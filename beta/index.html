@@ -3309,7 +3309,11 @@ function songTime(id) { var s = findSong(id); return s ? Number(s.duration) || 0
 function setTime(st) { var t = 0; st.songIds.forEach(function (id) { t += songTime(id); }); return t; }
 function showTime(sh) { var t = 0; sh.sets.forEach(function (st) { t += setTime(st); }); return t; }
 function showCounts(sh) { var n = 0; sh.sets.forEach(function (s) { n += s.songIds.filter(findSong).length; }); var t = showTime(sh); return sh.sets.length + (sh.sets.length === 1 ? " set" : " sets") + ", " + n + (n === 1 ? " song" : " songs") + (t ? ", " + fmtTime(t) : ""); }
-function playShow(sh, idx, back) { var f = showItems(sh); if (!f.length) { toast("That show has no songs yet."); return; } saveNow(); tmBeginShow(sh); startPlay(f, idx || 0, back || function () { go("shows"); }); }
+function playShow(sh, idx, back) {
+  var f = showItems(sh); if (!f.length) { toast("That show has no songs yet."); return; }
+  function open() { f = showItems(sh); saveNow(); tmBeginShow(sh); startPlay(f, idx || 0, back || function () { go("shows"); }); }
+  if (typeof akRunBegin === "function") akRunBegin(sh, open); else open();
+}
 
 function viewShows() {
   var list = h("div", { class: "list", id: "showList" }), bar = h("div");
@@ -3658,9 +3662,13 @@ function viewShow() {
         { label: "Undo last change", disabled: !undoStack.length, onClick: undoLast },
         { label: "Timers, break and start-time countdown…", onClick: function () { openTimers({ showId: sh.id }); } },
         { label: "Choose what shows under each song…", onClick: function () { infoOptionsDialog("sets", function () { draw(); }); } },
+        akRunLive(sh.id) ? { label: "End this show now…", onClick: function () { akEndShowAsk(draw); } } : null,
+        !akRunLive(sh.id) && akRunJustEnded(sh.id) ? { label: "Resume this show (encore)", onClick: function () { akRunResume(); draw(); } } : null,
+        { label: "Reminders checklists…", onClick: function () { openReminders({ showId: sh.id }); } },
         { label: "Start a new show (clear played marks)", onClick: function () { snap("clear played"); sh.played = {}; sh.counted = {}; save(); draw(); toastUndo("Played marks cleared."); } },
         { label: "Delete this show…", danger: true, onClick: function () { confirmBox("Move “" + sh.name + "” to Recently deleted?", "Delete", function () { snap("delete show"); trashShow(sh); save(); go("shows"); toastUndo("Show deleted."); }); } }]); } }, "⋯")));
     var cdOn = TM.cd.target && TM.cd.showId === sh.id;
+    body.appendChild(akRunCard(sh, draw));
     body.appendChild(panel); paintTog();
     panel.appendChild(h("div", { class: "row tmrow", "data-bk": "timers", "data-bt": "Countdown, end time and timers" },
       h("button", { class: "tmbtn", "aria-label": "Countdown to the start of the set", onClick: function () { openBigTimer({ showId: sh.id }); } },
@@ -3683,6 +3691,7 @@ function viewShow() {
     det.addEventListener("toggle", function () { S.showDetOpen[sh.id] = det.open; });
     panel.appendChild(det);
     panel.appendChild(akAnnCard(sh, draw));
+    panel.appendChild(akRemCard(sh, draw));
     panel.appendChild(h("div", { "data-bk": "totals", "data-bt": "Total time", class: "totals" + (tgt && total > tgt ? " over" : "") }, "Total " + fmtTime(total) + (tgt ? " of " + fmtTime(tgt) + (total > tgt ? " (over by " + fmtTime(total - tgt) + ")" : "") : "") + (total === 0 ? "  (add song lengths in each song to see times)" : "")));
     (function () { var fc = freshCard("show", sh); if (fc) panel.appendChild(fc); })();
     if (sh.sets.length > 1) {
@@ -4825,6 +4834,9 @@ function viewImport() {
   isub("A song someone sent you", "Open a Akashic Chords song file");
   out.appendChild(h("p", { class: "hint" }, "Choose the song file someone sent you (it ends in .chordbook.json). If you already have the song, you can add theirs as another version under a new name, or replace yours. A set list file works here too."));
   out.appendChild(fileBtn("Choose song file", anyFileInput()));
+  isub("Add a song from a photo", "A picture or screenshot of a chord sheet");
+  out.appendChild(h("p", { class: "hint" }, "Choose a photo or screenshot of a printed chord sheet (chords above the words, or ChordPro). The app reads it on this device, keeps each chord over the same letter as in the picture, and lets you check and fix it before saving."));
+  out.appendChild(fileBtn("Choose a photo", h("input", { type: "file", accept: "image/*", "aria-label": "Choose a photo of a chord sheet", onChange: function () { var f = this.files && this.files[0]; this.value = ""; if (f) openPhotoImport(f); } })));
   isub("Add a song from text", "Paste a chart or choose a text file");
   out.appendChild(h("div", { class: "fld" }, "Choose a text file", fileBtn("Choose text file", txtFile)));
   out.appendChild(h("div", { class: "fld" }, "or paste it", pasteTitle, pasteArea));
@@ -7828,6 +7840,7 @@ function logPlay(s, sh, info, at) {
   var setName = "", setNo = 0;
   if (sh) sh.sets.forEach(function (st, i) { if (!setNo && st.songIds.indexOf(s.id) >= 0) { setName = st.name; setNo = i + 1; } });
   if (info && info.setName) { setName = info.setName; setNo = info.setNo || setNo; }
+  var enc = typeof akRunEncoreInfo === "function" ? akRunEncoreInfo(sh) : null; if (enc) { setName = enc.setName; setNo = enc.setNo; }
   l.log.push({ id: uid(), at: at, sid: s.id, t: s.title, a: s.artist || "", sh: sh ? sh.id : "", sn: sh ? sh.name : "", pl: sh ? (sh.venue || sh.name) : "", st: setName, sk: setNo });
   if (l.log.length > 30000) l.log.splice(0, l.log.length - 30000);
 }
@@ -9817,6 +9830,18 @@ function viewSettings() {
   check("Vibrate when the countdown reaches zero", function () { return to.buzz; }, function (v) { to.buzz = v; });
   out.appendChild(h("p", { class: "hint" }, "The timers show in the bottom bar of the playing screen (turn that on or off under Playing screen buttons). Tap it to start a break, reset, or open the big countdown. The start time for the countdown is saved with each show, so you only change it when it is different."));
   out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { openTimers(); } }, "Open the timers"), h("button", { onClick: function () { openBigTimer(); } }, "Show the big countdown")));
+  section("Ending a show and encores", "When a show counts as over, and picking it back up");
+  var eo = akEndOpt();
+  check("End the show by itself when nothing has been played for a while", function () { return eo.auto; }, function (v) { eo.auto = v; });
+  range("Minutes with no song opened and no auto-scroll", function () { return eo.mins; }, function (v) { eo.mins = v; }, 10, 120, 5, function (v) { return v + " min"; });
+  range("Offer Resume / Encore for", function () { return eo.encoreHrs; }, function (v) { eo.encoreHrs = v; }, 1, 6, 1, function (v) { return v + (v === 1 ? " hour" : " hours") + " after the end"; });
+  out.appendChild(h("p", { class: "hint" }, "A show starts when you press Play on it. End it with End show (in the timers, on the show page, or as a playing-screen button). A running break keeps it open. If the tablet was off, the app closes the show as of the last song the next time it opens. Resume / Encore reopens it so encore songs go into the same show. The next time you play a show that ended, its played marks start fresh."));
+  section("Reminders", "Your own checklists before a set or at a time");
+  out.appendChild(h("p", { class: "hint" }, "Make a checklist (picks, capo, phone on silent) that pops up when you reach the first song of a set, at a time of day, or only when you open it. Add the Checklist button to the playing screen under Playing screen buttons."));
+  out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { openReminders(); } }, "Reminders…")));
+  section("Break music", "Music from your own files between sets");
+  out.appendChild(h("p", { class: "hint" }, "Load MP3 or M4A files; they are saved in the app and play with no signal. Play them with the Music button on the playing screen, or let them start when a set ends and fade out when the next set starts."));
+  out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { openBreakMusic(); } }, "Break music…")));
   section("Song ends and count-in", "Next song at the end, and a click before you start");
   var adv0 = settings(); adv0.advance = Object.assign({ mode: "off", wait: 8, startNext: true }, adv0.advance || {}); var av = adv0.advance;
   select("When a song's scrolling reaches the end", function () { return av.mode; }, function (v) { av.mode = v; }, [["off", "Do nothing"], ["ask", "Offer a Next button"], ["auto", "Go to the next song by itself"]]);
@@ -10063,12 +10088,12 @@ function tmPausePlay() {
   if (p.on) { p.acc += now - p.since; p.on = false; }
   p.byBreak = false; tmSave(); tmRefresh();
 }
-function tmEndRun(keep) {
-  var p = TM.play, now = Date.now(), ms = tmPlayMs(now);
+function tmEndRun(keep, at) {
+  var p = TM.play, now = at || Date.now(); if (p.on && now < p.since) now = p.since; var ms = tmPlayMs(now);
   if (keep !== false && p.began && ms >= 60000 && TM.show) {
     var sh = findShow(TM.show);
     if (sh) {
-      var brs = TM.brk.log.map(function (b) { return b.e - b.s; }); if (TM.brk.on) brs.push(now - TM.brk.since);
+      var brs = TM.brk.log.map(function (b) { return b.e - b.s; }); if (TM.brk.on) brs.push(Math.max(0, now - TM.brk.since));
       sh.runs = sh.runs || []; sh.runs.push({ at: p.began, play: ms, wall: now - p.began, breaks: brs });
       if (sh.runs.length > 30) sh.runs.shift();
       save();
@@ -10084,6 +10109,7 @@ function tmBreakStart() {
   b.on = true; b.since = now;
   if (tmOpt().pauseOnBreak && p.on) { p.acc += now - p.since; p.on = false; p.byBreak = true; }
   tmSave(); tmRefresh();
+  try { if (typeof bmOnBreak === "function") bmOnBreak(true); } catch (e) {}
 }
 function tmResumeAfterBreak() { var p = TM.play; if (p.byBreak) { p.byBreak = false; p.on = true; p.since = Date.now(); } }
 function tmBreakStop() {
@@ -10092,6 +10118,7 @@ function tmBreakStop() {
   b.log.push({ s: b.since, e: now }); b.last = now - b.since; b.on = false;
   tmResumeAfterBreak(); tmSave(); tmRefresh();
   toast("Break was " + tmFmt(b.last) + ".");
+  try { if (typeof bmOnBreak === "function") bmOnBreak(false); } catch (e) {}
 }
 function tmBreakReset() {
   var b = TM.brk; b.on = false; b.last = 0; tmResumeAfterBreak(); tmSave(); tmRefresh();
@@ -10280,6 +10307,7 @@ function openTimers(opt) {
   function live(kind, cls) { return h("span", { class: cls || "", "data-tm": kind }, tmText(kind, Date.now())); }
   function draw() {
     body.textContent = ""; var p = TM.play, b = TM.brk, c = TM.cd, now = Date.now();
+    if (typeof akRunCard === "function") body.appendChild(akRunCard(null, draw));
     /* playing time */
     body.appendChild(h("div", { class: "card tmcard" }, h("div", { class: "tmh" }, "▶ Playing time"),
       h("div", { class: "tmbig" }, live("play")),
@@ -10301,7 +10329,8 @@ function openTimers(opt) {
       h("div", { class: "muted" }, b.on ? "Break started " + tmClock(b.since) : b.last ? "Last break" : "No break yet"),
       h("div", { class: "row" },
         b.on ? h("button", { class: "primary", onClick: function () { tmBreakStop(); draw(); } }, "■ Stop break") : h("button", { class: "primary", onClick: function () { tmBreakStart(); draw(); } }, "☕ Start break"),
-        h("button", { disabled: !b.on && !b.last, onClick: function () { tmBreakReset(); draw(); } }, "Reset")),
+        h("button", { disabled: !b.on && !b.last, onClick: function () { tmBreakReset(); draw(); } }, "Reset"),
+        typeof openBreakMusic === "function" ? h("button", { onClick: function () { openBreakMusic(); } }, "♫ Break music") : null),
       bl.length ? h("div", { style: "margin-top:6px" }, bl) : null,
       h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!o.pauseOnBreak, onChange: function () { o.pauseOnBreak = this.checked; save(); } }), "Pause the playing time during a break")));
     /* countdown */
@@ -10427,10 +10456,11 @@ function countPlay(songId, showId, info) {
   var sh = showId ? findShow(showId) : null, now = Date.now();
   if (sh) {
     sh.counted = sh.counted || {};
-    if (sh.counted[songId]) { if (!sh.played[songId]) { sh.played[songId] = now; save(); refreshListTicks(); } return false; }
+    if (sh.counted[songId] && !(typeof akEncoreRecount === "function" && akEncoreRecount(sh, songId))) { if (!sh.played[songId]) { sh.played[songId] = now; save(); refreshListTicks(); } return false; }
     sh.counted[songId] = now; sh.played[songId] = now;
   }
   s.plays = (s.plays || 0) + 1; s.lastPlayed = now;
+  try { if (typeof akRunTouch === "function") akRunTouch(info, true); } catch (e) {}
   s.history = (s.history || []).concat([{ at: now, show: sh ? sh.name : "", showId: sh ? sh.id : "" }]).slice(-PLAY_HIST_MAX);
   logPlay(s, sh, info, now);
   save(); if (S.view === "play") refreshListTicks();
@@ -10842,6 +10872,7 @@ function advanceNow() {
 }
 function onSongEnd() {
   var p = S.play; if (!p) return;
+  try { akOnSongEnd(); } catch (e) {}
   var m = advanceMode();
   if (m === "off") { toast("End of the song."); return; }
   if (p.idx >= p.list.length - 1) { toast("End of the last song."); return; }
@@ -11493,6 +11524,7 @@ function startAuto() {
   }
   if (settings().autoMarkPlayed) markPlayed();
   tmOnScroll();
+  try { akOnAutoStart(); } catch (e) {}
   autoRAF = requestAnimationFrame(tick); setAutoUI();
 }
 function tick(t) {
@@ -11718,6 +11750,7 @@ function renderPlay() {
   root.appendChild(panes);
   akModeApply(song, root, panes);
   akAnnPlay(song);
+  try { akPlayHooks(song, item); } catch (e) {}
   if (lp) enablePinch(lp, "lyr", song, root); if (cp) enablePinch(cp, "chords", song, root);
   /* side buttons */
   var wrap = h("div", { class: "fabwrap" + (s.fab.labels === "under" ? " lbl-under" : s.fab.labels === "words" ? " lbl-words" : "") }), col = h("div", { class: "fabcol" + (s.fab.side === "left" ? " left" : ""), style: "top:" + s.fab.top + "%" });
@@ -14090,7 +14123,8 @@ function akLivePaint() {
   if (AKL.panelDraw) AKL.panelDraw();
 }
 function akExtraTb3(id, song, root) {
-  if (id !== "live" || !akLive().on) return null;
+  if (id !== "live") return typeof akExtraTb4 === "function" ? akExtraTb4(id, song, root) : null;
+  if (!akLive().on) return null;
   var b = h("button", { "aria-label": "Live requests", onClick: function () { openLivePanel(root, song); } }, akIcon("live"));
   setTimeout(akLivePaint, 0); return b;
 }
@@ -14259,6 +14293,909 @@ akCss("ak2-live", [
   ".akl-pre{white-space:pre;overflow:auto;max-height:40vh;font-size:.75rem;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px}",
   ".akl-steps li{margin:6px 0}",
   "a.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--fg);text-decoration:none}"
+].join("\n"));
+
+/* ================= Akashic Chords: when a show ends, and encores =================
+   One show night at a time ("run"), kept in this browser under chordbook:showrun:
+   { showId, began, lastAct, ended: 0 | end time, why: "button" | "idle" | "gap" | "other", resumedAt, encore, seen: {} }
+   - A run begins when you press Play on a show.
+   - Activity: a song shown on the playing screen, auto-scroll running, a counted play.
+   - It ends with the End show button, or by itself after a number of minutes with nothing opened and no auto-scroll
+     (settings().showEnd.mins, default 45). If the tablet was off, the next time the app opens it notices the gap and
+     closes the show as of the last activity.
+   - Resume / Encore reopens a show that just ended, so encore songs go into that same show (a song played again counts again,
+     and the history lists it under "Encore").
+   - The next time you play a show that ended, its played marks are cleared by themselves (a new night). */
+TB_ITEMS.push(["endshow", "End show / Encore"]); TB_SHORT.endshow = "End show";
+FAB_ITEMS.push(["endshow", "End show / Encore"]); FAB_OFF.endshow = 1; FAB_SHORT.endshow = "End show";
+AK_IC.endshow = "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M9 9h6v6H9z";
+var RKEY = "chordbook:showrun", RUN = null, runTickAt = 0, runSavedAt = 0;
+(function () {
+  try { var d = JSON.parse(localStorage.getItem(RKEY) || "null"); if (d && typeof d === "object" && d.showId) RUN = d; } catch (e) {}
+})();
+function akRunSave() { runSavedAt = Date.now(); try { if (RUN) localStorage.setItem(RKEY, JSON.stringify(RUN)); else localStorage.removeItem(RKEY); } catch (e) {} }
+function akEndOpt() {
+  var s = settings(), d = { auto: true, mins: 45, encoreHrs: 2 };
+  if (!s.showEnd || typeof s.showEnd !== "object") s.showEnd = {};
+  Object.keys(d).forEach(function (k) { if (s.showEnd[k] === undefined) s.showEnd[k] = d[k]; });
+  return s.showEnd;
+}
+function akRunLive(showId) { return !!(RUN && !RUN.ended && (!showId || RUN.showId === showId)); }
+function akRunJustEnded(showId) { return !!(RUN && RUN.ended && (!showId || RUN.showId === showId) && Date.now() - RUN.ended < akEndOpt().encoreHrs * 3600e3); }
+function akRunShow() { return RUN ? findShow(RUN.showId) : null; }
+
+/* the newest played mark of a show */
+function akLastMark(sh) { var t = 0; Object.keys(sh.played || {}).forEach(function (k) { if (sh.played[k] > t) t = sh.played[k]; }); return t; }
+function akRunFresh(sh) {
+  var now = Date.now();
+  /* the played marks belong to a show night that has ended: start clean */
+  if (sh.lastEnd && Object.keys(sh.played || {}).length && akLastMark(sh) <= sh.lastEnd.at + 60000) {
+    snap("new show night"); sh.played = {}; sh.counted = {}; save();
+    setTimeout(function () { toastUndo("New show night: the played marks from last time were cleared."); }, 600);
+  }
+  delete sh.lastEnd;
+  if (TM.show && TM.show !== sh.id) tmEndRun();
+  RUN = { showId: sh.id, began: now, lastAct: now, ended: 0, why: "", resumedAt: 0, encore: 0, seen: {} };
+  akRunSave(); save();
+}
+/* called when Play is pressed on a show; then() opens the playing screen */
+function akRunBegin(sh, then) {
+  akRunCheck();
+  if (RUN && RUN.showId === sh.id && !RUN.ended) { RUN.lastAct = Date.now(); akRunSave(); then(); return; }
+  if (akRunJustEnded(sh.id)) {
+    modal("Encore or a new show?", h("p", null, "“" + sh.name + "” ended at " + tmClock(RUN.ended) + ". Resume it for an encore, or start a new show?"),
+      [{ label: "Cancel" }, { label: "New show", onClick: function () { akRunFresh(sh); then(); } }, { label: "Resume (encore)", primary: true, onClick: function () { akRunResume(true); then(); } }]);
+    return;
+  }
+  if (RUN && !RUN.ended) akRunEnd("other", RUN.lastAct, true);
+  akRunFresh(sh); then();
+}
+/* end the show night as of time at (default now) */
+function akRunEnd(why, at, quiet) {
+  if (!RUN || RUN.ended) return;
+  var now = Date.now(); at = Math.min(now, at || now);
+  var sh = akRunShow();
+  if (TM.show === RUN.showId) tmEndRun(true, at);
+  RUN.ended = at; RUN.why = why || "button"; akRunSave();
+  if (sh) { sh.lastEnd = { began: RUN.began, at: at, why: RUN.why }; save(); }
+  try { if (typeof bmOnShowEnd === "function") bmOnShowEnd(); } catch (e) {}
+  if (!quiet) {
+    var name = sh ? "“" + sh.name + "”" : "The show";
+    var msg = why === "button" ? name + " ended." : why === "gap" ? name + " was closed as of " + tmClock(at) + ", the last time something played." : name + " ended at " + tmClock(at) + " (" + akEndOpt().mins + " minutes with nothing played).";
+    toast(msg, { label: "Encore", fn: function () { akRunResume(); } });
+  }
+  akRunPaint();
+}
+function akRunResume(quiet) {
+  if (!RUN || !RUN.ended) return;
+  var sh = akRunShow(), now = Date.now();
+  /* put the playing time and breaks back the way they were */
+  if (sh && (sh.runs || []).length && sh.runs[sh.runs.length - 1].at === RUN.began && !TM.play.began) {
+    var r = sh.runs.pop(), t = r.at;
+    TM.show = sh.id;
+    TM.play = { on: false, since: 0, acc: r.play || 0, began: r.at, byBreak: false };
+    TM.brk = { on: false, since: 0, last: 0, log: (r.breaks || []).map(function (ms) { var b = { s: t, e: t + ms }; t += ms; return b; }) };
+    tmSave();
+  }
+  if (sh && TM.show !== sh.id && !TM.play.began) TM.show = sh.id;
+  RUN.ended = 0; RUN.why = ""; RUN.resumedAt = now; RUN.encore = (RUN.encore || 0) + 1; RUN.lastAct = now; akRunSave();
+  if (sh) { delete sh.lastEnd; save(); }
+  if (TM.show === RUN.showId && tmOpt().playStart !== "manual") tmStartPlay();
+  if (!quiet) toast("Back in " + (sh ? "“" + sh.name + "”" : "the show") + ". Encore songs go into this show.");
+  akRunPaint();
+}
+/* something happened on the playing screen */
+function akRunTouch(item, playing) {
+  if (!RUN) return;
+  var now = Date.now();
+  if (RUN.ended) {
+    /* playing a song of the show that just ended, in the same playing session: that's an encore */
+    if (playing && item && item.showId === RUN.showId && RUN.seq && RUN.seq === S.playSeq && akRunJustEnded()) akRunResume();
+    return;
+  }
+  if (item && item.showId === RUN.showId) RUN.seq = S.playSeq;
+  RUN.lastAct = now;
+  if (now - runSavedAt > 15000) akRunSave();
+}
+/* is this a song played again during the encore? then it counts again */
+function akEncoreRecount(sh, songId) {
+  return !!(RUN && !RUN.ended && RUN.showId === sh.id && RUN.resumedAt && sh.counted && sh.counted[songId] && sh.counted[songId] < RUN.resumedAt);
+}
+function akRunEncoreInfo(sh) {
+  if (!sh || !RUN || RUN.ended || RUN.showId !== sh.id || !RUN.resumedAt) return null;
+  return { setName: "Encore", setNo: (sh.sets || []).length + 1 };
+}
+/* the check every 30 seconds, and when the app opens or comes back */
+var runTickAtStart = false;
+function akRunCheck() {
+  var now = Date.now(), gap = !runTickAtStart || (runTickAt && now - runTickAt > 120000); runTickAt = now; runTickAtStart = true;
+  if (!RUN || RUN.ended) return;
+  if (S.view === "play" && S.play && autoOn && !document.hidden) { RUN.lastAct = now; if (now - runSavedAt > 15000) akRunSave(); return; }
+  var o = akEndOpt(); if (!o.auto) return;
+  var mins = Math.max(5, Number(o.mins) || 45), idle = now - (RUN.lastAct || RUN.began);
+  if (idle < mins * 60000) return;
+  /* a break that is running keeps the show open (up to 3 hours) */
+  if (TM.brk.on && TM.show === RUN.showId && now - TM.brk.since < 3 * 3600e3) return;
+  akRunEnd(gap ? "gap" : "idle", RUN.lastAct || RUN.began);
+}
+setInterval(function () { try { akRunCheck(); } catch (e) {} }, 30000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) setTimeout(function () { try { akRunCheck(); } catch (e) {} }, 800); });
+setTimeout(function () { try { akRunCheck(); } catch (e) {} }, 2500);
+
+/* ---------------------------------------------------------------- what you see */
+function akRunPaint() {
+  Array.prototype.forEach.call(document.querySelectorAll("[data-akrun]"), function (el) { if (el._redraw) el._redraw(); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="endshow"],[data-fab="endshow"]'), function (b) {
+    var enc = akRunJustEnded() && !akRunLive();
+    b.setAttribute("data-lbl", enc ? "Encore" : btnWord("toolbar", "endshow", "End show"));
+    b.setAttribute("aria-label", enc ? "Resume the show for an encore" : "End the show");
+  });
+}
+function akEndShowAsk(after) {
+  var sh = akRunShow(); if (!akRunLive()) return;
+  confirmBox("End “" + (sh ? sh.name : "the show") + "” now? You can resume it for an encore.", "End show", function () { stopAuto(); akRunEnd("button"); if (after) after(); });
+}
+function akEndBtnClick() {
+  if (akRunLive()) akEndShowAsk();
+  else if (akRunJustEnded()) akRunResume();
+  else toast("No show is playing. Press Play on a show to start one.");
+}
+/* the card for the show page and the timers panel; sh = this show only, or null for whichever show is running */
+function akRunCard(sh, redraw) {
+  var box = h("div", { class: "card akrun", "data-akrun": "1", "data-bk": "showrun" });
+  function draw() {
+    box.textContent = "";
+    var live = akRunLive(sh && sh.id), ended = !live && akRunJustEnded(sh && sh.id), rs = akRunShow();
+    if (!live && !ended) { box.style.display = "none"; return; }
+    box.style.display = "";
+    var name = rs ? rs.name : "Show";
+    if (live) {
+      box.appendChild(h("div", { class: "akrun-h" }, "● ", sh ? "Show is on" : name, RUN.encore ? h("span", { class: "akrun-tag" }, "Encore") : null));
+      box.appendChild(h("div", { class: "muted" }, "Started " + tmClock(RUN.began) + " · last song activity " + tmClock(RUN.lastAct)));
+      box.appendChild(h("div", { class: "row" }, h("button", { class: "danger", onClick: function () { akEndShowAsk(function () { draw(); if (redraw) redraw(); }); } }, "■ End show")));
+    } else {
+      box.appendChild(h("div", { class: "akrun-h" }, sh ? "Show ended" : name + " ended"));
+      box.appendChild(h("div", { class: "muted" }, "Ended at " + tmClock(RUN.ended) + (RUN.why === "idle" ? " (nothing played for a while)" : RUN.why === "gap" ? " (as of the last song, the app was closed)" : "") + ". Resume it to put encore songs into this show."));
+      box.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akRunResume(); draw(); if (redraw) redraw(); } }, "↺ Resume / Encore")));
+    }
+  }
+  box._redraw = draw; draw();
+  return box;
+}
+function akExtraTb4(id, song, root) {
+  if (id === "endshow") { var b = h("button", { onClick: function () { akEndBtnClick(); } }, akIcon("endshow")); setTimeout(akRunPaint, 0); return b; }
+  if (typeof akExtraTb5 === "function") return akExtraTb5(id, song, root);
+  return null;
+}
+/* ---------------------------------------------------------------- hooks the playing screen calls */
+/* each time the playing screen shows a song */
+function akPlayHooks(song, item) {
+  var key = S.playSeq + ":" + S.play.idx, moved = S.akHookKey !== key; S.akHookKey = key;
+  akRunTouch(item, moved);
+  if (typeof akRemPlay === "function") akRemPlay(item);
+  akRunPaint();
+}
+/* auto-scroll starts: the set is going (break music fades out) */
+function akOnAutoStart() {
+  akRunTouch(S.play && curItem(), true);
+  if (typeof bmOnSetStart === "function") bmOnSetStart();
+}
+/* the scrolling reached the end of a song */
+function akOnSongEnd() {
+  var p = S.play; if (!p) return;
+  var it = p.list[p.idx], nx = p.list[p.idx + 1];
+  akRunTouch(it);
+  if (it && it.showId && (!nx || nx.setNo !== it.setNo) && typeof bmOnSetEnd === "function") bmOnSetEnd(!nx);
+}
+akCss("ak3-run", [
+  ".akrun{padding:10px 12px}.akrun .row{margin:6px 0 0}",
+  ".akrun-h{font-weight:700;display:flex;gap:8px;align-items:center}",
+  ".akrun-tag{font-size:.75rem;font-weight:700;padding:1px 8px;border-radius:10px;background:var(--accent);color:var(--bg)}"
+].join("\n"));
+
+/* ================= Akashic Chords: reminders (your own checklists before a set, or at a time) =================
+   lib().reminders = [{ id, name, items: [{ id, text }], when: "set" | "time" | "manual", setNo: 0 (every set) | n,
+                        time: "HH:MM", days: "show" | "every", showId: "" (every show) | show id, fired: "YYYY-MM-DD" }]
+   "set": pops up when the playing screen reaches the first song of a set (once per set per show night).
+   "time": pops up at that time of day, on days with a show (or every day).
+   Any reminder can be opened by hand from the Checklist button, the show's ⋯ menu, or Settings. */
+TB_ITEMS.push(["checklist", "Reminders checklist"]); TB_SHORT.checklist = "Checklist";
+FAB_ITEMS.push(["checklist", "Reminders checklist"]); FAB_OFF.checklist = 1; FAB_SHORT.checklist = "Checklist";
+AK_IC.checklist = "M10 6h10 M10 12h10 M10 18h10 M3.5 6l1.6 1.6L8 4.7 M3.5 12l1.6 1.6L8 10.7 M3.5 18l1.6 1.6L8 16.7";
+var AK_REM_STARTER = ["Picks", "Capo", "Tuner and spare strings", "Phone on silent", "Water"];
+
+function akRems() { var l = lib(); if (!Array.isArray(l.reminders)) l.reminders = []; return l.reminders; }
+function akRemWhenText(r) {
+  if (r.when === "time") return "At " + tmHM(r.time) + (r.days === "every" ? ", every day" : ", on show days");
+  if (r.when === "manual") return "Only when I open it";
+  return r.setNo ? (r.setNo === 1 ? "Before the first set" : "Before set " + r.setNo) : "Before every set";
+}
+function akRemScopeText(r) { var sh = r.showId && findShow(r.showId); return r.showId ? (sh ? "Only “" + sh.name + "”" : "A deleted show") : "Every show"; }
+/* reminders that belong to a show (its own and the ones for every show) */
+function akRemsFor(sh) { return akRems().filter(function (r) { return !r.showId || (sh && r.showId === sh.id); }); }
+
+/* ---------------------------------------------------------------- the checklist that pops up */
+function akRemPop(title, list) {
+  list = list.filter(function (r) { return (r.items || []).some(function (x) { return (x.text || "").trim(); }); });
+  if (!list.length) return;
+  var body = h("div", { class: "akrem-pop" }), boxes = [], count = h("div", { class: "muted akrem-count" });
+  function paint() { var n = boxes.filter(function (b) { return b.checked; }).length; count.textContent = n === boxes.length ? "All set ✓" : n + " of " + boxes.length + " done"; doneB.textContent = n === boxes.length ? "All set" : "Done"; }
+  list.forEach(function (r) {
+    if (list.length > 1) body.appendChild(h("div", { class: "akrem-h" }, r.name || "Checklist"));
+    r.items.forEach(function (x) {
+      if (!(x.text || "").trim()) return;
+      var cb = h("input", { type: "checkbox", onChange: paint }); boxes.push(cb);
+      body.appendChild(h("label", { class: "chk akrem-item" }, cb, h("span", null, x.text)));
+    });
+  });
+  body.appendChild(count);
+  var doneB = null;
+  modal(title, body, [{ label: "Edit…", onClick: function () { setTimeout(function () { list.length === 1 ? akRemEdit(list[0], null) : openReminders(); }, 0); } }, { label: "Done", primary: true }], { wide: true });
+  var ms = document.querySelectorAll(".modal"), btns = ms.length ? ms[ms.length - 1].querySelectorAll(".sheet > .row button") : []; doneB = btns[btns.length - 1] || h("button");
+  paint();
+}
+/* called each time the playing screen shows a song: at the first song of a set, pop that set's checklist once */
+function akRemPlay(item) {
+  if (!item || !item.showId || !S.play) return;
+  var p = S.play, prev = p.list[p.idx - 1];
+  if (prev && prev.setNo === item.setNo && prev.showId === item.showId) return;
+  var sh = findShow(item.showId); if (!sh) return;
+  var setNo = item.setNo || 1;
+  var due = akRemsFor(sh).filter(function (r) { return r.when === "set" && (!r.setNo || r.setNo === setNo); });
+  if (!due.length) return;
+  var seen, key = String(setNo);
+  if (typeof RUN !== "undefined" && RUN && RUN.showId === sh.id && !RUN.ended) { RUN.seen = RUN.seen || {}; seen = RUN.seen; }
+  else { S.akRemSeen = S.akRemSeen || {}; key = S.playSeq + "|" + sh.id + "|" + setNo; seen = S.akRemSeen; }
+  if (seen[key]) return;
+  seen[key] = Date.now(); if (typeof akRunSave === "function") akRunSave();
+  var st = sh.sets[setNo - 1], name = st && st.name ? st.name : "Set " + setNo;
+  setTimeout(function () { if (S.view === "play") akRemPop("Before " + name, due); }, 450);
+}
+/* timed reminders */
+function akRemTick() {
+  var now = new Date(), today = ymd(now), hm = tmPad(now.getHours()) + ":" + tmPad(now.getMinutes());
+  var shows = (lib().shows || []), playingId = S.play && S.play.list[S.play.idx] && S.play.list[S.play.idx].showId, liveId = typeof akRunLive === "function" && akRunLive() ? RUN.showId : "";
+  function showDay(id) { return shows.some(function (sh) { return (!id || sh.id === id) && (sh.date === today || sh.id === playingId || sh.id === liveId); }); }
+  akRems().forEach(function (r) {
+    if (r.when !== "time" || !r.time || r.fired === today) return;
+    if (!(hm >= r.time && hm <= akAddMin(r.time, 20))) return;
+    if (r.days !== "every" && !showDay(r.showId)) return;
+    if (r.days === "every" && r.showId && !showDay(r.showId)) return;
+    r.fired = today; save(); akRemPop(r.name || "Reminder", [r]);
+  });
+}
+setInterval(function () { try { akRemTick(); } catch (e) {} }, 20000);
+
+/* ---------------------------------------------------------------- making and changing reminders */
+function akRemEdit(r, done, preset) {
+  var isNew = !r; r = r || Object.assign({ id: uid(), name: "", items: [], when: "set", setNo: 0, time: "19:00", days: "show", showId: "" }, preset || {});
+  var items = (r.items || []).map(function (x) { return { id: x.id || uid(), text: x.text || "" }; });
+  if (isNew && !items.length) items = AK_REM_STARTER.map(function (t) { return { id: uid(), text: t }; });
+  var name = h("input", { type: "text", value: r.name || "", placeholder: "Like: Before every set", "aria-label": "Name", autocapitalize: "sentences" });
+  var list = h("div", { class: "akrem-list" });
+  function drawItems(focusLast) {
+    list.textContent = ""; var rows = [];
+    items.forEach(function (x, i) {
+      var grip = h("span", { class: "grip", "aria-label": "Drag to reorder" }, "⋮⋮");
+      var inp = h("input", { type: "text", value: x.text, placeholder: "Item", "aria-label": "Item " + (i + 1), autocapitalize: "sentences", onInput: function () { x.text = this.value; } });
+      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); items.splice(i + 1, 0, { id: uid(), text: "" }); drawItems(); var all = list.querySelectorAll("input"); if (all[i + 1]) all[i + 1].focus(); } });
+      var row = h("div", { class: "akrem-row" }, grip, inp, h("button", { class: "icon sm", "aria-label": "Remove this item", onClick: function () { items.splice(i, 1); drawItems(); } }, "✕"));
+      rows.push(row); list.appendChild(row);
+      rowDrag({ handle: grip, self: row, rows: function () { return rows; }, onDrop: function (from, to) { items.splice(to, 0, items.splice(from, 1)[0]); drawItems(); } });
+    });
+    if (focusLast) { var all = list.querySelectorAll("input"); if (all.length) all[all.length - 1].focus(); }
+  }
+  drawItems();
+  var addB = h("button", { onClick: function () { items.push({ id: uid(), text: "" }); drawItems(true); } }, "+ Item");
+  var whenOpts = [["set|0", "Before every set"], ["set|1", "Before the first set"], ["set|2", "Before set 2"], ["set|3", "Before set 3"], ["set|4", "Before set 4"], ["time|0", "At a time of day"], ["manual|0", "Only when I open it"]];
+  var cur = r.when === "set" ? "set|" + (r.setNo || 0) : r.when + "|0";
+  var when = h("select", { "aria-label": "When it pops up" }, whenOpts.map(function (o) { return h("option", { value: o[0], selected: o[0] === cur }, o[1]); }));
+  var tm = h("input", { type: "time", value: r.time || "19:00", "aria-label": "Time" });
+  var days = h("select", { "aria-label": "Which days" }, h("option", { value: "show", selected: r.days !== "every" }, "Only on days with a show"), h("option", { value: "every", selected: r.days === "every" }, "Every day"));
+  var shows = (lib().shows || []).slice().sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")) || a.name.localeCompare(b.name); });
+  var scope = h("select", { "aria-label": "Which shows" }, [h("option", { value: "", selected: !r.showId }, "Every show")].concat(shows.map(function (sh) { return h("option", { value: sh.id, selected: r.showId === sh.id }, "Only “" + sh.name + "”" + (sh.date ? " (" + sh.date + ")" : "")); })));
+  var timeF = h("div", { class: "two" }, h("label", { class: "fld" }, "Time", tm), h("label", { class: "fld" }, "Days", days));
+  function paint() { timeF.style.display = when.value.indexOf("time") === 0 ? "" : "none"; }
+  when.addEventListener("change", paint); paint();
+  var body = h("div", null, h("label", { class: "fld" }, "Name", name), h("div", { class: "fld" }, "Checklist", list, h("div", { class: "row" }, addB)),
+    h("label", { class: "fld" }, "When it pops up", when), timeF, h("label", { class: "fld" }, "For", scope),
+    h("p", { class: "hint" }, "Before a set, it pops up on the playing screen when you reach the first song of that set. Tick things off as you go."));
+  modal(isNew ? "New reminder" : "Reminder", body, [
+    isNew ? null : { label: "Delete", danger: true, onClick: function () { snap("delete reminder"); var L = akRems(), i = L.indexOf(r); if (i >= 0) L.splice(i, 1); save(); toastUndo("Reminder deleted."); if (done) done(); } },
+    { label: "Cancel" },
+    { label: "Save", primary: true, onClick: function () {
+      var its = items.filter(function (x) { return (x.text || "").trim(); }).map(function (x) { return { id: x.id, text: x.text.trim() }; });
+      if (!its.length) { toast("Add at least one item."); return false; }
+      snap(isNew ? "add reminder" : "edit reminder");
+      var w = when.value.split("|");
+      r.name = name.value.trim() || akRemWhenText({ when: w[0], setNo: Number(w[1]), time: tm.value, days: days.value });
+      r.items = its; r.when = w[0]; r.setNo = w[0] === "set" ? Number(w[1]) : 0;
+      r.time = tm.value || "19:00"; r.days = days.value; r.showId = scope.value;
+      if (r.when !== "time") delete r.fired;
+      if (isNew) akRems().push(r);
+      save(); toast("Reminder saved."); if (done) done();
+    } }].filter(Boolean), { wide: true });
+}
+/* the list of all reminders; opt.showId puts that show's first and makes new ones for it */
+function openReminders(opt) {
+  opt = opt || {};
+  var sh = opt.showId ? findShow(opt.showId) : null, body = h("div"), close;
+  function draw() {
+    body.textContent = "";
+    var L = sh ? akRemsFor(sh) : akRems();
+    if (!L.length) body.appendChild(h("p", { class: "hint" }, "No reminders yet. Make a checklist (picks, capo, phone on silent…) that pops up before a set or at a time."));
+    L.forEach(function (r) {
+      body.appendChild(h("div", { class: "akrem-li" },
+        h("button", { class: "grow akrem-open", onClick: function () { akRemPop(r.name || "Checklist", [r]); } }, h("b", null, r.name || "Checklist"), h("span", { class: "muted" }, akRemWhenText(r) + " · " + akRemScopeText(r) + " · " + r.items.length + (r.items.length === 1 ? " item" : " items"))),
+        h("button", { onClick: function () { akRemEdit(r, draw); } }, "Edit")));
+    });
+    body.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akRemEdit(null, draw, sh ? { showId: sh.id } : null); } }, "+ New reminder")));
+    body.appendChild(h("p", { class: "hint" }, "Tap a reminder to open its checklist now."));
+  }
+  draw();
+  close = modal(sh ? "Reminders for “" + sh.name + "”" : "Reminders", body, [{ label: "Close" }], { wide: true });
+  return close;
+}
+/* the Checklist button: the reminders for the show you're playing */
+function akRemOpenNow() {
+  var it = S.play && S.play.list[S.play.idx], sh = it && it.showId ? findShow(it.showId) : null, L = sh ? akRemsFor(sh) : akRems();
+  if (!L.length) { openReminders(sh ? { showId: sh.id } : null); return; }
+  if (L.length === 1) { akRemPop(L[0].name || "Checklist", L); return; }
+  var setNo = it ? it.setNo || 1 : 0, due = L.filter(function (r) { return r.when === "set" && (!r.setNo || r.setNo === setNo); });
+  if (due.length && sh) { var st = sh.sets[setNo - 1]; akRemPop("Before " + (st && st.name ? st.name : "Set " + setNo), due); return; }
+  openReminders(sh ? { showId: sh.id } : null);
+}
+/* the card on the show page */
+function akRemCard(sh, redraw) {
+  var L = akRemsFor(sh);
+  var box = h("details", { class: "card akann-card", "data-bk": "reminders" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Reminders", h("span", { class: "muted", style: "font-weight:400" }, L.length ? "  ·  " + L.length : "")));
+  if (S.akRemOpen) box.open = true; box.addEventListener("toggle", function () { S.akRemOpen = box.open; });
+  box.appendChild(h("p", { class: "hint" }, "Checklists that pop up before a set or at a time: picks, capo, phone on silent. Ones marked “Every show” come with every show."));
+  L.forEach(function (r) { box.appendChild(h("button", { class: "akann-row", onClick: function () { akRemEdit(r, redraw); } }, h("b", null, r.name || "Checklist"), "  ", h("span", { class: "grow muted" }, akRemWhenText(r) + (r.showId ? "" : " · every show")))); });
+  box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akRemEdit(null, redraw, { showId: sh.id }); } }, "+ Reminder for this show"), h("button", { onClick: function () { akRemEdit(null, redraw); } }, "+ For every show")));
+  return box;
+}
+function akExtraTb5(id, song, root) {
+  if (id === "checklist") return h("button", { "aria-label": "Reminders checklist", onClick: function () { akRemOpenNow(); } }, akIcon("checklist"));
+  if (typeof akExtraTb6 === "function") return akExtraTb6(id, song, root);
+  return null;
+}
+akCss("ak3-remind", [
+  ".akrem-pop .akrem-item{font-size:1.3rem;padding:8px 2px;align-items:center}.akrem-pop .akrem-item input{width:26px;height:26px}",
+  ".akrem-pop .akrem-item input:checked+span{text-decoration:line-through;opacity:.6}",
+  ".akrem-h{font-weight:700;margin:10px 0 2px;color:var(--accent)}.akrem-count{margin-top:8px}",
+  ".akrem-row{display:flex;gap:6px;align-items:center;margin:4px 0}.akrem-row input{flex:1;min-width:0}.akrem-row .grip{cursor:grab;padding:4px 6px;opacity:.7}",
+  ".akrem-li{display:flex;gap:6px;align-items:center;margin:6px 0}.akrem-open{display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:2px}"
+].join("\n"));
+
+/* ================= Akashic Chords: break music =================
+   Your own audio files, saved inside this browser (IndexedDB "akashic-music", store "tracks": { id, name, type, data }),
+   so they play with no signal. Played through Web Audio so the volume and the fades work on iPhones and iPads too.
+   settings().breakMusic = { tracks: [{ id, name, dur }], vol: 0.6, fadeIn: 4, fadeOut: 6, autoStart: false, autoStop: true, shuffle: false }
+   - Manual: the Music button on the playing screen, the timers panel, or Settings.
+   - Optional: starts by itself when a set ends (the last song of a set reaches its end, or you start a break),
+     and fades out when the next set starts (auto-scroll starts, or you stop the break). */
+TB_ITEMS.push(["music", "Break music"]); TB_ON.music = 1; TB_SHORT.music = "Music";
+FAB_ITEMS.push(["music", "Break music"]); FAB_OFF.music = 1; FAB_SHORT.music = "Music";
+AK_IC.music = "M9 18V5l11-2v13 M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M17 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z";
+var BM = { audio: null, ctx: null, gain: null, cur: "", url: "", playing: false, fading: 0, auto: false, played: {}, db: null, unlocked: false, mini: null, up: false, priming: false };
+function bmOpt() {
+  var s = settings(), d = { tracks: [], vol: 0.6, fadeIn: 4, fadeOut: 6, autoStart: false, autoStop: true, shuffle: false };
+  if (!s.breakMusic || typeof s.breakMusic !== "object") s.breakMusic = {};
+  Object.keys(d).forEach(function (k) { if (s.breakMusic[k] === undefined) s.breakMusic[k] = d[k]; });
+  if (!Array.isArray(s.breakMusic.tracks)) s.breakMusic.tracks = [];
+  return s.breakMusic;
+}
+function bmTracks() { return bmOpt().tracks; }
+function bmTrack(id) { return bmTracks().filter(function (t) { return t.id === id; })[0] || null; }
+
+/* ---------------------------------------------------------------- saving the files */
+function bmDb() {
+  return new Promise(function (res, rej) {
+    if (BM.db) { res(BM.db); return; }
+    if (!window.indexedDB) { rej(new Error("This browser can't save music files.")); return; }
+    var r = indexedDB.open("akashic-music", 1);
+    r.onupgradeneeded = function () { if (!r.result.objectStoreNames.contains("tracks")) r.result.createObjectStore("tracks", { keyPath: "id" }); };
+    r.onsuccess = function () { BM.db = r.result; res(BM.db); };
+    r.onerror = function () { rej(r.error || new Error("Couldn't open the music storage.")); };
+  });
+}
+function bmReq(mode, fn) {
+  return bmDb().then(function (db) { return new Promise(function (res, rej) {
+    var tx = db.transaction("tracks", mode), st = tx.objectStore("tracks"), q = fn(st), out;
+    if (q) q.onsuccess = function () { out = q.result; };
+    tx.oncomplete = function () { res(out); }; tx.onerror = function () { rej(tx.error || new Error("Couldn't save that file.")); }; tx.onabort = tx.onerror;
+  }); });
+}
+function bmGet(id) { return bmReq("readonly", function (st) { return st.get(id); }); }
+function bmDel(id) { return bmReq("readwrite", function (st) { return st.delete(id); }); }
+function bmDuration(blob) {
+  return new Promise(function (res) {
+    var a = document.createElement("audio"), u = URL.createObjectURL(blob), done = false;
+    function fin(v) { if (done) return; done = true; URL.revokeObjectURL(u); res(v); }
+    a.preload = "metadata"; a.onloadedmetadata = function () { fin(isFinite(a.duration) ? Math.round(a.duration) : 0); }; a.onerror = function () { fin(-1); };
+    setTimeout(function () { fin(0); }, 4000); a.src = u;
+  });
+}
+function bmAddFiles(files, done) {
+  files = Array.prototype.slice.call(files || []); if (!files.length) return;
+  var o = bmOpt(), added = 0, bad = 0;
+  toast("Saving " + files.length + (files.length === 1 ? " file…" : " files…"));
+  files.reduce(function (pr, f) {
+    return pr.then(function () {
+      return readFileAs(f, "buffer").then(function (buf) {
+        var type = f.type || "audio/mpeg", blob = new Blob([buf], { type: type });
+        return bmDuration(blob).then(function (dur) {
+          if (dur < 0) { bad++; return; }
+          var id = uid(), name = f.name.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ");
+          return bmReq("readwrite", function (st) { return st.put({ id: id, name: name, type: type, data: buf }); }).then(function () { o.tracks.push({ id: id, name: name, dur: dur }); added++; save(); });
+        });
+      }).catch(function () { bad++; });
+    });
+  }, Promise.resolve()).then(function () {
+    toast(added ? "Added " + added + (added === 1 ? " song" : " songs") + " to the break music." + (bad ? " " + bad + " couldn't be played by this device." : "") : "Those files couldn't be played by this device. Try MP3 or M4A.");
+    if (done) done();
+  });
+}
+function bmRemove(id, done) {
+  var o = bmOpt(), i = o.tracks.map(function (t) { return t.id; }).indexOf(id); if (i < 0) return;
+  if (BM.cur === id) bmStop(true);
+  o.tracks.splice(i, 1); save(); bmDel(id).catch(function () {}); if (done) done();
+}
+
+/* ---------------------------------------------------------------- the player */
+function bmEnsure() {
+  if (BM.audio) return;
+  var a = BM.audio = document.createElement("audio"); a.preload = "auto"; a.setAttribute("playsinline", "");
+  a.addEventListener("ended", function () { bmNext(true); });
+  a.addEventListener("timeupdate", bmPaintTime);
+  a.addEventListener("play", function () { BM.playing = true; if (!BM.priming) bmPaint(); });
+  a.addEventListener("pause", function () { BM.playing = false; bmPaint(); });
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) { BM.ctx = new AC(); var src = BM.ctx.createMediaElementSource(a); BM.gain = BM.ctx.createGain(); BM.gain.gain.value = 0; src.connect(BM.gain); BM.gain.connect(BM.ctx.destination); }
+  } catch (e) { BM.ctx = null; BM.gain = null; }
+}
+function bmVolNow() { return BM.gain ? BM.gain.gain.value : BM.audio ? BM.audio.volume : 0; }
+function bmSetGain(v) {
+  v = Math.max(0, Math.min(1, v));
+  if (BM.gain) { var t = BM.ctx.currentTime; BM.gain.gain.cancelScheduledValues(t); BM.gain.gain.setValueAtTime(v, t); } else if (BM.audio) BM.audio.volume = v;
+}
+/* fade to a volume over some seconds, then call then() */
+function bmFade(to, secs, then) {
+  clearInterval(BM.fading); BM.fading = 0;
+  secs = Math.max(0, Number(secs) || 0);
+  if (!secs) { bmSetGain(to); if (then) then(); return; }
+  var from = bmVolNow(), t0 = performance.now();
+  BM.fading = setInterval(function () {
+    var k = Math.min(1, (performance.now() - t0) / (secs * 1000));
+    bmSetGain(from + (to - from) * k);
+    if (k >= 1) { clearInterval(BM.fading); BM.fading = 0; if (then) then(); }
+  }, 50);
+}
+function bmLoad(id) {
+  return bmGet(id).then(function (rec) {
+    if (!rec) throw new Error("That song's file isn't in this browser any more.");
+    if (BM.url) URL.revokeObjectURL(BM.url);
+    BM.url = URL.createObjectURL(new Blob([rec.data], { type: rec.type || "audio/mpeg" }));
+    BM.audio.src = BM.url; BM.cur = id; BM.played[id] = 1;
+  });
+}
+function bmPick(dir) {
+  var L = bmTracks(); if (!L.length) return "";
+  var i = L.map(function (t) { return t.id; }).indexOf(BM.cur);
+  if (bmOpt().shuffle && dir > 0) {
+    var left = L.filter(function (t) { return !BM.played[t.id] && t.id !== BM.cur; });
+    if (!left.length) { BM.played = {}; left = L.filter(function (t) { return t.id !== BM.cur; }); if (!left.length) left = L; }
+    return left[Math.floor(Math.random() * left.length)].id;
+  }
+  return L[((i < 0 ? (dir > 0 ? -1 : 0) : i) + dir + L.length) % L.length].id;
+}
+/* start (or carry on) playing, fading in */
+function bmPlay(auto, id) {
+  if (!bmTracks().length) { if (!auto) { toast("Add some music files first."); openBreakMusic(); } return; }
+  bmEnsure();
+  try { if (BM.ctx && BM.ctx.state !== "running") BM.ctx.resume(); } catch (e) {}
+  BM.auto = !!auto; BM.up = true; BM.priming = false;
+  var o = bmOpt(), want = id || (BM.cur && bmTrack(BM.cur) ? BM.cur : bmPick(1));
+  var ready = want !== BM.cur || !BM.audio.src ? bmLoad(want) : Promise.resolve();
+  ready.then(function () {
+    if (!BM.playing) bmSetGain(0);
+    return BM.audio.play();
+  }).then(function () { bmFade(o.vol, o.fadeIn); bmPaint(); }).catch(function (e) {
+    if (e && e.name === "NotAllowedError") { if (!auto) toast("Tap Play once more to start the music."); else bmMini(true); }
+    else toast((e && e.message) || "That song couldn't be played.");
+  });
+}
+function bmPause(fade) {
+  if (!BM.audio || !BM.playing) return;
+  BM.up = false;
+  bmFade(0, fade ? bmOpt().fadeOut : 0.15, function () { BM.audio.pause(); bmPaint(); });
+}
+function bmStop(now) {
+  if (!BM.audio) return;
+  BM.up = false;
+  bmFade(0, now ? 0 : bmOpt().fadeOut, function () { BM.audio.pause(); try { BM.audio.currentTime = 0; } catch (e) {} BM.auto = false; bmPaint(); });
+}
+function bmToggle() { if (BM.playing && BM.up) bmPause(false); else bmPlay(false); }
+function bmNext(fromEnd) {
+  var id = bmPick(1); if (!id) return;
+  var was = BM.playing || fromEnd;
+  bmEnsure(); bmLoad(id).then(function () { if (was) { if (fromEnd) bmSetGain(bmOpt().vol); return BM.audio.play(); } }).then(bmPaint).catch(function () {});
+}
+function bmPrev() {
+  if (BM.audio && BM.audio.currentTime > 4) { BM.audio.currentTime = 0; return; }
+  var id = bmPick(-1); if (!id) return;
+  var was = BM.playing; bmEnsure(); bmLoad(id).then(function () { if (was) return BM.audio.play(); }).then(bmPaint).catch(function () {});
+}
+function bmSetVol(v) { var o = bmOpt(); o.vol = Math.max(0, Math.min(1, v)); save(); if (BM.playing && BM.up) { clearInterval(BM.fading); BM.fading = 0; bmSetGain(o.vol); } }
+
+/* the first tap anywhere lets the browser start sound later by itself (needed for "start when a set ends") */
+function bmUnlock() {
+  if (BM.unlocked || !bmTracks().length || !bmOpt().autoStart) return;
+  BM.unlocked = true; bmEnsure();
+  try { if (BM.ctx && BM.ctx.state !== "running") BM.ctx.resume(); } catch (e) {}
+  if (!BM.audio.src) { BM.priming = true; bmLoad(bmPick(1)).then(function () { bmSetGain(0); return BM.audio.play(); }).then(function () { if (BM.priming) { BM.audio.pause(); BM.priming = false; } }).catch(function () { BM.unlocked = false; BM.priming = false; }); }
+}
+document.addEventListener("pointerdown", function () { try { bmUnlock(); } catch (e) {} }, true);
+
+/* ---------------------------------------------------------------- automatic start and stop */
+function bmOnSetEnd(lastOfShow) { var o = bmOpt(); if (o.autoStart && !BM.playing && bmTracks().length) { bmPlay(true); toast(lastOfShow ? "End of the show: break music on." : "End of the set: break music on."); } }
+function bmOnBreak(on) {
+  var o = bmOpt();
+  if (on && o.autoStart && !BM.playing && bmTracks().length) bmPlay(true);
+  if (!on && o.autoStop && BM.playing) bmPause(true);
+}
+function bmOnSetStart() { if (bmOpt().autoStop && BM.playing) bmPause(true); }
+function bmOnShowEnd() {}
+
+/* ---------------------------------------------------------------- what you see */
+function bmName() { var t = bmTrack(BM.cur); return t ? t.name : ""; }
+function bmPaintTime() {
+  var a = BM.audio; if (!a) return;
+  var txt = fmtTime(a.currentTime || 0) + (isFinite(a.duration) && a.duration ? " / " + fmtTime(a.duration) : "");
+  Array.prototype.forEach.call(document.querySelectorAll("[data-bm=time]"), function (el) { if (el.textContent !== txt) el.textContent = txt; });
+}
+function bmPaint() {
+  Array.prototype.forEach.call(document.querySelectorAll("[data-bm=name]"), function (el) { el.textContent = bmName() || "Nothing playing"; });
+  Array.prototype.forEach.call(document.querySelectorAll("[data-bm=play]"), function (el) { el.textContent = BM.playing ? "❚❚" : "▶"; el.setAttribute("aria-label", BM.playing ? "Pause the music" : "Play the music"); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="music"],[data-fab="music"]'), function (el) { el.classList.toggle("on", !!BM.playing); });
+  Array.prototype.forEach.call(document.querySelectorAll(".bmrow"), function (el) { el.classList.toggle("on", el.getAttribute("data-id") === BM.cur); });
+  bmPaintTime(); bmMini(false);
+}
+/* a small player in the corner while music plays (or when the browser needs a tap to start it) */
+function bmMini(needTap) {
+  var show = BM.playing || needTap;
+  if (!show) { if (BM.mini) { BM.mini.remove(); BM.mini = null; } return; }
+  if (!BM.mini) {
+    BM.mini = h("div", { class: "bmmini", role: "region", "aria-label": "Break music" },
+      h("button", { class: "bmmini-name", onClick: function () { openBreakMusic(); } }, "♫ ", h("span", { "data-bm": "name" }, bmName())),
+      h("button", { class: "icon sm", "data-bm": "play", onClick: function () { bmToggle(); } }, "❚❚"),
+      h("button", { class: "icon sm", "aria-label": "Next song", onClick: function () { bmNext(); } }, "⏭"),
+      h("button", { class: "icon sm", "aria-label": "Fade out and stop", onClick: function () { bmStop(); } }, "■"));
+    document.body.appendChild(BM.mini);
+  }
+  BM.mini.classList.toggle("tap", !!needTap && !BM.playing);
+  var nm = BM.mini.querySelector("[data-bm=name]"); if (nm) nm.textContent = needTap && !BM.playing ? "Tap to start the break music" : bmName();
+  var pb = BM.mini.querySelector("[data-bm=play]"); if (pb) pb.textContent = BM.playing ? "❚❚" : "▶";
+}
+function openBreakMusic() {
+  var o = bmOpt(), body = h("div", { class: "bmpanel" });
+  var addIn = h("input", { type: "file", accept: "audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac", multiple: true, "aria-label": "Choose music files", onChange: function () { var f = this.files, me = this; bmAddFiles(f, function () { me.value = ""; draw(); }); } });
+  function draw() {
+    body.textContent = "";
+    body.appendChild(h("div", { class: "card bmnow" },
+      h("div", { class: "bmnow-name", "data-bm": "name" }, bmName() || "Nothing playing"),
+      h("div", { class: "muted", "data-bm": "time" }, ""),
+      h("div", { class: "row bmctl" },
+        h("button", { class: "icon", "aria-label": "Previous song", onClick: function () { bmPrev(); } }, "⏮"),
+        h("button", { class: "icon primary bmbig", "data-bm": "play", onClick: function () { bmToggle(); } }, BM.playing ? "❚❚" : "▶"),
+        h("button", { class: "icon", "aria-label": "Next song", onClick: function () { bmNext(); } }, "⏭"),
+        h("button", { onClick: function () { bmStop(); } }, "Fade out")),
+      h("label", { class: "fld" }, "Volume", h("input", { type: "range", min: 0, max: 100, step: 1, value: Math.round(o.vol * 100), "aria-label": "Volume", onInput: function () { bmSetVol(Number(this.value) / 100); } }))));
+    var list = h("div", { class: "bmlist" }), rows = [];
+    bmTracks().forEach(function (t, i) {
+      var grip = h("span", { class: "grip", "aria-label": "Drag to reorder" }, "⋮⋮");
+      var row = h("div", { class: "bmrow" + (t.id === BM.cur ? " on" : ""), "data-id": t.id }, grip,
+        h("button", { class: "grow bmrow-name", onClick: function () { bmPlay(false, t.id); } }, t.name, t.dur ? h("span", { class: "muted" }, "  " + fmtTime(t.dur)) : null),
+        h("button", { class: "icon sm", "aria-label": "Remove " + t.name, onClick: function () { confirmBox("Remove “" + t.name + "” from the break music?", "Remove", function () { bmRemove(t.id, draw); }); } }, "✕"));
+      rows.push(row); list.appendChild(row);
+      rowDrag({ handle: grip, self: row, rows: function () { return rows; }, onDrop: function (from, to) { var L = bmTracks(); L.splice(to, 0, L.splice(from, 1)[0]); save(); draw(); } });
+    });
+    if (!bmTracks().length) list.appendChild(h("p", { class: "hint" }, "No music yet. Add MP3 or M4A files from this device; they are saved inside the app, so they play with no signal."));
+    body.appendChild(list);
+    body.appendChild(h("div", { class: "row" }, fileBtn("+ Add music files", addIn)));
+    function chk(label, key) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!o[key], onChange: function () { o[key] = this.checked; save(); if (key === "autoStart" && this.checked) bmUnlock(); } }), label); }
+    function secs(label, key, max) { return h("label", { class: "fld" }, label, h("select", { onChange: function () { o[key] = Number(this.value); save(); } }, [0, 1, 2, 3, 4, 6, 8, 10, 15].filter(function (v) { return v <= max; }).map(function (v) { return h("option", { value: v, selected: Number(o[key]) === v }, v ? v + " seconds" : "No fade"); }))); }
+    body.appendChild(h("details", { class: "card" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Options"),
+      chk("Start the music by itself when a set ends (the last song of a set reaches its end, or I start a break)", "autoStart"),
+      chk("Fade it out when the next set starts (auto-scroll starts, or I stop the break)", "autoStop"),
+      chk("Shuffle", "shuffle"),
+      h("div", { class: "two" }, secs("Fade in", "fadeIn", 10), secs("Fade out", "fadeOut", 15)),
+      h("p", { class: "hint" }, "Music files take space in this browser's storage. If the music should start by itself, tap the screen once after opening the app (browsers only let sound start on its own after a tap).")));
+    bmPaintTime();
+  }
+  draw();
+  modal("Break music", body, [{ label: "Close" }], { wide: true });
+}
+function akExtraTb6(id, song, root) {
+  if (id === "music") { var b = h("button", { "aria-label": "Break music", class: BM.playing ? "on" : "", onClick: function () { openBreakMusic(); } }, akIcon("music")); return b; }
+  return null;
+}
+function akExtraFab2(song, root) {
+  function fb(id, label, fn) { return function () { var b = h("button", { class: "fb", "aria-label": label, onClick: function () { fn(); this.blur(); } }, akIcon(id)); if (id === "music" && BM.playing) b.classList.add("on"); return b; }; }
+  return { music: fb("music", "Break music", openBreakMusic), checklist: fb("checklist", "Reminders checklist", akRemOpenNow), endshow: fb("endshow", "End show or encore", akEndBtnClick) };
+}
+akCss("ak3-music", [
+  ".bmnow{text-align:center}.bmnow-name{font-weight:700;font-size:1.15rem;margin-bottom:2px}",
+  ".bmctl{justify-content:center;align-items:center;gap:10px}.bmbig{width:58px;height:58px;font-size:1.5rem;border-radius:50%}",
+  ".bmrow{display:flex;align-items:center;gap:6px;margin:4px 0;border:1px solid var(--line);border-radius:10px;padding:2px 4px}.bmrow.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}",
+  ".bmrow-name{text-align:left;background:none;border:0;min-height:40px}.bmrow .grip{cursor:grab;padding:4px 6px;opacity:.7}",
+  ".bmmini{position:fixed;left:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 64px);z-index:60;display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:22px;background:var(--panel);border:1px solid var(--accent);box-shadow:0 4px 16px #0006;max-width:calc(100vw - 20px)}",
+  ".bmmini-name{background:none;border:0;max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:36px;padding:0 6px}",
+  ".bmmini.tap{animation:bmpulse 1.2s ease-in-out infinite}@keyframes bmpulse{50%{box-shadow:0 0 0 6px var(--accent)}}"
+].join("\n"));
+
+/* ================= Akashic Chords: a song from a photo or screenshot of a chord sheet =================
+   Reads the picture on this device with Tesseract (bundled with the app in the ocr/ folder next to the page, no internet needed
+   once the app has been opened online), then rebuilds the sheet as chords above the words:
+   - lines of words are grouped by their height on the page;
+   - a line where (almost) every word is a chord name is a chord line;
+   - each chord is put over the letter it sits above in the picture, using where the letters of the lyric line below are.
+   The result opens in a review screen to fix before it is saved. ChordPro photos ([G]words) come through as text too. */
+var AKO = { worker: null, loading: null, busy: false };
+var AKO_FILES = ["tesseract.min.js", "worker.min.js", "tesseract-core-lstm.wasm.js", "tesseract-core-simd-lstm.wasm.js", "eng.traineddata.gz"];
+function akOcrUrl(f) { return new URL("ocr/" + f, location.href).href; }
+function akOcrSimd() { try { return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11])); } catch (e) { return false; } }
+function akOcrScript() {
+  if (window.Tesseract) return Promise.resolve();
+  return new Promise(function (res, rej) {
+    var s = document.createElement("script"); s.src = akOcrUrl("tesseract.min.js");
+    s.onload = function () { window.Tesseract ? res() : rej(new Error("The photo reader didn't load.")); };
+    s.onerror = function () { rej(new Error("The photo reader isn't on this device yet. Open the app once with internet, then try again.")); };
+    document.head.appendChild(s);
+  });
+}
+function akOcrWorker(progress) {
+  if (AKO.worker) return Promise.resolve(AKO.worker);
+  if (AKO.loading) return AKO.loading;
+  AKO.loading = akOcrScript().then(function () {
+    return Tesseract.createWorker("eng", 1, {
+      workerPath: akOcrUrl("worker.min.js"), corePath: akOcrUrl(akOcrSimd() ? "tesseract-core-simd-lstm.wasm.js" : "tesseract-core-lstm.wasm.js"),
+      langPath: new URL("ocr", location.href).href, gzip: true, workerBlobURL: false,
+      logger: function (m) { if (AKO.onProgress) AKO.onProgress(m); },
+      errorHandler: function () {}
+    });
+  }).then(function (w) {
+    return w.setParameters({ tessedit_pageseg_mode: "6", preserve_interword_spaces: "1" }).then(function () { AKO.worker = w; AKO.loading = null; return w; });
+  }).catch(function (e) { AKO.loading = null; throw e; });
+  return AKO.loading;
+}
+
+/* ---------------------------------------------------------------- the picture */
+function akOcrLoadImage(file) {
+  return new Promise(function (res, rej) {
+    var u = URL.createObjectURL(file), img = new Image();
+    img.onload = function () { res({ img: img, url: u }); };
+    img.onerror = function () { URL.revokeObjectURL(u); rej(new Error("That picture couldn't be opened. Try a JPG or PNG.")); };
+    img.src = u;
+  });
+}
+/* a grey, evenly sized copy of the picture, turned by rot quarter turns */
+function akOcrCanvas(img, rot) {
+  var w = img.naturalWidth || img.width, hh = img.naturalHeight || img.height;
+  var long = Math.max(w, hh), sc = long < 1400 ? Math.min(3, 1800 / long) : long > 3200 ? 3200 / long : 1;
+  var cw = Math.round(w * sc), ch = Math.round(hh * sc), turn = ((rot || 0) % 4 + 4) % 4;
+  var c = document.createElement("canvas"); c.width = turn % 2 ? ch : cw; c.height = turn % 2 ? cw : ch;
+  var x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  x.translate(c.width / 2, c.height / 2); x.rotate(turn * Math.PI / 2); x.drawImage(img, -cw / 2, -ch / 2, cw, ch);
+  try {
+    var d = x.getImageData(0, 0, c.width, c.height), p = d.data;
+    for (var i = 0; i < p.length; i += 4) { var g = p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114; p[i] = p[i + 1] = p[i + 2] = g; }
+    x.putImageData(d, 0, 0);
+  } catch (e) {}
+  return c;
+}
+/* words with their boxes: [{ t, x0, y0, x1, y1, line }] */
+function akOcrRead(canvas) {
+  return akOcrWorker().then(function (w) { return w.recognize(canvas, { rotateAuto: true }, { blocks: true, text: true }); }).then(function (r) {
+    var words = [], ln = 0;
+    (r.data.blocks || []).forEach(function (b) { (b.paragraphs || []).forEach(function (p) { (p.lines || []).forEach(function (l) {
+      ln++; (l.words || []).forEach(function (wd) { var t = (wd.text || "").trim(); if (t) words.push({ t: t, x0: wd.bbox.x0, y0: wd.bbox.y0, x1: wd.bbox.x1, y1: wd.bbox.y1, line: ln, conf: wd.confidence }); });
+    }); }); });
+    return { words: words, text: r.data.text || "" };
+  });
+}
+
+/* ---------------------------------------------------------------- rebuilding the sheet (no browser needed; tested on its own) */
+function akMedian(a) { if (!a.length) return 0; a = a.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; }
+/* an OCR word as a chord name, or "" */
+function akOcrChord(t) {
+  var c = String(t).replace(/♭/g, "b").replace(/♯/g, "#").replace(/[–—]/g, "-");
+  c = c.replace(/[.,;:'’]+$/, "").replace(/^\((.+)\)$/, "$1");
+  var tries = [c, c.replace(/rn/g, "m")];
+  /* common misreads: "Cc" for C, "DIF#" or "D|F#" for D/F# */
+  tries.slice().forEach(function (t) {
+    tries.push(t.replace(/^([A-G])([a-g])(?=$|[^a-z])/, function (m, a, b) { return a.toLowerCase() === b ? a : m; }));
+    tries.push(t.replace(/^([A-G].*?)[Il|1\\]([A-G][#b]?)$/, "$1/$2"));
+  });
+  for (var i = 0; i < tries.length; i++) if (tries[i] && isChordTok(tries[i])) return tries[i];
+  return "";
+}
+function akOcrIsChordLine(ws) {
+  var n = 0, ch = 0;
+  ws.forEach(function (w) { if (EXTRA_TOKENS[w.t]) return; n++; if (akOcrChord(w.t)) ch++; });
+  if (!ch) return false;
+  if (n === 1 && ws.length === 1 && /^(A|I|a)$/.test(ws[0].t)) return false;
+  return ch / n >= 0.75;
+}
+/* how wide letters are in a typical sheet font (Helvetica / Arial, thousandths of the font size), to find the letter under a chord */
+var AKO_W = (function () {
+  var w = {}, t = " 278!278\"355#556$556%889&667'191(333)333*389+584,278-333.278/278:278;278<584=584>584?556@1015[278\\278]278^469_556`333{334|260}334~584" +
+    "A667B667C722D722E667F611G778H722I278J500K667L556M833N722O778P667Q778R722S667T611U722V667W944X667Y667Z611" +
+    "a556b556c500d556e556f278g556h556i222j222k500l222m833n556o556p556q556r333s500t278u556v500w722x500y500z500";
+  t.replace(/([\s\S])(\d+)/g, function (m, c, n) { w[c] = Number(n); });
+  for (var d = 0; d < 10; d++) w[d] = 556;
+  return w;
+})();
+function akOcrCharW(c) { return AKO_W[c] || 556; }
+/* does the sheet use a font where every letter is equally wide? */
+function akOcrMono(words) {
+  var ea = 0, eb = 0, sw = 0, sa = 0, sb = 0, use = words.filter(function (w) { return w.t.length >= 3 && /^[A-Za-z']+$/.test(w.t); });
+  if (use.length < 4) return false;
+  use.forEach(function (w) { w._a = w.t.length; w._b = w.t.split("").reduce(function (x, c) { return x + akOcrCharW(c); }, 0); sw += w.x1 - w.x0; sa += w._a; sb += w._b; });
+  use.forEach(function (w) { var wd = w.x1 - w.x0; ea += Math.abs(wd - w._a * sw / sa) / wd; eb += Math.abs(wd - w._b * sw / sb) / wd; });
+  return ea < eb;
+}
+var AKO_SEC = /^\s*[\[(]?\s*((?:pre[- ]?)?chorus|verse|intro|outro|bridge|solo|instrumental|interlude|tag|coda|refrain|hook|ending|break|turnaround|riff)(\s*\d+)?\s*[\])]?\s*:?\s*$/i;
+function akOcrLayout(words) {
+  words = (words || []).filter(function (w) { return w && String(w.t || "").trim() && w.x1 > w.x0 && w.y1 > w.y0; });
+  if (!words.length) return { title: "", text: "" };
+  var H = akMedian(words.map(function (w) { return w.y1 - w.y0; })) || 10;
+  /* group into lines: the reader's own lines first, then join pieces that sit at the same height */
+  var map = {}, lines = [];
+  words.forEach(function (w) { var k = w.line || 0; if (!map[k]) { map[k] = { ws: [] }; lines.push(map[k]); } map[k].ws.push(w); });
+  lines.forEach(function (l) { l.y0 = Math.min.apply(null, l.ws.map(function (w) { return w.y0; })); l.y1 = Math.max.apply(null, l.ws.map(function (w) { return w.y1; })); l.yc = akMedian(l.ws.map(function (w) { return (w.y0 + w.y1) / 2; })); });
+  lines.sort(function (a, b) { return a.yc - b.yc; });
+  var merged = [];
+  lines.forEach(function (l) {
+    var m = merged[merged.length - 1];
+    if (m && Math.abs(l.yc - m.yc) < H * 0.45) { m.ws = m.ws.concat(l.ws); m.y0 = Math.min(m.y0, l.y0); m.y1 = Math.max(m.y1, l.y1); }
+    else merged.push(l);
+  });
+  lines = merged;
+  lines.forEach(function (l) {
+    l.ws.sort(function (a, b) { return a.x0 - b.x0; });
+    l.chord = akOcrIsChordLine(l.ws);
+    l.h = akMedian(l.ws.map(function (w) { return w.y1 - w.y0; }));
+    var chars = 0, wid = 0; l.ws.forEach(function (w) { chars += w.t.length; wid += w.x1 - w.x0; }); l.cw = chars ? wid / chars : H * 0.5;
+  });
+  var lyr = lines.filter(function (l) { return !l.chord; }), CW = akMedian(lyr.map(function (l) { return l.cw; })) || akMedian(lines.map(function (l) { return l.cw; })) || H * 0.5;
+  var L = akMedian(lines.map(function (l) { return l.ws[0].x0; }).sort(function (a, b) { return a - b; }).slice(0, Math.max(1, Math.ceil(lines.length * 0.25))));
+  var mono = akOcrMono(words);
+  /* where each letter of a word starts */
+  function starts(sg) {
+    var ws = sg.t.split("").map(function (c) { return mono ? 1 : akOcrCharW(c); }), tot = ws.reduce(function (a, b) { return a + b; }, 0) || 1, k = (sg.x1 - sg.x0) / tot, x = sg.x0;
+    return ws.map(function (wd) { var at = x; x += wd * k; return at; });
+  }
+  var pitch = akMedian(lines.slice(1).map(function (l, i) { return l.yc - lines[i].yc; })) || H * 1.6;
+  /* a lyric line as text, with where each word sits */
+  function lyricRow(l) {
+    var cw = l.cw || CW, ind = Math.round((l.ws[0].x0 - L) / cw), s = ind >= 3 ? new Array(ind + 1).join(" ") : "", segs = [];
+    l.ws.forEach(function (w, i) {
+      if (i) { var gap = Math.max(1, Math.round((w.x0 - l.ws[i - 1].x1) / cw - 0.45)); s += new Array(gap + 1).join(" "); }
+      segs.push({ c0: s.length, n: w.t.length, x0: w.x0, x1: w.x1, t: w.t }); s += w.t;
+    });
+    return { s: s, segs: segs, cw: cw };
+  }
+  function colAt(x, row) {
+    var segs = row.segs, cw = row.cw, i;
+    if (!segs.length) return Math.max(0, Math.round((x - L) / CW));
+    if (x < segs[0].x0 - cw * 0.4) return segs[0].c0 - Math.max(1, Math.round((segs[0].x0 - x) / cw));
+    for (i = 0; i < segs.length; i++) {
+      var sg = segs[i], ccw = (sg.x1 - sg.x0) / sg.n;
+      if (x < sg.x0 - cw * 0.4) {
+        var pv = segs[i - 1], from = pv.c0 + pv.n, cols = sg.c0 - from;
+        return from + Math.min(cols - 1, Math.max(0, Math.floor((x - pv.x1) / Math.max(1, sg.x0 - pv.x1) * cols)));
+      }
+      if (x <= sg.x1 - ccw * 0.5 || i === segs.length - 1 && x <= sg.x1) {
+        var st = starts(sg), best = 0; st.forEach(function (sx, k) { if (Math.abs(sx - x) < Math.abs(st[best] - x)) best = k; });
+        return sg.c0 + best;
+      }
+    }
+    var last = segs[segs.length - 1];
+    return last.c0 + last.n + Math.max(1, Math.round((x - last.x1) / cw));
+  }
+  function chordRow(l, row) {
+    var cs = l.ws.map(function (w) { var c = akOcrChord(w.t) || (EXTRA_TOKENS[w.t] ? w.t : ""); return c ? { c: c, col: row ? colAt(w.x0, row) : Math.max(0, Math.round((w.x0 - L) / CW)) } : null; }).filter(Boolean);
+    var shift = 0; cs.forEach(function (c) { if (c.col < -shift) shift = -c.col; });
+    var out = "";
+    cs.forEach(function (c) { var col = c.col + shift; if (out.length && col <= out.length) col = out.length + 1; out += new Array(col - out.length + 1).join(" ") + c.c; });
+    return { s: out, shift: shift };
+  }
+  var out = [], title = "", start = 0;
+  if (lines.length > 2 && !lines[0].chord && lines[0].h > H * 1.3 && !AKO_SEC.test(lines[0].ws.map(function (w) { return w.t; }).join(" "))) { title = lines[0].ws.map(function (w) { return w.t; }).join(" "); start = 1; }
+  for (var i = start; i < lines.length; i++) {
+    var l = lines[i], prev = lines[i - 1];
+    if (i > start && prev && l.yc - prev.yc > pitch * 1.7 && out.length && out[out.length - 1] !== "") out.push("");
+    if (l.chord) {
+      var nx = lines[i + 1];
+      if (nx && !nx.chord && nx.yc - l.yc < Math.max(pitch * 1.35, H * 2.6) && !AKO_SEC.test(nx.ws.map(function (w) { return w.t; }).join(" "))) {
+        var row = lyricRow(nx), cr = chordRow(l, row);
+        out.push(cr.s.replace(/\s+$/, ""));
+        out.push((cr.shift ? new Array(cr.shift + 1).join(" ") : "") + row.s);
+        i++;
+      } else out.push(chordRow(l, null).s);
+      continue;
+    }
+    var txt = lyricRow(l).s, sm = AKO_SEC.exec(txt);
+    if (sm) { out.push("[" + (sm[1].charAt(0).toUpperCase() + sm[1].slice(1).toLowerCase()) + (sm[2] ? " " + sm[2].trim() : "") + "]"); continue; }
+    out.push(txt);
+  }
+  return { title: title, text: out.join("\n").replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+/* ---------------------------------------------------------------- the review screen */
+function openPhotoImport(file) {
+  if (!file) { var inp = h("input", { type: "file", accept: "image/*", onChange: function () { if (this.files && this.files[0]) openPhotoImport(this.files[0]); } }); inp.click(); return; }
+  var pic = null, rot = 0, closed = false;
+  var status = h("div", { class: "akocr-status", role: "status" }, "Opening the picture…"), bar = h("div", { class: "akocr-bar" }, h("i"));
+  var imgBox = h("div", { class: "akocr-img" });
+  var title = h("input", { type: "text", placeholder: "Song title", "aria-label": "Song title", autocapitalize: "words" });
+  var artist = h("input", { type: "text", placeholder: "Artist", "aria-label": "Artist", autocapitalize: "words" });
+  var ta = h("textarea", { class: "akocr-text", rows: 14, spellcheck: "false", autocapitalize: "off", wrap: "off", "aria-label": "What was read: chords above the words" });
+  var prev = h("div", { class: "akocr-prev" }), snapChk = h("input", { type: "checkbox" });
+  var showPrev = h("input", { type: "checkbox", checked: true, onChange: paintPrev });
+  var pt = 0; ta.addEventListener("input", function () { clearTimeout(pt); pt = setTimeout(paintPrev, 300); });
+  function paintPrev() {
+    prev.textContent = ""; prev.style.display = showPrev.checked ? "" : "none"; if (!showPrev.checked || !ta.value.trim()) return;
+    try { prev.appendChild(renderLyricChart(normalizeChart(ta.value, snapChk.checked).text, { n: 0, shift: 0, acc: "sharp", st: styleOf(), cues: true, cuesOpen: false })); } catch (e) {}
+  }
+  snapChk.addEventListener("change", paintPrev);
+  function setBar(f) { bar.style.display = f == null ? "none" : ""; bar.firstChild.style.width = Math.round((f || 0) * 100) + "%"; }
+  AKO.onProgress = function (m) {
+    if (closed) return;
+    var what = { "loading tesseract core": "Getting the reader ready", "loading language traineddata": "Loading the letters", "initializing api": "Getting ready", "recognizing text": "Reading the picture" }[m.status] || "Working";
+    status.textContent = what + "…"; setBar(m.progress);
+  };
+  function read() {
+    if (!pic || AKO.busy) return;
+    AKO.busy = true; status.textContent = "Getting the reader ready…"; setBar(0); ta.disabled = true;
+    var c = akOcrCanvas(pic.img, rot);
+    imgBox.textContent = ""; var th = h("img", { alt: "The picture", src: c.toDataURL("image/jpeg", 0.7) }); imgBox.appendChild(th);
+    akOcrRead(c).then(function (r) {
+      var lay = akOcrLayout(r.words);
+      ta.value = lay.text || r.text || ""; if (lay.title && !title.value) title.value = lay.title.replace(/\b\w/g, function (x) { return x; });
+      var nChordLines = lay.text.split("\n").filter(function (x) { return x.trim() && isChordLineText(x); }).length;
+      status.textContent = ta.value.trim() ? "Done. Check it against the picture, fix anything that's off, then save." + (nChordLines ? "" : " No chord lines were found; if the chords are there, make the picture sharper or straighter and read it again.") : "No words were found. Try a sharper, straighter picture.";
+    }).catch(function (e) { status.textContent = (e && e.message) || "The picture couldn't be read."; }).then(function () { AKO.busy = false; setBar(null); ta.disabled = false; paintPrev(); });
+  }
+  var body = h("div", { class: "akocr" },
+    h("div", { class: "akocr-top" }, imgBox,
+      h("div", { class: "akocr-side" }, status, bar,
+        h("div", { class: "row" }, h("button", { "aria-label": "Turn the picture left", onClick: function () { rot--; read(); } }, "⟲ Turn"), h("button", { "aria-label": "Turn the picture right", onClick: function () { rot++; read(); } }, "Turn ⟳"), h("button", { onClick: read }, "Read again")),
+        h("div", { class: "two" }, h("label", { class: "fld" }, "Title", title), h("label", { class: "fld" }, "Artist", artist)))),
+    h("label", { class: "fld" }, "What was read (chords above the words, in the same places as the picture)", ta),
+    h("div", { class: "row" }, h("label", { class: "chk" }, showPrev, "Show how it will look"), h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word")),
+    prev,
+    h("p", { class: "hint" }, "Works best with a clear, straight, printed sheet or a screenshot. Handwriting and slanted photos read poorly. Everything stays on this device."));
+  var close = modal("Song from a photo", body, [{ label: "Cancel", onClick: function () { closed = true; } }, { label: "Save song", primary: true, onClick: function () {
+    if (!ta.value.trim()) { toast("There's nothing to save yet."); return false; }
+    var r = normalizeChart(ta.value, snapChk.checked);
+    snap("add song");
+    var s = newSong({ title: title.value.trim() || r.title || "Untitled", artist: artist.value.trim(), lyrics: r.text });
+    lib().songs.push(s); saveNow(); closed = true; if (pic) URL.revokeObjectURL(pic.url);
+    toast("Song added."); go("song", { songId: s.id });
+  } }], { wide: true, onClose: function () { closed = true; } });
+  akOcrLoadImage(file).then(function (p) { pic = p; read(); }).catch(function (e) { status.textContent = e.message; });
+  return close;
+}
+akCss("ak3-ocr", [
+  ".akocr-top{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}.akocr-img{flex:0 1 260px;max-width:100%}.akocr-img img{width:100%;max-height:36vh;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff}",
+  ".akocr-side{flex:1 1 260px;min-width:0}.akocr-status{font-weight:600;margin-bottom:6px}",
+  ".akocr-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-bottom:6px}.akocr-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}",
+  ".akocr-text{font-family:ui-monospace,Menlo,Consolas,'Courier New',monospace;font-size:14px;line-height:1.35;white-space:pre;overflow:auto;width:100%;min-height:40vh}",
+  ".akocr-prev{border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:46vh;overflow:auto;--lyric-size:18px;font-size:18px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
