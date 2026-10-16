@@ -960,11 +960,13 @@ function chordStuck(c, o) { return !!(o.n || o.shift) && !canTranspose(c); }
 function chordTr(c, o) {
   var shape = transposeChord(c, o.n, o.acc);
   var shown = o.shift ? transposeChord(c, o.n + o.shift, o.acc) : shape;
+  if (o.deg && o.deg.mode === "numerals") { var nu = akNumeral(c, o.deg); if (nu) return { shown: nu, shape: styleChord(shape, o.st) }; }
   return { shown: styleChord(shown, o.st), shape: styleChord(shape, o.st) };
 }
 function chEl(c, o, cls) {
   var t = chordTr(c, o);
-  return h("span", { class: (cls || "ch") + (chordStuck(c, o) ? " nochg" : ""), title: chordStuck(c, o) ? "Not changed when transposing" : null, "data-shape": t.shape, role: "button", tabindex: "-1" }, t.shown);
+  var both = o.deg && o.deg.mode === "both" ? akNumeral(c, o.deg) : "";
+  return h("span", { class: (cls || "ch") + (chordStuck(c, o) ? " nochg" : ""), title: chordStuck(c, o) ? "Not changed when transposing" : null, "data-shape": t.shape, role: "button", tabindex: "-1" }, t.shown, both ? h("sup", { class: "akdeg" }, both) : null);
 }
 function tabBlock(lines) { return h("div", { class: "tabblock" }, h("pre", { class: "tab" }, lines.map(function (l) { return l.replace(/\s+$/, ""); }).join("\n"))); }
 function fitTabs(root, sizeVar) {
@@ -980,9 +982,14 @@ function fitTabs(root, sizeVar) {
 function renderLyricChart(text, o) {
   var root = h("div", { class: "chart" }), rows = String(text || "").replace(/\r\n?/g, "\n").split("\n"), skipTo = 0;
   rows.forEach(function (rawLine, ri) {
+    var n0 = root.childNodes.length; oneRow(rawLine, ri);
+    for (var q = n0; q < root.childNodes.length; q++) if (root.childNodes[q].setAttribute) root.childNodes[q].setAttribute("data-li", String(ri));
+  });
+  function oneRow(rawLine, ri) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { root.appendChild(tabBlock(rows.slice(ri, te))); skipTo = te; return; }
     var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { root.appendChild(akSoloEl(solo)); return; }
+    var bvl = typeof akBvParse === "function" ? akBvParse(rawLine) : null; if (bvl) { var bve = akBvLineEl(bvl); if (bve) root.appendChild(bve); return; }
     var sp = splitCues(rawLine), line = sp.text;
     if (!line.trim() && !sp.cues.length && rawLine.trim() === "") { root.appendChild(h("div", { class: "gap" })); return; }
     if (!line.trim()) { if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen)); return; }
@@ -1011,7 +1018,8 @@ function renderLyricChart(text, o) {
       })));
     }
     if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen));
-  });
+  }
+  if (typeof akBvDecorate === "function") akBvDecorate(root);
   return applySecColors(root, o && o.secColor, o && o.base);
 }
 function renderRawChart(text, o) {
@@ -1020,6 +1028,7 @@ function renderRawChart(text, o) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { root.appendChild(tabBlock(rows.slice(ri, te))); skipTo = te; return; }
     var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { root.appendChild(akSoloEl(solo)); return; }
+    var bvl = typeof akBvParse === "function" ? akBvParse(rawLine) : null; if (bvl) { var bve = akBvLineEl(bvl); if (bve) root.appendChild(bve); return; }
     var sp = splitCues(rawLine), line = sp.text;
     if (rawLine.trim() === "") { root.appendChild(h("div", { class: "gap" })); return; }
     if (!line.trim()) { if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen)); return; }
@@ -1033,7 +1042,8 @@ function renderRawChart(text, o) {
       while ((m = re.exec(line)) !== null) {
         if (isChordTok(m[1])) {
           var ct = chordTr(m[1], o);
-          d.appendChild(h("span", { class: "ch" + (chordStuck(m[1], o) ? " nochg" : ""), "data-shape": ct.shape, role: "button", tabindex: "-1" }, ct.shown));
+          var bn = o.deg && o.deg.mode === "both" ? akNumeral(m[1], o.deg) : "";
+          d.appendChild(h("span", { class: "ch" + (chordStuck(m[1], o) ? " nochg" : ""), "data-shape": ct.shape, role: "button", tabindex: "-1" }, ct.shown, bn ? h("sup", { class: "akdeg" }, bn) : null));
           var spc = m[2].length ? Math.max(1, m[2].length - (ct.shown.length - m[1].length)) : 0;
           d.appendChild(document.createTextNode(new Array(spc + 1).join(" ")));
         } else d.appendChild(document.createTextNode(m[0]));
@@ -1048,6 +1058,7 @@ function renderRawChart(text, o) {
     root.appendChild(d);
     if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen));
   });
+  if (typeof akBvDecorate === "function") akBvDecorate(root);
   return applySecColors(root, o && o.secColor, o && o.base);
 }
 
@@ -1058,6 +1069,8 @@ function chartToPlain(text, o) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { rows.slice(ri, te).forEach(function (l) { out.push(l.replace(/\s+$/, "")); }); skipTo = te; return; }
     var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { out.push("(Solo" + (solo.text ? ": " + solo.text : "") + ")"); return; }
+    var bvl = typeof akBvParse === "function" ? akBvParse(rawLine) : null; if (bvl) { out.push(akBvPlainLine(bvl)); return; }
+    if (typeof akBvStrip === "function") rawLine = akBvStrip(rawLine, true);
     var sp = splitCues(rawLine), line = sp.text;
     var cueTxt = sp.cues.map(function (c) { return "(" + (CUE_TYPES[c.type] || CUE_TYPES.note).label + ": " + c.text + ")"; }).join(" ");
     if (!line.trim()) { if (rawLine.trim() === "") out.push(""); else if (o.cues && cueTxt) out.push(cueTxt); return; }
@@ -1585,6 +1598,7 @@ function applyLook() {
   try { akPacksApply(); } catch (e) {}
   try { akApply(); } catch (e) {}
   try { akFx2Apply(); } catch (e) {}
+  try { akArtApply(); } catch (e) {}
 }
 
 /* ---------- backup files ---------- */
@@ -1843,13 +1857,14 @@ function render() {
   var v = S.view;
   try { akAtmo(); } catch (e) {}
   if (v !== "settings") resetSettingsHist();
-  if (v === "play") { app.appendChild(renderPlay()); return; }
+  if (v === "play") { app.appendChild(renderPlay()); try { akAfterRender(); } catch (e) {} return; }
   releaseWake();
   var map = { songs: viewSongs, shows: viewShows, banter: viewBanter, discover: viewDiscover, build: viewBuild, history: viewHistory, guide: viewGuide, atmosphere: viewAtmosphere, import: viewImport, settings: viewSettings, song: viewSong, show: viewShow };
   app.appendChild((map[v] || viewSongs)());
   layRun(app);
   S.scrKey = scrollNow();
   try { scrollRestore(S.scrKey); } catch (e) {}
+  try { akAfterRender(); } catch (e) {}
 }
 function backupBanner() {
   if (S.bannerHidden || !(store.changes > 0) || songCount() === 0 || akOnlySamples()) return null;
@@ -2310,6 +2325,7 @@ function filteredSongs() {
   var ordered = sortSongsBy(sortedSongs(), S.sortBy);
   if (smart && smart.reverse && S.sortBy === smart.sort) ordered = ordered.slice().reverse();
   return ordered.filter(function (s) {
+    if (typeof akShelfOk === "function" && !akShelfOk(s)) return false;
     if (S.favOnly && !s.fav) return false;
     if (S.rustyOnly && !isRusty(s)) return false;
     if (smart && !smartMatch(s, smart, now)) return false;
@@ -2390,6 +2406,7 @@ function songRow(s, songs, i) {
   return h("div", { "data-k": azRowLetter(s), class: "item" + (s.active ? "" : " off") + (sel && S.sel[s.id] ? " picked" : ""), style: s.color ? "border-left:6px solid " + s.color + ";padding-left:6px" : null },
     sel ? h("div", { class: "pick" + (S.sel[s.id] ? " on" : ""), "aria-hidden": "true" }, S.sel[s.id] ? "✓" : "") : null,
     main,
+    typeof akShelfRowBtn === "function" ? akShelfRowBtn(s) : null,
     sel ? null : h("button", { class: "icon", "aria-label": "Play " + s.title, onClick: function () { playFromSongs(songs, i); } }, "▶"));
 }
 function viewSongs() {
@@ -2449,7 +2466,7 @@ function viewSongs() {
     fbtn.textContent = "Filters" + (n ? " (" + n + ")" : "") + (o ? " ▴" : " ▾"); fbtn.classList.toggle("on", n > 0); fbtn.setAttribute("aria-expanded", o ? "true" : "false");
   }
   var box = h("div", { "data-blocks": "songs", "data-items": "1" }, az.el, h("div", { class: "row", "data-bk": "search", "data-bt": "Search and Filters button" }, h("div", { class: "grow" }, search), fbtn), extra, (!S.q && !S.tagSel.length && !smartActive() ? freshCard("songs") : null), list);
-  extra.setAttribute("data-bk", "filters"); extra.setAttribute("data-bt", "Filters panel"); list.setAttribute("data-bk", "songlist"); list.setAttribute("data-bt", "Song list");
+  extra.setAttribute("data-bk", "filters"); if (typeof akShelfBar === "function") box.insertBefore(akShelfBar(function () { fill(); }), extra); extra.setAttribute("data-bt", "Filters panel"); list.setAttribute("data-bk", "songlist"); list.setAttribute("data-bt", "Song list");
   fill(); paintFbtn();
   var fill0 = fill; fill = function () { fill0(); paintFbtn(); };
   var more = h("button", { class: "icon", "aria-label": "More", onClick: function () {
@@ -2461,6 +2478,8 @@ function viewSongs() {
       { label: "Build a set list…", onClick: function () { go("build"); } },
       { label: "Play history…", onClick: function () { go("history"); } },
       { label: "Tour and feature guide…", onClick: function () { go("guide"); } },
+      { label: "💡 Quick idea…", onClick: function () { akIdeaDialog(); } },
+      { label: "📝 Notepad", onClick: function () { akNotepad(); } },
       { label: "Song requests…" + (reqNewCount() ? " (" + reqNewCount() + " new)" : ""), onClick: openRequests },
       { label: "Find duplicate songs…", onClick: openDuplicates },
       { label: "Manage tags…", onClick: manageTags },
@@ -2483,7 +2502,7 @@ function viewSongs() {
     h("button", { disabled: !count, onClick: function () { shareDialog(selectedSongs()); } }, "Share…"),
     h("button", { class: "danger", disabled: !count, onClick: function () { deleteSelected(); } }, "Delete…")));
   return shell("Songs (" + lib().songs.length + ")", wrap, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Songs (" + lib().songs.length + ")"), libButton()),
-    actions: h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, h("button", { class: "primary", onClick: function () { snap("new song"); var s = newSong({ title: "New song" }); lib().songs.push(s); save(); go("song", { songId: s.id }); } }, "+ New"), more) });
+    actions: h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, h("button", { class: "primary", onClick: function () { snap("new song"); var s = newSong({ title: "New song" }); if (S.shelf === "wip" || S.shelf === "orig") s.shelf = S.shelf; lib().songs.push(s); save(); go("song", { songId: s.id }); } }, "+ New"), more) });
 }
 function selectedSongs() { return lib().songs.filter(function (s) { return S.sel[s.id]; }); }
 function tagSelected() {
@@ -2679,7 +2698,7 @@ function viewSong() {
     lyrArea.addEventListener("paste", function () {
       setTimeout(function () {
         var lines = lyrArea.value.replace(/\r\n?/g, "\n").split("\n").map(expandTabs);
-        var found = lines.some(function (ln, i) { return isChordLineText(ln) && lines[i + 1] && lines[i + 1].trim() && !isChordLineText(lines[i + 1]) && !/\[[^\]]+\]/.test(lines[i + 1]); });
+        var found = lines.some(function (ln, i) { return isChordLineText(ln) && lines[i + 1] && lines[i + 1].trim() && !isChordLineText(lines[i + 1]) && !/\[[^\]]+\]/.test(lines[i + 1]); }) || akHasLooseChords(lyrArea.value);
         if (!found) return;
         pushHist(); var before = lyrArea.value, r = normalizeChart(before, false);
         if (r.text === before.trim()) return;
@@ -2748,7 +2767,7 @@ function viewSong() {
       h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { snap("place chords"); pushHist(); openPlacer(s, { onChange: function () { lyrArea.value = s.lyrics; later(); drawPrev(); }, onClose: function () { pushHist(); save(); } }); } }, "Place chords…"), h("button", { onClick: function () { plSectionDialog("Add a section label", "", "Add", function (name) {
         pushHist(); var t = lyrArea.value, pos = lyrArea.selectionStart || 0, ls = t.lastIndexOf("\n", pos - 1) + 1;
         var pre = ls > 0 && t.slice(Math.max(0, ls - 2), ls) !== "\n\n" ? "\n" : "";
-        lyrArea.value = t.slice(0, ls) + pre + "[" + name + "]\n" + t.slice(ls); s.lyrics = lyrArea.value; pushHist(); save(); toast("Added [" + name + "] above the line you were on."); }); } }, "+ Section…"), h("button", { onClick: function () { addCue(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); }); } }, "+ Add cue"), h("button", { onClick: function () { pushHist(); akSoloInsert(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Solo"), h("button", { onClick: function () { openTabEditor(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Tab…"), h("button", { onClick: function () { makeChordFrom(lyrArea, "lyrics", "lyrics"); } }, "♪ Make chord")),
+        lyrArea.value = t.slice(0, ls) + pre + "[" + name + "]\n" + t.slice(ls); s.lyrics = lyrArea.value; pushHist(); save(); toast("Added [" + name + "] above the line you were on."); }); } }, "+ Section…"), h("button", { onClick: function () { addCue(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); }); } }, "+ Add cue"), h("button", { onClick: function () { pushHist(); akSoloInsert(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Solo"), h("button", { onClick: function () { pushHist(); var n = akFindChordsInSong(s); if (!n) { toast("No plain-text chords found. Chords already in brackets are fine."); return; } lyrArea.value = s.lyrics; var cta = chordsFld.querySelector("textarea"); if (cta) cta.value = s.chords || ""; pushHist(); save(); drawPrev(); toast("Turned plain-text chords into real chords.", { label: "Undo", fn: function () { restore(Math.max(0, hi - 1)); } }); } }, "✨ Chords in text"), h("button", { onClick: function () { pushHist(); akSheetDialog(s, function () { lyrArea.value = s.lyrics; pushHist(); save(); drawPrev(); }); } }, "Chords from a sheet…"), h("button", { onClick: function () { pushHist(); openLucky(s, { onClose: function () { lyrArea.value = s.lyrics; pushHist(); save(); drawPrev(); } }); } }, "🍀 Lucky guess"), h("button", { onClick: function () { pushHist(); akBvDialog(s, lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "🎤 Backing vocals"), h("button", { onClick: function () { openTabEditor(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Tab…"), h("button", { onClick: function () { makeChordFrom(lyrArea, "lyrics", "lyrics"); } }, "♪ Make chord")),
       lyrArea,
       prevCard, secCard,
       h("div", { class: "row" },
@@ -2767,9 +2786,13 @@ function viewSong() {
         fld("Capo fret", "capo", { num: true, cap: "off", inputmode: "numeric" }),
         h("label", { class: "fld" }, "Show chords as", h("select", { value: s.view, onChange: function () { s.view = this.value; later(); } }, h("option", { value: "shapes" }, "My shapes"), h("option", { value: "sounding" }, "Sounding key (for other players)")))),
       akSongPlayingExtra(s, later),
+      akProgCard(s, later),
+      akMemoCard(s, later),
       h("p", { class: "hint" }, tuningOffset() || s.capo ? "Your tuning is " + tuningName(tuningOffset()) + (s.capo ? " with a capo on " + s.capo : "") + ". Sounding key shows each chord " + (soundShift(s) >= 0 ? "up " : "down ") + Math.abs(soundShift(s)) + " semitones from your shapes." : "Set your tuning in Settings to use the sounding-key view."),
       fld("Text size for this song (0 uses your default)", "size", { num: true, cap: "off", inputmode: "numeric" }),
       h("h2", null, "Practice and songwriting"),
+      akShelfField(s, later),
+      akEditorExtra(s, function () { pushHist(); save(); build(); }),
       h("div", { class: "row", style: "margin-top:0;flex-wrap:wrap" },
         h("button", { onClick: function () { clearTimeout(histTimer); saveNow(); S.playMode = "practice"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, function () { go("song", { songId: s.id }); }); } }, "Practice with the measure chart"),
         h("button", { onClick: function () { clearTimeout(histTimer); saveNow(); S.playMode = "write"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, function () { go("song", { songId: s.id }); }); } }, "Write: chart, scratch pad, rhymes"),
@@ -2847,7 +2870,7 @@ function plParse(text) {
     if (!t) return { kind: "blank", raw: raw };
     var sm = /^\[([^\]]+)\]$/.exec(t);
     if (sm && !isChordLike(sm[1].trim())) return { kind: "section", raw: raw, name: sm[1].trim() };
-    if (t[0] === "{") return { kind: "raw", raw: raw };
+    if (t[0] === "{" && !/^\{\/?h\d?[\s}]/.test(t)) return { kind: "raw", raw: raw };
     if (isTabLine(t) || /^[A-Ga-g]?\s*\|[-\d\/\\hpbrx~()|\s.*]+$/.test(t)) return { kind: "raw", raw: raw, mono: true };
     var tokens = plTokens(raw);
     return { kind: tokens.some(function (k) { return k.t === "w"; }) ? "lyric" : "chords", raw: raw, tokens: tokens, dirty: false };
@@ -2905,7 +2928,8 @@ function openPlacer(song, o) {
     if (!hist.length) return;
     var t = hist.pop(); lines = plParse(t); sel = null; song.lyrics = t; if (o.onChange) o.onChange(); draw();
   }
-  function close() { closeLetters(); if (root.parentNode) root.parentNode.removeChild(root); if (o.onClose) o.onClose(); }
+  function topLi() { var kids = body.children, bt = body.getBoundingClientRect().top; for (var i = 0; i < kids.length; i++) if (kids[i].getBoundingClientRect().bottom > bt + 4) return +(kids[i].getAttribute("data-li") || 0); return 0; }
+  function close() { var tl = topLi(); closeLetters(); if (root.parentNode) root.parentNode.removeChild(root); if (o.onClose) o.onClose(tl); }
   function sameSel(a, b) { return a && b && a.li === b.li && a.ti === b.ti && a.pos === b.pos && !!a.end === !!b.end && !!a.gap === !!b.gap; }
 
   /* --- chord list --- */
@@ -3036,14 +3060,19 @@ function openPlacer(song, o) {
   function draw() {
     var sc = body.scrollTop;
     body.textContent = "";
-    lines.forEach(function (l, li) { body.appendChild(drawLine(l, li)); });
+    lines.forEach(function (l, li) { var el = drawLine(l, li); el.setAttribute("data-li", String(li)); body.appendChild(el); });
     body.scrollTop = sc;
+    if (o.startLine != null) { var sl = o.startLine; o.startLine = null; var tgt = body.querySelector('[data-li="' + sl + '"]'); if (tgt) body.scrollTop = Math.max(0, body.scrollTop + tgt.getBoundingClientRect().top - body.getBoundingClientRect().top - 1); }
     foot.textContent = "";
     var pal = palette(), sug = pal.length < 4 ? plKeyChords(song).filter(function (c, i, a) { return pal.indexOf(c) < 0 && a.indexOf(c) === i; }) : [];
     var row = h("div", { class: "prow" });
     pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { tapChip(c); } }, c)); });
     row.appendChild(h("button", { class: "chip pchipbtn" + (erase ? " on" : ""), "aria-pressed": erase ? "true" : "false", onClick: tapErase }, "⌫ Erase"));
     row.appendChild(h("button", { class: "chip", onClick: addChordDialog }, "+ Chord"));
+    if (typeof akShapePicker === "function") row.appendChild(h("button", { class: "chip", "aria-label": "Make a chord by tapping frets", onClick: function () { akShapePicker(function (c) {
+      if (sel) { var t = sel; sel = null; place(t, c); }
+      else { song.palette = song.palette || []; if (palette().indexOf(c) < 0) song.palette.push(c); if (o.onChange) o.onChange(); armed = mode === "chord" ? c : armed; draw(); toast("Added " + c + " to the list."); }
+    }); } }, "✋ Shape"));
     row.appendChild(h("button", { class: "chip", onClick: startSection }, "§ Section"));
     foot.appendChild(row);
     undoBtn.disabled = !hist.length;
@@ -9015,7 +9044,8 @@ var TOUR = { i: 0, el: null, start: null };
 function tourCfg() { var s = settings(); if (!s.tour || typeof s.tour !== "object") s.tour = {}; if (s.tour.auto === undefined) s.tour.auto = true; return s.tour; }
 function tipsCfg() { var s = settings(); if (!s.tips || typeof s.tips !== "object") s.tips = {}; if (s.tips.on === undefined) s.tips.on = true; if (!s.tips.seen) s.tips.seen = {}; return s.tips; }
 
-function tourSteps() {
+function tourSteps() { var a = tourStepsBase(); return typeof akTourExtra === "function" ? akTourExtra(a) : a; }
+function tourStepsBase() {
   return [
     { t: "Welcome to Akashic Chords", txt: ["Your songs, set lists and stage screen in one place, made to be played from a tablet with a pedal.", "This short tour covers the big pieces. Everything is saved on this device as you go. You can skip now and find the tour again in Settings, under “Help, tour and tips”."] },
     { t: "Your songs", view: "songs", sel: '[data-bk="search"]', txt: ["This is your library. Search by title, artist or lyrics, and open Filters to sort and narrow it by tag, favorites, most played, or songs you haven't played lately.", "Tap a song to edit it, or ▶ to play it. The ⋯ menu has select mode, smart lists, duplicate finder, libraries and more."] },
@@ -9154,6 +9184,7 @@ var AK_GUIDE = [
     ["On-screen keyboard", "A keyboard drawn by the app, for when a pedal stops the device keyboard from appearing. Tap a text box, then ⌨.", "settings"]]]
 ];
 function viewGuide() {
+  if (typeof akViewFeatures === "function") return akViewFeatures();
   var body = h("div", { "data-blocks": "guide" },
     h("div", { class: "card", "data-bk": "tour", "data-bt": "Take the tour" }, h("strong", null, "New here?"), h("p", { class: "hint", style: "margin:6px 0" }, "A two-minute walk through the big features."), h("button", { class: "primary", onClick: function () { openTour(); } }, "Take the tour")));
   AK_GUIDE.forEach(function (g, gi) {
@@ -11570,7 +11601,9 @@ function tick(t) {
       if (t - lastReadout > 500) { lastReadout = t; if (ui.speed) ui.speed.textContent = lenFlashing() ? fmtTime(durOf(song)) + " song" : fmtTime(Math.max(0, left)) + " left"; }
     } else sp = speedOf(song);
     if (typeof akSoloHold === "function" && akSoloHold(sc, pos, t, dt)) { if (modeOf(song) === "duration") endAt += dt * 1000; autoRAF = requestAnimationFrame(tick); return; }
-    pos += sp * dt;
+    pos += sp * dt * (S.akSlow || 1);
+    if (S.akSlow && S.akSlow < 1 && modeOf(song) === "duration") endAt += dt * 1000 * (1 - S.akSlow);
+    if (S.akLoop && typeof akLoopWrap === "function" && akLoopWrap(sc)) { autoRAF = requestAnimationFrame(tick); return; }
     if (glide) { var gk = Math.min(1, (t - glide.t0) / glide.ms), gcur = glide.from + (glide.to - glide.from) * (1 - Math.pow(1 - gk, 3)); pos += gcur - glide.at; glide.at = gcur; if (gk >= 1) glide = null; }
     sc.scrollTop = pos; lastSet = sc.scrollTop;
     if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2 && pos > 2) { stopAuto(); onSongEnd(); return; }
@@ -11643,7 +11676,7 @@ function transposeBy(d) {
 }
 function chartOpts(song) {
   var n = song.transpose || 0, shift = song.view === "sounding" ? soundShift(song) : 0;
-  return { n: n, shift: shift, acc: accFor(song, n + shift, settings().acc), st: styleOf(), cues: settings().cues, cuesOpen: settings().cuesOpen, secColor: function (n) { return secStyleFor(song, n); }, base: songBaseColors(song) };
+  return { n: n, shift: shift, acc: accFor(song, n + shift, settings().acc), st: styleOf(), cues: settings().cues, cuesOpen: settings().cuesOpen, secColor: function (n) { return secStyleFor(song, n); }, base: songBaseColors(song), deg: typeof akDegOpts === "function" ? akDegOpts(song) : null };
 }
 function keyLine(song) {
   var n = song.transpose || 0, sh = soundShift(song), parts = [];
@@ -11715,11 +11748,11 @@ function renderPlay() {
   if (song.size) root.style.setProperty("--lyric-size", song.size + "px");
   function leave() { var b = S.back, wasLayout = S.layout; stopAuto(); releaseWake(); S.play = wasLayout ? (S.prevPlay || null) : null; if (wasLayout) { S.prevPlay = null; S.back = S.prevBack || null; } S.layout = false; if (S.nav.length && navBack()) return; if (b) b(); else go("songs"); }
   leaveFn = function () { if (settings().backConfirm && autoOn) confirmBox("Leave this song? Auto-scroll is running.", "Leave", leave); else leave(); };
-  var rowsN = Math.max(1, Math.min(4, Number(s.toolbar.rows) || 1)), tbFree = !!s.toolbar.free;
+  var rowsN = Math.max(1, Math.min(4, Number(s.toolbar.rows) || 1)), tbFree = !!s.toolbar.free && !akGridOn();
   var tb = h("div", { class: "ptop" + (s.toolbar.labels === "under" ? " lbl-under" : s.toolbar.labels === "words" ? " lbl-words" : "") + (tbFree ? " free" : rowsN > 1 ? " multi" : "") + (!tbFree && s.toolbar.spread ? " spread" : "") });
   if (tbFree) tb.style.height = topFreeHeightCss(rowsN);
   s.toolbar.items.forEach(function (it) {
-    if (!it.on) return;
+    if (!akTbShown(it)) return;
     var el = null;
     switch (it.id) {
       case "prev": el = h("button", { "aria-label": "Previous song", disabled: p.idx === 0, onClick: function () { playStep(-1); } }, akIcon("prev")); break;
@@ -11763,7 +11796,8 @@ function renderPlay() {
       if (S.layout) enableTopDrag(el, it.id, tb);
     }
   });
-  if (!tbFree && rowsN > 1) tb.style.gridTemplateColumns = "repeat(" + Math.ceil(tb.children.length / rowsN) + ", max-content)";
+  akTbAfter(tb, song);
+  if (!tbFree && rowsN > 1 && !akGridOn()) tb.style.gridTemplateColumns = "repeat(" + Math.ceil(tb.children.length / rowsN) + ", max-content)";
   var tbCollapsed = !!s.toolbar.collapsed && s.toolbar.handle !== false && !S.layout, tbTitle = (item.setName ? item.setName + " · " : "") + (p.idx + 1) + "/" + p.list.length + " · " + (song.title || "");
   var tbWrap = h("div", { class: "ptopwrap" + (tbCollapsed ? " collapsed" : "") },
     tb,
@@ -11826,7 +11860,7 @@ function renderPlay() {
   };
   Object.assign(fabDefs, akExtraFab(song, root));
   s.fab.items.forEach(function (it) {
-    if (!it.on || !fabDefs[it.id]) return;
+    if (!it.on || !fabDefs[it.id] || !akModesOk(AK_TB_MODES[it.id])) return;
     var el = fabDefs[it.id](), ps = s.fab.pos[it.id];
     el.setAttribute("data-fab", it.id); if (FAB_SHORT[it.id]) el.setAttribute("data-lbl", btnWord("fab", it.id, FAB_SHORT[it.id]));
     var fc = fabColorFor(it.id); if (fc) { el.style.background = fc.bg; el.style.borderColor = fc.bg; el.style.color = fc.fg; }
@@ -12236,6 +12270,7 @@ function openTalk(song) {
   var info = [["Year", song.year], ["Original artist", song.origArtist], ["Written by", song.writers]].filter(function (x) { return x[1]; });
   if (info.length || song.trivia) body.appendChild(h("div", { class: "card" }, h("strong", null, "About this song" + (song.infoChecked ? "" : " (unchecked)")), info.map(function (x) { return h("div", null, h("span", { class: "muted" }, x[0] + ": "), x[1]); }), song.trivia ? h("p", { style: "white-space:pre-wrap;margin:8px 0 0;font-size:1.1em" }, song.trivia) : null));
   var cvc = akCoversCard(song); if (cvc) body.appendChild(cvc);
+  if (/\[[^\]]+\]/.test(song.lyrics || song.chords || "")) { var pgc = akProgCard(song, function () { save(); fillCharts(); }); pgc.open = true; pgc.dispatchEvent(new Event("toggle")); body.appendChild(pgc); }
   var jokes = store.banter.filter(function (j) { return j.songId === song.id; });
   if (jokes.length) body.appendChild(h("div", { class: "card" }, h("strong", null, "Banter for this song"), jokes.map(function (j) { return h("p", { style: "margin:8px 0 0;font-size:1.1em" }, j.text); })));
   if (!body.firstChild) body.appendChild(h("p", { class: "hint" }, "No notes or info for this song yet. Add them in the song editor."));
@@ -15851,6 +15886,7 @@ function akPlayHooks4(song, item) {
   setTimeout(function () { try { if (S.view === "play" && S.play && curSong() === song) akRetuneOnShow(song, item); } catch (e) {} }, 30);
   try { akBrkOnShow(item); } catch (e) {}
   akSolo = null;
+  if (typeof akPlayHooks5 === "function") try { akPlayHooks5(song, item); } catch (e) {}
 }
 function akSettingsExtra(c) {
   c.again("songs-and-shows");
@@ -15873,6 +15909,7 @@ function akSettingsExtra(c) {
   c.check("Show the capo and tuning changes in the info bar on the playing screen", function () { return settings().capoInfo !== false; }, function (v) { settings().capoInfo = v; });
   c.again("data-and-extras");
   akBackupSettings(c);
+  if (typeof akSettingsExtra2 === "function") akSettingsExtra2(c);
 }
 
 akCss("ak4-live", [
@@ -15891,6 +15928,1534 @@ akCss("ak4-live", [
   ".topbar .akbhead{min-width:0;padding:0 10px}"
 ].join("\n"));
 
+/* ================= Akashic Chords batch 4, phase 2: chords and editing =================
+   - finding chords written as plain text (above the words, ♭ and ♯, D-A, (X2), Intro: labels…) and turning them into real chords
+   - putting chords from a chord sheet you paste onto the lyrics you already have, by matching the words
+   - Lucky guess: a bare chord list placed over the lyrics as suggestions you nudge, accept or remove
+   - Place chords from the playing screen, and back to the same spot
+   - Get lyrics / Get chords buttons on the playing screen (search the web, then paste what you found)
+   - a Custom shape chip in Place chords: tap the frets, the app names the chord and places it */
+
+/* ---------------------------------------------------------------- 1. chord text clean-up */
+var AK_LABEL_RE = /^(\s*)((?:intro|verse|chorus|bridge|outro|solo|interlude|instrumental|pre-?chorus|riff|tag|ending|coda|turnaround|refrain|hook|break)\s*\d*\s*:\s*)/i;
+/* one token as written -> the chord it means (same length where possible), or null */
+function akFixTok(tok) {
+  var t = tok.replace(/♭/g, "b").replace(/♯/g, "#").replace(/[–—]/g, "-");
+  var lead = "", tail = "";
+  var m = /^([(]*)(.*?)([),.;]*)$/.exec(t); if (m) { lead = m[1]; t = m[2]; tail = m[3]; }
+  if (!t) return null;
+  if (/^[x×]\s*\d+$/i.test(t) || /^\d+\s*[x×]$/i.test(t)) return { text: "x" + t.replace(/\D/g, ""), extra: true };
+  if (t === "|" || t === "||" || t === "/" || t === "%" || t === "-" || t === "N.C." || t === "NC") return { text: t, extra: true };
+  /* fix the spelling of the type: DSus2 -> Dsus2, DMaj7 -> Dmaj7, Bm7-5 -> Bm7b5, G7+ -> G7#5 */
+  var cm = /^([A-G][#b]?)(.*)$/.exec(t); if (!cm) return null;
+  var q = cm[2].replace(/^Sus/, "sus").replace(/^Maj/, "maj").replace(/^Min/, "m").replace(/^MIN/, "m").replace(/^Dim/, "dim").replace(/^Aug/, "aug").replace(/^Add/, "add");
+  q = q.replace(/7-5$/, "7b5").replace(/-5$/, "b5").replace(/^(\d+)\+$/, "$1#5").replace(/^\+$/, "aug");
+  var c = cm[1] + q;
+  /* chords joined by a dash: D-A, C-Am */
+  if (!isChordTok(c) && /-/.test(c)) { var parts = c.split("-"); if (parts.length > 1 && parts.every(function (p) { return p && isChordTok(p); })) return { text: parts.join(" "), multi: parts }; }
+  if (!isChordTok(c)) return null;
+  return { text: c, chord: c, paren: !!(lead || /\)/.test(tail)) };
+}
+/* a line that is really a chord line once cleaned up. Returns { line, label, chords } (line keeps the chords in the same columns) or null */
+function akFixChordLine(line) {
+  if (!line || !line.trim() || /\[[^\]]+\]|\{/.test(line)) return null;
+  if (isTabLine(line)) return null;
+  var label = "", body = line, lm = AK_LABEL_RE.exec(line);
+  if (lm) { label = lm[2].trim(); body = line.slice(lm[0].length); }
+  var re = /\S+/g, mm, out = "", last = 0, chords = 0, bad = 0, toks = 0;
+  /* "(X2)" written as two tokens "(X" "2)" is rare; handle x 2 */
+  body = body.replace(/\(\s*[xX×]\s*(\d+)\s*\)/g, function (s, n) { var r = "x" + n; while (r.length < s.length) r += " "; return r; }).replace(/[,]/g, " ");
+  while ((mm = re.exec(body)) !== null) {
+    toks++;
+    var f = akFixTok(mm[0]);
+    if (!f) { bad++; break; }
+    if (f.chord || f.multi) chords += f.multi ? f.multi.length : 1;
+    var txt = f.text; while (txt.length < mm[0].length) txt += " ";
+    out += body.slice(last, mm.index) + txt; last = mm.index + mm[0].length;
+  }
+  if (bad || !chords) return null;
+  out += body.slice(last);
+  /* a line of one ordinary word like "A" or "Am" on its own is too risky unless it has company */
+  if (toks === 1 && !label && /^(A|Am|I)$/i.test(out.trim()) && false) return null;
+  return { line: (lm ? lm[1] : "") + out.replace(/\s+$/, ""), label: label, chords: chords };
+}
+/* chords as [brackets] for a chord row, keeping x2 and | as they are */
+function akBracketRow(s) { return s.trim().split(/\s+/).map(function (x) { return isChordTok(x) ? "[" + x + "]" : x; }).join(" "); }
+/* clean up a whole text before it is converted: chord lines get fixed in place, labelled chord lines become chord rows */
+function akPreFix(text) {
+  var n = 0, lines = String(text || "").replace(/\r\n?/g, "\n").split("\n").map(function (ln) {
+    var f = akFixChordLine(expandTabs(ln)); if (!f) return ln;
+    n++;
+    if (f.label) return f.line.match(/^\s*/)[0] + f.label + " " + akBracketRow(f.line);
+    return f.line;
+  });
+  akPreFix.count = n;
+  return lines.join("\n");
+}
+/* does the text have chords written as plain text? (for the paste check) */
+function akHasLooseChords(text) {
+  var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+  return lines.some(function (ln) { var t = ln.trim(); return t && !/\[[^\]]+\]/.test(ln) && !!akFixChordLine(expandTabs(ln)); });
+}
+/* turn every plain-text chord in a song into real chords. Returns how many lines changed. */
+function akFindChordsInSong(s) {
+  var n = 0;
+  if ((s.lyrics || "").trim() && akHasLooseChords(s.lyrics)) {
+    var r = normalizeChart(s.lyrics, false); if (r.text !== s.lyrics.trim()) { var a = s.lyrics.split("\n").length; s.lyrics = r.text; n += Math.max(1, a - r.text.split("\n").length); }
+  }
+  if ((s.chords || "").trim()) { var c = akPreFix(s.chords); if (c !== s.chords) { n += akPreFix.count; s.chords = c; } }
+  return n;
+}
+function akFindChordsAll() {
+  var hits = lib().songs.filter(function (s) { return akHasLooseChords(s.lyrics) || (s.chords && akPreFix(s.chords) !== s.chords); });
+  if (!hits.length) { toast("Every song's chords already show as chords."); return; }
+  modal("Find chords in every song?", h("div", null, h("p", null, hits.length + (hits.length === 1 ? " song has" : " songs have") + " chords written as plain text (above the words, with ♭ or ♯, D-A, (X2) and the like)."), h("p", { class: "hint" }, "They are turned into real chords, keeping their place over the words. Lyrics are not changed. You can undo it."),
+    h("div", { class: "hint" }, hits.slice(0, 12).map(function (s) { return s.title; }).join(", ") + (hits.length > 12 ? " and " + (hits.length - 12) + " more" : ""))),
+    [{ label: "Cancel" }, { label: "Find chords", primary: true, onClick: function () { snap("find chords"); var n = 0; hits.forEach(function (s) { if (akFindChordsInSong(s)) n++; }); save(); toastUndo("Fixed chords in " + n + (n === 1 ? " song." : " songs.")); } }]);
+}
+
+/* ---------------------------------------------------------------- 2. chords from a chord sheet onto your lyrics */
+function akNormWord(w) { return String(w || "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9]+/g, ""); }
+/* sheetText: a pasted chord sheet (chords above words or in brackets). Returns { text, placed, rows, matched, total } */
+function akMergeSheet(lyrics, sheetText) {
+  var sheet = normalizeChart(akPreFix(sheetText), false).text;
+  var A = plParse(lyrics), B = plParse(sheet);
+  /* words of your lyrics */
+  var aw = []; A.forEach(function (l, li) { if (l.kind === "lyric") l.tokens.forEach(function (k, ti) { if (k.t === "w" && akNormWord(k.text)) aw.push({ li: li, ti: ti, n: akNormWord(k.text), k: k }); }); });
+  /* words of the sheet, with the chords that sit on them; chord rows wait for the next word */
+  var bw = [], pendRows = [], loose = null;
+  B.forEach(function (l) {
+    if (l.kind === "chords") { pendRows.push(plLineText(l).trim()); return; }
+    if (l.kind !== "lyric") return;
+    l.tokens.forEach(function (k) {
+      if (k.t === "c") { loose = loose || []; loose.push(k.chord); return; }
+      var n = akNormWord(k.text); if (!n) return;
+      bw.push({ n: n, k: k, loose: loose, rows: pendRows.length ? pendRows : null }); loose = null; pendRows = [];
+    });
+  });
+  var trailingRows = pendRows;
+  /* line up the two word lists (longest common subsequence) */
+  var N = aw.length, M = bw.length, W = M + 1, L = new Uint16Array((N + 1) * (M + 1)), i, j;
+  for (i = N - 1; i >= 0; i--) for (j = M - 1; j >= 0; j--) L[i * W + j] = aw[i].n === bw[j].n ? L[(i + 1) * W + j + 1] + 1 : Math.max(L[(i + 1) * W + j], L[i * W + j + 1]);
+  var pairs = []; i = 0; j = 0;
+  while (i < N && j < M) { if (aw[i].n === bw[j].n) { pairs.push([i, j]); i++; j++; } else if (L[(i + 1) * W + j] >= L[i * W + j + 1]) i++; else j++; }
+  var placed = 0, rowsAt = {}, lineHit = {};
+  pairs.forEach(function (p) {
+    var a = aw[p[0]], b = bw[p[1]], k = a.k, s = b.k;
+    var line = A[a.li];
+    if (b.loose) { b.loose.forEach(function (c) { line.tokens.splice(line.tokens.indexOf(k), 0, { t: "c", chord: c, pre: " " }); placed++; }); line.dirty = true; }
+    if (s.chord) { k.chord = s.chord; placed++; line.dirty = true; }
+    if (s.mids.length) { k.mids = s.mids.map(function (m) { return { pos: Math.min(k.text.length - 1, Math.round(m.pos * k.text.length / Math.max(1, s.text.length))), chord: m.chord }; }).filter(function (m) { return m.pos > 0; }); placed += k.mids.length; line.dirty = true; }
+    if (b.rows) rowsAt[a.li] = (rowsAt[a.li] || []).concat(b.rows);
+    lineHit[a.li] = 1;
+  });
+  var out = [], rows = 0;
+  A.forEach(function (l, li) {
+    if (rowsAt[li] && !(li > 0 && A[li - 1].kind === "chords")) { rowsAt[li].forEach(function (r) { out.push(r); rows++; }); }
+    out.push(plLineText(l));
+  });
+  if (trailingRows.length) { trailingRows.forEach(function (r) { out.push(r); rows++; }); }
+  var lyricLines = A.filter(function (l) { return l.kind === "lyric"; }).length;
+  return { text: out.join("\n"), placed: placed, rows: rows, matched: Object.keys(lineHit).length, total: lyricLines, words: pairs.length, of: N };
+}
+function akSheetSearchUrl(s, what) { return "https://www.google.com/search?q=" + encodeURIComponent(((s.title || "") + " " + (s.artist || "") + " " + what).trim()); }
+/* the dialog: paste a chord sheet, and its chords go onto the lyrics already in the song */
+function akSheetDialog(s, done) {
+  var area = h("textarea", { rows: 10, spellcheck: "false", autocapitalize: "off", placeholder: "Paste a chord sheet here: chords above the words, or chords in [brackets]", "aria-label": "Chord sheet" });
+  var res = h("div", { class: "hint", role: "status" });
+  var body = h("div", null,
+    h("p", { class: "hint", style: "margin-top:0" }, "Find the song's chords on the web, copy the page's chord sheet and paste it here. The app matches its words to your lyrics and puts each chord over the same word, even if the lines are split differently. Your words are not changed."),
+    h("div", { class: "row", style: "margin-top:0" }, h("a", { class: "btnlink", href: akSheetSearchUrl(s, "chords"), target: "_blank", rel: "noopener noreferrer" }, "Search the web for chords ↗"),
+      navigator.clipboard && navigator.clipboard.readText ? h("button", { onClick: function () { navigator.clipboard.readText().then(function (t) { area.value = t; }, function () { toast("Couldn't read the clipboard. Press and hold in the box, then Paste."); }); } }, "Paste") : null),
+    area, res);
+  modal("Chords from a chord sheet", body, [{ label: "Cancel" }, { label: (s.lyrics || "").trim() ? "Put the chords on my lyrics" : "Use this as the lyrics", primary: true, onClick: function () {
+    var t = area.value; if (!t.trim()) { toast("Paste a chord sheet first."); return false; }
+    if (!(s.lyrics || "").trim()) { s.lyrics = normalizeChart(akPreFix(t), false).text; done && done(); toast("Added the lyrics with their chords."); return; }
+    var r = akMergeSheet(s.lyrics, t);
+    if (!r.placed && !r.rows) { toast("The words didn't match your lyrics, so no chords were placed."); return false; }
+    s.lyrics = r.text; done && done();
+    toast("Placed " + r.placed + (r.placed === 1 ? " chord" : " chords") + " on " + r.matched + " of " + r.total + " lines" + (r.rows ? ", plus " + r.rows + " chord " + (r.rows === 1 ? "row" : "rows") : "") + ". Check the lines that didn't match.");
+  } }], { wide: true });
+}
+
+/* ---------------------------------------------------------------- 3. Lucky guess */
+/* the chord list of the Chords box, by section: { order: [name], map: { key: [chords] }, flat: [chords] } */
+function akChordListBySection(text) {
+  var map = {}, order = [], cur = "", flat = [];
+  String(text || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (ln) {
+    var t = ln.trim(); if (!t) return;
+    var sm = /^\[([^\]]+)\]$/.exec(t); if (sm && !isChordLike(sm[1].trim())) { cur = secKey(sm[1]); if (order.indexOf(cur) < 0) order.push(cur); return; }
+    var lm = AK_LABEL_RE.exec(t); if (lm) { cur = secKey(lm[2].replace(/:\s*$/, "")); if (order.indexOf(cur) < 0) order.push(cur); t = t.slice(lm[0].length); }
+    var f = akFixChordLine(t), src = f ? f.line : t.replace(/\[([^\]]+)\]/g, " $1 ");
+    var times = 1, mx = /x\s*(\d+)\s*$/i.exec(src); if (mx) times = Math.min(4, +mx[1]);
+    var cs = src.split(/\s+/).filter(function (x) { return isChordTok(x); });
+    if (!cs.length) return;
+    var all = []; for (var r = 0; r < times; r++) all = all.concat(cs);
+    map[cur] = (map[cur] || []).concat(all); flat = flat.concat(all);
+    if (order.indexOf(cur) < 0) order.push(cur);
+  });
+  return { order: order, map: map, flat: flat };
+}
+/* the guess. Returns [{ li, marks: [{ pos, chord, ok }] }] for lyric lines that have no chords yet */
+function akLuckyGuess(song, shift) {
+  var lines = String(song.lyrics || "").replace(/\r\n?/g, "\n").split("\n"), list = akChordListBySection(song.chords);
+  if (!list.flat.length) return null;
+  var secs = [], cur = { name: "", lines: [] };
+  lines.forEach(function (ln, li) {
+    var t = ln.trim(), sm = /^\[([^\]]+)\]$/.exec(t);
+    if (sm && !isChordLike(sm[1].trim())) { secs.push(cur); cur = { name: secKey(sm[1]), lines: [] }; return; }
+    if (!t || /\[[^\]]+\]|^\{/.test(t) || isTabLine(t)) return;
+    cur.lines.push(li);
+  });
+  secs.push(cur);
+  var hasSecs = list.order.some(function (k) { return k; }), out = [], seq = 0;
+  var allLines = 0; secs.forEach(function (s) { allLines += s.lines.length; });
+  var sequential = !hasSecs && list.flat.length >= allLines * 1.2;
+  var perSeq = sequential ? Math.max(1, Math.min(4, Math.round(list.flat.length / Math.max(1, allLines)))) : 0;
+  secs.forEach(function (sec) {
+    if (!sec.lines.length) return;
+    var P = (sec.name && list.map[sec.name]) || (sec.name && list.map[sec.name.replace(/\s*\d+$/, "")]) || (!hasSecs ? list.flat : (list.map[""] || list.flat));
+    var per = sequential ? perSeq : P.length <= 2 ? P.length : P.length === 3 ? 3 : 2;
+    per = Math.max(1, Math.min(4, per + (shift || 0)));
+    var idx = 0;
+    sec.lines.forEach(function (li) {
+      var text = lines[li], starts = [], re = /\S+/g, m;
+      while ((m = re.exec(text)) !== null) starts.push(m.index);
+      if (!starts.length) return;
+      var len = text.replace(/\s+$/, "").length, marks = [], used = {};
+      for (var c = 0; c < per; c++) {
+        var chord = sequential ? list.flat[seq++] : P[idx++ % P.length]; if (!chord) break;
+        var want = len * c / per, best = starts[0];
+        starts.forEach(function (s) { if (!used[s] && Math.abs(s - want) < Math.abs(best - want)) best = s; });
+        if (used[best]) continue; used[best] = 1;
+        marks.push({ pos: best, chord: chord, ok: false });
+      }
+      out.push({ li: li, marks: marks });
+    });
+  });
+  return out;
+}
+function openLucky(song, o) {
+  o = o || {};
+  var shift = 0, guess = akLuckyGuess(song, shift);
+  if (!guess) { toast("Put the song's chords in the Chords box first (just the list is fine), then try Lucky guess."); return; }
+  if (!guess.length) { toast("Every lyric line already has chords."); return; }
+  var lines = String(song.lyrics || "").replace(/\r\n?/g, "\n").split("\n"), sel = null;
+  var root = h("div", { class: "placer aklucky", role: "dialog", "aria-label": "Lucky guess" });
+  var body = h("div", { class: "pbody" }), foot = h("div", { class: "pfoot" }), hint = h("div", { class: "phint", role: "status" });
+  root.appendChild(h("div", { class: "ptopbar" }, h("strong", { class: "grow" }, "🍀 Lucky guess"),
+    h("button", { onClick: function () { menu(this, [
+      { label: "Fewer chords on each line", onClick: function () { shift--; guess = akLuckyGuess(song, shift); sel = null; draw(); } },
+      { label: "More chords on each line", onClick: function () { shift++; guess = akLuckyGuess(song, shift); sel = null; draw(); } },
+      { label: "Guess again from the start", onClick: function () { shift = 0; guess = akLuckyGuess(song, 0); sel = null; draw(); } },
+      { label: "Accept every chord", onClick: function () { guess.forEach(function (g) { g.marks.forEach(function (m) { m.ok = true; }); }); draw(); } }]); } }, "⋯"),
+    h("button", { onClick: close }, "Cancel"), h("button", { class: "primary", onClick: finish }, "Save")));
+  root.appendChild(hint); root.appendChild(body); root.appendChild(foot);
+  document.body.appendChild(root);
+  function close() { if (root.parentNode) root.parentNode.removeChild(root); if (o.onClose) o.onClose(false); }
+  function finish() {
+    var pending = 0; guess.forEach(function (g) { g.marks.forEach(function (m) { if (!m.ok) pending++; }); });
+    function write(keepAll) {
+      guess.forEach(function (g) {
+        var t = lines[g.li], ms = g.marks.filter(function (m) { return keepAll || m.ok; }).sort(function (a, b) { return b.pos - a.pos; });
+        ms.forEach(function (m) { t = t.slice(0, m.pos) + "[" + m.chord + "]" + t.slice(m.pos); });
+        lines[g.li] = t;
+      });
+      song.lyrics = lines.join("\n"); if (root.parentNode) root.parentNode.removeChild(root); if (o.onClose) o.onClose(true);
+      toast("Chords saved over the words.");
+    }
+    if (!pending) { write(true); return; }
+    modal("Keep the guesses you didn't check?", h("p", null, pending + (pending === 1 ? " chord is" : " chords are") + " still a guess (dashed). Keep them too, or only save the ones you accepted?"),
+      [{ label: "Back" }, { label: "Only accepted", onClick: function () { write(false); } }, { label: "Keep them all", primary: true, onClick: function () { write(true); } }]);
+  }
+  function lineOf(li) { for (var i = 0; i < guess.length; i++) if (guess[i].li === li) return guess[i]; return null; }
+  function wordStarts(text) { var out = [], re = /\S+/g, m; while ((m = re.exec(text)) !== null) out.push(m.index); return out; }
+  function move(kind, dir) {
+    if (!sel) return; var g = lineOf(sel.li), m = g.marks[sel.mi], text = lines[g.li], np = m.pos;
+    if (kind === "letter") { np = m.pos + dir; while (np >= 0 && np < text.length && text[np] === " ") np += dir; }
+    else { var ws = wordStarts(text), i = ws.indexOf(m.pos); if (i < 0) { i = 0; ws.forEach(function (s, k) { if (s <= m.pos) i = k; }); } np = ws[Math.max(0, Math.min(ws.length - 1, i + dir))]; }
+    if (np < 0 || np >= text.replace(/\s+$/, "").length) return;
+    if (g.marks.some(function (x, k) { return k !== sel.mi && x.pos === np; })) return;
+    m.pos = np; draw();
+  }
+  function drawLine(li) {
+    var g = lineOf(li), text = lines[li];
+    if (!g) {
+      var t = text.trim(), sm = /^\[([^\]]+)\]$/.exec(t);
+      if (sm && !isChordLike(sm[1].trim())) return h("div", { class: "psec" }, sm[1]);
+      if (!t) return h("div", { class: "pgap" });
+      return h("div", { class: "praw" }, text.replace(/\[([^\]]+)\]/g, "[$1]"));
+    }
+    var row = h("div", { class: "aklk-line", "data-li": String(li) }), chars = h("div", { class: "aklk-text" }), marks = h("div", { class: "aklk-marks" });
+    Array.from(text.replace(/\s+$/, "")).forEach(function (ch, i) {
+      chars.appendChild(h("span", { class: "aklk-c", "data-i": String(i), onClick: function () {
+        if (sel && sel.li === li) { var m = g.marks[sel.mi]; if (!g.marks.some(function (x) { return x !== m && x.pos === i; }) && ch !== " ") { m.pos = i; draw(); } return; }
+      } }, ch === " " ? " " : ch));
+    });
+    row.appendChild(marks); row.appendChild(chars);
+    g.marks.forEach(function (m, mi) {
+      var isSel = sel && sel.li === li && sel.mi === mi;
+      var b = h("button", { class: "aklk-ch" + (m.ok ? " ok" : "") + (isSel ? " sel" : ""), "aria-label": m.chord + (m.ok ? ", accepted" : ", a guess") + ". Tap to pick, drag to move.", "data-pos": String(m.pos) }, m.chord);
+      var drag = null;
+      b.addEventListener("pointerdown", function (e) { drag = { x: e.clientX, moved: false }; b.setPointerCapture(e.pointerId); });
+      b.addEventListener("pointermove", function (e) {
+        if (!drag) return; if (Math.abs(e.clientX - drag.x) > 6) drag.moved = true; if (!drag.moved) return;
+        var cs = chars.children, best = -1, bd = 1e9;
+        for (var k = 0; k < cs.length; k++) { if (cs[k].textContent === " ") continue; var r = cs[k].getBoundingClientRect(), d = Math.abs(r.left - e.clientX); if (d < bd) { bd = d; best = k; } }
+        if (best >= 0 && best !== m.pos && !g.marks.some(function (x) { return x !== m && x.pos === best; })) { m.pos = best; place(); }
+      });
+      b.addEventListener("pointerup", function () { var was = drag && drag.moved; drag = null; if (was) { sel = { li: li, mi: mi }; draw(); return; } sel = isSel ? null : { li: li, mi: mi }; draw(); });
+      marks.appendChild(b);
+      function place() { var c = chars.children[m.pos]; if (c) b.style.left = c.offsetLeft + "px"; b.setAttribute("data-pos", String(m.pos)); }
+      b._place = place;
+    });
+    return row;
+  }
+  function placeAll() { Array.prototype.forEach.call(body.querySelectorAll(".aklk-ch"), function (b) { if (b._place) b._place(); }); }
+  function draw() {
+    var sc = body.scrollTop; body.textContent = "";
+    lines.forEach(function (ln, li) { body.appendChild(drawLine(li)); });
+    body.scrollTop = sc; placeAll(); requestAnimationFrame(placeAll);
+    foot.textContent = "";
+    var total = 0, ok = 0; guess.forEach(function (g) { g.marks.forEach(function (m) { total++; if (m.ok) ok++; }); });
+    if (sel) {
+      var g = lineOf(sel.li), m = g && g.marks[sel.mi];
+      if (!m) { sel = null; draw(); return; }
+      var pal = akChordListBySection(song.chords).flat.filter(function (c, i, a) { return a.indexOf(c) === i; });
+      foot.appendChild(h("div", { class: "prow" },
+        h("button", { class: "chip", onClick: function () { move("word", -1); } }, "◀ Word"), h("button", { class: "chip", onClick: function () { move("letter", -1); } }, "◁ Letter"),
+        h("button", { class: "chip", onClick: function () { move("letter", 1); } }, "Letter ▷"), h("button", { class: "chip", onClick: function () { move("word", 1); } }, "Word ▶"),
+        h("button", { class: "chip on", onClick: function () { m.ok = true; var nx = null; guess.some(function (gg) { return gg.marks.some(function (mm, k) { if (!mm.ok) { nx = { li: gg.li, mi: k }; return true; } return false; }); }); sel = nx; draw(); } }, "✓ Accept"),
+        h("button", { class: "chip", onClick: function () { g.marks.splice(sel.mi, 1); sel = null; draw(); } }, "✕ Remove"),
+        h("button", { class: "chip", onClick: function () { var b = this; menu(b, pal.map(function (c) { return { label: c, onClick: function () { m.chord = c; draw(); } }; })); } }, "Change chord ▾")));
+    }
+    foot.appendChild(h("div", { class: "prow" }, h("span", { class: "muted" }, ok + " of " + total + " accepted"), h("button", { class: "chip", onClick: function () { guess.forEach(function (gg) { gg.marks.forEach(function (mm) { mm.ok = true; }); }); draw(); } }, "Accept all")));
+    hint.textContent = sel ? "Move it with the buttons, drag it, or tap a letter in its line. Accept keeps it." : "Dashed chords are guesses from your chord list. Tap one to move, change, accept or remove it. Tap a letter… after picking a chord to put it there.";
+  }
+  draw();
+  window.addEventListener("resize", placeAll);
+}
+
+/* ---------------------------------------------------------------- 4. from the playing screen: Place chords and back, Get lyrics / Get chords */
+TB_ITEMS.push(["placer", "Place chords here (and come back)"], ["getlyrics", "Get lyrics (search, then paste)"], ["getchords", "Get chords (search, then paste)"]);
+TB_SHORT.placer = "Place"; TB_SHORT.getlyrics = "Lyrics"; TB_SHORT.getchords = "Get chords";
+AK_IC.placer = "M4 20l1-4L16 5l3 3L8 19z M3 6h6 M6 3v6";
+AK_IC.getlyrics = "M5 4h10l4 4v12H5z M8 11h8 M8 15h6 M17 21l3 1";
+AK_IC.getchords = "M9 18V6l10-2v12 M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M17 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z M3 4l3 3";
+/* the line at the top of the lyrics pane */
+function akPlayTopLine() {
+  var lp = scroller(); if (!lp) return 0;
+  var els = lp.querySelectorAll("[data-li]"), top = lp.getBoundingClientRect().top;
+  for (var i = 0; i < els.length; i++) if (els[i].getBoundingClientRect().bottom > top + 4) return Number(els[i].getAttribute("data-li")) || 0;
+  return 0;
+}
+function akPlayGoLine(li) {
+  var lp = scroller(); if (!lp) return;
+  var els = lp.querySelectorAll("[data-li]"), best = null;
+  for (var i = 0; i < els.length; i++) { if (Number(els[i].getAttribute("data-li")) <= li) best = els[i]; else break; }
+  if (best) { lp.scrollTop = Math.max(0, lp.scrollTop + best.getBoundingClientRect().top - lp.getBoundingClientRect().top - 1); pos = lp.scrollTop; lastSet = lp.scrollTop; }
+}
+function akPlacerFromPlay(song) {
+  var was = autoOn, li = akPlayTopLine(), ch = $("chPane") ? $("chPane").scrollTop : 0;
+  stopAuto();
+  openPlacer(song, { startLine: li, onChange: function () {}, onClose: function (topLi) {
+    save(); fillCharts();
+    var go2 = function () { akPlayGoLine(topLi != null ? topLi : li); var c = $("chPane"); if (c) c.scrollTop = ch; };
+    go2(); requestAnimationFrame(go2);
+    toast("Back where you were.", was ? { label: "Scroll on", fn: function () { startAuto(); } } : null);
+  } });
+}
+function akGetMenu(btn, song, what) {
+  menu(btn, [
+    { head: what === "lyrics" ? "Lyrics for “" + song.title + "”" : "Chords for “" + song.title + "”" },
+    { label: "🔎 Search the web", onClick: function () { window.open(akSheetSearchUrl(song, what), "_blank", "noopener"); } },
+    { label: "📋 Paste what I found…", onClick: function () { akPasteFound(song, what); } }]);
+}
+function akPasteFound(song, what) {
+  var keep = { li: akPlayTopLine() };
+  function after() { save(); try { fillCharts(); keepAutoRender(); } catch (e) {} setTimeout(function () { akPlayGoLine(keep.li); }, 60); }
+  if (what === "chords") { akSheetDialog(song, after); return; }
+  var area = h("textarea", { rows: 10, spellcheck: "false", "aria-label": "Lyrics" });
+  modal("Paste the lyrics", h("div", null, h("p", { class: "hint", style: "margin-top:0" }, (song.lyrics || "").trim() ? "This song already has lyrics. Pasted lyrics with chords put their chords on your words; plain lyrics replace yours (you can undo in the song editor)." : "Chords above the words are turned into real chords for you."), area),
+    [{ label: "Cancel" }, { label: "Use these", primary: true, onClick: function () {
+      var t = area.value; if (!t.trim()) return false;
+      if ((song.lyrics || "").trim() && akHasLooseChords(t)) { var r = akMergeSheet(song.lyrics, t); song.lyrics = r.text; toast("Placed " + r.placed + " chords on your lyrics."); }
+      else { snap("paste lyrics"); song.lyrics = normalizeChart(akPreFix(t), false).text; toast("Lyrics saved."); }
+      after();
+    } }], { wide: true });
+}
+function akExtraTb8(id, song, root) {
+  if (id === "placer") return h("button", { "aria-label": "Place chords here, then come back", onClick: function () { akPlacerFromPlay(song); } }, akIcon("placer"));
+  if (id === "getlyrics") return h("button", { "aria-label": "Get lyrics", onClick: function () { akGetMenu(this, song, "lyrics"); } }, akIcon("getlyrics"));
+  if (id === "getchords") return h("button", { "aria-label": "Get chords", onClick: function () { akGetMenu(this, song, "chords"); } }, akIcon("getchords"));
+  if (typeof akExtraTb9 === "function") return akExtraTb9(id, song, root);
+  return null;
+}
+
+function akSettingsExtra2(c) {
+  c.again("data-and-extras");
+  c.section("Chords written as text", "Turn plain-text chords in every song into real chords");
+  c.out.appendChild(h("p", { class: "hint" }, "Chords typed above the words, with ♭ or ♯, D-A, (X2) or “Intro:” labels are found when you paste or import. This checks every song you already have."));
+  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: akFindChordsAll }, "✨ Find chords in every song…")));
+  if (typeof akSettingsExtra3 === "function") akSettingsExtra3(c);
+}
+
+/* ---------------------------------------------------------------- 5. Custom shape: tap frets, the app names the chord */
+function akShapePicker(onPick) {
+  var ins = settings().instrument, notes = akShapeNotes(ins), ns = notes.length, frets = new Array(ns).fill(-1), base = 1, host = h("div"), choice = null;
+  function draw() {
+    host.textContent = "";
+    var grid = h("div", { class: "fgrid", style: "grid-template-columns: 2.4em repeat(" + ns + ", 1fr)" });
+    grid.appendChild(h("div")); akStringLabels(ins).forEach(function (n, i) { var f = frets[i]; grid.appendChild(h("button", { class: "fcell top", "aria-label": "String " + n + ": " + (f < 0 ? "not played" : f === 0 ? "open" : "fretted"), onClick: function () { frets[i] = frets[i] === 0 ? -1 : 0; draw(); } }, f < 0 ? "×" : f === 0 ? "○" : n)); });
+    for (var r = 0; r < 5; r++) (function (fr) {
+      grid.appendChild(h("div", { class: "flab" }, String(fr)));
+      for (var i = 0; i < ns; i++) (function (i) { var on = frets[i] === fr; grid.appendChild(h("button", { class: "fcell" + (on ? " on" : ""), "aria-label": "String " + (i + 1) + ", fret " + fr, "aria-pressed": on ? "true" : "false", onClick: function () { frets[i] = on ? -1 : fr; draw(); } }, on ? "●" : "")); })(i);
+    })(base + r);
+    host.appendChild(h("p", { class: "hint", style: "margin-top:0" }, "Tap the frets you hold (in your tuning). Tap the top row for open (○) or not played (×). Pick the name and it goes on the word."));
+    host.appendChild(h("label", { class: "fld" }, "First fret shown", h("select", { onChange: function () { base = Number(this.value); draw(); } }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return h("option", { value: String(n), selected: n === base }, String(n)); }))));
+    var right = h("div");
+    host.appendChild(h("div", { class: "row", style: "align-items:flex-start;flex-wrap:wrap" }, h("div", { style: "flex:1 1 220px" }, grid), right));
+    var midis = frets.map(function (f, i) { return f >= 0 ? notes[i] + f : null; }).filter(function (m) { return m != null; });
+    if (midis.length) right.appendChild(h("div", { class: "cp-dia" }, chordDiagram({ frets: frets, fingers: [] }, ins, 0.6)));
+    var res = akIdentify(midis, false);
+    if (midis.length >= 2 && !res.length) right.appendChild(h("p", { class: "hint" }, "Not a chord I know yet. Try adding or removing a note."));
+    res.slice(0, 5).forEach(function (r) { right.appendChild(h("button", { class: "chip" + (choice === r.name ? " on" : ""), style: "display:block;margin:4px 0", onClick: function () { choice = r.name; draw(); } }, styleChord(r.name, styleOf()) + "  ·  " + r.long)); });
+    var own = h("input", { type: "text", placeholder: "Or type a name for it", value: choice && !res.some(function (r) { return r.name === choice; }) ? choice : "", "aria-label": "Chord name", onInput: function () { choice = this.value.trim(); } });
+    right.appendChild(own);
+  }
+  draw();
+  modal("Custom shape", host, [{ label: "Cancel" }, { label: "Use this chord", primary: true, onClick: function () {
+    if (!choice) { toast("Tap the frets, then pick the chord's name."); return false; }
+    if (!isChordLike(choice)) { var l = settings().customChords = settings().customChords || []; if (l.indexOf(choice) < 0) { l.push(choice); syncCustomChords(); } }
+    var key = fingerKeyFor(choice), rec = fingeringStore(ins)[key] || (fingeringStore(ins)[key] = {}); rec.custom = rec.custom || [];
+    if (!rec.custom.some(function (c) { return c.frets.join(",") === frets.join(","); })) rec.custom.unshift({ id: uid(), frets: frets.slice(), fingers: null });
+    rec.pick = "c" + rec.custom[0].id; save();
+    onPick(choice);
+  } }], { wide: true });
+}
+
+akCss("ak4-chords", [
+  ".aklucky .pbody{padding-bottom:40vh}",
+  ".aklk-line{position:relative;padding-top:1.5em;margin:.2em 0 .5em}",
+  ".aklk-text{white-space:nowrap;overflow-x:auto;font-size:1.15rem}",
+  ".aklk-c{display:inline-block;cursor:pointer;min-width:.3em}",
+  ".aklk-marks{position:absolute;left:0;top:0;right:0;height:1.4em}",
+  ".aklk-ch{position:absolute;top:0;min-height:0;padding:0 .3em;font-weight:700;border:2px dashed var(--chord, var(--accent));background:transparent;color:var(--chord, var(--accent));border-radius:6px;line-height:1.2;touch-action:none}",
+  ".aklk-ch.ok{border-style:solid;background:color-mix(in srgb,var(--accent) 18%,transparent)}",
+  ".aklk-ch.sel{outline:3px solid var(--accent);outline-offset:1px}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 4, phase 2: numbers and backing vocals =================
+   - chords as names, Roman numerals / Nashville numbers, or both (follows transpose and capo, because the numbers come from the key)
+   - a progression summary per section, in the song editor and the song's info
+   - backing vocal markings: harmony on the lead's words ({h1 3rd above}words{/h}) and separate backing lines ({bv1 5th: ooh ooh}),
+     several parts with their own colors, and a view switch: everything, lead only, or one singer's part */
+
+/* ---------------------------------------------------------------- 1. numbers */
+var AK_DEG_MAJ = ["1", "b2", "2", "b3", "3", "4", "b5", "5", "b6", "6", "b7", "7"];
+var AK_DEG_MIN = ["1", "b2", "2", "3", "#3", "4", "b5", "5", "6", "#6", "7", "#7"];
+var AK_ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII" };
+function akDegSettings() { var d = settings().degrees = settings().degrees || {}; if (!d.mode) d.mode = "names"; if (!d.style) d.style = "roman"; return d; }
+/* "Am", "F#m", "Bb", "C minor" -> { pc, minor } */
+function akParseKey(k) {
+  var m = /^\s*([A-G][#b♯♭]?)\s*(m(?!aj)|min|minor|-)?/i.exec(String(k || "").replace(/♯/g, "#").replace(/♭/g, "b"));
+  if (!m) return null;
+  var r = m[1][0].toUpperCase() + m[1].slice(1);
+  if (NOTE_IDX[r] === undefined) return null;
+  return { pc: NOTE_IDX[r], minor: !!m[2] };
+}
+/* a best guess at the key from the chords, when the song has none */
+var akKeyMemo = {};
+function akGuessKey(song) {
+  var txt = (song.lyrics || "") + "\n" + (song.chords || ""), id = song.id + ":" + txt.length;
+  if (akKeyMemo[id] !== undefined) return akKeyMemo[id];
+  var counts = new Array(24).fill(0), first = null, last = null, n = 0;
+  var re = /\[([^\]]+)\]/g, m;
+  while ((m = re.exec(txt)) !== null) {
+    var p = parseChordName(m[1].trim()); if (!p) continue;
+    var minor = p.q === "m" || p.q === "m7" || p.q === "m6";
+    counts[p.pc + (minor ? 12 : 0)]++; n++;
+    if (!first) first = { pc: p.pc, minor: minor }; last = { pc: p.pc, minor: minor };
+  }
+  var best = null;
+  if (n) {
+    var sc = -1;
+    for (var k = 0; k < 24; k++) {
+      var root = k % 12, isMin = k >= 12, tonicMaj = isMin ? (root + 3) % 12 : root, s = 0;
+      /* diatonic triads of the relative major: I ii iii IV V vi */
+      [[0, 0], [2, 1], [4, 1], [5, 0], [7, 0], [9, 1]].forEach(function (d) { s += counts[(tonicMaj + d[0]) % 12 + (d[1] ? 12 : 0)]; });
+      s += 0.01 * counts[(tonicMaj + 7) % 12 + 12] * 0; /* keep it simple */
+      if (first && first.pc === root && first.minor === isMin) s += n * 0.15 + 1;
+      if (last && last.pc === root && last.minor === isMin) s += n * 0.1 + 0.5;
+      s += counts[k] * 0.5;
+      if (s > sc) { sc = s; best = { pc: root, minor: isMin, guessed: true }; }
+    }
+  }
+  akKeyMemo[id] = best;
+  return best;
+}
+function akSongKey(song) { return akParseKey(song.key) || akGuessKey(song); }
+/* the options the renderer needs, or null when names are shown */
+function akDegOpts(song, force) {
+  if (!force) akBvSong = song; /* the song being drawn: its backing vocal part names and colors */
+  var d = akDegSettings(), mode = force || song.degMode || d.mode;
+  if (mode === "names") return null;
+  var k = akSongKey(song); if (!k) return null;
+  return { mode: mode, style: d.style, pc: k.pc, minor: k.minor };
+}
+/* one chord -> its number in the key: "vi7", "IV/3", "5", "2m7" */
+function akNumeral(c, deg) {
+  var m = /^([A-G][#b]?)(.*?)(?:\/([A-G][#b]?))?$/.exec(c || "");
+  if (!m || NOTE_IDX[m[1]] === undefined) return "";
+  var iv = ((NOTE_IDX[m[1]] - deg.pc) % 12 + 12) % 12, tab = deg.minor ? AK_DEG_MIN : AK_DEG_MAJ, dg = tab[iv];
+  var acc = dg.length > 1 ? dg[0] : "", num = +dg.slice(-1), q = m[2];
+  var minor = /^(m(?!aj)|min|-)/.test(q), dim = /^(dim|°|o(?=\d|$))/.test(q) || /m7b5|ø/.test(q), aug = /^(aug|\+)/.test(q);
+  var rest = q.replace(/^(min|m(?!aj)|-)/, "").replace(/^(dim|°)/, "").replace(/^(aug|\+)/, "");
+  var bass = "";
+  if (m[3] && NOTE_IDX[m[3]] !== undefined) bass = "/" + tab[((NOTE_IDX[m[3]] - deg.pc) % 12 + 12) % 12];
+  acc = acc.replace("b", "♭").replace("#", "♯"); bass = bass.replace("b", "♭").replace("#", "♯");
+  if (deg.style === "nashville") return acc + num + (minor ? (dim ? "" : "m") : "") + (dim ? "°" : "") + (aug ? "+" : "") + rest.replace(/^b5/, "") + bass;
+  var r = AK_ROMAN[num]; if (minor || dim) r = r.toLowerCase();
+  return acc + r + (dim ? (/m7b5|ø/.test(q) ? "ø" : "°") : "") + (aug ? "+" : "") + rest.replace(/^7b5/, "7").replace(/^b5/, "") + bass;
+}
+/* the progression of each section: [{ name, prog }] */
+function akProgSummary(song, deg) {
+  deg = deg || akDegOpts(song, "numerals") || null;
+  var out = [], seen = {}, cur = { name: "Start", chords: [] };
+  function flush() {
+    if (!cur.chords.length) return;
+    var p = [], prev = null; cur.chords.forEach(function (c) { if (c !== prev) p.push(c); prev = c; });
+    if (p.length > 16) p = p.slice(0, 16).concat("…");
+    var key = p.join(" ");
+    if (seen[cur.name + "|" + key]) return; seen[cur.name + "|" + key] = 1;
+    out.push({ name: cur.name, names: p.join(" – "), prog: deg ? p.map(function (c) { return c === "…" ? c : (akNumeral(c, deg) || c); }).join(" – ") : "" });
+  }
+  String(song.lyrics || song.chords || "").replace(/\r\n?/g, "\n").split("\n").forEach(function (ln) {
+    var t = ln.trim(), sm = /^\[([^\]]+)\]$/.exec(t);
+    if (sm && !isChordLike(sm[1].trim())) { flush(); cur = { name: sm[1].trim(), chords: [] }; return; }
+    var re = /\[([^\]]+)\]/g, m; while ((m = re.exec(ln)) !== null) if (isChordLike(m[1].trim())) cur.chords.push(m[1].trim());
+  });
+  flush();
+  return out;
+}
+function akKeyName(k) { return k ? NAMES[settings().acc === "flat" ? "flat" : "sharp"][k.pc] + (k.minor ? "m" : "") : ""; }
+/* card for the song editor and the info sheet */
+function akProgCard(song, onChange) {
+  var box = h("div");
+  function draw() {
+    box.textContent = "";
+    var k = akSongKey(song), d = akDegSettings();
+    if (!k) { box.appendChild(h("p", { class: "hint" }, "Add chords (or a key) and the progression shows here as numbers.")); return; }
+    var deg = { mode: "numerals", style: d.style, pc: k.pc, minor: k.minor }, list = akProgSummary(song, deg);
+    box.appendChild(h("p", { class: "hint", style: "margin-top:0" }, "Key " + akKeyName(k) + (k.guessed ? " (a guess from the chords; set the key above to be sure)" : "") + ". " + (d.style === "nashville" ? "Nashville numbers." : "Roman numerals: capitals are major, small letters minor.")));
+    if (!list.length) { box.appendChild(h("p", { class: "hint" }, "No chords yet.")); return; }
+    var tb = h("div", { class: "akprog" });
+    list.forEach(function (r) { tb.appendChild(h("div", { class: "akprog-row" }, h("b", null, r.name), h("span", { class: "akprog-n" }, r.prog), h("span", { class: "muted akprog-c" }, r.names))); });
+    box.appendChild(tb);
+    var sel = h("select", { "aria-label": "Show this song's chords as", onChange: function () { song.degMode = this.value || undefined; if (!this.value) delete song.degMode; onChange && onChange(); } },
+      [["", "Like my setting (" + AK_DEG_MODES[d.mode] + ")"], ["names", "Names"], ["numerals", "Numbers"], ["both", "Both"]].map(function (o) { return h("option", { value: o[0], selected: (song.degMode || "") === o[0] ? "" : null }, o[1]); }));
+    box.appendChild(h("label", { class: "fld" }, "Show this song's chords as", sel));
+  }
+  draw();
+  var card = h("details", { class: "card" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Chord progression in numbers"), box);
+  card.addEventListener("toggle", function () { if (card.open) draw(); });
+  return card;
+}
+var AK_DEG_MODES = { names: "names", numerals: "numbers", both: "both" };
+function akDegCycle() {
+  var d = akDegSettings(), order = ["names", "numerals", "both"];
+  d.mode = order[(order.indexOf(d.mode) + 1) % 3]; save();
+  toast(d.mode === "names" ? "Chord names." : d.mode === "numerals" ? (d.style === "nashville" ? "Nashville numbers." : "Roman numerals.") : "Names with numbers.");
+  try { fillCharts(); } catch (e) { render(); }
+}
+
+/* ---------------------------------------------------------------- 2. backing vocals */
+var AK_BV_COLORS = ["#E5484D", "#3E9BFF", "#30A46C", "#F5A524"];
+var AK_BV_IVS = ["", "unison", "3rd above", "3rd below", "4th above", "4th below", "5th above", "5th below", "6th above", "6th below", "octave above", "octave below"];
+var AK_BV_LINE_RE = /^\s*\{bv(\d)(?:\s+([^:}]*?))?\s*:\s?(.*)\}\s*$/i;
+var AK_BV_MARK_RE = /\{h(\d)(?:\s+([^}]*))?\}|\{\/h\}/g;
+var akBvSong = null; /* the song being drawn, for its part names and colors */
+function akBvPart(n, song) {
+  song = song || akBvSong;
+  var p = song && song.bvParts && song.bvParts[n] || {};
+  return { name: p.name || "BV" + n, color: p.color || AK_BV_COLORS[(n - 1) % 4] };
+}
+function akBvView() { return settings().bvView || "all"; }
+function akBvShort(iv) {
+  return String(iv || "").replace(/\s*above/i, "↑").replace(/\s*below/i, "↓").replace(/undetermined|\?/i, "?").trim();
+}
+function akBvParse(line) {
+  var m = AK_BV_LINE_RE.exec(line || ""); if (!m) return null;
+  var txt = m[3] || "", lead = /^(\s*)/.exec(txt)[1].length;
+  return { part: +m[1], iv: (m[2] || "").trim(), text: txt.trim(), indent: lead };
+}
+function akBvLineEl(b) {
+  var v = akBvView(); if (v === "lead" || (v !== "all" && +v !== b.part)) return null;
+  var p = akBvPart(b.part);
+  return h("div", { class: "akbvl", style: "--bvc:" + p.color + (b.indent ? ";padding-left:" + b.indent + "ch" : "") },
+    h("span", { class: "akbvtag" }, p.name + (b.iv ? " " + akBvShort(b.iv) : "")), " ", h("span", { class: "akbvtx" }, b.text));
+}
+function akBvPlainLine(b) { var p = akBvPart(b.part); return new Array(b.indent + 1).join(" ") + "(" + p.name + (b.iv ? " " + b.iv : "") + ": " + b.text + ")"; }
+/* drop the harmony marks; for plain text, the words get (BV1: …) around them */
+function akBvStrip(line, plain) {
+  if (!/\{\/?h/.test(line || "")) return line;
+  if (!plain) return line.replace(AK_BV_MARK_RE, "");
+  return line.replace(AK_BV_MARK_RE, function (s, n) { return n ? "«" : "»"; });
+}
+/* after a chart is drawn: colour the harmony words, take the marks out */
+function akBvDecorate(root) {
+  if (!root || root.textContent.indexOf("{") < 0) return;
+  var v = akBvView(), walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), nodes = [], n;
+  while ((n = walker.nextNode())) if (n.nodeValue.indexOf("{") >= 0 || nodes.length) nodes.push(n);
+  var cur = 0, curIv = "", tagNext = false;
+  nodes.forEach(function (tn) {
+    if (tn.parentNode && tn.parentNode.closest && tn.parentNode.closest(".ch,.akbvl,.cue,.tabblock")) return;
+    var s = tn.nodeValue, re = new RegExp(AK_BV_MARK_RE.source, "g"), m, last = 0, frag = document.createDocumentFragment(), changed = false;
+    function piece(txt) {
+      if (!txt) return;
+      var show = cur && (v === "all" || +v === cur);
+      if (!show) { frag.appendChild(document.createTextNode(txt)); return; }
+      var p = akBvPart(cur), el = h("span", { class: "akbvh", style: "--bvc:" + p.color, title: p.name + (curIv ? ", " + curIv : "") });
+      if (tagNext) { el.appendChild(h("sup", { class: "akbvtag" }, p.name + (curIv ? " " + akBvShort(curIv) : ""))); tagNext = false; }
+      el.appendChild(document.createTextNode(txt)); frag.appendChild(el);
+    }
+    while ((m = re.exec(s)) !== null) {
+      changed = true; piece(s.slice(last, m.index)); last = m.index + m[0].length;
+      if (m[1]) { cur = +m[1]; curIv = (m[2] || "").trim(); tagNext = true; } else { cur = 0; curIv = ""; tagNext = false; }
+    }
+    if (!changed && !cur) return;
+    piece(s.slice(last));
+    tn.parentNode.replaceChild(frag, tn);
+  });
+}
+/* the editor dialog */
+function akBvDialog(song, ta, done) {
+  song.bvParts = song.bvParts || {};
+  var start = ta.selectionStart, end = ta.selectionEnd, val = ta.value, hasSel = end > start && val.slice(start, end).trim();
+  var part = 1, kind = hasSel ? "harm" : "line";
+  var ivSel = h("select", { "aria-label": "Interval" }, AK_BV_IVS.map(function (x) { return h("option", { value: x }, x || "Not worked out yet"); }));
+  var txt = h("input", { type: "text", placeholder: "What they sing, like: ooh ooh, or (hold on)", "aria-label": "Backing words" });
+  var partsBox = h("div", { class: "prow" }), kindBox = h("div", { class: "prow" }), lineBox = h("div");
+  function drawParts() {
+    partsBox.textContent = "";
+    [1, 2, 3, 4].forEach(function (i) { var p = akBvPart(i, song); partsBox.appendChild(h("button", { class: "chip" + (part === i ? " on" : ""), style: "border-color:" + p.color, "aria-pressed": part === i ? "true" : "false", onClick: function () { part = i; drawParts(); } }, h("span", { class: "dot", style: "background:" + p.color }), " " + p.name)); });
+    partsBox.appendChild(h("button", { class: "chip", onClick: function () { var p = akBvPart(part, song); askText("Name this part", p.name, "Save", function (v) { song.bvParts[part] = Object.assign({}, song.bvParts[part], { name: v.trim() || undefined }); drawParts(); }, "Like Sam, or High harmony"); } }, "Rename…"));
+    partsBox.appendChild(h("button", { class: "chip", onClick: function () { var p = akBvPart(part, song); colorDialog("Color for " + p.name, p.color, function (c) { song.bvParts[part] = Object.assign({}, song.bvParts[part], { color: c || undefined }); drawParts(); }); } }, "Color…"));
+  }
+  function drawKind() {
+    kindBox.textContent = "";
+    [["harm", "Sings with the lead (the words I picked)"], ["line", "Own line (echo, oohs, answer)"]].forEach(function (k) { kindBox.appendChild(h("button", { class: "chip" + (kind === k[0] ? " on" : ""), "aria-pressed": kind === k[0] ? "true" : "false", onClick: function () { kind = k[0]; drawKind(); } }, k[1])); });
+    lineBox.hidden = kind !== "line";
+  }
+  lineBox.appendChild(h("label", { class: "fld" }, "Backing words", txt));
+  lineBox.appendChild(h("p", { class: "hint" }, "It goes on its own small line under the line you were on, starting at the same spot as the cursor."));
+  drawParts(); drawKind();
+  modal("Backing vocals", h("div", null,
+    h("p", { class: "hint", style: "margin-top:0" }, hasSel ? "Marking “" + val.slice(start, end).trim().slice(0, 40) + "”." : "Tip: select words in the lyrics first to mark a harmony on them."),
+    h("p", { class: "hint", style: "margin:8px 0 4px" }, "Part"), partsBox,
+    h("p", { class: "hint", style: "margin:12px 0 4px" }, "Kind"), kindBox,
+    h("label", { class: "fld" }, "Interval", ivSel), lineBox),
+    [{ label: "Cancel" }, hasSel ? { label: "Remove marks here", onClick: function () { var mid = val.slice(start, end).replace(AK_BV_MARK_RE, ""); ta.value = val.slice(0, start) + mid + val.slice(end); done(); } } : null, { label: "Add", primary: true, onClick: function () {
+      var iv = ivSel.value;
+      if (kind === "harm") {
+        if (!hasSel) { toast("Select the words they sing first."); return false; }
+        var a = start, b = end; while (a < b && /\s/.test(val[a])) a++; while (b > a && /\s/.test(val[b - 1])) b--;
+        ta.value = val.slice(0, a) + "{h" + part + (iv ? " " + iv : "") + "}" + val.slice(a, b) + "{/h}" + val.slice(b);
+      } else {
+        var w = txt.value.trim(); if (!w) { toast("Type what they sing."); return false; }
+        var ls = val.lastIndexOf("\n", start - 1) + 1, le = val.indexOf("\n", start); if (le < 0) le = val.length;
+        var col = Math.max(0, start - ls), line = val.slice(ls, le).replace(/\[[^\]]+\]/g, "").replace(AK_BV_MARK_RE, "");
+        col = Math.min(col, line.length);
+        ta.value = val.slice(0, le) + "\n{bv" + part + (iv ? " " + iv : "") + ": " + new Array(col + 1).join(" ") + w + "}" + val.slice(le);
+      }
+      done();
+    } }].filter(Boolean));
+}
+function akBvMenu(btn) {
+  var v = akBvView(), s = akBvSong, items = [{ head: "Backing vocals" }];
+  function set(x) { settings().bvView = x; save(); try { fillCharts(); } catch (e) { render(); } }
+  items.push({ label: (v === "all" ? "✓ " : "") + "Lead and backing vocals", onClick: function () { set("all"); } });
+  items.push({ label: (v === "lead" ? "✓ " : "") + "Lead only", onClick: function () { set("lead"); } });
+  [1, 2, 3, 4].forEach(function (i) { var used = s && new RegExp("\\{(h|bv)" + i + "[\\s:}]").test((s.lyrics || "")); if (used || v === String(i)) items.push({ label: (v === String(i) ? "✓ " : "") + "Only " + akBvPart(i).name + "'s part", onClick: function () { set(String(i)); } }); });
+  menu(btn, items);
+}
+
+/* ---------------------------------------------------------------- 3. hooks: toolbar, settings, song editor */
+TB_ITEMS.push(["degrees", "Chord names / numbers"], ["bv", "Backing vocals view"]);
+TB_SHORT.degrees = "Numbers"; TB_SHORT.bv = "BV";
+AK_IC.degrees = "M4 6h4 M6 6v12 M4 18h4 M11 6l3 12 3-12 M19 6v12";
+AK_IC.bv = "M9 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z M4 11a5 5 0 0 0 10 0 M9 16v4 M17 7v6 M20 8v4";
+function akExtraTb9(id, song, root) {
+  if (id === "degrees") return h("button", { "aria-label": "Chord names or numbers", onClick: akDegCycle }, akIcon("degrees"));
+  if (id === "bv") return h("button", { "aria-label": "Backing vocals view", onClick: function () { akBvMenu(this); } }, akIcon("bv"));
+  if (typeof akExtraTb10 === "function") return akExtraTb10(id, song, root);
+  return null;
+}
+function akSettingsExtra3(c) {
+  c.again("playing-screen");
+  c.section("Chord names or numbers", "Roman numerals or Nashville numbers instead of (or with) chord names");
+  var d = akDegSettings();
+  c.select("Show chords as", function () { return d.mode; }, function (v) { d.mode = v; }, [["names", "Names (G, Am, F)"], ["numerals", "Numbers (I, vi, IV)"], ["both", "Names with small numbers"]]);
+  c.select("Numbers style", function () { return d.style; }, function (v) { d.style = v; }, [["roman", "Roman numerals (I, ii, V7)"], ["nashville", "Nashville numbers (1, 2m, 57)"]]);
+  c.out.appendChild(h("p", { class: "hint" }, "Numbers come from the song's key, so they stay the same when you transpose or use a capo. With no key set, the app guesses it from the chords. A song can have its own choice (in the song, under Chord progression)."));
+  c.section("Backing vocals", "Show or hide the backing vocal markings");
+  c.select("Show", function () { return akBvView(); }, function (v) { settings().bvView = v; }, [["all", "Lead and backing vocals"], ["lead", "Lead only"], ["1", "Only part 1"], ["2", "Only part 2"], ["3", "Only part 3"], ["4", "Only part 4"]]);
+  c.out.appendChild(h("p", { class: "hint" }, "Mark them in a song with “🎤 Backing vocals”: select words a singer harmonises on, or add their own line. The toolbar button “Backing vocals view” switches quickly."));
+  if (typeof akSettingsExtra4 === "function") akSettingsExtra4(c);
+}
+SONG_FIELDS.push("bvParts", "degMode");
+
+akCss("ak4-theory", [
+  ".akdeg{font-size:.6em;margin-left:.15em;opacity:.8;font-weight:600;vertical-align:super}",
+  ".akprog{display:grid;gap:6px}.akprog-row{display:grid;grid-template-columns:minmax(70px,auto) 1fr;gap:2px 10px;align-items:baseline}",
+  ".akprog-n{font-weight:700;font-size:1.1rem}.akprog-c{grid-column:2;font-size:.85rem}",
+  ".akbvh{color:var(--bvc);text-decoration:underline 2px var(--bvc);text-underline-offset:.18em}",
+  ".akbvh sup.akbvtag,.akbvl .akbvtag{font-size:.5em;font-weight:700;color:#fff;background:var(--bvc);border-radius:6px;padding:0 .35em;margin-right:.25em;vertical-align:super;text-decoration:none;display:inline-block;line-height:1.4}",
+  ".akbvl{font-size:.72em;font-style:italic;color:var(--bvc);margin:-.1em 0 .25em;white-space:pre-wrap}",
+  ".akbvl .akbvtag{vertical-align:middle;font-style:normal}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 4, phase 3: modes, toolbar grid, info, floating windows, feature guide, theme art =================
+   - one feature registry (AK_FEAT): the feature guide, the tour additions, and the usage modes all read it
+   - usage modes: Perform / Learn and practice / Songwrite, any mix on; each hides what it doesn't need
+   - top toolbar as an even grid: pick the columns and rows, put any button in any cell
+   - toolbar info views: one button flips the top bar between buttons and info (banter, next up, trivia, tips)
+   - floating info window and floating notepad: drag, dock left / right / bottom, minimise, stays open between songs
+   - theme art slots: background, frame, corners and dividers per theme, a dimmer, and your own picture */
+
+/* ---------------------------------------------------------------- 1. modes */
+var AK_MODES = [["perform", "Perform", "Shows, sets, timers, requests, tips, breaks"], ["learn", "Learn and practice", "Scales, chord library, lessons, practice tools"], ["write", "Songwrite", "Works in progress, notepad, placing chords, rhymes, ideas"]];
+function akModes() { var m = settings().modes = settings().modes || {}; AK_MODES.forEach(function (x) { if (m[x[0]] === undefined) m[x[0]] = true; }); return m; }
+function akModeOn(m) { return akModes()[m] !== false; }
+/* a feature's modes as letters: "p", "lw"…; empty = always there */
+function akModesOk(ms) {
+  if (!ms) return true;
+  var on = akModes(), map = { p: "perform", l: "learn", w: "write" };
+  return ms.split("").some(function (c) { return on[map[c]] !== false; });
+}
+/* toolbar and side buttons that belong to a mode */
+var AK_TB_MODES = { request: "p", suggest: "p", encore: "p", calendar: "p", timers: "p", rick: "p", prevset: "p", nextset: "p", jokes: "p", backup: "", bv: "pw",
+  placer: "w", getlyrics: "lw", getchords: "lw", degrees: "lw", notepad: "w", idea: "w", loop: "l", practice: "l", needswork: "l", infoflip: "", infowin: "" };
+function akTbShown(it) {
+  if (!akModesOk(AK_TB_MODES[it.id])) return false;
+  var g = akGrid(); if (g.on) return g.cells.indexOf(it.id) >= 0;
+  return !!it.on;
+}
+/* tag whole areas so a CSS rule can hide them */
+var AK_AREA_MODES = { "requests-and-tips": "p" };
+function akModeBodyClass() {
+  var on = akModes(), b = document.body; if (!b) return;
+  AK_MODES.forEach(function (x) { b.classList.toggle("akm-off-" + x[0], on[x[0]] === false); });
+}
+function akModeTag(root) {
+  root = root || document;
+  Object.keys(AK_AREA_MODES).forEach(function (k) { Array.prototype.forEach.call(root.querySelectorAll('[data-bk="' + k + '"]'), function (el) { el.setAttribute("data-akm", AK_AREA_MODES[k]); }); });
+  Array.prototype.forEach.call(root.querySelectorAll("[data-fab]"), function (el) { var m = AK_TB_MODES[el.getAttribute("data-fab")]; if (m) el.setAttribute("data-akm", m); });
+}
+/* hide an element when none of its modes is on */
+(function () {
+  var rules = [], combos = ["p", "l", "w", "pl", "pw", "lw"], name = { p: "perform", l: "learn", w: "write" };
+  combos.forEach(function (c) { rules.push(c.split("").map(function (x) { return "body.akm-off-" + name[x]; }).join("") + " [data-akm=\"" + c + "\"]{display:none!important}"); });
+  akCss("ak4-modes-hide", rules.join("\n"));
+})();
+function akModesDialog(first) {
+  var on = akModes(), box = h("div");
+  function draw() {
+    box.textContent = "";
+    AK_MODES.forEach(function (x) {
+      var b = h("button", { class: "akmode" + (on[x[0]] !== false ? " on" : ""), "aria-pressed": on[x[0]] !== false ? "true" : "false", onClick: function () {
+        var n = AK_MODES.filter(function (y) { return on[y[0]] !== false; }).length;
+        if (on[x[0]] !== false && n === 1) { toast("Keep at least one mode on."); return; }
+        on[x[0]] = on[x[0]] === false; draw(); } }, h("strong", null, (on[x[0]] !== false ? "✓ " : "") + x[1]), h("span", { class: "muted" }, x[2]));
+      box.appendChild(b);
+    });
+  }
+  draw();
+  modal(first ? "How will you use Akashic Chords?" : "Usage modes", h("div", null, h("p", { class: "hint", style: "margin-top:0" }, "Pick one or more. Each mode shows its own buttons, menus and settings, so the app only has what you use. All on is everything. You can change this any time in Settings."), box),
+    [{ label: "Done", primary: true, onClick: function () { on.picked = true; save(); akModeBodyClass(); render(); } }]);
+}
+function akModesFirst() {
+  try {
+    var m = akModes();
+    if (m.picked) return;
+    if (typeof AK_EDITION !== "undefined" && AK_EDITION === "public") akModesDialog(true);
+    else { m.picked = true; save(); }
+  } catch (e) {}
+}
+setTimeout(akModesFirst, 2500);
+
+/* ---------------------------------------------------------------- 2. toolbar grid */
+function akGrid() {
+  var t = settings().toolbar, g = t.grid = t.grid || {};
+  if (g.on === undefined) g.on = false; if (!g.cols) g.cols = 6; if (!g.rows) g.rows = 2; if (!Array.isArray(g.cells)) g.cells = [];
+  return g;
+}
+function akGridOn() { return !!akGrid().on; }
+function akGridSeed(g) {
+  if (g.cells.some(Boolean)) return;
+  var on = settings().toolbar.items.filter(function (it) { return it.on && akModesOk(AK_TB_MODES[it.id]); }).map(function (it) { return it.id; });
+  g.cells = on.slice(0, g.cols * g.rows);
+}
+/* after the top bar is built: lay it out as the grid, and the info view */
+function akTbAfter(tb, song) {
+  var g = akGrid();
+  if (g.on) {
+    tb.classList.remove("multi", "free", "spread"); tb.classList.add("akgrid");
+    tb.style.gridTemplateColumns = "repeat(" + g.cols + ", minmax(0, 1fr))"; tb.style.height = "";
+    var by = {}; Array.prototype.forEach.call(tb.children, function (el) { var id = el.getAttribute("data-tb"); if (id) by[id] = el; });
+    tb.textContent = "";
+    for (var i = 0; i < g.cols * g.rows; i++) { var id = g.cells[i]; var el = id && by[id]; if (el) { el.style.position = ""; el.style.left = ""; el.style.top = ""; tb.appendChild(el); } else tb.appendChild(h("span", { class: "akgcell", "aria-hidden": "true" })); }
+  }
+  if (S.tbInfo) akInfoStrip(tb, song);
+}
+function akGridEditor(c) {
+  var g = akGrid(), box = h("div");
+  function label(id) { var it = TB_ITEMS.filter(function (x) { return x[0] === id; })[0]; return id ? (TB_SHORT[id] || (it ? it[1] : id)) : ""; }
+  function draw() {
+    box.textContent = "";
+    if (!g.on) return;
+    akGridSeed(g);
+    var grid = h("div", { class: "akgedit", style: "grid-template-columns:repeat(" + g.cols + ",minmax(0,1fr))" });
+    for (var i = 0; i < g.cols * g.rows; i++) (function (i) {
+      var id = g.cells[i];
+      grid.appendChild(h("button", { class: "akgc" + (id ? " on" : ""), "aria-label": "Cell " + (i + 1) + (id ? ": " + label(id) : ", empty"), onClick: function () {
+        var items = [{ head: "Cell " + (i + 1) }, { label: "Empty", onClick: function () { g.cells[i] = null; save(); draw(); } }, { sep: true }];
+        TB_ITEMS.forEach(function (x) { if (!akModesOk(AK_TB_MODES[x[0]])) return; items.push({ label: (g.cells[i] === x[0] ? "✓ " : "") + x[1] + (g.cells.indexOf(x[0]) >= 0 && g.cells[i] !== x[0] ? " (moves here)" : ""), onClick: function () { var j = g.cells.indexOf(x[0]); if (j >= 0) g.cells[j] = g.cells[i] || null; g.cells[i] = x[0]; save(); draw(); } }); });
+        menu(this, items);
+      } }, id ? label(id) : "+"));
+    })(i);
+    box.appendChild(grid);
+    box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { g.cells = []; akGridSeed(g); save(); draw(); } }, "Fill from my toolbar"), h("button", { onClick: function () { g.cells = []; save(); draw(); } }, "Clear all")));
+  }
+  c.check("Lay the top toolbar out as an even grid", function () { return g.on; }, function (v) { g.on = v; draw(); });
+  c.range("Columns", function () { return g.cols; }, function (v) { g.cols = v; draw(); }, 2, 10, 1);
+  c.range("Rows", function () { return g.rows; }, function (v) { g.rows = v; draw(); }, 1, 4, 1);
+  c.out.appendChild(h("p", { class: "hint" }, "Tap a cell to choose its button. A button can be in one cell; picking it again moves it. Empty cells stay blank so the others keep their place."));
+  draw(); c.out.appendChild(box);
+}
+
+/* ---------------------------------------------------------------- 3. info in the top bar, and the info window */
+var AK_TIPS = [
+  "Tune between songs while you talk, not after the count-in.", "Say the song title before you start: it helps requests and tips.", "Drink water at each break, before you need it.",
+  "A quick story about a song gets more applause than a perfect intro.", "Look up at the room at the end of each chorus.", "Mention the tip jar once a set, with a smile, not every song.",
+  "If a song falls apart, finish it with confidence. Most people won't notice.", "Thank the staff by name at least once a night.", "Start the last set with a song people know.",
+  "Keep a slow song ready for when the room gets quiet.", "Say when the next break is, so people know you're staying.", "Check your tuning after a Drop D song.",
+  "Practice the transitions between songs, not only the songs.", "Learn one new song a week, play it once a night until it feels easy.", "Record a rehearsal now and then and listen back with fresh ears."];
+var AK_INFO_KINDS = [["banter", "Banter"], ["next", "Next up"], ["trivia", "About the song"], ["tips", "Tips"]];
+function akNextItems() {
+  var p = S.play; if (!p) return [];
+  var out = [], n = p.list[p.idx + 1];
+  if (n) { var ns = findSong(n.songId); if (ns) out.push({ s: ns, next: true }); }
+  try { suggestCandidates("like", false, []).slice(0, 3).forEach(function (x) { if (!out.some(function (o) { return o.s === x.s; })) out.push({ s: x.s, why: (x.why || []).slice(0, 1).join("") }); }); } catch (e) {}
+  return out;
+}
+function akSongBits(s) { return [s.key ? "Key " + s.key : "", Number(s.capo) ? "Capo " + s.capo : "", typeof akRetuneOf === "function" && akRetuneOf(s) ? "⚠ " + akRetuneOf(s) : ""].filter(Boolean).join(" · "); }
+/* one kind of info as an element (short = for the top bar) */
+function akInfoBody(kind, song, short) {
+  var box = h("div", { class: "akinfo-b" });
+  if (kind === "banter") {
+    var mine = store.banter.filter(function (j) { return j.songId === song.id; }), pool = mine.length ? mine : store.banter.filter(function (j) { return !j.used; });
+    if (!pool.length) pool = store.banter;
+    if (!pool.length) box.appendChild(h("span", { class: "muted" }, "No banter yet. Add some under Import, Banter."));
+    else { S.akBanterI = ((S.akBanterI || 0) + (short ? 0 : 0)) % pool.length; var j = pool[S.akBanterI % pool.length]; box.appendChild(h("span", { class: "akinfo-txt" }, j.text)); box.appendChild(h("button", { class: "sm", onClick: function (e) { e.stopPropagation(); S.akBanterI = (S.akBanterI || 0) + 1; akInfoRefresh(); } }, "Another")); }
+  } else if (kind === "next") {
+    var nx = akNextItems();
+    if (!nx.length) box.appendChild(h("span", { class: "muted" }, "Nothing after this one."));
+    nx.slice(0, short ? 2 : 4).forEach(function (x) {
+      box.appendChild(h("button", { class: "akinfo-song", onClick: function (e) { e.stopPropagation(); if (x.next) playStep(1); else { playInsert(x.s.id, false); toast("“" + x.s.title + "” is next."); } } },
+        h("b", null, (x.next ? "Next: " : "") + (x.s.title || "Untitled")), " ", h("span", { class: "muted" }, akSongBits(x.s) || x.why || "")));
+    });
+  } else if (kind === "trivia") {
+    var bits = [song.year ? "Year " + song.year : "", song.origArtist ? "Original: " + song.origArtist : "", song.writers ? "Written by " + song.writers : ""].filter(Boolean);
+    if (bits.length) box.appendChild(h("span", { class: "muted" }, bits.join(" · ")));
+    if (song.trivia) box.appendChild(h("span", { class: "akinfo-txt" }, short ? (/^[^.!?]*[.!?]?/.exec(song.trivia) || [song.trivia])[0] : song.trivia));
+    if (song.historyNote) box.appendChild(h("span", { class: "akinfo-txt" }, song.historyNote));
+    if (!bits.length && !song.trivia) box.appendChild(h("span", { class: "muted" }, "No info for this song yet. “Get song info” in the song fills it in."));
+  } else if (kind === "tips") {
+    var i = (S.akTipI || 0) % AK_TIPS.length; box.appendChild(h("span", { class: "akinfo-txt" }, "💡 " + AK_TIPS[i])); box.appendChild(h("button", { class: "sm", onClick: function (e) { e.stopPropagation(); S.akTipI = i + 1; akInfoRefresh(); } }, "Next tip"));
+  } else if (kind === "chords") {
+    var ins = settings().instrument, seen = [], row = h("div", { class: "akinfo-dias" });
+    String((song.lyrics || "") + "\n" + (song.chords || "")).replace(/\[([^\]]+)\]/g, function (s, c) { c = c.trim(); if (isChordLike(c) && seen.indexOf(c) < 0) seen.push(c); return s; });
+    String(song.chords || "").split("\n").forEach(function (ln) { if (/\[/.test(ln) || !isChordLineText(ln)) return; ln.trim().split(/\s+/).forEach(function (c) { if (isChordTok(c) && seen.indexOf(c) < 0) seen.push(c); }); });
+    var o = chartOpts(song);
+    seen.slice(0, 16).forEach(function (c) {
+      var t = chordTr(c, o), d = null; try { d = allVoicings(ins, t.shape).list[0]; } catch (e) {}
+      row.appendChild(h("div", { class: "akinfo-dia" }, h("b", null, t.shown), d ? chordDiagram(d, ins, 0.42) : h("span", { class: "muted" }, "?")));
+    });
+    if (!seen.length) row.appendChild(h("span", { class: "muted" }, "No chords in this song."));
+    box.appendChild(row);
+  } else if (kind === "history") {
+    var cv = typeof akCoversCard === "function" ? akCoversCard(song) : null;
+    var hist = (lib().log || []).filter(function (e) { return e.sid === song.id; });
+    box.appendChild(h("span", { class: "muted" }, hist.length ? "You've played it " + hist.length + (hist.length === 1 ? " time" : " times") + ", last on " + new Date(hist[hist.length - 1].at).toLocaleDateString() + "." : "Not played yet."));
+    if (song.year) { var dec = Math.floor(song.year / 10) * 10; box.appendChild(h("span", { class: "akinfo-txt" }, "From the " + dec + "s" + (song.origArtist ? ", first recorded by " + song.origArtist : "") + ".")); }
+    if (cv) box.appendChild(cv);
+  }
+  return box;
+}
+/* the top bar's info view */
+function akInfoStrip(tb, song) {
+  var kinds = AK_INFO_KINDS, k = S.tbInfoKind || "banter", ki = Math.max(0, kinds.map(function (x) { return x[0]; }).indexOf(k));
+  Array.prototype.forEach.call(tb.children, function (el) { if (el.getAttribute("data-tb") !== "infoflip") el.style.display = "none"; });
+  var strip = h("div", { class: "akinfo-strip" },
+    h("button", { class: "akinfo-k", "aria-label": "Previous kind of info", onClick: function () { S.tbInfoKind = kinds[(ki + kinds.length - 1) % kinds.length][0]; akInfoRefresh(); } }, "‹"),
+    h("div", { class: "akinfo-main" }, h("span", { class: "akinfo-h" }, kinds[ki][1]), akInfoBody(kinds[ki][0], song, true)),
+    h("button", { class: "akinfo-k", "aria-label": "Next kind of info", onClick: function () { S.tbInfoKind = kinds[(ki + 1) % kinds.length][0]; akInfoRefresh(); } }, "›"));
+  tb.classList.remove("akgrid"); tb.style.gridTemplateColumns = "";
+  tb.appendChild(strip); tb.classList.add("akinfo-on");
+}
+function akInfoRefresh() {
+  var tb = document.querySelector(".ptop"), song = S.play && curSong();
+  if (tb && song) {
+    var old = tb.querySelector(".akinfo-strip"); if (old) old.remove();
+    Array.prototype.forEach.call(tb.children, function (el) { el.style.display = ""; }); tb.classList.remove("akinfo-on");
+    if (akGridOn()) { tb.classList.add("akgrid"); tb.style.gridTemplateColumns = "repeat(" + akGrid().cols + ", minmax(0, 1fr))"; }
+    if (S.tbInfo) akInfoStrip(tb, song);
+  }
+  akFloatFill("info");
+}
+
+/* ---------------------------------------------------------------- 4. floating windows */
+var AK_FLOATS = {};
+function akFloatCfg(id) { var f = settings().floats = settings().floats || {}; return f[id] = f[id] || {}; }
+function akFloatOpen(id) { return !!AK_FLOATS[id] && !!AK_FLOATS[id].el.isConnected; }
+/* def = { title, tabs: [[key, label]], body(tab, el), w, h } */
+function akFloat(id, def) {
+  if (akFloatOpen(id)) { akFloatClose(id); return; }
+  var c = akFloatCfg(id); c.open = true; save();
+  var el = h("div", { class: "akfloat", role: "dialog", "aria-label": def.title, "data-float": id });
+  var tabs = h("div", { class: "akf-tabs" }), body = h("div", { class: "akf-body" });
+  var head = h("div", { class: "akf-head" }, h("span", { class: "akf-grip", "aria-hidden": "true" }, "⠿"), h("b", { class: "akf-title" }, def.title), tabs,
+    h("button", { class: "akf-b", "aria-label": "Dock", title: "Dock left, right, bottom, or float", onClick: function () { var order = ["", "right", "left", "bottom"]; c.dock = order[(order.indexOf(c.dock || "") + 1) % 4]; save(); place(); } }, "⇲"),
+    h("button", { class: "akf-b", "aria-label": "Minimise", onClick: function () { c.min = !c.min; save(); place(); } }, "—"),
+    h("button", { class: "akf-b", "aria-label": "Close", onClick: function () { akFloatClose(id); } }, "✕"));
+  el.appendChild(head); el.appendChild(body);
+  document.body.appendChild(el);
+  AK_FLOATS[id] = { el: el, def: def, body: body, tabs: tabs };
+  function place() {
+    el.classList.toggle("min", !!c.min);
+    ["left", "right", "bottom"].forEach(function (d) { el.classList.toggle("dock-" + d, c.dock === d); });
+    akDockBody();
+    if (!c.dock) {
+      var W = window.innerWidth, H = window.innerHeight, w = Math.min(c.w || def.w || 340, W - 16), hh = Math.min(c.h || def.h || 300, H - 80);
+      el.style.width = w + "px"; el.style.height = c.min ? "" : hh + "px";
+      var x = c.x != null ? c.x : W - w - 12, y = c.y != null ? c.y : 70;
+      el.style.left = Math.max(4, Math.min(W - 60, x)) + "px"; el.style.top = Math.max(4, Math.min(H - 44, y)) + "px";
+    } else { el.style.left = el.style.top = el.style.width = el.style.height = ""; }
+  }
+  /* drag by the header (floating only) */
+  var drag = null;
+  head.addEventListener("pointerdown", function (e) { if (e.target.closest("button") || c.dock) return; var r = el.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top }; head.setPointerCapture(e.pointerId); });
+  head.addEventListener("pointermove", function (e) { if (!drag) return; c.x = e.clientX - drag.dx; c.y = e.clientY - drag.dy; el.style.left = c.x + "px"; el.style.top = c.y + "px"; });
+  head.addEventListener("pointerup", function () { if (drag) { drag = null; save(); } });
+  /* resize from the corner */
+  var rz = h("span", { class: "akf-rz", "aria-hidden": "true" }); el.appendChild(rz); var rs = null;
+  rz.addEventListener("pointerdown", function (e) { if (c.dock) return; var r = el.getBoundingClientRect(); rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height }; rz.setPointerCapture(e.pointerId); e.preventDefault(); });
+  rz.addEventListener("pointermove", function (e) { if (!rs) return; c.w = Math.max(220, rs.w + e.clientX - rs.x); c.h = Math.max(140, rs.h + e.clientY - rs.y); el.style.width = c.w + "px"; el.style.height = c.h + "px"; });
+  rz.addEventListener("pointerup", function () { if (rs) { rs = null; save(); } });
+  place(); akFloatFill(id);
+  return el;
+}
+function akFloatFill(id) {
+  var f = AK_FLOATS[id]; if (!f || !f.el.isConnected) return;
+  var c = akFloatCfg(id), d = f.def, tab = c.tab && d.tabs.some(function (t) { return t[0] === c.tab; }) ? c.tab : d.tabs[0][0];
+  f.tabs.textContent = "";
+  if (d.tabs.length > 1) d.tabs.forEach(function (t) { f.tabs.appendChild(h("button", { class: "akf-tab" + (t[0] === tab ? " on" : ""), "aria-pressed": t[0] === tab ? "true" : "false", onClick: function () { c.tab = t[0]; c.min = false; save(); f.el.classList.remove("min"); akFloatFill(id); } }, t[1])); });
+  var keep = f.body.querySelector("textarea"), focus = keep && document.activeElement === keep;
+  if (focus && f.tab === tab && f.key === d.key()) return; /* don't disturb typing */
+  f.tab = tab; f.key = d.key();
+  f.body.textContent = ""; d.body(tab, f.body);
+}
+function akFloatClose(id) { var f = AK_FLOATS[id]; if (f && f.def.onClose) f.def.onClose(); if (f && f.el.parentNode) f.el.parentNode.removeChild(f.el); delete AK_FLOATS[id]; akFloatCfg(id).open = false; save(); akDockBody(); }
+function akDockBody() {
+  var b = document.body, any = { left: 0, right: 0, bottom: 0 };
+  Object.keys(AK_FLOATS).forEach(function (id) { var c = akFloatCfg(id); if (AK_FLOATS[id].el.isConnected && c.dock && !c.min) any[c.dock] = 1; });
+  ["left", "right", "bottom"].forEach(function (d) { b.classList.toggle("akdock-" + d, !!any[d]); });
+  if (S.view === "play") setTimeout(function () { try { updateReserve(); fitSoon(); } catch (e) {} }, 0);
+}
+/* the info window */
+var AK_INFO_TABS = [["chords", "Chords"], ["banter", "Banter"], ["trivia", "About"], ["history", "History"], ["next", "Next up"]];
+function akInfoWinSong() { return S.view === "song" && S.songId ? findSong(S.songId) : S.play ? curSong() : null; }
+function akInfoWin(tab) {
+  if (tab) { akFloatCfg("info").tab = tab; akFloatCfg("info").min = false; }
+  if (akFloatOpen("info") && tab) { AK_FLOATS.info.el.classList.remove("min"); akFloatFill("info"); return; }
+  akFloat("info", { title: "Info", tabs: AK_INFO_TABS, w: 340, h: 320, key: function () { var s = akInfoWinSong(); return s ? s.id : ""; }, body: function (tab, el) {
+    var s = akInfoWinSong(); if (!s) { el.appendChild(h("p", { class: "hint" }, "Open a song and its info shows here.")); return; }
+    el.appendChild(h("div", { class: "akf-song" }, s.title || "Untitled", h("span", { class: "muted" }, " " + akSongBits(s))));
+    el.appendChild(akInfoBody(tab, s, false));
+  } });
+}
+/* the notepad window: this song's notes (the same scratch pad as Write mode) or general notes */
+function akNotepadSong() { return akInfoWinSong(); }
+function akNotepad() {
+  akFloat("notepad", { title: "Notepad", tabs: [["song", "This song"], ["all", "General"]], w: 320, h: 260, key: function () { var s = akNotepadSong(); return (s ? s.id : "") + ":" + (akFloatCfg("notepad").tab || ""); }, body: function (tab, el) {
+    var s = akNotepadSong();
+    if (tab === "song" && !s) { el.appendChild(h("p", { class: "hint" }, "Open a song to keep notes with it. The General tab is always here.")); return; }
+    var ta = h("textarea", { class: "akf-pad", spellcheck: "true", "aria-label": tab === "song" ? "Notes for this song" : "General notes", placeholder: tab === "song" ? "Ideas, lines, reminders for “" + (s.title || "this song") + "”…" : "Anything: set ideas, gear to bring, names…" });
+    ta.value = tab === "song" ? (s.scratch || "") : (settings().notepad || "");
+    var st = h("span", { class: "muted akf-saved" }, ""), t = 0;
+    ta.addEventListener("input", function () { clearTimeout(t); st.textContent = "…"; t = setTimeout(function () { if (tab === "song") s.scratch = ta.value; else settings().notepad = ta.value; save(); st.textContent = "Saved"; }, 400); });
+    ta.addEventListener("blur", function () { if (t) { clearTimeout(t); if (tab === "song") s.scratch = ta.value; else settings().notepad = ta.value; save(); st.textContent = "Saved"; } });
+    el.appendChild(ta); el.appendChild(st);
+  } });
+}
+/* reopen windows that were open, and keep them on the right song */
+function akFloatsSync() {
+  ["info", "notepad"].forEach(function (id) {
+    var c = akFloatCfg(id);
+    if (c.open && !akFloatOpen(id) && (id !== "info" || S.view === "play")) { c.open = false; if (id === "info") akInfoWin(); else akNotepad(); }
+    if (akFloatOpen(id)) {
+      if (id === "info" && S.view !== "play" && S.view !== "song") AK_FLOATS[id].el.style.display = "none";
+      else { AK_FLOATS[id].el.style.display = ""; akFloatFill(id); }
+    }
+  });
+  akDockBody();
+}
+/* the info window can pop up on its own */
+function akInfoAuto(song) {
+  var a = settings().infoWin || {};
+  if (!a.auto || a.auto === "off" || S.view !== "play") return;
+  akInfoWin(a.tab || "banter");
+  if (a.secs) { clearTimeout(S.akInfoT); S.akInfoT = setTimeout(function () { var c = akFloatCfg("info"); if (akFloatOpen("info")) { c.min = true; AK_FLOATS.info.el.classList.add("min"); akDockBody(); } }, a.secs * 1000); }
+}
+function akPlayHooks5(song, item) {
+  akFloatsSync(); akInfoAuto(song);
+  if (typeof akPlayHooks6 === "function") akPlayHooks6(song, item);
+}
+
+/* ---------------------------------------------------------------- 5. buttons */
+TB_ITEMS.push(["infoflip", "Switch the toolbar to info (banter, next up, tips)"], ["infowin", "Info window (chords, banter, trivia, next up)"], ["notepad", "Notepad"]);
+TB_SHORT.infoflip = "Info bar"; TB_SHORT.infowin = "Info"; TB_SHORT.notepad = "Notepad";
+FAB_ITEMS.push(["infowin", "Info window"], ["notepad", "Notepad"]); FAB_OFF.infowin = 1; FAB_OFF.notepad = 1; FAB_SHORT.infowin = "Info"; FAB_SHORT.notepad = "Notes";
+AK_IC.infoflip = "M4 7h16 M4 12h10 M4 17h7 M17 14l3 3-3 3";
+AK_IC.infowin = "M4 5h16v12H4z M12 9v5 M12 7v.5 M8 21h8";
+AK_IC.notepad = "M6 3h9l4 4v14H6z M9 9h7 M9 13h7 M9 17h4";
+function akExtraTb10(id, song, root) {
+  if (id === "infoflip") return h("button", { "aria-label": S.tbInfo ? "Show the buttons" : "Show info in the toolbar", "aria-pressed": S.tbInfo ? "true" : "false", class: S.tbInfo ? "on" : "", onClick: function () { S.tbInfo = !S.tbInfo; this.classList.toggle("on", S.tbInfo); this.setAttribute("aria-pressed", S.tbInfo ? "true" : "false"); akInfoRefresh(); setTimeout(function () { try { updateTbArrows(); } catch (e) {} }, 0); } }, akIcon("infoflip"));
+  if (id === "infowin") return h("button", { "aria-label": "Info window", onClick: function () { akInfoWin(); } }, akIcon("infowin"));
+  if (id === "notepad") return h("button", { "aria-label": "Notepad", onClick: function () { akNotepad(); } }, akIcon("notepad"));
+  if (typeof akExtraTb11 === "function") return akExtraTb11(id, song, root);
+  return null;
+}
+function akExtraFab4(song, root) {
+  var o = {
+    infowin: function () { return h("button", { class: "fb", "aria-label": "Info window", onClick: function () { akInfoWin(); this.blur(); } }, akIcon("infowin")); },
+    notepad: function () { return h("button", { class: "fb", "aria-label": "Notepad", onClick: function () { akNotepad(); this.blur(); } }, akIcon("notepad")); }
+  };
+  if (typeof akExtraFab5 === "function") Object.assign(o, akExtraFab5(song, root));
+  return o;
+}
+
+/* ---------------------------------------------------------------- 6. the feature registry, guide and tour */
+/* [id, category, name, what it does, where, modes, go (view or function), selector to point at, area for the picture, [related ids], tour] */
+var AK_FEAT_RAW = [
+  ["search", "Songs", "Search and filters", "Search titles, artists and lyrics. Filters sort and narrow by tag, favorites, played, key, tempo and more.", "Songs page, top", "", "songs", '[data-bk="search"]', "list"],
+  ["smart", "Songs", "Tags and smart lists", "Tag songs and save searches as smart lists (capo, tuning, needs work and more).", "Songs page, Filters", "", "songs", '[data-bk="search"]', "list", ["search", "shelves"]],
+  ["shelves", "Songs", "Works in progress and Originals", "Two extra song lists beside your main library. Show either in the main list, and move a song with one tap when it's finished.", "Songs page, top", "w", "songs", ".akshelf", "list", ["idea", "versions"]],
+  ["editor", "Songs", "The song editor", "Lyrics and chords, key, tempo, notes, pictures, versions and links for each song.", "Tap any song", "", "songs", null, "editor", ["placer", "findchords", "bv"]],
+  ["findchords", "Songs", "Chords written as text", "Chords typed above the words, with ♭/♯, D-A or (X2), turn into real chords on paste, or with ✨ Chords in text.", "Song editor, under the lyrics", "", "songs", null, "editor", ["sheet"]],
+  ["sheet", "Songs", "Chords from a chord sheet", "Paste a chord sheet from the web and its chords land on your own lyrics, matched word by word.", "Song editor, or Get chords on the playing screen", "lw", "songs", null, "editor", ["findchords", "lucky"]],
+  ["lucky", "Songs", "Lucky guess", "Spreads a bare chord list over the lyrics as dashed suggestions you nudge, accept or remove.", "Song editor", "w", "songs", null, "editor", ["placer"]],
+  ["placer", "Songs", "Place chords", "Tap a word, then a chord. From the playing screen it opens at your spot and brings you back.", "Song editor or toolbar", "w", "songs", null, "editor", ["shape"]],
+  ["shape", "Songs", "Custom chord shape", "Tap frets on a diagram and the app names the chord, places it and keeps the shape.", "Place chords, ✋ Shape", "w", "songs", null, "editor"],
+  ["bv", "Songs", "Backing vocals", "Mark harmony on the lead's words or a separate backing line, per singer, with the interval. Show lead only or one singer's part.", "Song editor, 🎤 Backing vocals", "pw", "songs", null, "lyrics"],
+  ["degrees", "Songs", "Roman numerals and Nashville numbers", "Show chords as names, numbers, or both. The progression of each section shows in the song's info.", "Settings, Playing screen; toolbar button", "lw", "settings", '[data-bk="chord-names-or-numbers"]', "lyrics"],
+  ["versions", "Songs", "Song history", "Every save of a song is kept, so you can look back and restore an older version.", "Song editor, ⋯ menu", "w", "songs", null, "editor"],
+  ["play", "Playing", "The playing screen", "Auto-scroll, text size, chord shapes for your tuning, fit-to-screen and touch lock.", "▶ on any song", "", "play", null, "lyrics", ["pedal", "toolbar"]],
+  ["toolbar", "Playing", "Toolbar and side buttons", "Choose the buttons, their order, size and place. The top bar can be an even grid.", "Settings, Playing screen", "", "settings", '[data-bk="toolbar-grid"]', "top", ["infoflip"]],
+  ["infoflip", "Playing", "Info in the toolbar", "One button flips the top bar to banter, next up, song info and tips, and back.", "Toolbar button “Info bar”", "", "play", '[data-tb="infoflip"]', "top", ["infowin"]],
+  ["infowin", "Playing", "Info window", "A window you can drag, dock or minimise, with chord diagrams, banter, song info, history and next up. It can pop up by itself.", "Toolbar or side button “Info”", "", "play", null, "float", ["notepad"]],
+  ["notepad", "Playing", "Notepad", "A floating notepad that saves as you type: notes for each song, and general notes.", "Toolbar or side button “Notepad”", "w", "play", null, "float"],
+  ["pedal", "Playing", "Bluetooth pedal", "Next song, scroll and more. Presses act instantly; a quick double press is an extra.", "Settings, Playing screen, Pedal", "", "settings", null, "settings"],
+  ["solo", "Playing", "Solo blocks", "A Solo block pauses auto-scroll until you tap or the time runs out.", "Song editor, + Solo", "pl", "songs", null, "lyrics"],
+  ["loop", "Practice", "Loop a section", "Auto-scroll goes round one section again and again while you practice it.", "Toolbar button “Loop”", "l", "play", null, "top", ["practice"]],
+  ["practice", "Practice", "Practice log and slow-down", "Time each practice, slow the scroll and metronome, and see what you've practiced.", "Toolbar button “Practice”", "l", "play", null, "top", ["needswork"]],
+  ["needswork", "Practice", "Needs work", "Flag songs that need practice and list them in a smart list.", "Song editor or toolbar", "l", "songs", null, "list"],
+  ["idea", "Songwriting", "Quick idea", "One tap makes a new work-in-progress song with a voice memo and a note.", "Songs page ⋯, or toolbar", "w", "songs", null, "list", ["shelves"]],
+  ["sendto", "Songwriting", "Send to…", "Send a song to Place chords, the notepad, a show, practice or print, and come back where you were.", "Song editor ⋯, or toolbar", "", "songs", null, "editor"],
+  ["shows", "Shows", "Shows and sets", "A show is a night made of sets. Timers, a break countdown and a show timer with Start, Pause and Reset.", "Shows tab", "p", "shows", null, "list", ["breaks"]],
+  ["breaks", "Shows", "Break countdown", "A countdown to the next break in the info bar, from each set's length.", "Info bar on the playing screen", "p", "shows", null, "bottom"],
+  ["retune", "Shows", "Drop D and tuning changes", "A heads-up before a song in another tuning, and a reminder to tune back after it.", "Song editor, Playing", "p", "songs", null, "bottom"],
+  ["requests", "Shows", "Requests and tips", "A QR page where the audience requests songs and tips.", "Settings, Requests and tips", "p", "settings", '[data-bk="requests-and-tips"]', "settings"],
+  ["history", "Shows", "Play history", "Every song you played, by night and place, with notes, tips and pay you can edit later.", "Shows tab, Play history", "p", "history", null, "list"],
+  ["build", "Shows", "Build a set list", "Pick the kind of gig and length, and get a set list from your own songs.", "Shows tab", "p", "build", null, "list"],
+  ["backup", "Your data", "One-tap backup", "Back up everything with one tap. The last copies are kept and can be restored in one tap.", "Toolbar, side button, or Settings, Data", "", "settings", '[data-bk="data-and-extras"]', "top"],
+  ["import", "Your data", "Import and export", "Add songs from files or text, share a set list, export a song.", "Import tab", "", "import", null, "list"],
+  ["modes", "Look and feel", "Usage modes", "Perform, Learn and practice, Songwrite: turn on what you use and the rest stays out of the way.", "Settings, Look", "", "settings", '[data-bk="usage-modes"]', "settings"],
+  ["themes", "Look and feel", "Themes and theme art", "Themes, fonts, colors and effects. Each theme can have background art, a frame and dividers, with a dimmer.", "Settings, Look", "", "settings", '[data-bk="theme-art"]', "settings"],
+  ["arrange", "Look and feel", "Arrange any page", "The ⇅ button on a page lets you drag every item where you want it.", "⇅ at the top of a page", "", "songs", ".laybtn", "settings"]
+];
+var AK_FEAT = AK_FEAT_RAW.map(function (r) { return { id: r[0], cat: r[1], name: r[2], desc: r[3], where: r[4], modes: r[5], go: r[6], sel: r[7], area: r[8], links: r[9] || [], tour: !!r[10] }; });
+var AK_FEAT_CATS = ["Songs", "Playing", "Practice", "Songwriting", "Shows", "Your data", "Look and feel"];
+function akFeat(id) { return AK_FEAT.filter(function (f) { return f.id === id; })[0]; }
+/* the whole list, plus every toolbar button (so it stays complete as buttons are added) */
+function akFeatAll() {
+  var out = AK_FEAT.slice(), have = {}; out.forEach(function (f) { have[f.id] = 1; });
+  TB_ITEMS.forEach(function (t) { if (have[t[0]]) return; out.push({ id: "tb-" + t[0], cat: "Toolbar buttons", name: t[1], desc: "A button you can put in the top toolbar.", where: "Settings, Playing screen, Top toolbar", modes: AK_TB_MODES[t[0]] || "", go: "play", sel: '[data-tb="' + t[0] + '"]', area: "top", links: [] }); });
+  return out;
+}
+/* a little drawing of the screen with the spot lit up */
+function akFeatPic(area) {
+  var play = ["top", "side", "lyrics", "bottom", "float"].indexOf(area) >= 0;
+  var pic = h("div", { class: "akpic " + (play ? "play" : "page"), "aria-hidden": "true" });
+  if (play) { ["top", "lyrics", "side", "bottom"].forEach(function (z) { pic.appendChild(h("i", { class: "z-" + z + (area === z ? " lit" : "") })); }); if (area === "float") pic.appendChild(h("i", { class: "z-float lit" })); }
+  else { ["head", "list", "tabs"].forEach(function (z) { pic.appendChild(h("i", { class: "z-" + z + ((area === "list" && z === "list") || (area === "editor" && z === "list") || (area === "settings" && z === "list") ? " lit" : "") })); }); }
+  return pic;
+}
+function akFeatGo(f) {
+  var v = f.go;
+  function point() { if (!f.sel) return; var el = document.querySelector(f.sel); if (!el) return; var d = el.closest("details"); while (d) { d.open = true; d = d.parentElement && d.parentElement.closest("details"); } if (el.tagName === "DETAILS") el.open = true; el.scrollIntoView({ block: "center" }); el.classList.add("akpulse"); setTimeout(function () { el.classList.remove("akpulse"); }, 2600); }
+  if (typeof v === "function") v();
+  else if (v === "play") { if (S.play) resumePlay(); else { var l = filteredSongs(); if (l.length) playFromSongs(l, 0); else { toast("Add a song first."); return; } } }
+  else go(v);
+  setTimeout(point, 350);
+}
+function akViewFeatures() {
+  var q = S.featQ || "", list = h("div");
+  var search = h("input", { type: "search", placeholder: "Search features", "aria-label": "Search features", value: q, onInput: function () { S.featQ = this.value; draw(); } });
+  function draw() {
+    list.textContent = "";
+    var all = akFeatAll(), qq = (S.featQ || "").trim().toLowerCase(), cats = AK_FEAT_CATS.concat(["Toolbar buttons"]);
+    cats.forEach(function (cat, ci) {
+      var items = all.filter(function (f) { return f.cat === cat && (!qq || (f.name + " " + f.desc + " " + f.where).toLowerCase().indexOf(qq) >= 0); });
+      if (!items.length) return;
+      var det = h("details", { class: "card akfeatcat", "data-bk": laySlug(cat) }, h("summary", null, h("b", null, cat), h("span", { class: "muted" }, " " + items.length)));
+      if (qq || ci === 0) det.open = true;
+      items.forEach(function (f) {
+        var off = !akModesOk(f.modes);
+        var it = h("details", { class: "akfeat" + (off ? " off" : "") }, h("summary", null, h("span", { class: "gt" }, f.name), off ? h("span", { class: "muted" }, " (mode off)") : null));
+        var links = (f.links || []).map(akFeat).filter(Boolean);
+        it.appendChild(h("div", { class: "akfeat-b" }, akFeatPic(f.area), h("div", { class: "grow" },
+          h("div", { class: "gd" }, f.desc), h("div", { class: "muted gd" }, "Where: " + f.where),
+          links.length ? h("div", { class: "muted gd" }, "Works with: ", links.map(function (l, i) { return h("button", { class: "linkish", onClick: function () { S.featQ = l.name; search.value = l.name; draw(); } }, l.name + (i < links.length - 1 ? "," : "")); })) : null,
+          f.go ? h("button", { class: "sm", onClick: function () { akFeatGo(f); } }, "Take me there") : null)));
+        det.appendChild(it);
+      });
+      list.appendChild(det);
+    });
+    if (!list.firstChild) list.appendChild(h("p", { class: "empty" }, "Nothing matches."));
+  }
+  draw();
+  var body = h("div", { "data-blocks": "guide" },
+    h("div", { class: "card", "data-bk": "tour" }, h("strong", null, "New here?"), h("p", { class: "hint", style: "margin:6px 0" }, "A short walk through the main features."), h("div", { class: "row", style: "margin:0" }, h("button", { class: "primary", onClick: function () { openTour(); } }, "Take the tour"), h("button", { onClick: function () { akModesDialog(false); } }, "Usage modes…"))),
+    h("div", { class: "row" }, h("div", { class: "grow" }, search)), list);
+  return shell("All features", body, {});
+}
+/* extra tour stops, from the registry */
+function akTourExtra(steps) {
+  var add = [
+    { t: "Usage modes", txt: ["Perform, Learn and practice, and Songwrite. Turn on the ones you use in Settings, Look, Usage modes, and each one brings its own buttons, menus and settings. All on is everything."] },
+    { t: "Info and notes while you play", txt: ["The Info bar button flips the top toolbar to banter, what's next, song info and tips. The Info window and Notepad float over the song: drag them, dock them to a side, or minimise them."] },
+    { t: "Songwriting", txt: ["Works in progress and Originals are their own lists beside your library. Quick idea makes a new song with a voice memo. Lucky guess and Chords from a chord sheet help put chords on new lyrics."] }];
+  var last = steps.pop(); return steps.concat(add, [last]);
+}
+
+/* ---------------------------------------------------------------- 7. theme art */
+var AK_THEME_ART = window.AK_THEME_ART || {}; /* filled at build time: { themeId: { bg: [url…], border: url, corner: url, divider: url } } */
+var akArtMine = {}; /* your own pictures, from IndexedDB */
+function akArtCfg(id) { var a = settings().themeArt = settings().themeArt || {}; id = id || settings().theme; return a[id] = a[id] || {}; }
+function akArtDb(cb) { try { var r = indexedDB.open("akashic-art", 1); r.onupgradeneeded = function () { r.result.createObjectStore("art"); }; r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); }; } catch (e) { cb(null); } }
+function akArtLoad() { akArtDb(function (db) { if (!db) return; var tx = db.transaction("art"), st = tx.objectStore("art"), rq = st.openCursor(); rq.onsuccess = function () { var c = rq.result; if (c) { akArtMine[c.key] = c.value; c.continue(); } else akArtApply(); }; }); }
+function akArtSaveMine(id, dataUrl) { akArtMine[id] = dataUrl; akArtDb(function (db) { if (!db) return; var tx = db.transaction("art", "readwrite"); if (dataUrl) tx.objectStore("art").put(dataUrl, id); else tx.objectStore("art").delete(id); }); }
+function akArtApply() {
+  var id = settings().theme, c = akArtCfg(id), art = AK_THEME_ART[id] || {}, r = document.documentElement, url = "";
+  if (c.bg === "mine") url = akArtMine[id] || "";
+  else if (c.bg && /^bg\d+$/.test(c.bg)) url = (art.bg || [])[+c.bg.slice(2) - 1] || "";
+  var light = typeof isLightNow === "function" && isLightNow(), dim = c.dim == null ? 0.45 : c.dim;
+  var el = document.getElementById("akArtBg");
+  if (!url) { if (el) el.remove(); document.body.classList.remove("akart-on", "akart-play"); }
+  else {
+    if (!el) { el = h("div", { id: "akArtBg", "aria-hidden": "true" }); document.body.insertBefore(el, document.body.firstChild); }
+    el.style.backgroundImage = "linear-gradient(" + (light ? "rgba(255,255,255," : "rgba(0,0,0,") + dim + "), " + (light ? "rgba(255,255,255," : "rgba(0,0,0,") + dim + ")), url(\"" + url + "\")";
+    document.body.classList.add("akart-on"); document.body.classList.toggle("akart-play", c.play === true);
+  }
+  r.style.setProperty("--akart-border", art.border && c.frame === "border" ? "url(\"" + art.border + "\")" : "none");
+  r.style.setProperty("--akart-corner", art.corner && c.frame === "corners" ? "url(\"" + art.corner + "\")" : "none");
+  r.style.setProperty("--akart-divider", art.divider && c.dividers ? "url(\"" + art.divider + "\")" : "none");
+  document.body.classList.toggle("akart-border", !!(art.border && c.frame === "border"));
+  document.body.classList.toggle("akart-corners", !!(art.corner && c.frame === "corners"));
+  document.body.classList.toggle("akart-div", !!(art.divider && c.dividers));
+}
+function akArtSettings(c) {
+  var id = settings().theme, a = akArtCfg(id), art = AK_THEME_ART[id] || {}, nbg = (art.bg || []).length;
+  c.out.appendChild(h("p", { class: "hint" }, nbg || art.border || art.corner ? "Art for this theme is built in. Pick a background, a frame and dividers." : "This theme has no built-in art yet. You can use your own picture as its background; built-in art arrives in a later update."));
+  var opts = [["", "None"]]; for (var i = 1; i <= nbg; i++) opts.push(["bg" + i, "Background " + i]); opts.push(["mine", akArtMine[id] ? "My picture" : "My picture (pick one below)"]);
+  c.select("Background", function () { return a.bg || ""; }, function (v) { a.bg = v; akArtApply(); }, opts);
+  var inp = h("input", { type: "file", accept: "image/*", onChange: function () {
+    var f = this.files && this.files[0]; if (!f) return;
+    var img = new Image(), rd = new FileReader();
+    rd.onload = function () { img.onload = function () { var sc = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement("canvas"); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc); cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); var d = cv.toDataURL("image/webp", 0.72); if (d.indexOf("image/webp") < 0) d = cv.toDataURL("image/jpeg", 0.75); akArtSaveMine(id, d); a.bg = "mine"; save(); akArtApply(); toast("Picture set for this theme."); c.refresh && c.refresh(); }; img.src = rd.result; };
+    rd.readAsDataURL(f);
+  } });
+  c.out.appendChild(h("div", { class: "row" }, fileBtn("Choose my picture…", inp), akArtMine[id] ? h("button", { onClick: function () { akArtSaveMine(id, null); if (a.bg === "mine") a.bg = ""; save(); akArtApply(); toast("Removed."); } }, "Remove my picture") : null));
+  c.range("Dim the picture (keeps text readable)", function () { return Math.round((a.dim == null ? 0.45 : a.dim) * 100); }, function (v) { a.dim = v / 100; akArtApply(); }, 0, 90, 5, function (v) { return v + "%"; });
+  c.check("Show it behind the playing screen too", function () { return a.play === true; }, function (v) { a.play = v; akArtApply(); });
+  if (art.border || art.corner) c.select("Frame", function () { return a.frame || ""; }, function (v) { a.frame = v; akArtApply(); }, [["", "None"]].concat(art.border ? [["border", "Full border"]] : []).concat(art.corner ? [["corners", "Corners only"]] : []));
+  if (art.divider) c.check("Section dividers", function () { return !!a.dividers; }, function (v) { a.dividers = v; akArtApply(); });
+}
+setTimeout(akArtLoad, 300);
+
+/* ---------------------------------------------------------------- 8. hooks */
+function akSettingsExtra4(c) {
+  c.again("look");
+  c.section("Usage modes", "Perform, Learn and practice, Songwrite");
+  var m = akModes();
+  AK_MODES.forEach(function (x) { c.check(x[1] + " (" + x[2].toLowerCase() + ")", function () { return m[x[0]] !== false; }, function (v) {
+    if (!v && AK_MODES.filter(function (y) { return m[y[0]] !== false; }).length === 1) { toast("Keep at least one mode on."); go("settings"); return; }
+    m[x[0]] = v; m.picked = true; akModeBodyClass(); }); });
+  c.out.appendChild(h("p", { class: "hint" }, "Each mode brings its own toolbar buttons, menus and settings. Turning one off hides them; nothing is deleted."));
+  c.section("Theme art", "Background picture, frame and dividers for the current theme");
+  akArtSettings(c);
+  c.again("playing-screen");
+  c.section("Toolbar grid", "The top toolbar as an even grid of cells");
+  akGridEditor(c);
+  c.section("Info window and notepad", "Floating windows on the playing screen");
+  var iw = settings().infoWin = settings().infoWin || {};
+  c.select("The info window opens by itself", function () { return iw.auto || "off"; }, function (v) { iw.auto = v; }, [["off", "Never"], ["start", "At the start of each song"]]);
+  c.select("…showing", function () { return iw.tab || "banter"; }, function (v) { iw.tab = v; }, AK_INFO_TABS);
+  c.range("…and tucks itself away after", function () { return iw.secs || 0; }, function (v) { iw.secs = v; }, 0, 60, 5, function (v) { return v ? v + " s" : "never (stays open)"; });
+  c.out.appendChild(h("p", { class: "hint" }, "Add the Info, Info bar and Notepad buttons to the toolbar or side buttons. Windows can be dragged by their title, docked with ⇲ and minimised with —."));
+  if (typeof akSettingsExtra5 === "function") akSettingsExtra5(c);
+}
+function akAfterRender() { akModeBodyClass(); akModeTag(document.getElementById("app")); akFloatsSync(); if (typeof akAfterRender2 === "function") akAfterRender2(); }
+
+akCss("ak4-modes", [
+  ".akmode{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;margin:0 0 8px;padding:12px 14px;border-radius:14px}",
+  ".akmode.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}",
+  ".ptop.akgrid{display:grid!important;gap:var(--tb-gap,6px);overflow:visible;grid-auto-rows:var(--tbh,var(--tb))}",
+  ".ptop.akgrid>button{width:100%!important;min-width:0!important;max-width:none!important;margin:0}.akgcell{display:block}",
+  ".akgedit{display:grid;gap:6px;margin:8px 0}.akgc{min-height:44px;padding:4px;font-size:.8rem;border-style:dashed}.akgc.on{border-style:solid;font-weight:700}",
+  ".ptop.akinfo-on{display:flex!important;flex-wrap:nowrap!important;align-items:stretch;overflow:hidden;height:auto!important}.ptop.akinfo-on>button[data-tb]{flex:none;width:auto}",
+  ".akinfo-strip{display:flex;align-items:stretch;gap:6px;flex:1 1 auto;min-width:0;height:calc(var(--tbh,var(--tb)) * 1.6);max-height:96px}",
+  ".akinfo-k{flex:none;min-width:32px;width:32px;padding:0}.akinfo-main{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px;overflow-y:auto;font-size:.9rem;line-height:1.25}",
+  ".akinfo-h{flex:none;font-weight:700;color:var(--accent);font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}",
+  ".ptop .akinfo-strip button{min-height:0!important;min-width:0!important;max-width:none!important;width:auto!important;font-size:.85rem;padding:2px 8px;line-height:1.2}.ptop .akinfo-strip .akinfo-k{align-self:stretch;width:32px!important;font-size:1.2rem;padding:0}.ptop .akinfo-strip .akinfo-song{text-align:left;white-space:normal}",
+  ".akinfo-b{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}.akinfo-b button.sm{padding:4px 10px;min-height:0;font-size:.85rem}",
+  ".akinfo-song{padding:4px 10px;min-height:0;text-align:left}.akinfo-dias{display:flex;flex-wrap:wrap;gap:6px}.akinfo-dia{display:flex;flex-direction:column;align-items:center;font-size:.9rem}",
+  ".akfloat{position:fixed;z-index:60;display:flex;flex-direction:column;background:var(--panel,var(--bg));color:var(--fg);border:1px solid var(--line,#8886);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:hidden}",
+  ".akfloat.min{height:auto!important}.akfloat.min .akf-body,.akfloat.min .akf-rz{display:none}",
+  ".akfloat.dock-right{top:0;right:0;bottom:0;width:min(360px,45vw);border-radius:0}.akfloat.dock-left{top:0;left:0;bottom:0;width:min(360px,45vw);border-radius:0}.akfloat.dock-bottom{left:0;right:0;bottom:0;height:32vh;border-radius:0}",
+  ".akfloat.min.dock-right,.akfloat.min.dock-left{bottom:auto}.akfloat.min.dock-bottom{height:auto}",
+  "body.akdock-right #app{margin-right:min(360px,45vw)}body.akdock-left #app{margin-left:min(360px,45vw)}body.akdock-bottom #app{height:68%}",
+  ".akf-head{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:move;touch-action:none;border-bottom:1px solid var(--line,#8884);flex-wrap:wrap}",
+  ".akf-title{font-size:.95rem}.akf-grip{opacity:.5}.akf-tabs{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto}",
+  ".akf-tab{padding:3px 8px;min-height:0;font-size:.8rem}.akf-tab.on{background:var(--accent);color:var(--accent-fg,#000)}.akf-b{padding:2px 8px;min-height:0;min-width:32px}",
+  ".akf-body{flex:1;overflow:auto;padding:8px 10px;display:flex;flex-direction:column;gap:6px}.akf-pad{flex:1;min-height:120px;width:100%;box-sizing:border-box;resize:none}",
+  ".akf-song{font-weight:700}.akf-saved{font-size:.75rem;align-self:flex-end}.akinfo-txt{line-height:1.35}",
+  ".akf-rz{position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 50%,var(--line,#8888) 50%)}",
+  ".akfeat{border-top:1px solid var(--line,#8883);padding:6px 0}.akfeat>summary{cursor:pointer;font-weight:600}.akfeat.off{opacity:.6}",
+  ".akfeat-b{display:flex;gap:12px;align-items:flex-start;margin:8px 0 4px}.akfeat-b .gd{font-size:14px;margin:0 0 6px}.akfeat-b button.sm{padding:6px 12px;min-height:0;font-size:13px}",
+  ".linkish{background:none;border:0;padding:0 4px;min-height:0;color:var(--accent);text-decoration:underline;font-size:inherit}",
+  ".akpic{flex:none;position:relative;width:64px;height:96px;border:2px solid var(--line,#8888);border-radius:8px;overflow:hidden}",
+  ".akpic i{position:absolute;background:color-mix(in srgb,var(--fg) 14%,transparent)}.akpic i.lit{background:var(--accent);animation:akpic 1.6s infinite}",
+  ".akpic.play .z-top{left:0;right:0;top:0;height:14%}.akpic.play .z-lyrics{left:8%;right:24%;top:22%;bottom:20%}.akpic.play .z-side{right:4%;width:14%;top:30%;height:40%}.akpic.play .z-bottom{left:0;right:0;bottom:0;height:10%}.akpic.play .z-float{right:10%;top:28%;width:52%;height:36%;border-radius:4px}",
+  ".akpic.page .z-head{left:0;right:0;top:0;height:12%}.akpic.page .z-list{left:8%;right:8%;top:18%;bottom:18%}.akpic.page .z-tabs{left:0;right:0;bottom:0;height:11%}",
+  "@keyframes akpic{50%{opacity:.45}}",
+  ".akpulse{outline:3px solid var(--accent)!important;outline-offset:3px;animation:akpic 1s 3}",
+  "#akArtBg{position:fixed;inset:0;z-index:0;background-size:cover;background-position:center;pointer-events:none}",
+  "body.akart-on{background:transparent}body.akart-on .shell{background:transparent}body.akart-play .play{--play-bg:transparent}",
+  "body.akart-border #app::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:50;border:22px solid transparent;border-image:var(--akart-border) 60 round}",
+  "body.akart-corners #app::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:50;background:var(--akart-corner) left top/72px no-repeat,var(--akart-corner) right top/72px no-repeat,var(--akart-corner) left bottom/72px no-repeat,var(--akart-corner) right bottom/72px no-repeat}",
+  "body.akart-div .sec::after{content:'';display:block;height:14px;margin-top:4px;background:var(--akart-divider) center/contain no-repeat}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 4, phase 3: songwriting and practice =================
+   - Works in progress and Originals: two song lists beside the main library, each can be shown in the main list; one tap moves a song on
+   - song history: the state of a song before each editing session is kept (last 30), to look back at or restore
+   - Send to…: one menu from a song to Place chords, Lucky guess, notepad, info, practice, write, a show, sharing, solo scales; you come back where you were
+   - practice: loop a section, slow everything down, a practice timer and log, and "needs work" flags
+   - quick idea: one tap makes a new work-in-progress song with a voice memo and a note
+   - smart lists can use capo, tuning, needs work, list (shelf) and last practiced */
+
+/* ---------------------------------------------------------------- 1. shelves */
+var AK_SHELVES = [["main", "Library"], ["wip", "Works in progress"], ["orig", "Originals"]];
+function akShelfCfg() { var c = settings().shelves = settings().shelves || {}; if (c.wipInMain === undefined) c.wipInMain = false; if (c.origInMain === undefined) c.origInMain = true; return c; }
+function akShelfOf(s) { return s.shelf === "wip" || s.shelf === "orig" ? s.shelf : "main"; }
+function akShelfOk(s) {
+  var cur = S.shelf || "main", sh = akShelfOf(s), c = akShelfCfg();
+  if (!akModeOn("write") && cur !== "main") cur = "main";
+  if (cur !== "main") return sh === cur;
+  return sh === "main" || (sh === "wip" && c.wipInMain) || (sh === "orig" && c.origInMain) || !akModeOn("write") && sh !== "wip";
+}
+function akShelfBar(refill) {
+  var bar = h("div", { class: "chips akshelf", "data-akm": "w" });
+  function draw() {
+    bar.textContent = "";
+    var cnt = { main: 0, wip: 0, orig: 0 }; lib().songs.forEach(function (s) { cnt[akShelfOf(s)]++; });
+    var cur = S.shelf || "main";
+    AK_SHELVES.forEach(function (x) { bar.appendChild(h("button", { class: "chip" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { S.shelf = x[0]; draw(); refill(); } }, x[1] + " " + cnt[x[0]])); });
+    bar.appendChild(h("button", { class: "chip", "aria-label": "List options", onClick: function () {
+      var c = akShelfCfg();
+      menu(this, [{ head: "In the main Library list" },
+        { label: (c.wipInMain ? "✓ " : "") + "Show works in progress", onClick: function () { c.wipInMain = !c.wipInMain; save(); draw(); refill(); } },
+        { label: (c.origInMain ? "✓ " : "") + "Show originals", onClick: function () { c.origInMain = !c.origInMain; save(); draw(); refill(); } },
+        { sep: true }, { label: "💡 Quick idea…", onClick: akIdeaDialog }]);
+    } }, "⚙"));
+  }
+  draw(); bar.redraw = draw;
+  return bar;
+}
+function akShelfMove(s, to, quiet) {
+  snap("move song"); if (to === "main") delete s.shelf; else s.shelf = to; save();
+  if (!quiet) toastUndo("“" + (s.title || "Untitled") + "” moved to " + AK_SHELVES.filter(function (x) { return x[0] === to; })[0][1] + ".");
+}
+/* the one-tap button on a work-in-progress row */
+function akShelfRowBtn(s) {
+  var bits = [];
+  if (s.needsWork) bits.push(h("span", { class: "akneeds", title: "Needs work", "aria-label": "Needs work" }, "🔧"));
+  if ((S.shelf || "main") === "wip" && akShelfOf(s) === "wip" && !S.select) bits.push(h("button", { class: "icon akdone", "aria-label": "Mark " + s.title + " finished", title: "Finished: move to Originals", onClick: function () { akShelfMove(s, "orig"); render(); } }, "✓"));
+  return bits.length ? h("span", { class: "akrowx" }, bits) : null;
+}
+function akShelfField(s, onChange) {
+  var sel = h("select", { "aria-label": "Which list", onChange: function () { if (this.value === "main") delete s.shelf; else s.shelf = this.value; onChange && onChange(); } }, AK_SHELVES.map(function (x) { return h("option", { value: x[0], selected: akShelfOf(s) === x[0] ? "" : null }, x[1]); }));
+  var row = h("div", { class: "row akshelf-ed", "data-akm": "w", style: "align-items:flex-end" }, h("label", { class: "fld grow", style: "margin:0" }, "List", sel));
+  if (akShelfOf(s) === "wip") row.appendChild(h("button", { class: "primary", onClick: function () { akShelfMove(s, "orig", true); sel.value = "orig"; this.remove(); toast("Finished! It's in Originals now."); onChange && onChange(); } }, "✓ Mark finished"));
+  return row;
+}
+
+/* ---------------------------------------------------------------- 2. song history (IndexedDB) */
+var AK_VER_FIELDS = ["title", "artist", "key", "tempo", "timeSig", "capo", "lyrics", "chords", "notes", "scratch", "tags"];
+function akVerDb(cb) { try { var r = indexedDB.open("akashic-versions", 1); r.onupgradeneeded = function () { var st = r.result.createObjectStore("v", { keyPath: "k", autoIncrement: true }); st.createIndex("sid", "sid"); }; r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); }; } catch (e) { cb(null); } }
+function akVerPick(s) { var o = {}; AK_VER_FIELDS.forEach(function (f) { if (s[f] !== undefined) o[f] = s[f]; }); return o; }
+function akVerAdd(sid, data, note) {
+  akVerDb(function (db) {
+    if (!db) return;
+    var tx = db.transaction("v", "readwrite"), st = tx.objectStore("v");
+    st.add({ sid: sid, at: Date.now(), data: data, note: note || "" });
+    var all = []; st.index("sid").openCursor(IDBKeyRange.only(sid)).onsuccess = function (e) { var c = e.target.result; if (c) { all.push(c.primaryKey); c.continue(); } else if (all.length > 30) all.slice(0, all.length - 30).forEach(function (k) { st.delete(k); }); };
+  });
+}
+function akVerList(sid, cb) { akVerDb(function (db) { if (!db) { cb([]); return; } var out = []; db.transaction("v").objectStore("v").index("sid").openCursor(IDBKeyRange.only(sid)).onsuccess = function (e) { var c = e.target.result; if (c) { out.push(c.value); c.continue(); } else cb(out.reverse()); }; }); }
+/* keep the song as it was when the editor opened, if the session changed it */
+var akVerOpen = null;
+function akVerTrack() {
+  var v = S.view, id = v === "song" ? S.songId : null;
+  if (akVerOpen && akVerOpen.id !== id) {
+    var s = findSong(akVerOpen.id);
+    if (s && JSON.stringify(akVerPick(s)) !== akVerOpen.json) akVerAdd(akVerOpen.id, JSON.parse(akVerOpen.json), "Before editing");
+    akVerOpen = null;
+  }
+  if (id && !akVerOpen) { var s2 = findSong(id); if (s2) akVerOpen = { id: id, json: JSON.stringify(akVerPick(s2)) }; }
+}
+window.addEventListener("pagehide", function () { try { akVerTrack(); var s = akVerOpen && findSong(akVerOpen.id); if (s && JSON.stringify(akVerPick(s)) !== akVerOpen.json) { akVerAdd(akVerOpen.id, JSON.parse(akVerOpen.json), "Before editing"); akVerOpen.json = JSON.stringify(akVerPick(s)); } } catch (e) {} });
+function akVerDialog(s, after) {
+  akVerList(s.id, function (list) {
+    var box = h("div");
+    if (!list.length) box.appendChild(h("p", { class: "hint" }, "No earlier versions yet. Each time you edit this song, the way it was before is kept here (the last 30)."));
+    list.forEach(function (v) {
+      var d = v.data, diff = [];
+      AK_VER_FIELDS.forEach(function (f) { if (JSON.stringify(d[f] || "") !== JSON.stringify(s[f] || "")) diff.push(f); });
+      var pre = h("pre", { class: "akver-pre", hidden: true }, (d.lyrics || d.chords || "").slice(0, 3000));
+      box.appendChild(h("div", { class: "card akver" },
+        h("div", null, h("b", null, new Date(v.at).toLocaleString()), h("span", { class: "muted" }, " · " + (diff.length ? "differs in " + diff.join(", ") : "same as now"))),
+        h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "sm", onClick: function () { pre.hidden = !pre.hidden; } }, "Look"),
+          diff.length ? h("button", { class: "sm", onClick: function () { confirmBox("Put “" + (s.title || "this song") + "” back to how it was on " + new Date(v.at).toLocaleString() + "? The way it is now is kept in the history too.", "Restore", function () {
+            akVerAdd(s.id, akVerPick(s), "Before restoring"); Object.assign(s, d); save(); closeAllModals(); toast("Restored."); if (akVerOpen && akVerOpen.id === s.id) akVerOpen.json = JSON.stringify(akVerPick(s)); after && after(); }); } }, "Restore") : null),
+        pre));
+    });
+    modal("History of “" + (s.title || "Untitled") + "”", box, [{ label: "Close", primary: true }], { wide: true });
+  });
+}
+
+/* ---------------------------------------------------------------- 3. Send to… */
+function akOrigin() { return { view: S.view, params: { songId: S.songId, showId: S.showId }, play: S.play }; }
+function akBackTo(o) { return function () { if (o.view === "play" && o.play) { S.play = o.play; go("play"); } else go(o.view, o.params); }; }
+function akSendTo(anchor, s, after) {
+  var o = akOrigin(), back = akBackTo(o), redo = function () { save(); if (after) after(); else render(); };
+  var items = [{ head: "Send “" + (s.title || "this song") + "” to" },
+    { label: "✎ Place chords", onClick: function () { openPlacer(s, { onChange: function () {}, onClose: redo }); } },
+    { label: "🍀 Lucky guess", onClick: function () { openLucky(s, { onClose: redo }); } },
+    { label: "📝 Notepad", onClick: function () { akNotepad(); } },
+    { label: "ⓘ Info window", onClick: function () { akInfoWin(); } },
+    { label: "▶ Play it", onClick: function () { saveNow(); S.playMode = "perform"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, back); } },
+    { label: "🎯 Practice (measure chart)", onClick: function () { saveNow(); S.playMode = "practice"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, back); } },
+    { label: "✍ Write (chart, scratch pad, rhymes)", onClick: function () { saveNow(); S.playMode = "write"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, back); } },
+    { label: "🎸 Solo scales", onClick: function () { openChordTools("scales", { song: s }); } },
+    { label: "☰ A show…", onClick: function () { S.sel = {}; S.sel[s.id] = 1; addSelectedToShow(); } },
+    { label: "⇪ Share or export…", onClick: function () { shareDialog([s]); } },
+    { label: "🕘 Its history…", onClick: function () { akVerDialog(s, redo); } }];
+  if (akModeOn("write")) { items.push({ sep: true }); AK_SHELVES.forEach(function (x) { if (akShelfOf(s) !== x[0]) items.push({ label: "Move to " + x[1], onClick: function () { akShelfMove(s, x[0]); redo(); } }); }); }
+  menu(anchor, items.filter(function (it) { return it.head || it.sep || !/Practice|Solo/.test(it.label) || akModeOn("learn"); }));
+}
+
+/* ---------------------------------------------------------------- 4. practice */
+function akPracticeLog() { var l = lib(); if (!Array.isArray(l.practice)) l.practice = []; return l.practice; }
+function akLoopSections() {
+  var sc = scroller(); if (!sc) return [];
+  var secs = Array.prototype.slice.call(sc.querySelectorAll(".sec[data-li]")), out = [], top = sc.getBoundingClientRect().top;
+  secs.forEach(function (el, i) {
+    var y = sc.scrollTop + el.getBoundingClientRect().top - top, nx = secs[i + 1], y2 = nx ? sc.scrollTop + nx.getBoundingClientRect().top - top : sc.scrollHeight - sc.clientHeight;
+    out.push({ name: el.textContent, from: Math.max(0, y - 8), to: Math.max(y + 40, y2 - sc.clientHeight * 0.35) });
+  });
+  return out;
+}
+function akLoopMenu(btn) {
+  var secs = akLoopSections(), items = [{ head: "Loop a section" }];
+  if (S.akLoop) items.push({ label: "✕ Stop looping " + S.akLoop.name, onClick: function () { S.akLoop = null; toast("Loop off."); akLoopPaint(); } });
+  if (!secs.length) items.push({ label: "This song has no sections ([Verse], [Chorus]…).", disabled: true });
+  secs.forEach(function (x) { items.push({ label: (S.akLoop && S.akLoop.name === x.name && S.akLoop.from === x.from ? "✓ " : "") + x.name, onClick: function () {
+    S.akLoop = x; var sc = scroller(); if (sc) { sc.scrollTop = x.from; pos = x.from; lastSet = x.from; }
+    if (!autoOn) startAuto(); toast("Looping " + x.name + ". Tap Loop again to stop."); akLoopPaint(); } }); });
+  menu(btn, items);
+}
+function akLoopPaint() { var b = document.querySelector('[data-tb="loop"]'); if (b) { b.classList.toggle("on", !!S.akLoop); b.setAttribute("aria-pressed", S.akLoop ? "true" : "false"); } }
+/* called by auto-scroll each frame: go back to the start of the loop */
+function akLoopWrap(sc) {
+  var L = S.akLoop; if (!L) return false;
+  if (pos >= L.to) { pos = L.from; sc.scrollTop = pos; lastSet = sc.scrollTop; L.rounds = (L.rounds || 0) + 1; return true; }
+  return false;
+}
+function akPracticeDialog() {
+  var song = S.play ? curSong() : null, P = S.akPrac = S.akPrac || {};
+  var box = h("div"), timeEl = h("b", { class: "akprac-t" }, "0:00"), tmr = 0;
+  function el() { return P.start ? Math.floor((Date.now() - P.start) / 1000) + (P.acc || 0) : (P.acc || 0); }
+  function paint() { timeEl.textContent = fmtTime(el()); }
+  function stop(log) {
+    var secs = el(); P.start = 0; P.acc = 0;
+    if (log && secs >= 20) { akPracticeLog().push({ sid: P.sid || (song && song.id) || "", at: Date.now(), secs: secs }); save(); toast("Logged " + Math.round(secs / 60) + " min of practice."); }
+    draw();
+  }
+  function draw() {
+    box.textContent = "";
+    paint();
+    box.appendChild(h("div", { class: "row", style: "align-items:center" }, timeEl,
+      P.start ? h("button", { onClick: function () { P.acc = el(); P.start = 0; draw(); } }, "Pause") : h("button", { class: "primary", onClick: function () { P.start = Date.now(); P.sid = song ? song.id : P.sid; draw(); } }, P.acc ? "Carry on" : "Start practice"),
+      el() ? h("button", { onClick: function () { stop(true); } }, "Done, log it") : null));
+    var slow = Math.round((S.akSlow || 1) * 100);
+    var out = h("output", null, slow + "%");
+    box.appendChild(h("label", { class: "fld" }, "Speed (scroll and count-in)", h("div", { class: "range" }, h("input", { type: "range", min: 40, max: 100, step: 5, value: slow, "aria-label": "Practice speed", onInput: function () { S.akSlow = Number(this.value) / 100; out.textContent = this.value + "%"; } }), out)));
+    if (song) box.appendChild(h("label", { class: "row", style: "gap:8px;align-items:center" }, h("input", { type: "checkbox", checked: song.needsWork ? "" : null, onChange: function () { song.needsWork = this.checked; save(); } }), "This song needs work"));
+    var log = akPracticeLog(), week = Date.now() - 7 * 86400000, mine = song ? log.filter(function (x) { return x.sid === song.id; }) : [];
+    var wk = log.filter(function (x) { return x.at > week; }).reduce(function (a, x) { return a + x.secs; }, 0);
+    box.appendChild(h("p", { class: "hint" }, "This week: " + Math.round(wk / 60) + " min." + (song ? " This song: " + Math.round(mine.reduce(function (a, x) { return a + x.secs; }, 0) / 60) + " min over " + mine.length + (mine.length === 1 ? " session" : " sessions") + "." : "")));
+    var recent = log.slice(-8).reverse();
+    if (recent.length) box.appendChild(h("div", { class: "akprac-log" }, recent.map(function (x) { var s = findSong(x.sid); return h("div", null, h("span", { class: "muted" }, new Date(x.at).toLocaleDateString() + " "), (s ? s.title : "General") + " · " + Math.max(1, Math.round(x.secs / 60)) + " min"); })));
+  }
+  draw(); tmr = setInterval(paint, 1000);
+  modal("Practice", box, [{ label: "Close", primary: true, onClick: function () { clearInterval(tmr); } }]);
+}
+function akNeedsWorkToggle(song, btn) { song.needsWork = !song.needsWork; save(); if (btn) { btn.classList.toggle("on", song.needsWork); btn.setAttribute("aria-pressed", song.needsWork ? "true" : "false"); } toast(song.needsWork ? "Flagged: needs work." : "Flag taken off."); }
+
+/* ---------------------------------------------------------------- 5. voice memos (IndexedDB) and quick idea */
+function akAudioDb(cb) { try { var r = indexedDB.open("akashic-audio", 1); r.onupgradeneeded = function () { r.result.createObjectStore("a"); }; r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); }; } catch (e) { cb(null); } }
+function akAudioPut(id, blob, cb) { akAudioDb(function (db) { if (!db) { cb && cb(false); return; } var tx = db.transaction("a", "readwrite"); tx.objectStore("a").put(blob, id); tx.oncomplete = function () { cb && cb(true); }; tx.onerror = function () { cb && cb(false); }; }); }
+function akAudioGet(id, cb) { akAudioDb(function (db) { if (!db) { cb(null); return; } var rq = db.transaction("a").objectStore("a").get(id); rq.onsuccess = function () { cb(rq.result || null); }; rq.onerror = function () { cb(null); }; }); }
+function akAudioDel(id) { akAudioDb(function (db) { if (db) db.transaction("a", "readwrite").objectStore("a").delete(id); }); }
+/* a record button: onDone(blob, secs) */
+function akRecorder(onDone) {
+  var btn = h("button", { class: "akrec" }, "● Record"), st = h("span", { class: "muted" }, ""), rec = null, chunks = [], t0 = 0, iv = 0;
+  btn.addEventListener("click", function () {
+    if (rec) { rec.stop(); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) { toast("This browser can't record. Attach a file instead."); return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      chunks = []; rec = new MediaRecorder(stream); t0 = Date.now();
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () { clearInterval(iv); stream.getTracks().forEach(function (t) { t.stop(); }); var b = new Blob(chunks, { type: rec.mimeType || "audio/webm" }), secs = Math.round((Date.now() - t0) / 1000); rec = null; btn.textContent = "● Record again"; btn.classList.remove("on"); st.textContent = "Recorded " + fmtTime(secs); onDone(b, secs); };
+      rec.start(); btn.textContent = "■ Stop"; btn.classList.add("on"); iv = setInterval(function () { st.textContent = fmtTime(Math.round((Date.now() - t0) / 1000)); }, 500);
+    }, function () { toast("The microphone isn't allowed. Check the browser's permission for this site."); });
+  });
+  return h("span", { class: "row", style: "margin:0;align-items:center;gap:8px" }, btn, st);
+}
+function akAddAudio(s, blob, secs, name) {
+  var id = uid(); s.audio = s.audio || [];
+  akAudioPut(id, blob, function (ok) { if (!ok) { toast("Couldn't keep the recording (storage is full?)."); return; } s.audio.push({ id: id, name: name || "Voice memo " + new Date().toLocaleString(), at: Date.now(), secs: secs || 0, type: blob.type || "" }); save(); });
+}
+function akIdeaDialog() {
+  var title = h("input", { type: "text", value: "Idea " + new Date().toLocaleDateString() + " " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), "aria-label": "Name" });
+  var note = h("textarea", { rows: 4, placeholder: "A line, a chord change, a hook…", "aria-label": "Note" }), memo = null;
+  var rec = akRecorder(function (b, secs) { memo = { b: b, secs: secs }; });
+  modal("💡 Quick idea", h("div", null, h("label", { class: "fld" }, "Name", title), rec, h("label", { class: "fld" }, "Note", note), h("p", { class: "hint" }, "It goes into Works in progress as a new song. The note goes in its lyrics, the memo under Voice memos.")),
+    [{ label: "Cancel" }, { label: "Keep it", primary: true, onClick: function () {
+      if (!note.value.trim() && !memo) { toast("Record or type something first."); return false; }
+      snap("quick idea"); var s = newSong({ title: title.value.trim() || "Idea", shelf: "wip", lyrics: note.value.trim(), tags: [] }); lib().songs.push(s);
+      if (memo) akAddAudio(s, memo.b, memo.secs, "Idea memo");
+      save(); S.shelf = "wip"; toast("Idea kept in Works in progress.", { label: "Open", fn: function () { go("song", { songId: s.id }); } });
+      if (S.view === "songs") render();
+    } }]);
+}
+/* the voice memo list in the song editor */
+function akMemoCard(s, onChange) {
+  var box = h("div");
+  function draw() {
+    box.textContent = "";
+    (s.audio || []).forEach(function (a, i) {
+      var player = h("audio", { controls: "", preload: "none", style: "width:100%" });
+      akAudioGet(a.id, function (b) { if (b) player.src = URL.createObjectURL(b); else if (a.url) player.src = a.url; });
+      box.appendChild(h("div", { class: "akmemo" }, h("div", { class: "row", style: "margin:0;align-items:center" }, h("b", { class: "grow" }, a.name), a.secs ? h("span", { class: "muted" }, fmtTime(a.secs)) : null,
+        h("button", { class: "sm", "aria-label": "Delete " + a.name, onClick: function () { confirmBox("Delete “" + a.name + "”?", "Delete", function () { akAudioDel(a.id); s.audio.splice(i, 1); save(); draw(); onChange && onChange(); }); } }, "Delete")), player));
+    });
+    box.appendChild(akRecorder(function (b, secs) { akAddAudio(s, b, secs); setTimeout(draw, 300); onChange && onChange(); }));
+  }
+  draw();
+  var card = h("details", { class: "card", "data-akm": "w" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Voice memos" + ((s.audio || []).length ? " (" + s.audio.length + ")" : "")), box);
+  return card;
+}
+
+/* ---------------------------------------------------------------- 6. smart lists: more fields */
+SONG_FIELDS.push("shelf", "needsWork", "audio");
+SMART_FIELDS.push(["capo", "Capo fret"], ["tuning", "Tuning change (Drop D…)"], ["needsWork", "Needs work"], ["shelf", "List (library, works in progress, originals)"], ["practiced", "Last practiced"]);
+SMART_OPS.capo = [["gte", "at least"], ["lte", "at most"], ["eq", "exactly"]];
+SMART_OPS.tuning = [["is", "yes"], ["not", "no"]]; SMART_OPS.needsWork = [["is", "yes"], ["not", "no"]];
+SMART_OPS.shelf = [["is", "is"], ["isnot", "isn't"]]; SMART_OPS.practiced = [["within", "in the last"], ["older", "not in the last"], ["never", "never"]];
+var akSmartKindBase = smartValueKind, akSmartRuleBase = smartRuleOk;
+smartValueKind = function (f, op) {
+  if (f === "capo") return "num"; if (f === "tuning" || f === "needsWork") return ""; if (f === "shelf") return "text"; if (f === "practiced") return op === "never" ? "" : "days";
+  return akSmartKindBase(f, op);
+};
+smartRuleOk = function (s, r, now) {
+  var n = Number(r.v);
+  if (r.f === "capo") { var c = Number(s.capo) || 0; return r.op === "gte" ? c >= n : r.op === "lte" ? c <= n : c === n; }
+  if (r.f === "tuning") { var t = typeof akRetuneOf === "function" && !!akRetuneOf(s); return r.op === "is" ? t : !t; }
+  if (r.f === "needsWork") return r.op === "is" ? !!s.needsWork : !s.needsWork;
+  if (r.f === "shelf") { var want = String(r.v || "").toLowerCase(), sh = akShelfOf(s), nm = AK_SHELVES.filter(function (x) { return x[0] === sh; })[0][1].toLowerCase(); var hit = nm.indexOf(want) >= 0 || sh === want; return r.op === "is" ? hit : !hit; }
+  if (r.f === "practiced") { var last = 0; akPracticeLog().forEach(function (x) { if (x.sid === s.id && x.at > last) last = x.at; }); if (r.op === "never") return !last; var d = (now - last) / DAY_MS; return r.op === "within" ? last && d <= n : !last || d > n; }
+  return akSmartRuleBase(s, r, now);
+};
+
+/* ---------------------------------------------------------------- 7. buttons and hooks */
+TB_ITEMS.push(["loop", "Loop a section (practice)"], ["practice", "Practice: timer, log, slow-down"], ["needswork", "Needs work flag"], ["idea", "Quick idea (new song with a voice memo)"], ["sendto", "Send this song to…"]);
+TB_SHORT.loop = "Loop"; TB_SHORT.practice = "Practice"; TB_SHORT.needswork = "Needs work"; TB_SHORT.idea = "Idea"; TB_SHORT.sendto = "Send to";
+AK_TB_MODES.sendto = "";
+AK_IC.loop = "M17 2l3 3-3 3 M4 11V9a4 4 0 0 1 4-4h12 M7 22l-3-3 3-3 M20 13v2a4 4 0 0 1-4 4H4";
+AK_IC.practice = "M12 8v5l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M9 1h6";
+AK_IC.needswork = "M14 7l3-3 3 3-3 3z M14 7L4 17v3h3L17 10";
+AK_IC.idea = "M9 18h6 M10 21h4 M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z";
+AK_IC.sendto = "M4 12l16-8-6 16-2-6z M12 14l8-10";
+function akExtraTb11(id, song, root) {
+  if (id === "loop") return h("button", { "aria-label": "Loop a section", class: S.akLoop ? "on" : "", "aria-pressed": S.akLoop ? "true" : "false", onClick: function () { akLoopMenu(this); } }, akIcon("loop"));
+  if (id === "practice") return h("button", { "aria-label": "Practice timer, log and speed", onClick: akPracticeDialog }, akIcon("practice"));
+  if (id === "needswork") return h("button", { "aria-label": "Needs work", class: song.needsWork ? "on" : "", "aria-pressed": song.needsWork ? "true" : "false", onClick: function () { akNeedsWorkToggle(song, this); } }, akIcon("needswork"));
+  if (id === "idea") return h("button", { "aria-label": "Quick idea", onClick: akIdeaDialog }, akIcon("idea"));
+  if (id === "sendto") return h("button", { "aria-label": "Send this song to", onClick: function () { var b = this; stopAuto(); akSendTo(b, song, function () { save(); keepAutoRender(); }); } }, akIcon("sendto"));
+  if (typeof akExtraTb12 === "function") return akExtraTb12(id, song, root);
+  return null;
+}
+/* the song editor's extra row */
+function akEditorExtra(s, rebuild) {
+  return h("div", { class: "row akedx", style: "flex-wrap:wrap" },
+    h("button", { onClick: function () { akSendTo(this, s, rebuild); } }, "➤ Send to…"),
+    h("button", { onClick: function () { akVerDialog(s, rebuild); } }, "🕘 History…"),
+    h("button", { class: s.needsWork ? "on" : "", "aria-pressed": s.needsWork ? "true" : "false", "data-akm": "l", onClick: function () { akNeedsWorkToggle(s, this); } }, "🔧 Needs work"));
+}
+function akAfterRender2() { akVerTrack(); akLoopPaint(); }
+function akPlayHooks6(song) { if (S.akLoop && S.akLoop.sid !== song.id) { if (S.akLoop.sid) S.akLoop = null; else S.akLoop.sid = song.id; } }
+function akSettingsExtra5(c) {
+  c.again("songs-and-shows");
+  c.section("Works in progress and Originals", "Two song lists beside your library");
+  var sc = akShelfCfg();
+  c.check("Show works in progress in the main Library list", function () { return sc.wipInMain; }, function (v) { sc.wipInMain = v; });
+  c.check("Show originals in the main Library list", function () { return sc.origInMain; }, function (v) { sc.origInMain = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "Switch lists with the chips at the top of the Songs page. A song moves with “✓ Mark finished” in the song, the ✓ on its row, or Send to…"));
+}
+
+akCss("ak4-write", [
+  ".akshelf{margin:6px 0}.akrowx{display:flex;align-items:center;gap:4px}.akneeds{font-size:1rem}.akdone{color:var(--accent)}",
+  ".akver-pre{white-space:pre-wrap;max-height:40vh;overflow:auto;font-size:.85rem;background:color-mix(in srgb,var(--fg) 6%,transparent);padding:8px;border-radius:8px}",
+  ".akver button.sm,.akmemo button.sm{padding:4px 10px;min-height:0;font-size:.85rem}.akmemo{margin:0 0 10px}",
+  ".akprac-t{font-size:2rem;font-variant-numeric:tabular-nums;min-width:4ch}.akprac-log{font-size:.9rem;display:grid;gap:2px}",
+  ".akrec.on{background:#E5484D;color:#fff;border-color:#E5484D}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
@@ -15905,6 +17470,7 @@ function mergeAbove(chordLine, lyric, snap) {
   return text.trim();
 }
 function normalizeChart(raw, snap) {
+  if (typeof akPreFix === "function") raw = akPreFix(raw);
   var rows = String(raw).replace(/\r\n?/g, "\n").split("\n").map(expandTabs), out = [], title = "";
   function sec(l) { l = String(l || "").replace(/[\[\]{}]/g, "").trim(); if (l) out.push("[" + l + "]"); }
   function isSec(t) { var m = /^\[([^\]]+)\]$/.exec(t); return !!m && !isChordLike(m[1].trim()); }
