@@ -1756,8 +1756,8 @@ function openSearch(q) { return h("a", { href: "https://www.google.com/search?q=
 /* ---------- going back: a history of the screens you have been on, with where each was scrolled to ---------- */
 S.nav = [];
 var histDepth = 0, ignorePop = 0;
-function navKey(e) { return e.view + "|" + (e.view === "song" ? e.songId : "") + "|" + (e.view === "show" ? e.showId : ""); }
-function navHere() { var sc = $("mainScroll"); return { view: S.view, songId: S.songId, showId: S.showId, scroll: sc ? sc.scrollTop : 0 }; }
+function navKey(e) { return e.view + "|" + (e.view === "song" ? e.songId : "") + "|" + (e.view === "show" ? e.showId : e.view === "gig" ? e.gigId : ""); }
+function navHere() { var sc = $("mainScroll"); return { view: S.view, songId: S.songId, showId: S.showId, gigId: S.gigId, scroll: sc ? sc.scrollTop : 0 }; }
 function histPush() { try { history.pushState({ cb: 1 }, ""); histDepth++; } catch (e) {} }
 function histPop() { if (histDepth > 0) { histDepth--; ignorePop++; try { history.back(); } catch (e) { ignorePop--; } } }
 function navPush(toKey) {
@@ -1774,7 +1774,7 @@ function navBack(fromPop) {
   while (S.nav.length) { var c = S.nav.pop(); if (c.view !== "play" && navKey(c) !== cur) { e = c; break; } }
   if (!e) return false;
   if (!fromPop && !S.popping) histPop();
-  S.view = e.view; if (e.songId != null) S.songId = e.songId; if (e.showId != null) S.showId = e.showId;
+  S.view = e.view; if (e.songId != null) S.songId = e.songId; if (e.showId != null) S.showId = e.showId; if (e.gigId != null) S.gigId = e.gigId;
   stopAuto(); render();
   var put = function () { var sc = $("mainScroll"); if (sc) sc.scrollTop = e.scroll; };
   put(); requestAnimationFrame(put); setTimeout(put, 120);
@@ -1811,7 +1811,7 @@ window.addEventListener("popstate", function () {
   }, { passive: true });
 })();
 function go(view, params) {
-  var tk = navKey({ view: view, songId: (params && params.songId) || S.songId, showId: (params && params.showId) || S.showId });
+  var tk = navKey({ view: view, songId: (params && params.songId) || S.songId, showId: (params && params.showId) || S.showId, gigId: (params && params.gigId) || S.gigId });
   if (!S.noNav) navPush(tk);
   if (view !== "shows") { S.selShowMode = false; S.selShows = {}; }
   if (view !== "show") { S.selSongMode = false; S.selSongs = {}; }
@@ -1860,6 +1860,8 @@ function render() {
   if (v === "play") { app.appendChild(renderPlay()); try { akAfterRender(); } catch (e) {} return; }
   releaseWake();
   var map = { songs: viewSongs, shows: viewShows, banter: viewBanter, discover: viewDiscover, build: viewBuild, history: viewHistory, guide: viewGuide, atmosphere: viewAtmosphere, import: viewImport, settings: viewSettings, learn: viewLearn, stats: viewStats, song: viewSong, show: viewShow };
+  if (typeof viewGig === "function") map.gig = viewGig;
+  if (typeof AK_VIEWS === "object") Object.keys(AK_VIEWS).forEach(function (k) { map[k] = AK_VIEWS[k]; });
   app.appendChild((map[v] || viewSongs)());
   layRun(app);
   S.scrKey = scrollNow();
@@ -1895,7 +1897,7 @@ function shell(title, content, o) {
     (!withTabs || o.noBanner) ? null : akSampleBanner(),
     h("div", { class: "main", id: "mainScroll" }, h("div", { style: "max-width:900px;margin:0 auto" }, content)));
   if (withTabs) {
-    var cur = S.view === "show" || S.view === "build" || S.view === "history" ? "shows" : S.view === "banter" ? "import" : S.view === "discover" ? "songs" : S.view === "guide" || S.view === "atmosphere" || S.view === "stats" ? "settings" : S.view === "song" ? "songs" : S.view;
+    var cur = typeof AK_VIEW_TAB === "object" && AK_VIEW_TAB[S.view] ? AK_VIEW_TAB[S.view] : S.view === "show" || S.view === "gig" || S.view === "build" || S.view === "history" ? "shows" : S.view === "banter" ? "import" : S.view === "discover" ? "songs" : S.view === "guide" || S.view === "atmosphere" || S.view === "stats" ? "settings" : S.view === "song" ? "songs" : S.view;
     var leaving = function (next) { if (o.leave) o.leave(next); else next(); };
     wrap.appendChild(tabBarEl({ canBack: canBack, onBack: function () { if (o.back) o.back(); else navBack(); }, leave: leaving, cur: cur }));
   }
@@ -3471,7 +3473,7 @@ function viewShows() {
     { label: "Choose what shows under each show…", onClick: function () { infoOptionsDialog("shows", function () { render(); }); } },
     { label: "Recently deleted…", onClick: openTrash },
     { label: "Undo last change", disabled: !undoStack.length, onClick: undoLast }]); } }, "⋯");
-  return shell("Shows", wrapList, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Shows"), libButton()), actions: h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, calConfigured() ? h("button", { "aria-label": "Next shows from your calendar", title: "Next shows", onClick: function () { openCalendar(); } }, "📅") : null, h("button", { "aria-label": "Build a set list", title: "Build a set list for a gig", onClick: function () { go("build"); } }, "✦"), h("button", { class: "primary", onClick: function () { snap("new show"); var sh = newShow("New show"); lib().shows.unshift(sh); save(); go("show", { showId: sh.id }); } }, "+ New"), more) });
+  return shell("Shows", wrapList, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Shows"), libButton()), actions: h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, calConfigured() ? h("button", { "aria-label": "Next shows from your calendar", title: "Next shows", onClick: function () { openCalendar(); } }, "📅") : null, h("button", { "aria-label": "Build a set list", title: "Build a set list for a gig", onClick: function () { go("build"); } }, "✦"), h("button", { class: "primary", onClick: function () { snap("new set list"); var sh = newShow("New set list"); lib().shows.unshift(sh); save(); go("show", { showId: sh.id }); } }, "+ New"), more) });
 }
 
 /* ---------- Shows screen: month calendar ---------- */
@@ -3702,7 +3704,7 @@ function viewShow() {
       h("button", { class: "primary", onClick: function () { playShow(sh, 0, function () { go("show", { showId: sh.id }); }); } }, "▶ Play show"),
       tog,
       h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
-        { label: "Show details: venue, date, times, set lengths…", onClick: function () { akShowDetails(sh, draw); } },
+        { label: "Set list details: length, times, set lengths…", onClick: function () { akShowDetails(sh, draw); } },
         { label: S.selSongMode ? "Done selecting songs" : "Select songs…", onClick: function () { S.selSongMode = !S.selSongMode; S.selSongs = {}; draw(); } },
         { label: "Export or print…", onClick: function () { exportShow(sh); } },
         { label: "Encore ideas…", onClick: function () { openEncore(); } },
@@ -3729,12 +3731,10 @@ function viewShow() {
       h("button", { onClick: function () { openTimers({ showId: sh.id }); } }, "Timers")));
     panel.appendChild(h("label", { class: "fld", "data-bk": "name", "data-bt": "Show name" }, "Name", h("input", { type: "text", value: sh.name, onInput: function () { sh.name = this.value; save(); } })));
     S.showDetOpen = S.showDetOpen || {};
-    var detBits = [sh.venue, sh.date, sh.target ? sh.target + " min" : "", sh.notes ? "notes" : "", sh.color ? "color" : ""].filter(Boolean);
-    var det = h("details", { class: "card showdet", "data-bk": "details" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Date, length, color and notes", h("span", { class: "muted", style: "font-weight:400" }, detBits.length ? "  ·  " + detBits.join(" · ") : "")),
-      akVenueField(sh, draw),
-      h("div", { class: "two" },
-        h("label", { class: "fld" }, "Date (optional)", h("input", { type: "date", value: sh.date, onChange: function () { sh.date = this.value; save(); } })),
-        h("label", { class: "fld" }, "Planned length (minutes)", h("input", { type: "number", min: 0, value: sh.target || "", inputmode: "numeric", onInput: function () { sh.target = Number(this.value) || 0; save(); } }))),
+    var detBits = [sh.target ? sh.target + " min" : "", sh.notes ? "notes" : "", sh.color ? "color" : ""].filter(Boolean);
+    var det = h("details", { class: "card showdet", "data-bk": "details" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "Length, color and notes", h("span", { class: "muted", style: "font-weight:400" }, detBits.length ? "  ·  " + detBits.join(" · ") : "")),
+      typeof akSetlistGigsLine === "function" ? akSetlistGigsLine(sh) : null,
+      h("label", { class: "fld" }, "Planned length (minutes)", h("input", { type: "number", min: 0, value: sh.target || "", inputmode: "numeric", onInput: function () { sh.target = Number(this.value) || 0; save(); } })),
       h("label", { class: "fld" }, "When a song's scrolling reaches the end", h("select", { "aria-label": "When a song ends", onChange: function () { sh.advance = this.value; save(); } }, [["", "Do what my default says"], ["off", "Do nothing"], ["ask", "Offer a Next button"], ["auto", "Go to the next song by itself"]].map(function (o) { var op = h("option", { value: o[0] }, o[1]); if ((sh.advance || "") === o[0]) op.selected = true; return op; }))),
       h("div", { class: "fld" }, "Color", colorPicker(sh.color, function (c) { sh.color = c; save(); })),
       h("label", { class: "fld" }, "Notes", h("textarea", { rows: 2, value: sh.notes, onInput: function () { sh.notes = this.value; save(); } })));
@@ -13987,7 +13987,7 @@ function akVenueEdit(v, done, preName) {
   body.appendChild(res);
   body.appendChild(h("p", { class: "hint", style: "margin:2px 0 8px" }, "Search uses OpenStreetMap, which is free. Phone and website are filled in when OpenStreetMap has them."));
   AK_VFIELDS.forEach(function (f) {
-    var big = f[0] === "notes" || f[0] === "load" || f[0] === "pay";
+    var big = f[0] === "notes" || f[0] === "load" || f[0] === "pay" || f[0] === "staff";
     var el = big ? h("textarea", { rows: 2 }) : h("input", { type: f[0] === "email" ? "email" : f[0] === "phone" ? "tel" : f[0] === "website" ? "url" : "text", autocapitalize: f[0] === "name" || f[0] === "contact" ? "words" : "off" });
     el.value = v[f[0]] || ""; inputs[f[0]] = el;
     body.appendChild(h("label", { class: "fld" }, f[1], el));
@@ -14014,7 +14014,7 @@ function akVenueCard(v, o) {
   if (v.phone) body.appendChild(h("div", null, "📞 ", h("a", { href: "tel:" + v.phone.replace(/[^\d+]/g, "") }, v.phone)));
   if (v.email) body.appendChild(h("div", null, "✉ ", h("a", { href: "mailto:" + v.email }, v.email)));
   if (v.website) body.appendChild(h("div", null, "🌐 ", h("a", { href: /^https?:/i.test(v.website) ? v.website : "https://" + v.website, target: "_blank", rel: "noopener" }, v.website.replace(/^https?:\/\//i, ""))));
-  [["pay", "Pay and terms"], ["load", "Load-in, parking, gear"], ["notes", "Notes"]].forEach(function (f) { if (v[f[0]]) body.appendChild(h("div", { class: "akv-note" }, h("div", { class: "muted" }, f[1]), h("div", { style: "white-space:pre-wrap" }, v[f[0]]))); });
+  [["pay", "Pay and terms"], ["load", "Load-in, parking, gear"], ["staff", "Staff and people"], ["notes", "Notes"]].forEach(function (f) { if (v[f[0]]) body.appendChild(h("div", { class: "akv-note" }, h("div", { class: "muted" }, f[1]), h("div", { style: "white-space:pre-wrap" }, v[f[0]]))); });
   if (shows.length) { body.appendChild(h("h3", { style: "margin:12px 0 4px;font-size:1rem" }, "Shows here")); shows.slice(0, 12).forEach(function (sh) { body.appendChild(h("button", { class: "akv-show", onClick: function () { closeAll(); go("show", { showId: sh.id }); } }, (sh.date || "No date") + "  ·  " + (sh.name || "Untitled"))); }); }
   function closeAll() { Array.prototype.forEach.call(document.querySelectorAll(".modal"), function (m) { m.remove(); }); }
   modal(v.name || "Venue", body, [{ label: "Edit", onClick: function () { setTimeout(function () { akVenueEdit(v, function () { o.done && o.done(); }); }, 0); } }, { label: "Close", primary: true }], { wide: true });
@@ -15988,10 +15988,8 @@ function akShowDetails(sh, redraw) {
   var before = sh.venue || "";
   var body = h("div", null,
     h("label", { class: "fld" }, "Name", h("input", { type: "text", value: sh.name, onInput: function () { sh.name = this.value; save(); } })),
-    akVenueField(sh, function () {}),
-    h("div", { class: "two" },
-      h("label", { class: "fld" }, "Date", h("input", { type: "date", value: sh.date, onChange: function () { sh.date = this.value; save(); } })),
-      h("label", { class: "fld" }, "Planned length (minutes)", h("input", { type: "number", min: 0, value: sh.target || "", inputmode: "numeric", onInput: function () { sh.target = Number(this.value) || 0; save(); } }))),
+    typeof akSetlistGigsLine === "function" ? akSetlistGigsLine(sh) : null,
+    h("label", { class: "fld" }, "Planned length (minutes)", h("input", { type: "number", min: 0, value: sh.target || "", inputmode: "numeric", onInput: function () { sh.target = Number(this.value) || 0; save(); } })),
     h("div", { class: "two" },
       h("label", { class: "fld" }, "Start time", h("input", { type: "time", value: sh.startTime || "", onChange: function () { sh.startTime = this.value; save(); } })),
       h("label", { class: "fld" }, "End time", h("input", { type: "time", value: sh.endTime || "", onChange: function () { sh.endTime = this.value; save(); } }))),
@@ -16000,7 +15998,7 @@ function akShowDetails(sh, redraw) {
       h("label", { class: "fld" }, "Break length (minutes)", h("input", { type: "number", min: 0, value: sh.breakMins || "", inputmode: "numeric", onInput: function () { sh.breakMins = Math.max(0, Number(this.value) || 0); save(); } }))),
     h("label", { class: "fld" }, "Notes", h("textarea", { rows: 3, value: sh.notes, onInput: function () { sh.notes = this.value; save(); } })),
     h("div", { class: "row" }, h("button", { onClick: function () { akBreakPlanDialog(sh); } }, "Length of each set…"), h("button", { onClick: function () { var hs = histState(); hs.tab = "nights"; hs.place = ""; hs.show = sh.id; hs.open = ""; go("history"); } }, "Past nights of this show…")));
-  modal("Show details", body, [{ label: "Done", primary: true, onClick: function () { akVenueBackfill(sh, before); setTimeout(function () { if (redraw) redraw(); }, 0); } }], { wide: true });
+  modal("Set list details", body, [{ label: "Done", primary: true, onClick: function () { akVenueBackfill(sh, before); setTimeout(function () { if (redraw) redraw(); }, 0); } }], { wide: true });
 }
 
 /* ---------------------------------------------------------------- hooks */
@@ -19116,6 +19114,7 @@ function viewStats() {
   else if (st.tab === "shows") akStatShows(pane, nights);
   else if (st.tab === "places") akStatPlaces(pane, histNights(st.period, ""));
   else if (st.tab === "requests") akStatRequests(pane, lim);
+  else if (st.tab === "money" && typeof akStatMoney === "function") akStatMoney(pane, lim, st);
   else akStatCharts(pane, nights, lim);
   var top = h("div", { class: "row", style: "margin:0 0 8px" }, h("span", { class: "muted grow" }, log.length + " plays · " + nights.length + " nights"), h("button", { class: "sm", onClick: function () { go("history"); } }, "Play history page"));
   return shell("Logs and stats", h("div", { "data-blocks": "stats" }, tabs, filt, top, pane), {});
@@ -19319,7 +19318,7 @@ function akPracSet(on, quiet) {
 function akPracStart() {
   var p = S.play; if (!p) return;
   var sid = ""; (p.list || []).some(function (it) { if (it.showId) { sid = it.showId; return true; } return false; });
-  AKP.pend = { seq: S.playSeq, showId: sid, at: Date.now(), timer: 0, plays: [], no: false, yes: false };
+  AKP.pend = { seq: S.playSeq, showId: sid, gigId: S.akGigNext || "", at: Date.now(), timer: 0, plays: [], no: false, yes: false };
   setTimeout(akPracCard, 60);
 }
 function akPracNo() {
@@ -19348,6 +19347,7 @@ function akPracYes() {
     save(); try { refreshListTicks(); } catch (e) {}
     toast("Logging this as a show" + (n ? ": " + n + (n === 1 ? " play" : " plays") + " counted from when they happened." : ", from when you opened the set."));
   }
+  if (p.gigId) S.akGigNext = p.gigId;
   if (sh && typeof akRunBegin === "function") akRunBegin(sh, apply); else apply();
 }
 /* the "Is this a show?" card: floats over the playing screen and doesn't stop the song */
@@ -19558,6 +19558,594 @@ akCss("ak6-live", [
   "[data-akprac].on,[data-akreq].on{background:var(--accent)!important;color:var(--on-accent,#000)!important;border-color:var(--accent)!important}",
   ".akprac-chip{white-space:nowrap}.icon.akedit{font-size:1.1rem}"
 ].join("\n"));
+
+/* ================= Akashic Chords batch 6, phase 2: Shows and Set lists, pay and tips, editing the log afterwards =================
+   - A Show is one booking: date, times, venue (address opens Maps), venue photos, notes (staff names...), pay and tips,
+     and the set lists planned for it. A Set list holds songs only. lib().gigs = [show]; the old lib().shows are the set lists.
+   - Playing a set list from a show (or on the day of a show) links the night to it: every play is logged with the show (e.g),
+     and the show remembers which set lists were used (gig.used).
+   - Pay and tips window for each show (pay, paid, several tips with how they came in, costs); "Pay and tips" tab in Logs and stats.
+   - The log editor: every detail of a past night or show (show, set list, venue, date, each song's time, sets, songs, notes, money). */
+
+function akGigs() { var l = lib(); if (!Array.isArray(l.gigs)) l.gigs = []; return l.gigs; }
+function akGig(id) { if (!id) return null; return akGigs().filter(function (g) { return g.id === id; })[0] || null; }
+function akNewGig(o) {
+  return Object.assign({ id: uid(), name: "", date: "", start: "", end: "", venue: "", venueId: "", address: "", notes: "", photos: [], color: "",
+    pay: 0, paid: false, payHow: "", payNote: "", tips: [], costs: [], setlists: [], used: [], added: new Date().toISOString() }, o || {});
+}
+function akGigTitle(g) { return (g && (g.name || g.venue)) || "Show"; }
+function akGigAddr(g) { var v = akVenueFor(g); return (g.address || (v && v.address) || "").trim(); }
+function akMapsUrl(name, addr) { var q = [name, addr].filter(Boolean).join(", "); return q ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q) : ""; }
+function akNum(v) { v = Number(v); return isFinite(v) ? v : 0; }
+function akGigMoney(g) {
+  var tips = 0, costs = 0; (g.tips || []).forEach(function (t) { tips += akNum(t.amt); }); (g.costs || []).forEach(function (c) { costs += akNum(c.amt); });
+  var pay = akNum(g.pay); return { pay: pay, tips: tips, costs: costs, earned: pay + tips, net: pay + tips - costs };
+}
+function akGigEntries(g) { return (lib().log || []).filter(function (e) { return e.g === g.id; }).sort(function (a, b) { return a.at - b.at; }); }
+function akGigDateText(g) {
+  if (!g.date) return "No date";
+  var p = g.date.split("-"), d = new Date(+p[0], +p[1] - 1, +p[2]);
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+function akTodayKey() { return histDate(Date.now()); }
+var AK_TIP_HOW = ["Cash", "Tip jar", "Venmo", "Cash App", "PayPal", "Zelle", "Card", "Request page", "Other"];
+
+/* the pictures belong to the app, so they're kept and go into backups */
+(function () {
+  var inUse = imgIdsInUse;
+  imgIdsInUse = function () {
+    var ids = inUse.apply(this, arguments);
+    store.libs.forEach(function (l) { (l.gigs || []).forEach(function (g) { (g.photos || []).forEach(function (id) { ids[id] = 1; }); }); (l.venues || []).forEach(function (v) { (v.photos || []).forEach(function (id) { ids[id] = 1; }); }); });
+    return ids;
+  };
+  var forL = imagesFor;
+  imagesFor = function (libs) {
+    var out = forL.apply(this, arguments) || {}, any = Object.keys(out).length > 0;
+    (libs || store.libs).forEach(function (l) { [].concat(l.gigs || [], l.venues || []).forEach(function (x) { (x.photos || []).forEach(function (id) { if (IMG[id]) { out[id] = IMG[id]; any = true; } }); }); });
+    return any ? out : undefined;
+  };
+})();
+/* venues get a place for staff names */
+AK_VFIELDS.splice(AK_VFIELDS.length - 1, 0, ["staff", "Staff and people (names, who's who)"]);
+
+/* ---------------------------------------------------------------- which show is this night? */
+/* S.akGigNext: the show a set list is being played from (set by the show page) */
+function akGigFor(sh) {
+  if (S.akGigNext) { var g0 = akGig(S.akGigNext); S.akGigNext = ""; if (g0) return g0; }
+  var today = akTodayKey(), cand = akGigs().filter(function (g) { return g.date === today; });
+  if (!cand.length) return null;
+  var withIt = cand.filter(function (g) { return (g.setlists || []).indexOf(sh.id) >= 0; });
+  return withIt[0] || (cand.length === 1 ? cand[0] : null);
+}
+function akGigUse(g, sh) {
+  if (!g || !sh) return;
+  g.setlists = g.setlists || []; if (g.setlists.indexOf(sh.id) < 0) g.setlists.push(sh.id);
+  g.used = g.used || [];
+  var last = g.used[g.used.length - 1];
+  if (!last || last.sl !== sh.id || Date.now() - last.at > 6 * 3600e3) g.used.push({ sl: sh.id, name: sh.name || "", at: Date.now() });
+  if (!g.date) g.date = akTodayKey();
+  save();
+}
+function akRunGig() { return typeof RUN !== "undefined" && RUN && !RUN.ended && RUN.gigId ? akGig(RUN.gigId) : null; }
+(function () {
+  var fresh = akRunFresh;
+  akRunFresh = function (sh) {
+    var g = akGigFor(sh);
+    fresh.apply(this, arguments);
+    if (RUN && g) { RUN.gigId = g.id; akRunSave(); akGigUse(g, sh); setTimeout(function () { toast("Logging to the show “" + akGigTitle(g) + "”."); }, 900); }
+  };
+  var begin = akRunBegin;
+  akRunBegin = function (sh, then) {
+    if (RUN && RUN.showId === sh.id && !RUN.ended && S.akGigNext) { var g = akGig(S.akGigNext); S.akGigNext = ""; if (g) { RUN.gigId = g.id; akRunSave(); akGigUse(g, sh); } }
+    return begin.apply(this, arguments);
+  };
+  var lp = logPlay;
+  logPlay = function (s, sh, info, at) {
+    lp.apply(this, arguments);
+    var g = sh && RUN && RUN.showId === sh.id && RUN.gigId ? akGig(RUN.gigId) : null, l = lib().log, e = l[l.length - 1];
+    if (g && e && e.sid === s.id) { e.g = g.id; e.gn = akGigTitle(g); e.pl = g.venue || akGigTitle(g); }
+  };
+  var end = akRunEnd;
+  akRunEnd = function () {
+    var g = akRunGig(), r = end.apply(this, arguments);
+    if (g && !(akGigMoney(g).earned)) setTimeout(function () { toast("Add the pay and tips for “" + akGigTitle(g) + "”?", { label: "Pay and tips", fn: function () { akGigMoneyDialog(g); } }); }, 4500);
+    return r;
+  };
+})();
+/* the place of a night: a show's venue wins */
+(function () { var info = akNightInfo; akNightInfo = function (n) { var r = info.apply(this, arguments), g = akNightGig(n); if (g) { var m = akGigMoney(g); r.tips = m.tips; r.pay = m.pay; r.gig = g; } return r; }; })();
+function akNightGig(n) { var e = (n.entries || []).filter(function (x) { return x.g; })[0]; return e ? akGig(e.g) : null; }
+
+/* ---------------------------------------------------------------- the Shows tab: Shows | Set lists */
+function akShowsTab() { var t = settings().showsTab; if (t !== "gigs" && t !== "sets") t = akGigs().length ? "gigs" : "sets"; return t; }
+function akShowsTabs() {
+  var cur = akShowsTab();
+  return h("div", { class: "chips akshtabs", role: "tablist", "aria-label": "Shows or set lists" },
+    [["gigs", "🎤 Shows", akGigs().length], ["sets", "☰ Set lists", lib().shows.length]].map(function (o) {
+      var on = cur === o[0];
+      return h("button", { class: "chip" + (on ? " on" : ""), role: "tab", "aria-selected": on ? "true" : "false", onClick: function () { settings().showsTab = o[0]; save(); render(); } }, o[1] + " " + o[2]);
+    }));
+}
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
+    if (akShowsTab() === "gigs") return viewGigs();
+    var el = vs.apply(this, arguments), main = el.querySelector(".main > div");
+    if (main) main.insertBefore(akShowsTabs(), main.firstChild);
+    var t = el.querySelector(".topbar h1"); if (t) t.textContent = "Set lists";
+    var nb = el.querySelector(".topbar button.primary"); if (nb) nb.setAttribute("aria-label", "New set list");
+    return el;
+  };
+})();
+function akGigSum(g) {
+  var m = akGigMoney(g), n = (g.setlists || []).filter(findShow).length;
+  return [g.venue && g.venue !== g.name ? g.venue : "", g.start ? tmHM(g.start) + (g.end ? "–" + tmHM(g.end) : "") : "", n ? n + (n === 1 ? " set list" : " set lists") : "", m.earned ? akMoney(m.earned) + (g.pay && !g.paid ? " (pay not in yet)" : "") : ""].filter(Boolean).join(" · ");
+}
+function akGigRow(g) {
+  var past = g.date && g.date < akTodayKey();
+  return h("div", { class: "item akgigrow" + (past ? " past" : ""), style: g.color ? "border-left:8px solid " + g.color + ";padding-left:6px" : null },
+    h("div", { class: "akgig-date" }, g.date ? [h("b", null, String(Number(g.date.slice(8, 10)))), h("span", null, new Date(+g.date.slice(0, 4), +g.date.slice(5, 7) - 1, 1).toLocaleDateString(undefined, { month: "short" }))] : h("span", null, "—")),
+    h("button", { class: "main-btn", onClick: function () { go("gig", { gigId: g.id }); } }, h("div", { class: "t" }, akGigTitle(g)), h("div", { class: "s" }, (g.date ? akGigDateText(g) + " · " : "") + (akGigSum(g) || " "))),
+    (g.setlists || []).some(findShow) ? h("button", { class: "icon", "aria-label": "Play " + akGigTitle(g), onClick: function () { akGigPlay(g); } }, "▶") : null);
+}
+function viewGigs() {
+  var gigs = akGigs(), today = akTodayKey(), list = h("div", { class: "list" });
+  var up = gigs.filter(function (g) { return !g.date || g.date >= today; }).sort(function (a, b) { return (a.date || "9999").localeCompare(b.date || "9999") || (a.start || "").localeCompare(b.start || ""); });
+  var past = gigs.filter(function (g) { return g.date && g.date < today; }).sort(function (a, b) { return b.date.localeCompare(a.date); });
+  var mig = akGigMigrateCard(); if (mig) list.appendChild(mig);
+  if (!gigs.length) list.appendChild(h("div", { class: "empty" }, "No shows yet. A show is one booking: the date, the venue, the pay and tips, and the set lists you play there. Tap + New to add one."));
+  if (up.length) { list.appendChild(h("div", { class: "akgig-sub" }, "Coming up")); up.forEach(function (g) { list.appendChild(akGigRow(g)); }); }
+  if (past.length) {
+    var n = S.akPastN || 30;
+    list.appendChild(h("div", { class: "akgig-sub" }, "Past shows (" + past.length + ")"));
+    past.slice(0, n).forEach(function (g) { list.appendChild(akGigRow(g)); });
+    if (past.length > n) list.appendChild(h("button", { onClick: function () { S.akPastN = n + 60; render(); } }, "Show more"));
+  }
+  var more = h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+    { label: "Venues…", onClick: function () { openVenues(); } },
+    { label: "Pay and tips (logs and stats)…", onClick: function () { akStatState().tab = "money"; go("stats"); } },
+    { label: "Play history…", onClick: function () { go("history"); } },
+    { label: "Make shows from old dated set lists…", onClick: function () { akGigMigrate(true); } }]); } }, "⋯");
+  var body = h("div", { "data-blocks": "gigs", "data-items": "1" }, akShowsTabs(), list);
+  return shell("Shows", body, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Shows"), libButton()), actions: h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" },
+    h("button", { class: "primary", onClick: function () { akGigNewDialog(); } }, "+ New"), more) });
+}
+function akGigNewDialog(pre) {
+  pre = pre || {};
+  var g = akNewGig({ date: pre.date || "", setlists: pre.setlists || [] });
+  var name = h("input", { type: "text", placeholder: "For example: Friday at the Wine Cellar", autocapitalize: "words", "aria-label": "Show name" });
+  var date = h("input", { type: "date", value: g.date, "aria-label": "Date" }), start = h("input", { type: "time", "aria-label": "Start time" }), end = h("input", { type: "time", "aria-label": "End time" });
+  var vbox = h("div"); function dv() { vbox.textContent = ""; vbox.appendChild(akVenueField(g, dv)); } dv();
+  modal("New show", h("div", null, h("label", { class: "fld" }, "Name (optional, the venue is used if blank)", name), vbox,
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Date", date), h("div", { class: "two" }, h("label", { class: "fld" }, "Start", start), h("label", { class: "fld" }, "End", end)))),
+    [{ label: "Cancel" }, { label: "Create show", primary: true, onClick: function () {
+      snap("new show"); g.name = name.value.trim(); g.date = date.value; g.start = start.value; g.end = end.value;
+      akGigs().push(g); settings().showsTab = "gigs"; save(); go("gig", { gigId: g.id });
+    } }]);
+  setTimeout(function () { name.focus(); }, 30);
+}
+/* play a show: pick the set list if there are several */
+function akGigPlay(g, sl) {
+  var lists = (g.setlists || []).map(findShow).filter(Boolean);
+  if (sl) lists = [sl];
+  if (!lists.length) { toast("Add a set list to this show first."); return; }
+  function run(sh) { S.akGigNext = g.id; if (!sh.startTime && g.start) sh.startTime = g.start; if (!sh.endTime && g.end) sh.endTime = g.end; playShow(sh, 0, function () { go("gig", { gigId: g.id }); }); setTimeout(function () { S.akGigNext = ""; }, 4000); }
+  if (lists.length === 1) { run(lists[0]); return; }
+  var last = (g.used || []).length ? g.used[g.used.length - 1].sl : "";
+  modal("Which set list?", h("div", { class: "list" }, lists.map(function (sh) { return h("button", { class: "item main-btn", style: "width:100%;text-align:left", onClick: function () { document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); run(sh); } }, h("div", { class: "t" }, (sh.id === last ? "↺ " : "") + sh.name), h("div", { class: "s" }, showCounts(sh))); })), [{ label: "Cancel" }]);
+}
+
+/* ---------------------------------------------------------------- the show page */
+function viewGig() {
+  var g = akGig(S.gigId); if (!g) { settings().showsTab = "gigs"; return viewGigs(); }
+  var body = h("div");
+  function draw() {
+    var sc = $("mainScroll"), keep = sc ? sc.scrollTop : 0;
+    body.textContent = "";
+    var lists = (g.setlists || []).map(findShow).filter(Boolean), m = akGigMoney(g);
+    body.appendChild(h("div", { class: "row", style: "flex-wrap:wrap" },
+      lists.length ? h("button", { class: "primary", onClick: function () { akGigPlay(g); } }, "▶ Play show") : null,
+      h("button", { onClick: function () { akGigMoneyDialog(g, draw); } }, "💵 Pay and tips" + (m.earned ? " · " + akMoney(m.earned) : "")),
+      typeof akPracBtn === "function" && lists.length ? akPracBtn("chip") : null));
+    /* details */
+    var det = h("div", { class: "card akgig-card", "data-bk": "details" }, h("h3", null, "Details"));
+    det.appendChild(h("label", { class: "fld" }, "Name", h("input", { type: "text", value: g.name, placeholder: g.venue || "Show name", autocapitalize: "words", onInput: function () { g.name = this.value; save(); } })));
+    det.appendChild(h("div", { class: "two" },
+      h("label", { class: "fld" }, "Date", h("input", { type: "date", value: g.date, onChange: function () { g.date = this.value; save(); } })),
+      h("div", { class: "two" },
+        h("label", { class: "fld" }, "Start", h("input", { type: "time", value: g.start, onChange: function () { g.start = this.value; save(); } })),
+        h("label", { class: "fld" }, "End", h("input", { type: "time", value: g.end, onChange: function () { g.end = this.value; save(); } })))));
+    det.appendChild(akVenueField(g, draw));
+    var v = akVenueFor(g), addr = akGigAddr(g), mapA = h("a", { class: "btnlink", target: "_blank", rel: "noopener noreferrer", href: akMapsUrl(g.venue, addr) || "#" }, "📍 Open in Maps ↗");
+    if (!addr && !g.venue) mapA.style.display = "none";
+    det.appendChild(h("label", { class: "fld" }, "Address", h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" },
+      h("input", { type: "text", value: g.address || "", placeholder: (v && v.address) || "Street, town", autocapitalize: "words", onInput: function () { g.address = this.value; save(); mapA.href = akMapsUrl(g.venue, akGigAddr(g)); mapA.style.display = akGigAddr(g) || g.venue ? "" : "none"; } }), mapA)));
+    if (addr) det.appendChild(h("div", { class: "akgig-addr" }, h("a", { href: akMapsUrl(g.venue, addr), target: "_blank", rel: "noopener noreferrer" }, "📍 " + addr)));
+    det.appendChild(h("label", { class: "fld" }, "Notes for this show (who booked you, staff names, anything to remember)", h("textarea", { rows: 3, value: g.notes || "", onInput: function () { g.notes = this.value; save(); } })));
+    if (v) det.appendChild(h("label", { class: "fld" }, "People at " + v.name + " (kept with the venue for every show there)", h("textarea", { rows: 2, value: v.staff || "", placeholder: "Bartenders, managers, sound person…", onInput: function () { v.staff = this.value; save(); } })));
+    det.appendChild(h("div", { class: "fld" }, "Color", colorPicker(g.color, function (c) { g.color = c; save(); })));
+    body.appendChild(det);
+    /* photos */
+    body.appendChild(akGigPhotos(g, draw));
+    /* set lists */
+    var sl = h("div", { class: "card akgig-card", "data-bk": "setlists" }, h("h3", null, "Set lists for this show"));
+    if (!lists.length) sl.appendChild(h("p", { class: "hint" }, "No set list yet. Add one you have, or make a new one."));
+    lists.forEach(function (sh, i) {
+      var uses = (g.used || []).filter(function (u) { return u.sl === sh.id; });
+      sl.appendChild(h("div", { class: "item" },
+        h("button", { class: "main-btn", onClick: function () { go("show", { showId: sh.id }); } }, h("div", { class: "t" }, sh.name || "Untitled"), h("div", { class: "s" }, showCounts(sh) + (uses.length ? " · played " + uses.map(function (u) { return tmClock(u.at); }).join(", ") : ""))),
+        h("button", { class: "icon", "aria-label": "Play " + sh.name, onClick: function () { akGigPlay(g, sh); } }, "▶"),
+        h("button", { class: "icon", "aria-label": "Take " + sh.name + " off this show", onClick: function () { snap("set list off show"); g.setlists.splice(g.setlists.indexOf(sh.id), 1); save(); draw(); toastUndo("Taken off this show (the set list is kept)."); } }, "✕")));
+    });
+    sl.appendChild(h("div", { class: "row" },
+      h("button", { onClick: function () { akPickSetlist(function (sh) { snap("add set list"); g.setlists = g.setlists || []; if (g.setlists.indexOf(sh.id) < 0) g.setlists.push(sh.id); save(); draw(); }, g.setlists); } }, "+ Add a set list"),
+      h("button", { onClick: function () { snap("new set list"); var sh = newShow(akGigTitle(g) + " set"); lib().shows.unshift(sh); g.setlists = g.setlists || []; g.setlists.push(sh.id); save(); go("show", { showId: sh.id }); } }, "+ New set list"),
+      typeof akSetHelper === "function" ? h("button", { onClick: function () { akSetHelper({ gig: g }); } }, "✦ Set list helper") : null));
+    body.appendChild(sl);
+    /* what was played */
+    body.appendChild(akGigLogCard(g, draw));
+    layRun(body);
+    if (sc) sc.scrollTop = keep;
+  }
+  draw();
+  var more = h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+    { label: "Duplicate (new date)", onClick: function () { snap("duplicate show"); var c = akNewGig(Object.assign(clone(g), { id: uid(), date: "", tips: [], costs: [], pay: g.pay, paid: false, used: [], photos: (g.photos || []).slice() })); akGigs().push(c); save(); go("gig", { gigId: c.id }); } },
+    { label: "Venue card", disabled: !akVenueFor(g), onClick: function () { akVenueCard(akVenueFor(g), { done: render }); } },
+    { label: "Edit what was played…", onClick: function () { akLogEdit({ gig: g, redraw: render }); } },
+    { label: "Delete this show…", danger: true, onClick: function () { confirmBox("Delete “" + akGigTitle(g) + "”? Its set lists and the play history are kept.", "Delete", function () { snap("delete show"); lib().gigs = akGigs().filter(function (x) { return x !== g; }); (lib().log || []).forEach(function (e) { if (e.g === g.id) { delete e.g; delete e.gn; } }); save(); go("shows"); toastUndo("Show deleted."); }); } }]); } }, "⋯");
+  return shell(akGigTitle(g), body, { back: function () { saveNow(); if (!navBack()) go("shows"); }, noBanner: true, actions: more });
+}
+function akPickSetlist(cb, skip) {
+  var q = h("input", { type: "search", placeholder: "Find a set list", "aria-label": "Find a set list" }), list = h("div", { class: "list", style: "max-height:52vh;overflow:auto" }), close;
+  function draw() {
+    list.textContent = ""; var t = normTitle(q.value);
+    lib().shows.filter(function (sh) { return (!skip || skip.indexOf(sh.id) < 0) && (!t || normTitle(sh.name).indexOf(t) >= 0); }).forEach(function (sh) {
+      list.appendChild(h("button", { class: "item main-btn", style: "width:100%;text-align:left", onClick: function () { close(); cb(sh); } }, h("div", { class: "t" }, sh.name || "Untitled"), h("div", { class: "s" }, showCounts(sh))));
+    });
+    if (!list.firstChild) list.appendChild(h("div", { class: "empty" }, "No set lists match."));
+  }
+  q.addEventListener("input", draw); draw();
+  close = modal("Add a set list", h("div", null, q, list), [{ label: "Cancel" }], { wide: true });
+}
+/* photos of the venue (kept with the venue, so every show there has them) and of this show */
+function akGigPhotos(g, redraw) {
+  var v = akVenueFor(g), host = v || g; host.photos = host.photos || [];
+  var card = h("div", { class: "card akgig-card", "data-bk": "photos" }, h("h3", null, v ? "Photos of " + v.name : "Photos of the venue"));
+  if (!v) card.appendChild(h("p", { class: "hint", style: "margin:0 0 6px" }, "Pick or save the venue above and the photos are kept with it for every show there."));
+  var strip = h("div", { class: "akgig-photos" });
+  host.photos.forEach(function (id, i) {
+    var rec = IMG[id];
+    strip.appendChild(h("div", { class: "akgig-ph" },
+      rec ? h("button", { class: "akgig-thumb", "aria-label": "Open photo " + (i + 1), onClick: function () { modal(v ? v.name : "Photo", h("img", { src: rec.data, alt: "", style: "width:100%;display:block;border-radius:8px" }), [{ label: "Close", primary: true }], { wide: true }); } }, h("img", { src: rec.data, alt: "" })) : h("div", { class: "akgig-thumb missing" }, "?"),
+      h("button", { class: "icon sm", "aria-label": "Remove photo " + (i + 1), onClick: function () { confirmBox("Remove this photo?", "Remove", function () { snap("remove photo"); host.photos.splice(i, 1); save(); redraw(); }); } }, "✕")));
+  });
+  card.appendChild(strip);
+  var inp = h("input", { type: "file", accept: "image/*", multiple: true, onChange: function () {
+    var files = Array.prototype.slice.call(this.files || []); this.value = ""; if (!files.length) return;
+    var chain = Promise.resolve(), n = 0;
+    files.forEach(function (f, k) { chain = chain.then(function () { return imgFromFile(f); }).then(function (rec) { var id = "vph" + uid() + k; return imgPut(id, rec).then(function () { host.photos.push(id); n++; }); }).catch(function (e) { toast(e.message || "Couldn't add that photo."); }); });
+    chain.then(function () { save(); if (n) toast(n === 1 ? "Photo added." : n + " photos added."); redraw(); });
+  } });
+  card.appendChild(h("div", { class: "row" }, fileBtn("📷 Add photos", inp)));
+  return card;
+}
+/* the plays of a show, by set list and set */
+function akGigLogCard(g, redraw) {
+  var es = akGigEntries(g), card = h("div", { class: "card akgig-card", "data-bk": "played" }, h("h3", null, "What was played" + (es.length ? " (" + es.length + ")" : "")));
+  if (!es.length) card.appendChild(h("p", { class: "hint" }, g.date && g.date > akTodayKey() ? "Plays are logged here when you play a set list from this show." : "Nothing logged for this show yet. Play a set list from here, or add the songs by hand."));
+  var last = "";
+  es.forEach(function (e, i) {
+    var head = (e.sn || "") + (e.st ? " · " + e.st : "");
+    if (head !== last) { card.appendChild(h("div", { class: "hset" }, head || "Songs")); last = head; }
+    card.appendChild(h("div", { class: "hline" }, h("span", { class: "bldn" }, String(i + 1)), h("div", { class: "grow" }, e.t, h("span", { class: "muted" }, "  " + histTime(e.at)))));
+  });
+  if (es.length > 1) card.appendChild(h("p", { class: "hint" }, "From " + histTime(es[0].at) + " to " + histTime(es[es.length - 1].at) + "."));
+  card.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akLogEdit({ gig: g, redraw: redraw }); } }, es.length ? "✎ Edit what was played" : "+ Add songs by hand")));
+  return card;
+}
+
+/* ---------------------------------------------------------------- pay and tips */
+function akGigMoneyDialog(g, done) {
+  var w = { pay: g.pay || "", paid: !!g.paid, payHow: g.payHow || "", payNote: g.payNote || "", tips: clone(g.tips || []), costs: clone(g.costs || []) };
+  var box = h("div"), tot = h("div", { class: "akmoney-tot", role: "status" });
+  function total() {
+    var m = akGigMoney({ pay: w.pay, tips: w.tips, costs: w.costs });
+    tot.textContent = "Pay " + akMoney(m.pay) + "  +  tips " + akMoney(m.tips) + (m.costs ? "  −  costs " + akMoney(m.costs) : "") + "  =  " + akMoney(m.net);
+  }
+  function money(v, set, label) { return h("input", { type: "number", min: 0, step: "0.01", inputmode: "decimal", value: v === 0 || v ? v : "", placeholder: "0", "aria-label": label, style: "max-width:110px", onInput: function () { set(this.value); total(); } }); }
+  function sel(v, opts, set, label) { return h("select", { "aria-label": label, onChange: function () { set(this.value); } }, [h("option", { value: "" }, "How?")].concat(opts.map(function (o) { return h("option", { value: o, selected: v === o }, o); }))); }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("h3", { style: "margin:0 0 4px" }, "Pay"));
+    box.appendChild(h("div", { class: "row akmoney-row", style: "margin:0;align-items:center" },
+      h("span", null, "$"), money(w.pay, function (v) { w.pay = v; }, "Pay"),
+      sel(w.payHow, ["Cash", "Check", "Venmo", "Zelle", "PayPal", "Bank transfer", "Card", "Other"], function (v) { w.payHow = v; }, "Paid how"),
+      h("label", { class: "chk", style: "margin:0" }, h("input", { type: "checkbox", checked: w.paid, onChange: function () { w.paid = this.checked; } }), "Paid")));
+    box.appendChild(h("input", { type: "text", value: w.payNote, placeholder: "Note (invoice, who pays, when)", "aria-label": "Pay note", onInput: function () { w.payNote = this.value; } }));
+    box.appendChild(h("h3", { style: "margin:12px 0 4px" }, "Tips"));
+    w.tips.forEach(function (t, i) {
+      box.appendChild(h("div", { class: "row akmoney-row" }, h("span", null, "$"), money(t.amt, function (v) { t.amt = v; }, "Tip amount"), sel(t.how, AK_TIP_HOW, function (v) { t.how = v; }, "Tip came in how"),
+        h("input", { type: "text", value: t.note || "", placeholder: "Note", "aria-label": "Tip note", class: "grow", onInput: function () { t.note = this.value; } }),
+        h("button", { class: "icon sm", "aria-label": "Remove this tip", onClick: function () { w.tips.splice(i, 1); draw(); } }, "✕")));
+    });
+    box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { w.tips.push({ id: uid(), amt: "", how: "Cash", note: "" }); draw(); setTimeout(function () { var ins = box.querySelectorAll('input[aria-label="Tip amount"]'); if (ins.length) ins[ins.length - 1].focus(); }, 0); } }, "+ Add tips"),
+      [5, 10, 20].map(function (n) { return h("button", { class: "sm", onClick: function () { w.tips.push({ id: uid(), amt: n, how: "Cash", note: "" }); draw(); } }, "+$" + n); })));
+    var rq = akGigReqTips(g);
+    if (rq.sum && !w.tips.some(function (t) { return t.how === "Request page" && akNum(t.amt) === rq.sum; })) box.appendChild(h("div", { class: "hint row", style: "align-items:center" }, "Request page tips marked received that day: " + akMoney(rq.sum) + ".", h("button", { class: "sm", onClick: function () { w.tips.push({ id: uid(), amt: rq.sum, how: "Request page", note: rq.n + " requests" }); draw(); } }, "Add them")));
+    box.appendChild(h("h3", { style: "margin:12px 0 4px" }, "Costs (optional)"));
+    w.costs.forEach(function (c, i) {
+      box.appendChild(h("div", { class: "row akmoney-row" }, h("span", null, "$"), money(c.amt, function (v) { c.amt = v; }, "Cost amount"),
+        h("input", { type: "text", value: c.what || "", placeholder: "Gas, parking, strings…", "aria-label": "What the cost was", class: "grow", onInput: function () { c.what = this.value; } }),
+        h("button", { class: "icon sm", "aria-label": "Remove this cost", onClick: function () { w.costs.splice(i, 1); draw(); } }, "✕")));
+    });
+    box.appendChild(h("button", { onClick: function () { w.costs.push({ id: uid(), amt: "", what: "" }); draw(); } }, "+ Add a cost"));
+    box.appendChild(tot); total();
+  }
+  draw();
+  modal("Pay and tips: " + akGigTitle(g), box, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () {
+    snap("pay and tips");
+    g.pay = akNum(w.pay); g.paid = w.paid; g.payHow = w.payHow; g.payNote = w.payNote.trim();
+    g.tips = w.tips.filter(function (t) { return akNum(t.amt); }).map(function (t) { return { id: t.id || uid(), amt: akNum(t.amt), how: t.how || "", note: (t.note || "").trim() }; });
+    g.costs = w.costs.filter(function (c) { return akNum(c.amt); }).map(function (c) { return { id: c.id || uid(), amt: akNum(c.amt), what: (c.what || "").trim() }; });
+    save(); toastUndo("Saved: " + akMoney(akGigMoney(g).net) + " for “" + akGigTitle(g) + "”."); if (done) done(); else if (S.view === "gig" || S.view === "stats") render();
+  } }], { wide: true });
+}
+function akGigReqTips(g) {
+  var sum = 0, n = 0; if (!g.date) return { sum: 0, n: 0 };
+  akReqLog().forEach(function (r) { if (r.tipOk && r.tip && histDate(r.at) === g.date) { sum += akNum(r.tip); n++; } });
+  return { sum: Math.round(sum * 100) / 100, n: n };
+}
+
+/* ---------------------------------------------------------------- the log editor: every detail, afterwards */
+function akHM(at) { var d = new Date(at); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+function akAtOn(date, hm, base) {
+  var t = new Date(date + "T" + (hm || "20:00") + ":00").getTime();
+  if (base && t < base - 6 * 3600e3) t += 864e5; /* past midnight */
+  return t;
+}
+/* o.night (from the play history) or o.gig (a show); o.redraw */
+function akLogEdit(o) {
+  var g = o.gig || null, n = o.night || null;
+  var entries = g ? akGigEntries(g) : n.entries.slice().sort(function (a, b) { return a.at - b.at; });
+  if (!g && n) g = akNightGig(n);
+  var meta = !g && n ? clone(akNightMeta(n.key) || {}) : {};
+  var first = entries[0] ? entries[0].at : (g && g.date ? akAtOn(g.date, g.start || "20:00") : Date.now());
+  var date0 = g && o.gig ? (g.date || histDate(first)) : (n ? n.date : histDate(first));
+  var place0 = g ? (g.venue || "") : (n && n.place !== "Not in a show" ? n.place : "");
+  var gigSel = h("select", { "aria-label": "Show" }, [h("option", { value: "" }, "Not part of a show")].concat(akGigs().slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); }).map(function (x) { return h("option", { value: x.id, selected: g && g.id === x.id }, (x.date ? x.date + "  " : "") + akGigTitle(x)); })));
+  var sh0 = entries[0] ? entries[0].sh || "" : (n ? n.sh || "" : (g && (g.setlists || [])[0]) || "");
+  var shSel = h("select", { "aria-label": "Set list used" }, [h("option", { value: "" }, "No set list")].concat(lib().shows.map(function (x) { return h("option", { value: x.id, selected: sh0 === x.id }, x.name || "Untitled"); })));
+  var place = h("input", { type: "text", value: place0, autocapitalize: "words", list: "aklvl", "aria-label": "Venue or place" });
+  var dl = h("datalist", { id: "aklvl" }, histAllPlaces().concat(akVenues().map(function (v) { return v.name; })).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).map(function (p) { return h("option", { value: p }); }));
+  var date = h("input", { type: "date", value: date0, "aria-label": "Date" });
+  var notes = h("textarea", { rows: 2, value: g ? (g.notes || "") : (meta.notes || ""), "aria-label": "Notes" });
+  var tips = h("input", { type: "number", min: 0, step: "0.01", inputmode: "decimal", value: meta.tips || "", "aria-label": "Tips" });
+  var pay = h("input", { type: "number", min: 0, step: "0.01", inputmode: "decimal", value: meta.pay || "", "aria-label": "Pay" });
+  /* songs in sets, each with its time */
+  var sets = [], byName = {}, gone = [];
+  entries.forEach(function (e) { var nm = e.st || ""; if (!byName[nm]) { byName[nm] = { name: nm, mins: (meta.setLens || {})[nm] || "", items: [] }; sets.push(byName[nm]); } byName[nm].items.push({ e: e, hm: akHM(e.at), hm0: akHM(e.at) }); });
+  if (!sets.length) sets.push({ name: "Set 1", mins: "", items: [] });
+  var setsBox = h("div");
+  function flat() { var a = []; sets.forEach(function (st) { st.items.forEach(function (x) { a.push(x); }); }); return a; }
+  /* moving a song swaps it with its neighbour, the times stay where they were (in time order) */
+  function move(x, d) {
+    var a = flat(), i = a.indexOf(x), j = i + d; if (j < 0 || j >= a.length) return;
+    var y = a[j], tx = x.hm; x.hm = y.hm; y.hm = tx;
+    var sx = null, sy = null; sets.forEach(function (st) { if (st.items.indexOf(x) >= 0) sx = st; if (st.items.indexOf(y) >= 0) sy = st; });
+    var ix = sx.items.indexOf(x), iy = sy.items.indexOf(y);
+    sx.items[ix] = y; sy.items[iy] = x; drawSets();
+  }
+  function drawSets() {
+    setsBox.textContent = "";
+    var a = flat();
+    sets.forEach(function (st, si) {
+      var card = h("div", { class: "card", style: "padding:8px 10px;margin:6px 0" }, h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" },
+        h("input", { type: "text", value: st.name, placeholder: "Set name", "aria-label": "Set name", onInput: function () { st.name = this.value; } }),
+        g ? null : h("input", { type: "number", min: 0, inputmode: "numeric", value: st.mins, placeholder: "min", "aria-label": "Set length in minutes", style: "max-width:80px", onInput: function () { st.mins = this.value; } })));
+      st.items.forEach(function (x) {
+        var k = a.indexOf(x);
+        card.appendChild(h("div", { class: "hline aklog-row" }, h("span", { class: "bldn" }, String(k + 1)),
+          h("input", { type: "time", value: x.hm, "aria-label": "Time " + x.e.t, class: "aklog-t", onChange: function () { x.hm = this.value; } }),
+          h("div", { class: "grow" }, x.e.t),
+          h("button", { class: "icon sm", "aria-label": "Move up", disabled: k === 0, onClick: function () { move(x, -1); } }, "▲"),
+          h("button", { class: "icon sm", "aria-label": "Move down", disabled: k === a.length - 1, onClick: function () { move(x, 1); } }, "▼"),
+          h("button", { class: "icon sm", "aria-label": "Take out " + x.e.t, onClick: function () { st.items.splice(st.items.indexOf(x), 1); if (!x.e._new) gone.push(x.e); drawSets(); } }, "✕")));
+      });
+      card.appendChild(h("div", { class: "row", style: "margin:4px 0 0" },
+        h("button", { onClick: function () { histSongPicker("Add songs to " + (st.name || "this set"), function (ids) {
+          var lastHm = (flat().slice(-1)[0] || {}).hm || (g && g.start) || "20:00";
+          ids.forEach(function (id) { var s = findSong(id); if (!s) return; var p = lastHm.split(":"), mm = (+p[0]) * 60 + (+p[1]) + 4; lastHm = ("0" + Math.floor(mm / 60) % 24).slice(-2) + ":" + ("0" + mm % 60).slice(-2);
+            st.items.push({ e: { id: uid(), at: 0, sid: s.id, t: s.title, a: s.artist || "", sh: "", sn: "", pl: "", st: st.name, sk: si + 1, man: 1, _new: true }, hm: lastHm, hm0: "" }); });
+          drawSets(); }); } }, "+ Add songs"),
+        sets.length > 1 && !st.items.length ? h("button", { onClick: function () { sets.splice(si, 1); drawSets(); } }, "Remove empty set") : null));
+      setsBox.appendChild(card);
+    });
+    setsBox.appendChild(h("button", { onClick: function () { sets.push({ name: "Set " + (sets.length + 1), mins: "", items: [] }); drawSets(); } }, "+ Add a set"));
+  }
+  drawSets();
+  var moneyRow = g ? h("div", { class: "row" }, h("button", { onClick: function () { akGigMoneyDialog(g); } }, "💵 Pay and tips: " + akMoney(akGigMoney(g).net)))
+    : h("div", { class: "two" }, h("label", { class: "fld" }, "Tips ($)", tips), h("label", { class: "fld" }, "Pay ($)", pay));
+  var body = h("div", null,
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Show", gigSel), h("label", { class: "fld" }, "Set list used", shSel)),
+    h("label", { class: "fld" }, "Venue or place", h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, place, h("button", { type: "button", onClick: function () { openVenues(function (v) { place.value = v.name; }); } }, "My venues…"))), dl,
+    h("label", { class: "fld" }, "Date", date),
+    moneyRow,
+    h("label", { class: "fld" }, g ? "Show notes" : "Notes", notes),
+    h("h3", { style: "margin:10px 0 2px;font-size:1rem" }, "Sets and songs"),
+    h("p", { class: "hint", style: "margin:0 0 4px" }, "Each song shows the time it was played; change any time. ▲ ▼ swap a song with its neighbour and keep the times in order."),
+    setsBox);
+  modal(o.gig ? "Edit what was played: " + akGigTitle(g) : "Edit this night", body, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () {
+    if (!date.value) { toast("Choose a date."); return false; }
+    snap("edit log");
+    var log = lib().log, pl = place.value.trim(), gg = akGig(gigSel.value), slist = findShow(shSel.value);
+    gone.forEach(function (e) { histRemove(e); });
+    var base = null, dateChanged = date.value !== date0;
+    sets.forEach(function (st, si) {
+      st.items.forEach(function (x) {
+        var e = x.e, at;
+        if (!e._new && !dateChanged && x.hm === x.hm0) at = e.at;
+        else at = akAtOn(date.value, x.hm, base);
+        if (base === null) base = at;
+        e.at = at; e.st = st.name; e.sk = si + 1;
+        if (pl) e.pl = pl; else delete e.pl;
+        if (shSel.value !== sh0 || e._new) { e.sh = slist ? slist.id : ""; e.sn = slist ? slist.name : ""; }
+        if (gg) { e.g = gg.id; e.gn = akGigTitle(gg); } else { delete e.g; delete e.gn; }
+        if (e._new) { delete e._new; log.push(e); histAdjust(e.sid, 1, e.at); }
+      });
+    });
+    log.sort(function (a, b) { return a.at - b.at; });
+    if (gg) {
+      gg.notes = notes.value; if (pl && !gg.venue) gg.venue = pl;
+      if (o.gig && gg === g) { g.date = date.value; if (pl) g.venue = pl; }
+      if (slist && (gg.setlists || []).indexOf(slist.id) < 0) { gg.setlists = gg.setlists || []; gg.setlists.push(slist.id); }
+    } else if (n) {
+      var start = (flat()[0] || {}).e ? flat()[0].e.at : akAtOn(date.value, "20:00");
+      var newKey = (slist ? slist.id : (n.sh || "none")) + "|" + histDate(start), m = akNightMeta(n.key, true);
+      m.notes = notes.value.trim(); m.tips = Number(tips.value) || 0; m.pay = Number(pay.value) || 0; m.setLens = {};
+      sets.forEach(function (st) { if (Number(st.mins)) m.setLens[st.name] = Number(st.mins); });
+      if (newKey !== n.key) { lib().nights[newKey] = m; delete lib().nights[n.key]; try { histState().open = newKey; } catch (e) {} }
+    }
+    save(); if (o.redraw) o.redraw(); else render(); toastUndo("Saved.");
+  } }], { wide: true });
+}
+akNightEdit = function (n, redraw) { akLogEdit({ night: n, redraw: redraw }); };
+/* a night in the play history can become a show */
+function akNightToGig(n, redraw) {
+  var meta = akNightMeta(n.key) || {}, sh = n.sh ? findShow(n.sh) : null;
+  var g = akNewGig({ name: n.place !== "Not in a show" ? n.place : (sh ? sh.name : "Show"), date: n.date, venue: n.place !== "Not in a show" ? n.place : "", start: akHM(n.entries[0].at), end: akHM(n.entries[n.entries.length - 1].at + 4 * 60000), notes: meta.notes || "", pay: akNum(meta.pay), tips: akNum(meta.tips) ? [{ id: uid(), amt: akNum(meta.tips), how: "", note: "" }] : [], setlists: sh ? [sh.id] : [] });
+  var v = akVenueByName(g.venue); if (v) g.venueId = v.id;
+  snap("night to show"); akGigs().push(g); n.entries.forEach(function (e) { e.g = g.id; e.gn = akGigTitle(g); });
+  save(); toastUndo("Made the show “" + akGigTitle(g) + "”."); go("gig", { gigId: g.id });
+}
+
+/* ---------------------------------------------------------------- old dated set lists become shows (asked once) */
+function akGigOldDated() { return lib().shows.filter(function (sh) { return sh.date && !akGigs().some(function (g) { return (g.setlists || []).indexOf(sh.id) >= 0 && g.date === sh.date; }); }); }
+function akGigMigrateCard() {
+  if (settings().gigMigDone) return null;
+  var old = akGigOldDated(); if (!old.length) return null;
+  return h("div", { class: "card akgig-mig" }, h("b", null, "Shows and set lists are separate now."),
+    h("p", { class: "hint", style: "margin:4px 0" }, "Your old shows are your set lists. " + old.length + (old.length === 1 ? " of them has" : " of them have") + " a date. Make a Show for each one, with its date, venue and times, and its past plays and tips?"),
+    h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akGigMigrate(); } }, "Make " + old.length + (old.length === 1 ? " show" : " shows")), h("button", { onClick: function () { settings().gigMigDone = 1; save(); render(); } }, "No thanks")));
+}
+function akGigMigrate(ask) {
+  var old = akGigOldDated();
+  if (!old.length) { toast("No set lists with a date are left to turn into shows."); settings().gigMigDone = 1; save(); return; }
+  function run() {
+    snap("make shows from set lists");
+    old.forEach(function (sh) {
+      var key = sh.id + "|" + sh.date, meta = (lib().nights || {})[key] || {};
+      var g = akNewGig({ name: sh.name, date: sh.date, start: sh.startTime || "", end: sh.endTime || "", venue: sh.venue || "", venueId: sh.venueId || "", notes: sh.notes || "", color: sh.color || "", setlists: [sh.id], pay: akNum(meta.pay), tips: akNum(meta.tips) ? [{ id: uid(), amt: akNum(meta.tips), how: "", note: "" }] : [] });
+      akGigs().push(g);
+      (lib().log || []).forEach(function (e) { if (e.sh === sh.id && histDate(e.at) === sh.date && !e.g) { e.g = g.id; e.gn = akGigTitle(g); } });
+    });
+    settings().gigMigDone = 1; settings().showsTab = "gigs"; save(); render(); toastUndo("Made " + old.length + (old.length === 1 ? " show." : " shows."));
+  }
+  if (ask) confirmBox("Make a show for each of the " + old.length + " set lists that have a date?", "Make shows", run); else run();
+}
+
+/* ---------------------------------------------------------------- Pay and tips in Logs and stats */
+AK_STAT_TABS.push(["money", "Pay and tips"]);
+function akStatMoney(pane, lim, st) {
+  var limKey = lim ? histDate(lim) : "", today = akTodayKey();
+  var rows = akGigs().filter(function (g) { return g.date && g.date <= today && (!limKey || g.date >= limKey) && (!st.place || (g.venue || akGigTitle(g)) === st.place); }).map(function (g) {
+    var m = akGigMoney(g), es = akGigEntries(g), hrs = 0;
+    if (g.start && g.end) { var a = akAtOn(g.date, g.start), b = akAtOn(g.date, g.end, a); hrs = Math.max(0, (b - a) / 3600e3); }
+    else if (es.length > 1) hrs = (es[es.length - 1].at - es[0].at) / 3600e3 + 0.07;
+    return { g: g, date: g.date, place: g.venue || akGigTitle(g), m: m, hrs: hrs, tips: g.tips || [] };
+  });
+  /* nights with money written on them that aren't shows */
+  histNights(st.period, st.place).forEach(function (n) {
+    if (akNightGig(n)) return; var meta = akNightMeta(n.key) || {};
+    if (!akNum(meta.pay) && !akNum(meta.tips)) return;
+    var hrs = n.entries.length > 1 ? (n.entries[n.entries.length - 1].at - n.entries[0].at) / 3600e3 + 0.07 : 0;
+    rows.push({ g: null, night: n, date: n.date, place: n.place, m: { pay: akNum(meta.pay), tips: akNum(meta.tips), costs: 0, earned: akNum(meta.pay) + akNum(meta.tips), net: akNum(meta.pay) + akNum(meta.tips) }, hrs: hrs, tips: akNum(meta.tips) ? [{ amt: akNum(meta.tips), how: "" }] : [] });
+  });
+  rows.sort(function (a, b) { return b.date.localeCompare(a.date); });
+  if (!rows.length) { pane.appendChild(h("p", { class: "hint" }, "No pay or tips yet. Open a show and tap 💵 Pay and tips, or add them to a night in the play history.")); return; }
+  var T = { pay: 0, tips: 0, costs: 0, net: 0, hrs: 0, paidHrs: 0 }; rows.forEach(function (r) { T.pay += r.m.pay; T.tips += r.m.tips; T.costs += r.m.costs; T.net += r.m.net; if (r.hrs) { T.hrs += r.hrs; T.paidHrs += r.m.earned; } });
+  var tipped = rows.filter(function (r) { return r.m.tips; });
+  pane.appendChild(h("div", { class: "akstat-tiles" },
+    akTile("Earned", akMoney(T.pay + T.tips)), akTile("Pay", akMoney(T.pay)), akTile("Tips", akMoney(T.tips)), T.costs ? akTile("Costs", akMoney(T.costs)) : null, akTile("Take home", akMoney(T.net)),
+    akTile("Shows", String(rows.length)), akTile("Average a show", akMoney((T.pay + T.tips) / rows.length)), akTile("Average tips", tipped.length ? akMoney(T.tips / tipped.length) : "–"),
+    T.hrs ? akTile("Per hour", akMoney(T.paidHrs / T.hrs)) : null));
+  var unpaid = rows.filter(function (r) { return r.g && r.g.pay && !r.g.paid; });
+  if (unpaid.length) pane.appendChild(h("div", { class: "card warn" }, h("b", null, "Pay not in yet (" + unpaid.length + ")"), unpaid.map(function (r) { return h("div", { class: "akstat-row" }, h("span", { class: "grow" }, r.date + " · " + r.place), h("span", null, akMoney(r.m.pay)), h("button", { class: "sm", onClick: function () { akGigMoneyDialog(r.g); } }, "Paid…")); })));
+  var months = akMonths(12), byM = {}; rows.forEach(function (r) { var k = r.date.slice(0, 7); byM[k] = (byM[k] || 0) + r.m.earned; });
+  pane.appendChild(h("h3", null, "Earned each month"));
+  pane.appendChild(akBarChart(months.map(function (x) { return [x.label, Math.round(byM[x.key] || 0)]; }), { label: "Earned each month", fmt: function (v) { return "$" + Math.round(v); } }));
+  var byP = {}; rows.forEach(function (r) { var p = byP[r.place] = byP[r.place] || { place: r.place, n: 0, pay: 0, tips: 0 }; p.n++; p.pay += r.m.pay; p.tips += r.m.tips; });
+  var tb = h("tbody");
+  Object.keys(byP).map(function (k) { return byP[k]; }).sort(function (a, b) { return (b.pay + b.tips) - (a.pay + a.tips); }).forEach(function (p) { tb.appendChild(h("tr", null, h("td", null, p.place), h("td", null, String(p.n)), h("td", null, akMoney(p.pay)), h("td", null, akMoney(p.tips)), h("td", null, akMoney((p.pay + p.tips) / p.n)))); });
+  pane.appendChild(h("h3", null, "By venue"));
+  pane.appendChild(h("div", { class: "aktbl-wrap" }, h("table", { class: "aktbl" }, h("thead", null, h("tr", null, ["Venue", "Shows", "Pay", "Tips", "Average"].map(function (c) { return h("th", null, c); }))), tb)));
+  var byHow = {}; rows.forEach(function (r) { r.tips.forEach(function (t) { var k = t.how || "Not said"; byHow[k] = (byHow[k] || 0) + akNum(t.amt); }); });
+  var hows = Object.keys(byHow).sort(function (a, b) { return byHow[b] - byHow[a]; });
+  if (hows.length) { pane.appendChild(h("h3", null, "How tips came in")); pane.appendChild(akBarChart(hows.map(function (k) { return [k, Math.round(byHow[k])]; }), { label: "Tips by how they came in", fmt: function (v) { return "$" + Math.round(v); } })); }
+  var best = tipped.slice().sort(function (a, b) { return b.m.tips - a.m.tips; }).slice(0, 5);
+  if (best.length) pane.appendChild(h("div", { class: "card" }, h("h3", { style: "margin-top:0" }, "Best tip nights"), best.map(function (r, i) { return h("div", { class: "akstat-row" }, h("span", { class: "muted akstat-i" }, String(i + 1)), h("span", { class: "grow" }, r.date + " · " + r.place), h("span", null, akMoney(r.m.tips))); })));
+  var all = h("tbody");
+  rows.forEach(function (r) { all.appendChild(h("tr", null, h("td", { style: "white-space:nowrap" }, r.date), h("td", null, r.g ? h("button", { class: "linkish", onClick: function () { go("gig", { gigId: r.g.id }); } }, r.place) : r.place), h("td", null, r.m.pay ? akMoney(r.m.pay) + (r.g && !r.g.paid ? " *" : "") : ""), h("td", null, r.m.tips ? akMoney(r.m.tips) : ""), h("td", null, r.m.costs ? akMoney(r.m.costs) : ""), h("td", null, akMoney(r.m.net)))); });
+  pane.appendChild(h("h3", null, "Every show"));
+  pane.appendChild(h("div", { class: "aktbl-wrap" }, h("table", { class: "aktbl" }, h("thead", null, h("tr", null, ["Date", "Place", "Pay", "Tips", "Costs", "Take home"].map(function (c) { return h("th", null, c); }))), all)));
+  pane.appendChild(h("p", { class: "hint" }, "* pay not marked as received."));
+  pane.appendChild(h("div", { class: "row" }, h("button", { onClick: function () {
+    saveFile("pay-and-tips-" + akDateStr(Date.now()) + ".csv", akCsv([["Date", "Show", "Place", "Pay", "Paid", "Tips", "Costs", "Take home", "Hours"]].concat(rows.map(function (r) { return [r.date, r.g ? akGigTitle(r.g) : "", r.place, r.m.pay || "", r.g ? (r.g.paid ? "yes" : "no") : "", r.m.tips || "", r.m.costs || "", r.m.net, r.hrs ? r.hrs.toFixed(2) : ""]; }))), "text/csv");
+  } }, "Export CSV")));
+}
+
+/* ---------------------------------------------------------------- hooks */
+TB_ITEMS.push(["gigmoney", "Pay and tips for this show"]); TB_SHORT.gigmoney = "Pay/tips"; AK_TB_MODES.gigmoney = "p";
+AK_IC.gigmoney = "M12 2v20 M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6";
+function akMoneyNow() {
+  var g = akRunGig() || akGigFor({ id: S.play && curItem() ? curItem().showId : "" });
+  if (g) akGigMoneyDialog(g); else toast("This set isn't linked to a show. Open the show (Shows tab) and play from there, or add a show for today.");
+}
+function akExtraTb15(id, song, root) {
+  if (id === "gigmoney") return h("button", { "aria-label": "Pay and tips for this show", onClick: akMoneyNow }, akIcon("gigmoney"));
+  if (typeof akExtraTb16 === "function") return akExtraTb16(id, song, root);
+  return null;
+}
+(function () {
+  /* the play history: a night can become a show */
+  var vh = viewHistory;
+  viewHistory = function () {
+    var el = vh.apply(this, arguments);
+    setTimeout(akHistGigButtons, 0);
+    return el;
+  };
+})();
+function akHistGigButtons() {
+  if (S.view !== "history") return;
+  var d = histState(); if (d.tab !== "nights" || !d.open) return;
+  var n = histNights(d.period, d.place).filter(function (x) { return x.key === d.open; })[0]; if (!n) return;
+  var btn = Array.prototype.filter.call(document.querySelectorAll(".hnight button.primary"), function (b) { return /Edit this night/.test(b.textContent); })[0];
+  if (!btn || btn.parentNode.querySelector(".akn2g")) return;
+  var g = akNightGig(n);
+  btn.parentNode.insertBefore(g ? h("button", { class: "akn2g", onClick: function () { go("gig", { gigId: g.id }); } }, "🎤 Open the show") : h("button", { class: "akn2g", onClick: function () { akNightToGig(n); } }, "🎤 Make this a show"), btn.nextSibling);
+}
+document.addEventListener("click", function () { if (S.view === "history") setTimeout(akHistGigButtons, 30); }, true);
+
+akCss("ak6-shows", [
+  ".akshtabs{margin:2px 0 10px}.akshtabs .chip{font-size:1rem;padding:6px 14px}",
+  ".akgig-sub{margin:12px 2px 4px;font-weight:800;color:var(--muted)}",
+  ".akgigrow{align-items:stretch}.akgigrow.past{opacity:.85}",
+  ".akgig-date{flex:none;width:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:10px;background:var(--accent-bg);color:var(--accent);line-height:1.05}.akgig-date b{font-size:1.3rem}.akgig-date span{font-size:.75rem;text-transform:uppercase;font-weight:700}",
+  ".akgig-card h3{margin:0 0 6px;font-size:1.05rem}.akgig-addr a{color:var(--accent)}",
+  ".akgig-photos{display:flex;gap:8px;flex-wrap:wrap}.akgig-ph{position:relative}.akgig-ph .icon{position:absolute;top:2px;right:2px;min-height:26px;min-width:26px;padding:0}",
+  ".akgig-thumb{padding:0;width:104px;height:78px;border-radius:8px;overflow:hidden;display:block}.akgig-thumb img{width:100%;height:100%;object-fit:cover;display:block}.akgig-thumb.missing{display:flex;align-items:center;justify-content:center;border:1px dashed var(--line)}",
+  ".akmoney-row select{flex:0 1 150px;width:auto;min-width:0}.akmoney-row .chk{flex:none}",
+  ".akmoney-row{flex-wrap:nowrap;align-items:center;margin:4px 0}.akmoney-row .grow{min-width:60px}.akmoney-tot{margin-top:12px;padding:10px;border-radius:10px;background:var(--accent-bg);font-weight:700}",
+  ".aklog-row{align-items:center;gap:6px}.aklog-t{max-width:110px;min-height:34px;padding:2px 6px}",
+  ".akgig-mig{border-color:var(--accent)}.linkish{background:none;border:0;padding:0;min-height:0;color:var(--accent);text-decoration:underline;text-align:left}"
+].join("\n"));
+/* on a set list's page: the shows it belongs to */
+function akSetlistGigsLine(sh) {
+  var gs = akGigs().filter(function (g) { return (g.setlists || []).indexOf(sh.id) >= 0; }).sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  var box = h("div", { class: "fld" }, h("div", { class: "muted" }, gs.length ? "Used in these shows" : "Not part of a show yet"));
+  gs.slice(0, 6).forEach(function (g) { box.appendChild(h("button", { class: "sm", style: "margin:2px 4px 2px 0", onClick: function () { document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); go("gig", { gigId: g.id }); } }, (g.date ? akGigDateText(g) + " · " : "") + akGigTitle(g))); });
+  box.appendChild(h("button", { class: "sm", style: "margin:2px 0", onClick: function () { document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); akGigNewDialog({ setlists: [sh.id], date: akTodayKey() }); } }, "+ Make a show with this set list"));
+  return box;
+}
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
