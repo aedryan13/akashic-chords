@@ -982,6 +982,7 @@ function renderLyricChart(text, o) {
   rows.forEach(function (rawLine, ri) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { root.appendChild(tabBlock(rows.slice(ri, te))); skipTo = te; return; }
+    var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { root.appendChild(akSoloEl(solo)); return; }
     var sp = splitCues(rawLine), line = sp.text;
     if (!line.trim() && !sp.cues.length && rawLine.trim() === "") { root.appendChild(h("div", { class: "gap" })); return; }
     if (!line.trim()) { if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen)); return; }
@@ -1018,6 +1019,7 @@ function renderRawChart(text, o) {
   rows.forEach(function (rawLine, ri) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { root.appendChild(tabBlock(rows.slice(ri, te))); skipTo = te; return; }
+    var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { root.appendChild(akSoloEl(solo)); return; }
     var sp = splitCues(rawLine), line = sp.text;
     if (rawLine.trim() === "") { root.appendChild(h("div", { class: "gap" })); return; }
     if (!line.trim()) { if (o.cues && sp.cues.length) root.appendChild(cueRow(sp.cues, o.cuesOpen)); return; }
@@ -1055,6 +1057,7 @@ function chartToPlain(text, o) {
   rows.forEach(function (rawLine, ri) {
     if (ri < skipTo) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { rows.slice(ri, te).forEach(function (l) { out.push(l.replace(/\s+$/, "")); }); skipTo = te; return; }
+    var solo = typeof akSoloParse === "function" ? akSoloParse(rawLine) : null; if (solo) { out.push("(Solo" + (solo.text ? ": " + solo.text : "") + ")"); return; }
     var sp = splitCues(rawLine), line = sp.text;
     var cueTxt = sp.cues.map(function (c) { return "(" + (CUE_TYPES[c.type] || CUE_TYPES.note).label + ": " + c.text + ")"; }).join(" ");
     if (!line.trim()) { if (rawLine.trim() === "") out.push(""); else if (o.cues && cueTxt) out.push(cueTxt); return; }
@@ -1360,6 +1363,7 @@ function normalizeStore() {
   if (!store.libs.some(function (l) { return l.id === store.cur; })) store.cur = store.libs[0].id;
   if (!Array.isArray(st.customChords)) st.customChords = [];
   syncCustomChords();
+  try { if (typeof akMigrate4 === "function") akMigrate4(st); } catch (e) {}
 }
 function fromV1(d) {
   var l = newLib("My songs");
@@ -1374,7 +1378,7 @@ function load() {
     if (raw) {
       var d = JSON.parse(raw);
       store.libs = d.libs || []; store.cur = d.cur || ""; if (d.settings) deepMerge(store.settings, d.settings);
-      store.banter = d.banter || []; store.fingerings = d.fingerings || { guitar: {}, ukulele: {} }; store.recent = d.recent || []; store.lastBackup = d.lastBackup || ""; store.changes = d.changes || 0;
+      store.banter = d.banter || []; store.fingerings = d.fingerings || { guitar: {}, ukulele: {} }; store.recent = d.recent || []; store.lastBackup = d.lastBackup || ""; store.lastQuick = d.lastQuick || ""; store.changes = d.changes || 0;
     } else {
       var r1 = localStorage.getItem(KEY1);
       if (r1) {
@@ -1392,12 +1396,20 @@ function load() {
 }
 function storeJSON() { return JSON.stringify(store); }
 function saveNow() {
-  clearTimeout(saveTimer);
+  clearTimeout(saveTimer); if (saveIdle && window.cancelIdleCallback) { cancelIdleCallback(saveIdle); saveIdle = 0; }
   try { trackUpdated(); } catch (e) {}
   try { localStorage.setItem(KEY2, storeJSON()); persistOK = true; } catch (e) { if (persistOK) { try { S.persistHidden = false; } catch (e2) {} } persistOK = false; }
 }
 window.addEventListener("pagehide", function () { if (saveTimer) { try { saveNow(); } catch (e) {} } });
-function save() { store.changes = (store.changes || 0) + 1; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 250); }
+/* saving writes the whole library (about a megabyte): on the playing screen it waits for a quiet moment so it never
+   holds up a pedal press or a button (it is always written when the app is hidden or closed) */
+var saveIdle = 0;
+function save() {
+  store.changes = (store.changes || 0) + 1; clearTimeout(saveTimer);
+  if (saveIdle && window.cancelIdleCallback) { cancelIdleCallback(saveIdle); saveIdle = 0; }
+  if (S.view === "play" && window.requestIdleCallback) saveTimer = setTimeout(function () { saveIdle = requestIdleCallback(function () { saveIdle = 0; saveNow(); }, { timeout: 4000 }); }, 1500);
+  else saveTimer = setTimeout(saveNow, 250);
+}
 function songCount() { var n = 0; store.libs.forEach(function (l) { n += l.songs.length; }); return n; }
 
 /* ---------- gentle reminders to save a backup file ---------- */
@@ -1859,7 +1871,7 @@ function shell(title, content, o) {
   var wrap = h("div", { class: "shell" },
     h("div", { class: "topbar" },
       (!withTabs && canBack) ? h("button", { class: "icon", "aria-label": "Back", onClick: o.back || function () { navBack(); } }, "←") : null,
-      o.titleEl || h("h1", null, title), o.actions || null, layButtonEl()),
+      o.titleEl || h("h1", null, title), o.actions || null, (settings().rollBackup || {}).header && typeof akBackupBtn === "function" ? akBackupBtn("icon akbhead") : null, layButtonEl()),
     layBannerEl(),
     (withTabs && !o.noBanner) ? tipBannerEl() : null,
     (persistOK || S.persistHidden) ? null : h("div", { class: "warn banner", style: "margin:0 14px" }, h("div", { class: "grow" }, "This browser isn't saving your songs here. Save a backup file from the Import tab before you close the page."),
@@ -1887,6 +1899,7 @@ function tabBarEl(o) {
       o.leave(function () { if (t[0] === "play") resumePlay(); else go(t[0]); });
     } }, h("span", { class: "ic" }, t[1]), t[2]));
   });
+  if ((settings().rollBackup || {}).tab && typeof akBackupBtn === "function") { var bk = akBackupBtn("akbtab"); bk.textContent = ""; bk.appendChild(h("span", { class: "ic" }, akIcon("backup"))); bk.appendChild(document.createTextNode("Backup")); bar.appendChild(bk); }
   return bar;
 }
 function libButton() {
@@ -2244,7 +2257,7 @@ function openImageViewer(root, song, start) {
   var v = h("div", { class: "imgview", role: "dialog", "aria-label": "Pictures" }, bar, body);
   root.appendChild(v); setZoom(100); draw(false);
 }
-function ivScroll(dir) { var b = document.querySelector(".imgview .iv-body"); if (b) b.scrollBy({ top: dir * b.clientHeight * 0.85, behavior: "smooth" }); }
+function ivScroll(dir) { var b = document.querySelector(".imgview .iv-body"); if (b) b.scrollBy({ top: dir * b.clientHeight * 0.85, behavior: settings().pedalGlide ? "smooth" : "auto" }); }
 function ivClose() { var v = document.querySelector(".imgview"); if (v) v.remove(); }
 
 
@@ -2258,7 +2271,8 @@ function songInfoLine(s, o) {
   if (o.length && s.duration) out.push(fmtTime(s.duration));
   if (o.tempo && s.tempo) out.push(s.tempo + " bpm");
   if (o.timeSig && s.timeSig) out.push(s.timeSig);
-  if (o.capo && s.capo) out.push("capo " + s.capo);
+  if (o.capo && Number(s.capo)) out.push("capo " + s.capo);
+  if (o.retune && typeof akRetuneOf === "function" && akRetuneOf(s)) out.push("⚠ " + akRetuneOf(s));
   if (o.year && s.year) out.push(String(s.year));
   if (o.origArtist && s.origArtist) out.push("orig. " + s.origArtist);
   if (o.tags && (s.tags || []).length) out.push(s.tags.join(", "));
@@ -2734,7 +2748,7 @@ function viewSong() {
       h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { snap("place chords"); pushHist(); openPlacer(s, { onChange: function () { lyrArea.value = s.lyrics; later(); drawPrev(); }, onClose: function () { pushHist(); save(); } }); } }, "Place chords…"), h("button", { onClick: function () { plSectionDialog("Add a section label", "", "Add", function (name) {
         pushHist(); var t = lyrArea.value, pos = lyrArea.selectionStart || 0, ls = t.lastIndexOf("\n", pos - 1) + 1;
         var pre = ls > 0 && t.slice(Math.max(0, ls - 2), ls) !== "\n\n" ? "\n" : "";
-        lyrArea.value = t.slice(0, ls) + pre + "[" + name + "]\n" + t.slice(ls); s.lyrics = lyrArea.value; pushHist(); save(); toast("Added [" + name + "] above the line you were on."); }); } }, "+ Section…"), h("button", { onClick: function () { addCue(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); }); } }, "+ Add cue"), h("button", { onClick: function () { openTabEditor(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Tab…"), h("button", { onClick: function () { makeChordFrom(lyrArea, "lyrics", "lyrics"); } }, "♪ Make chord")),
+        lyrArea.value = t.slice(0, ls) + pre + "[" + name + "]\n" + t.slice(ls); s.lyrics = lyrArea.value; pushHist(); save(); toast("Added [" + name + "] above the line you were on."); }); } }, "+ Section…"), h("button", { onClick: function () { addCue(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); }); } }, "+ Add cue"), h("button", { onClick: function () { pushHist(); akSoloInsert(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Solo"), h("button", { onClick: function () { openTabEditor(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Tab…"), h("button", { onClick: function () { makeChordFrom(lyrArea, "lyrics", "lyrics"); } }, "♪ Make chord")),
       lyrArea,
       prevCard, secCard,
       h("div", { class: "row" },
@@ -2752,6 +2766,7 @@ function viewSong() {
       h("div", { class: "two" },
         fld("Capo fret", "capo", { num: true, cap: "off", inputmode: "numeric" }),
         h("label", { class: "fld" }, "Show chords as", h("select", { value: s.view, onChange: function () { s.view = this.value; later(); } }, h("option", { value: "shapes" }, "My shapes"), h("option", { value: "sounding" }, "Sounding key (for other players)")))),
+      akSongPlayingExtra(s, later),
       h("p", { class: "hint" }, tuningOffset() || s.capo ? "Your tuning is " + tuningName(tuningOffset()) + (s.capo ? " with a capo on " + s.capo : "") + ". Sounding key shows each chord " + (soundShift(s) >= 0 ? "up " : "down ") + Math.abs(soundShift(s)) + " semitones from your shapes." : "Set your tuning in Settings to use the sounding-key view."),
       fld("Text size for this song (0 uses your default)", "size", { num: true, cap: "off", inputmode: "numeric" }),
       h("h2", null, "Practice and songwriting"),
@@ -3634,6 +3649,7 @@ function viewShow() {
       { label: "Add songs…", onClick: function () { pickSongs(function (ids) { snap("add songs"); ids.forEach(function (id) { st.songIds.push(id); }); save(); draw(); }); } },
       { label: "Color…", onClick: function () { modal("Set color", colorPicker(st.color, function (c) { st.color = c; save(); }), [{ label: "Done", onClick: function () { setTimeout(draw, 0); } }]); } },
       { label: "Rename…", onClick: function () { askText("Rename set", st.name, "Rename", function (v) { st.name = v; save(); draw(); }); } },
+      { label: "Set length (for the break countdown)…", onClick: function () { askText("Length of " + st.name + " in minutes (blank = the show's)", st.mins ? String(st.mins) : "", "Save", function (v) { st.mins = Math.max(0, parseInt(v, 10) || 0); save(); draw(); }, "45"); } },
       { sep: true },
       { label: "Move all songs to another set…", disabled: !st.songIds.length, onClick: function () { setTimeout(function () {
         var targets = sh.sets.map(function (x, xi) { return xi === si ? null : { label: "→ " + (/^set\s*\d+$/i.test(x.name.trim()) ? x.name : (xi + 1) + ". " + x.name), onClick: function () { moveAllSongs(st, x); } }; });
@@ -3653,6 +3669,7 @@ function viewShow() {
       h("button", { class: "primary", onClick: function () { playShow(sh, 0, function () { go("show", { showId: sh.id }); }); } }, "▶ Play show"),
       tog,
       h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+        { label: "Show details: venue, date, times, set lengths…", onClick: function () { akShowDetails(sh, draw); } },
         { label: S.selSongMode ? "Done selecting songs" : "Select songs…", onClick: function () { S.selSongMode = !S.selSongMode; S.selSongs = {}; draw(); } },
         { label: "Export or print…", onClick: function () { exportShow(sh); } },
         { label: "Encore ideas…", onClick: function () { openEncore(); } },
@@ -3669,6 +3686,7 @@ function viewShow() {
         { label: "Delete this show…", danger: true, onClick: function () { confirmBox("Move “" + sh.name + "” to Recently deleted?", "Delete", function () { snap("delete show"); trashShow(sh); save(); go("shows"); toastUndo("Show deleted."); }); } }]); } }, "⋯")));
     var cdOn = TM.cd.target && TM.cd.showId === sh.id;
     body.appendChild(akRunCard(sh, draw));
+    if (typeof akShowTimerBar === "function") body.appendChild(akShowTimerBar(sh, draw));
     body.appendChild(panel); paintTog();
     panel.appendChild(h("div", { class: "row tmrow", "data-bk": "timers", "data-bt": "Countdown, end time and timers" },
       h("button", { class: "tmbtn", "aria-label": "Countdown to the start of the set", onClick: function () { openBigTimer({ showId: sh.id }); } },
@@ -8051,7 +8069,9 @@ function viewHistory() {
       var open = d.open === n.key, sets = {}, order = [];
       n.entries.forEach(function (e) { var nm = e.st || ""; if (!sets[nm]) { sets[nm] = []; order.push(nm); } sets[nm].push(e); });
       var card = h("div", { class: "card hnight" }, h("button", { class: "main-btn", "aria-expanded": open ? "true" : "false", style: "width:100%;text-align:left", onClick: function () { d.open = open ? "" : n.key; draw(); } },
-        h("div", { class: "t" }, (open ? "▾ " : "▸ ") + histDateText(n.date)), h("div", { class: "s" }, n.place + " · " + n.entries.length + (n.entries.length === 1 ? " song" : " songs") + " · " + histTime(n.entries[0].at) + " to " + histTime(n.entries[n.entries.length - 1].at))));
+        h("div", { class: "t" }, (open ? "▾ " : "▸ ") + histDateText(n.date)), h("div", { class: "s" }, n.place + " · " + n.entries.length + (n.entries.length === 1 ? " song" : " songs") + " · " + histTime(n.entries[0].at) + " to " + histTime(n.entries[n.entries.length - 1].at) + (function () { var m = typeof akNightMeta === "function" ? akNightMeta(n.key) : null; return m && m.tips ? " · tips $" + m.tips : ""; })())));
+      var nm0 = typeof akNightMeta === "function" ? akNightMeta(n.key) : null;
+      if (open && nm0 && (nm0.notes || nm0.pay)) card.appendChild(h("div", { class: "hint", style: "margin:6px 0 0;white-space:pre-wrap" }, [nm0.pay ? "Pay $" + nm0.pay : "", nm0.notes || ""].filter(Boolean).join(" · ")));
       if (open) {
         var no = 0;
         order.forEach(function (nm) {
@@ -8064,7 +8084,8 @@ function viewHistory() {
           });
         });
         card.appendChild(h("div", { class: "row", style: "flex-wrap:wrap;margin-top:8px" },
-          h("button", { class: "primary", onClick: function () { histNightToShow(n); } }, "Make a set list from this night"),
+          h("button", { class: "primary", onClick: function () { akNightEdit(n, draw); } }, "✎ Edit this night"),
+          h("button", { onClick: function () { histNightToShow(n); } }, "Make a set list from this night"),
           h("button", { onClick: function () { histSongPicker("Add songs to this night", function (ids) { snap("add to history"); ids.forEach(function (id) { histAddEntry(id, n); n.entries = (lib().log || []).filter(function (e) { return (e.sh || "none") + "|" + histDate(e.at) === n.key; }).sort(function (a, b) { return a.at - b.at; }); }); save(); draw(); toast("Added to the night."); }); } }, "+ Add a song I played"),
           h("button", { onClick: function () { askText("Venue or place", n.place === "Not in a show" ? "" : n.place, "Save", function (v) { snap("rename place"); n.entries.forEach(function (e) { e.pl = v; }); save(); draw(); }); } }, "Rename the place"),
           h("button", { class: "danger", onClick: function () { confirmBox("Remove this night (" + n.entries.length + " plays) from your history? Songs' play counts go down by the same amount.", "Remove night", function () { snap("remove night"); n.entries.slice().forEach(histRemove); d.open = ""; save(); draw(); toastUndo("Night removed."); }); } }, "Remove night")));
@@ -8131,7 +8152,9 @@ function viewHistory() {
   function draw() {
     host.textContent = "";
     var nights = histNights(d.period, d.place), stats = histSongStats(nights);
+    if (d.show) { var fsh = findShow(d.show); nights = nights.filter(function (n) { return n.sh === d.show; }); stats = histSongStats(nights); }
     host.appendChild(tabs()); host.appendChild(filters());
+    if (d.show) host.appendChild(h("div", { class: "chips" }, h("button", { class: "chip on", "aria-label": "Show every show again", onClick: function () { d.show = ""; draw(); } }, "Only “" + (fsh ? fsh.name : "this show") + "”  ✕")));
     host.appendChild(d.tab === "nights" ? nightsView(nights) : d.tab === "songs" ? songsView(stats) : d.tab === "places" ? placesView(nights) : overview(nights, stats));
   }
   function histAddNight() {
@@ -9779,7 +9802,7 @@ function viewSettings() {
   range("Bottom bar height", function () { return s.bottom.height; }, function (v) { s.bottom.height = v; }, 28, 90, 2, function (v) { return v + " px"; });
   range("Bottom bar text size", function () { return s.bottom.size; }, function (v) { s.bottom.size = v; }, 11, 40, 1, function (v) { return v + " px"; });
   out.appendChild(h("div", { class: "card" }, h("strong", null, "Bottom bar shows")));
-  [["title", "Song title"], ["artist", "Artist"], ["key", "Key"], ["sounding", "Sounding key (when you use a different tuning or capo)"], ["pos", "Place in the show (song 3 of 12)"], ["year", "Year and original artist"], ["clock", "Clock"], ["timer", "Timers button (playing time, break, countdown)"], ["left", "Time left and songs left (when an end time is set)"], ["next", "Next up (the next song, its key and capo)"]].forEach(function (f) { check(f[1], function () { return s.bottom.fields[f[0]]; }, function (v) { s.bottom.fields[f[0]] = v; }); });
+  [["title", "Song title"], ["artist", "Artist"], ["key", "Key"], ["sounding", "Sounding key (when you use a different tuning or capo)"], ["pos", "Place in the show (song 3 of 12)"], ["year", "Year and original artist"], ["clock", "Clock"], ["timer", "Timers button (playing time, break, countdown)"], ["left", "Time left and songs left (when an end time is set)"], ["next", "Next up (the next song, its key and capo)"], ["nextbreak", "Countdown to the next break"]].forEach(function (f) { check(f[1], function () { return s.bottom.fields[f[0]]; }, function (v) { s.bottom.fields[f[0]] = v; }); });
   section("Side buttons", "Which buttons, their size, side and colors");
   range("Side button size", function () { return s.fab.size; }, function (v) { s.fab.size = v; }, 36, 110, 2, function (v) { return v + " px"; });
   range("Side button opacity", function () { return s.fab.opacity; }, function (v) { s.fab.opacity = v; }, 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + "%"; });
@@ -9856,6 +9879,9 @@ function viewSettings() {
   section("Pedal", "Foot pedal and keyboard keys");
   out.appendChild(h("p", { class: "hint" }, "Press Learn, then press the pedal. Your pedal needs to be in a keyboard-style mode (arrow keys, Page Up/Down, Space or Enter). Left pedal: tap to start or stop auto-scroll, double tap to open or close the song list. Right pedal: tap to scroll down, double tap to scroll up. With the song list open, left scrolls it up a page and right scrolls it down a page."));
   range("Double-tap window", function () { return s.pedalWin; }, function (v) { s.pedalWin = v; }, 0, 800, 50, function (v) { return v ? v + " ms" : "off (no double taps)"; });
+  check("Glide when the pedal scrolls (off: jump at once, like a page turn)", function () { return !!s.pedalGlide; }, function (v) { s.pedalGlide = v; });
+  check("Wait to see if a second press is coming (the old way; adds a short delay to every press)", function () { return !!s.pedalWait; }, function (v) { s.pedalWait = v; });
+  out.appendChild(h("p", { class: "hint" }, "Every press acts the moment it arrives. A quick second press takes the first one back and does the double-press action instead, so double presses still work with no delay. While auto-scroll is running, the right pedal moves the auto-scroll down with it, and it carries on from there."));
   range("Each “scroll down” press moves", function () { return s.pedalStep; }, function (v) { s.pedalStep = v; }, 0.1, 1, 0.01, function (v) { return Math.round(v * 100) + "% of the screen"; });
   range("In the song list, a press moves", function () { return s.listPage; }, function (v) { s.listPage = v; }, 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + "% of the list"; });
   var last = h("code", { id: "lastKey" }, S.lastKey || "—");
@@ -10008,6 +10034,7 @@ function viewSettings() {
   out.appendChild(akSampleCard());
   section("Arrange the pages", "Move blocks around on every page and save it as the default");
   layArrangeCard(out);
+  if (typeof akSettingsExtra === "function") akSettingsExtra({ group: group, section: section, again: again, check: check, select: select, range: range, out: out, s: s, mark: mark, refresh: refresh });
   drawPreview(); updUndo();
   return shell("Settings", root);
 }
@@ -10118,6 +10145,7 @@ function tmBreakStop() {
   b.log.push({ s: b.since, e: now }); b.last = now - b.since; b.on = false;
   tmResumeAfterBreak(); tmSave(); tmRefresh();
   toast("Break was " + tmFmt(b.last) + ".");
+  try { if (typeof akBreakStopped === "function") akBreakStopped(); } catch (e) {}
   try { if (typeof bmOnBreak === "function") bmOnBreak(false); } catch (e) {}
 }
 function tmBreakReset() {
@@ -11459,7 +11487,8 @@ function openSmartEditor(existing) {
 
 /* ---------- "date updated": stamped when a song's own content changes (not plays, favorites or history) ---------- */
 var UPD_SKIP = { plays: 1, lastPlayed: 1, history: 1, updated: 1, fav: 1, requested: 1 }, updSig = {};
-function updHash(s) { var j = JSON.stringify(s, function (k, v) { return UPD_SKIP[k] ? undefined : v; }), n = 5381; for (var i = 0; i < j.length; i++) n = ((n * 33) ^ j.charCodeAt(i)) >>> 0; return n; }
+/* the song as text, without the fields that change by playing it (comparing whole strings is much quicker than hashing them letter by letter) */
+function updHash(s) { return JSON.stringify(s, function (k, v) { return UPD_SKIP[k] ? undefined : v; }); }
 function trackUpdated() {
   var now = new Date().toISOString();
   store.libs.forEach(function (l) { (l.songs || []).forEach(function (s) {
@@ -11540,7 +11569,10 @@ function tick(t) {
       sp = left > 0.1 ? remaining / left : remaining * 10;
       if (t - lastReadout > 500) { lastReadout = t; if (ui.speed) ui.speed.textContent = lenFlashing() ? fmtTime(durOf(song)) + " song" : fmtTime(Math.max(0, left)) + " left"; }
     } else sp = speedOf(song);
-    pos += sp * dt; sc.scrollTop = pos; lastSet = sc.scrollTop;
+    if (typeof akSoloHold === "function" && akSoloHold(sc, pos, t, dt)) { if (modeOf(song) === "duration") endAt += dt * 1000; autoRAF = requestAnimationFrame(tick); return; }
+    pos += sp * dt;
+    if (glide) { var gk = Math.min(1, (t - glide.t0) / glide.ms), gcur = glide.from + (glide.to - glide.from) * (1 - Math.pow(1 - gk, 3)); pos += gcur - glide.at; glide.at = gcur; if (gk >= 1) glide = null; }
+    sc.scrollTop = pos; lastSet = sc.scrollTop;
     if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2 && pos > 2) { stopAuto(); onSongEnd(); return; }
   }
   autoRAF = requestAnimationFrame(tick);
@@ -11562,7 +11594,26 @@ function adjustSpeed(dir) {
   }
   save(); setAutoUI();
 }
-function scrollBy(sign) { var sc = scroller(); if (sc) sc.scrollBy({ top: sign * sc.clientHeight * settings().pedalStep, behavior: "smooth" }); }
+/* one pedal step. It moves at once (no waiting), and while auto-scroll runs it moves the auto-scroll with it,
+   so the scroll carries on from the new place instead of snapping back. "Glide" (Settings > Pedal) animates it quickly. */
+var glide = null;
+function scrollBy(sign, frac) {
+  var sc = scroller(); if (!sc) return;
+  var dy = sign * sc.clientHeight * (frac || settings().pedalStep), max = Math.max(0, sc.scrollHeight - sc.clientHeight);
+  if (autoOn) {
+    var from = pos, to = Math.max(0, Math.min(max, pos + dy)), song = curSong();
+    if (modeOf(song) === "duration" && performance.now() >= preUntil) {
+      /* keep the same speed: the time left follows the distance left */
+      var now = performance.now(), left = Math.max(0.1, (endAt - now) / 1000), rem0 = Math.max(1, max - from), sp = rem0 / left;
+      endAt = now + Math.max(0, max - to) / Math.max(1e-3, sp) * 1000;
+    }
+    if (settings().pedalGlide) { glide = { from: from, to: to, at: from, t0: performance.now(), ms: 140 }; return; }
+    pos = to; sc.scrollTop = pos; lastSet = sc.scrollTop; glide = null; return;
+  }
+  if (!settings().pedalGlide) { sc.scrollTop = Math.max(0, Math.min(max, sc.scrollTop + dy)); return; }
+  var a = sc.scrollTop, b = Math.max(0, Math.min(max, a + dy)), t0 = performance.now();
+  (function step(t) { var k = Math.min(1, (t - t0) / 140), e = 1 - Math.pow(1 - k, 3); sc.scrollTop = a + (b - a) * e; if (k < 1 && !autoOn) requestAnimationFrame(step); })(t0);
+}
 function playStep(d) {
   var p = S.play, ni = p.idx + d;
   if (ni < 0 || ni >= p.list.length) { toast(d > 0 ? "That's the last song." : "That's the first song."); return; }
@@ -11796,8 +11847,10 @@ function renderPlay() {
   var bb = h("div", { class: "pbottom" + (two ? " two" : "") }, h("div", { class: "tt" }, h("div", null, titleBits, info.length ? h("span", { class: "muted" }, (titleBits.length ? "  ·  " : "") + info.join(" · ")) : null), f.next ? nextUpEl(p, song) : null));
   var bx = two ? h("div", { class: "brow2" }) : bb;
   if (f.key || f.sounding) bx.appendChild(ui.info);
+  if (s.capoInfo !== false) { var cbits = []; if (Number(song.capo)) cbits.push("Capo " + song.capo); if (typeof akRetuneOf === "function" && akRetuneOf(song)) cbits.push("⚠ " + akRetuneOf(song)); if (cbits.length) bx.appendChild(h("span", { class: "akcapo" }, cbits.join(" · "))); }
   if (f.clock) { ui.clock = h("span", { class: "muted" }, clockText()); bx.appendChild(ui.clock); clearInterval(S.clockT); S.clockT = setInterval(function () { if (ui.clock && ui.clock.isConnected) ui.clock.textContent = clockText(); else clearInterval(S.clockT); }, 15000); }
   if (f.left) bx.appendChild(tmLeftPill());
+  if (f.nextbreak !== false && typeof akBreakPill === "function") bx.appendChild(akBreakPill());
   if (f.timer) bx.appendChild(tmPill());
   if (two && bx.children.length) bb.appendChild(bx);
   var infoTop = s.bottom.pos !== "bottom";
@@ -11868,6 +11921,8 @@ function nextUpEl(p, song) {
   var bits = [ns.title || "Untitled"]; if (ns.key) bits.push(ns.key);
   var c1 = Number(song.capo) || 0, c2 = Number(ns.capo) || 0, warn = c1 !== c2;
   if (c2) bits.push("capo " + c2); else if (warn) bits.push("no capo");
+  var r1 = typeof akRetuneOf === "function" ? akRetuneOf(song) : "", r2 = typeof akRetuneOf === "function" ? akRetuneOf(ns) : "";
+  if (r1 !== r2) { warn = true; bits.push(r2 ? r2 : "back to " + akBaseTuningName()); } else if (r2) bits.push(r2);
   var cur = curItem(), lead = nx.setNo !== cur.setNo ? "Next set" : "Next";
   return h("div", { class: "nextup" + (warn ? " capow" : "") }, (warn ? "⚠ " : "") + lead + ": " + bits.join(" · "));
 }
@@ -12260,7 +12315,7 @@ function editFingering(instr, key, existing, done) {
 
 /* ---------- song list overlay with search ---------- */
 var LISTCFG = { mode: "show", q: "", sysKb: false };
-function listScroll(dir) { var b = document.querySelector(".listpanel .body"); if (b) b.scrollBy({ top: dir * b.clientHeight * settings().listPage, behavior: "smooth" }); }
+function listScroll(dir) { var b = document.querySelector(".listpanel .body"); if (b) b.scrollBy({ top: dir * b.clientHeight * settings().listPage, behavior: settings().pedalGlide ? "smooth" : "auto" }); }
 function toggleList() { var r = document.querySelector(".play"); if (!r) return; if (r.querySelector(".listpanel")) closeList(r); else openSongList(r); }
 function closeList(root) { var a = root.querySelector(".scrim"), b = root.querySelector(".listpanel"); if (a) a.remove(); if (b) b.remove(); }
 function refreshListTicks() { var b = document.querySelector(".listpanel"); if (b && b._draw) b._draw(); }
@@ -12366,12 +12421,21 @@ function openSongList(root) {
 }
 
 /* ================= pedal and keys ================= */
-var pend = {};
-function gesture(name, single, dbl) {
+var pend = {}, pendAt = {};
+/* a pedal press acts the moment it arrives. A second press inside the double-press window takes the first one back
+   (undo) and does the double-press action instead, so double presses still work with no waiting.
+   settings().pedalWait = true brings back the old way (wait to see if a second press comes). */
+function gesture(name, single, dbl, undo) {
   var win = settings().pedalWin;
   if (!win || !dbl) { single(); return; }
-  if (pend[name]) { clearTimeout(pend[name]); pend[name] = null; dbl(); return; }
-  pend[name] = setTimeout(function () { pend[name] = null; single(); }, win);
+  if (settings().pedalWait || !undo) {
+    if (pend[name]) { clearTimeout(pend[name]); pend[name] = null; dbl(); return; }
+    pend[name] = setTimeout(function () { pend[name] = null; single(); }, win);
+    return;
+  }
+  var now = performance.now();
+  if (pendAt[name] && now - pendAt[name] <= win) { pendAt[name] = 0; try { undo(); } catch (e) {} dbl(); return; }
+  pendAt[name] = now; single();
 }
 function pedalAct(act) {
   var root = document.querySelector(".play"); if (!root || S.layout) return;
@@ -12379,12 +12443,13 @@ function pedalAct(act) {
   var listOpen = !!root.querySelector(".listpanel");
   if (root.querySelector(".imgview")) {
     if (act === "toggle" || act === "up") ivScroll(-1);
-    else if (act === "down") gesture("down", function () { ivScroll(1); }, ivClose);
+    else if (act === "down") gesture("down", function () { ivScroll(1); }, ivClose, function () { ivScroll(-1); });
     else if (act === "list") ivClose();
     return;
   }
-  if (act === "toggle") gesture("toggle", function () { if (listOpen) listScroll(-1); else autoToggle(); }, function () { toggleList(); });
-  else if (act === "down") { if (listOpen) listScroll(1); else gesture("down", function () { scrollBy(1); }, function () { scrollBy(-1); }); }
+  if (typeof akSoloPedal === "function" && akSoloPedal(act)) return;
+  if (act === "toggle") gesture("toggle", function () { if (listOpen) listScroll(-1); else autoToggle(); }, function () { toggleList(); }, function () { if (listOpen) listScroll(1); else autoToggle(); });
+  else if (act === "down") { if (listOpen) listScroll(1); else gesture("down", function () { scrollBy(1); }, function () { scrollBy(-1); }, function () { scrollBy(-1); }); }
   else if (act === "up") { if (listOpen) listScroll(-1); else scrollBy(-1); }
   else if (act === "faster") adjustSpeed(1);
   else if (act === "slower") adjustSpeed(-1);
@@ -13927,7 +13992,8 @@ function openVenues(onPick) {
 }
 /* the venue line in a show's details */
 function akVenueField(sh, redraw) {
-  var inp = h("input", { type: "text", value: sh.venue || "", placeholder: "For example: The Wine Cellar", autocapitalize: "words", list: "akvlist", onInput: function () { sh.venue = this.value; var v = akVenueByName(this.value); sh.venueId = v ? v.id : ""; save(); paint(); } });
+  var was = sh.venue || "";
+  var inp = h("input", { type: "text", value: sh.venue || "", placeholder: "For example: The Wine Cellar", autocapitalize: "words", list: "akvlist", onInput: function () { sh.venue = this.value; var v = akVenueByName(this.value); sh.venueId = v ? v.id : ""; save(); paint(); }, onChange: function () { if (typeof akVenueBackfill === "function") akVenueBackfill(sh, was); was = sh.venue || ""; } });
   var dl = h("datalist", { id: "akvlist" }, akVenues().map(function (v) { return h("option", { value: v.name }); }));
   var cardB = h("button", { type: "button", onClick: function () { var v = akVenueFor(sh); if (v) akVenueCard(v, { done: redraw }); } }, "Venue card");
   var saveB = h("button", { type: "button" }, "Save as a venue…");
@@ -14473,6 +14539,7 @@ function akPlayHooks(song, item) {
   var key = S.playSeq + ":" + S.play.idx, moved = S.akHookKey !== key; S.akHookKey = key;
   akRunTouch(item, moved);
   if (typeof akRemPlay === "function") akRemPlay(item);
+  if (moved && typeof akPlayHooks4 === "function") akPlayHooks4(song, item);
   akRunPaint();
 }
 /* auto-scroll starts: the set is going (break music fades out) */
@@ -14485,6 +14552,7 @@ function akOnSongEnd() {
   var p = S.play; if (!p) return;
   var it = p.list[p.idx], nx = p.list[p.idx + 1];
   akRunTouch(it);
+  try { if (typeof akRetuneOnEnd === "function") akRetuneOnEnd(); } catch (e) {}
   if (it && it.showId && (!nx || nx.setNo !== it.setNo) && typeof bmOnSetEnd === "function") bmOnSetEnd(!nx);
 }
 akCss("ak3-run", [
@@ -14920,11 +14988,14 @@ function openBreakMusic() {
 }
 function akExtraTb6(id, song, root) {
   if (id === "music") { var b = h("button", { "aria-label": "Break music", class: BM.playing ? "on" : "", onClick: function () { openBreakMusic(); } }, akIcon("music")); return b; }
+  if (typeof akExtraTb7 === "function") return akExtraTb7(id, song, root);
   return null;
 }
 function akExtraFab2(song, root) {
   function fb(id, label, fn) { return function () { var b = h("button", { class: "fb", "aria-label": label, onClick: function () { fn(); this.blur(); } }, akIcon(id)); if (id === "music" && BM.playing) b.classList.add("on"); return b; }; }
-  return { music: fb("music", "Break music", openBreakMusic), checklist: fb("checklist", "Reminders checklist", akRemOpenNow), endshow: fb("endshow", "End show or encore", akEndBtnClick) };
+  var o = { music: fb("music", "Break music", openBreakMusic), checklist: fb("checklist", "Reminders checklist", akRemOpenNow), endshow: fb("endshow", "End show or encore", akEndBtnClick) };
+  if (typeof akExtraFab3 === "function") Object.assign(o, akExtraFab3(song, root));
+  return o;
 }
 akCss("ak3-music", [
   ".bmnow{text-align:center}.bmnow-name{font-weight:700;font-size:1.15rem;margin-bottom:2px}",
@@ -15198,6 +15269,628 @@ akCss("ak3-ocr", [
   ".akocr-prev{border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:46vh;overflow:auto;--lyric-size:18px;font-size:18px}"
 ].join("\n"));
 
+/* ================= Akashic Chords batch 4, phase 1: live-show fixes =================
+   - capo shown in the song list, set lists and the info bar (on by default)
+   - tuning changes per song (Drop D and others): a tag in lists and the info bar, a heads-up before, and a reminder to tune back after
+   - countdown to the next break (set lengths per show or per set, or worked out from the songs left in the set)
+   - show page: start / pause / reset the show timer and the played-songs count
+   - one-tap Backup button (top toolbar, side buttons, bottom tab bar, page header) and rolling backups (last N kept)
+   - Solo blocks in a song: {solo} or {solo: 16 bars} / {solo: 0:30}; auto-scroll waits there
+   - editing a past night afterwards (venue, date, time, notes, tips, set lengths, songs and their order) */
+
+/* ---------------------------------------------------------------- defaults and one-time changes */
+DEFAULTS.listInfo.capo = true; DEFAULTS.setInfo.capo = true;
+DEFAULTS.listInfo.retune = true; DEFAULTS.setInfo.retune = true;
+DEFAULTS.bottom.fields.nextbreak = true;
+DEFAULTS.capoInfo = true;
+DEFAULTS.retune = { endRemind: true, headsUp: true };
+DEFAULTS.breakPlan = { setMins: 0, buzz: true };
+DEFAULTS.rollBackup = { keep: 10, download: true, pics: true, tab: false, header: false };
+DEFAULTS.solo = { pause: true, secs: 0, at: 0.3 };
+TB_ITEMS.push(["backup", "Backup (one tap)"]); TB_SHORT.backup = "Backup";
+FAB_ITEMS.push(["backup", "Backup (one tap)"]); FAB_OFF.backup = 1; FAB_SHORT.backup = "Backup";
+AK_IC.backup = "M12 3v12 M7 10l5 5 5-5 M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2";
+SONG_INFO_OPTS.splice(6, 0, ["retune", "Tuning change (Drop D…)"]);
+SONG_FIELDS.push("retune");
+/* called at the end of normalizeStore (every load and restore) */
+function akMigrate4(st) {
+  if (!st.mig4a) {
+    st.mig4a = 1;
+    if (st.listInfo) { st.listInfo.capo = true; st.listInfo.retune = true; }
+    if (st.setInfo) { st.setInfo.capo = true; st.setInfo.retune = true; }
+    if (st.bottom && st.bottom.fields && st.bottom.fields.nextbreak === undefined) st.bottom.fields.nextbreak = true;
+    if (st.capoInfo === undefined) st.capoInfo = true;
+  }
+  ["retune", "breakPlan", "rollBackup", "solo"].forEach(function (k) {
+    if (!st[k] || typeof st[k] !== "object") st[k] = {};
+    Object.keys(DEFAULTS[k]).forEach(function (x) { if (st[k][x] === undefined) st[k][x] = DEFAULTS[k][x]; });
+  });
+}
+
+/* ---------------------------------------------------------------- tuning changes (Drop D and others) */
+var AK_RETUNES = ["Drop D", "Half step down", "Whole step down", "Half step up", "DADGAD", "Open G", "Open D", "Open E", "Drop C"];
+function akRetuneOf(song) {
+  if (!song) return "";
+  if (song.retune) return String(song.retune);
+  var t = (song.tags || []).filter(function (x) { return /^drop\s*[a-g]$/i.test(String(x).trim()); })[0];
+  return t ? String(t).trim().replace(/^drop\s*/i, "Drop ").replace(/\s([a-g])$/i, function (m, c) { return " " + c.toUpperCase(); }) : "";
+}
+/* the name of the tuning you are normally in, from Settings */
+function akBaseTuningName() {
+  var s = settings(), instr = s.instrument || "guitar", alt = (s.altTuning || {})[instr];
+  if (alt && alt.name) return alt.name;
+  var off = tuningOffset();
+  if (instr === "ukulele") return off === 0 ? "standard tuning" : tuningName(off);
+  var names = { 0: "E standard", "-1": "E♭ standard", "-2": "D standard", "-3": "C♯ standard", "-4": "C standard", 1: "F standard", 2: "F♯ standard" };
+  return names[off] || tuningName(off);
+}
+/* the extra fields for the "Playing" part of the song editor */
+function akSongPlayingExtra(s, later) {
+  var sel = h("select", { "aria-label": "Tuning for this song" });
+  var cur = s.retune || "", opts = [["", "Same as my tuning (" + akBaseTuningName() + ")"]].concat(AK_RETUNES.map(function (x) { return [x, x]; }));
+  if (cur && AK_RETUNES.indexOf(cur) < 0) opts.push([cur, cur]);
+  opts.push(["__other", "Other…"]);
+  opts.forEach(function (o) { sel.appendChild(h("option", { value: o[0] }, o[1])); });
+  sel.value = cur;
+  sel.addEventListener("change", function () {
+    var v = this.value;
+    if (v === "__other") { sel.value = s.retune || ""; askText("Tuning for this song", s.retune || "", "Use it", function (t) { s.retune = t; later(); var o = h("option", { value: t }, t); sel.insertBefore(o, sel.lastChild); sel.value = t; }, "Like Drop C or Open G"); return; }
+    s.retune = v; later();
+  });
+  var tagHint = !s.retune && akRetuneOf(s) ? h("p", { class: "hint", style: "margin:2px 0 0" }, "This song has the tag “" + akRetuneOf(s) + "”, so it already counts as " + akRetuneOf(s) + ".") : null;
+  return h("div", null, h("label", { class: "fld" }, "Tuning for this song", sel),
+    tagHint,
+    h("p", { class: "hint", style: "margin:2px 0 8px" }, "A song in another tuning shows it in the song list and the info bar. Before it you get a heads-up, and at its end a reminder to tune back to " + akBaseTuningName() + " (unless the next song uses the same tuning)."));
+}
+/* a short banner on the playing screen */
+function akPlayBanner(root, txt, cls, ms) {
+  if (!root) return;
+  var old = root.querySelector(".akbanner"); if (old) old.remove();
+  var b = h("div", { class: "akbanner " + (cls || ""), role: "status" }, h("span", { class: "grow" }, txt), h("button", { class: "icon sm", "aria-label": "Close", onClick: function () { b.remove(); try { updateReserve(); } catch (e) {} } }, "✕"));
+  var tb = root.querySelector(".ptopwrap"); if (tb && tb.nextSibling) root.insertBefore(b, tb.nextSibling); else root.appendChild(b);
+  try { updateReserve(); } catch (e) {}
+  setTimeout(function () { if (b.isConnected) { b.remove(); try { updateReserve(); } catch (e) {} } }, ms || 12000);
+}
+var akRetuneLast = { id: "", tune: "" };
+function akRetuneOnShow(song, item) {
+  var o = settings().retune || {}, root = document.querySelector(".play"), now = akRetuneOf(song), key = S.playSeq + ":" + S.play.idx;
+  if (akRetuneLast.key === key) return;
+  var prevTune = akRetuneLast.id && akRetuneLast.id !== song.id ? akRetuneLast.tune : null;
+  akRetuneLast = { id: song.id, tune: now, key: key };
+  if (prevTune === null || prevTune === now) return;
+  if (now && o.headsUp !== false) akPlayBanner(root, "⚠ This song is in " + now + ". Retune before you start.", "warn");
+  else if (!now && prevTune && o.endRemind !== false) akPlayBanner(root, "⚠ Back to " + akBaseTuningName() + ": the last song was in " + prevTune + ".", "warn");
+}
+/* the scroll reached the end of the song */
+function akRetuneOnEnd() {
+  var p = S.play; if (!p) return;
+  var o = settings().retune || {}, cur = findSong(p.list[p.idx].songId), nx = p.list[p.idx + 1], ns = nx ? findSong(nx.songId) : null;
+  var a = akRetuneOf(cur), b = akRetuneOf(ns), root = document.querySelector(".play");
+  if (a && a !== b && o.endRemind !== false) { akPlayBanner(root, "🎸 Tune back to " + (b || akBaseTuningName()) + (ns ? " for “" + ns.title + "”." : "."), "warn", 20000); try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {} }
+  else if (b && a !== b && o.headsUp !== false) akPlayBanner(root, "🎸 Next song “" + ns.title + "” is in " + b + ". Retune now.", "warn", 20000);
+}
+
+/* ---------------------------------------------------------------- countdown to the next break */
+function akSetLenMin(sh, setNo) {
+  if (!sh) return 0;
+  var st = sh.sets[setNo - 1];
+  return Number(st && st.mins) || Number(sh.setMins) || Number((settings().breakPlan || {}).setMins) || 0;
+}
+function akBrkState() { if (!TM.set || typeof TM.set !== "object") TM.set = { showId: "", no: 0, began: 0, buzzed: 0 }; return TM.set; }
+/* the playing screen showed a song: a new set has begun when the set number changes */
+function akBrkOnShow(item) {
+  if (!item || !item.showId) return;
+  var st = akBrkState(), now = Date.now();
+  if (TM.brk.on) return;
+  if (st.showId !== item.showId || st.no !== item.setNo) { TM.set = { showId: item.showId, no: item.setNo, began: now, buzzed: 0 }; tmSave(); }
+}
+function akBreakStopped() {
+  var st = akBrkState();
+  if (S.play && curItem() && curItem().showId) { var it = curItem(); TM.set = { showId: it.showId, no: it.setNo, began: Date.now(), buzzed: 0 }; }
+  else st.began = Date.now();
+  tmSave();
+}
+/* {ms, est, last, label} or null */
+function akBrkInfo(now) {
+  if (!S.play || S.view !== "play") return null;
+  var it = curItem(); if (!it || !it.showId) return null;
+  var sh = findShow(it.showId); if (!sh) return null;
+  var p = S.play, last = !p.list.slice(p.idx + 1).some(function (x) { return x.setNo !== it.setNo; });
+  if (TM.brk.on) return { onBreak: true };
+  var st = akBrkState(), mins = akSetLenMin(sh, it.setNo);
+  if (mins && st.showId === it.showId && st.no === it.setNo && st.began) {
+    return { ms: st.began + mins * 60000 - now, est: false, last: last };
+  }
+  /* no set length: the songs left in this set, at their own lengths */
+  var left = 0, cs = curSong();
+  if (cs) left += Math.max(0, tmSlot(cs) - dwellSeconds());
+  p.list.slice(p.idx + 1).forEach(function (x) { if (x.setNo === it.setNo) left += tmSlot(findSong(x.songId)); });
+  return { ms: left * 1000, est: true, last: last };
+}
+function akBrkText(now) {
+  var q = akBrkInfo(now); if (!q) return "";
+  if (q.onBreak) return "";
+  var what = q.last ? "Set ends" : "Break";
+  if (q.ms <= 0) return q.est ? what + " now" : (q.last ? "Set time is up" : "☕ Break time") + " +" + tmFmt(-q.ms);
+  return "☕ " + what + " in " + (q.est ? "~" : "") + tmFmt(Math.ceil(q.ms / 1000) * 1000);
+}
+function akBreakPill() {
+  var b = h("button", { class: "tmpill akbrk", "data-akbrk": "1", "aria-label": "Countdown to the next break", onClick: function () { akBreakPlanDialog(); } }, akBrkText(Date.now()));
+  b.hidden = !b.textContent; return b;
+}
+setInterval(function () {
+  var els = document.querySelectorAll("[data-akbrk]"); if (!els.length) return;
+  var now = Date.now(), t = akBrkText(now), q = akBrkInfo(now);
+  for (var i = 0; i < els.length; i++) { if (els[i].textContent !== t) els[i].textContent = t; els[i].hidden = !t; els[i].classList.toggle("due", !!(q && !q.onBreak && q.ms <= 0)); els[i].classList.toggle("soon", !!(q && !q.onBreak && q.ms > 0 && q.ms <= 300000)); }
+  var st = akBrkState();
+  if (q && !q.onBreak && !q.est && q.ms <= 0 && !st.buzzed) {
+    st.buzzed = now; tmSave();
+    toast(q.last ? "The time for this set is up." : "Break time.", q.last ? null : { label: "Start break", fn: function () { tmBreakStart(); } });
+    if ((settings().breakPlan || {}).buzz !== false) { try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) {} }
+  }
+}, 1000);
+function akBreakPlanDialog(sh0) {
+  var it = S.play && curItem(), sh = sh0 || (it && it.showId ? findShow(it.showId) : null), bp = settings().breakPlan, body = h("div");
+  if (sh) {
+    body.appendChild(h("p", { class: "hint", style: "margin-top:0" }, "The countdown starts when a set's first song comes up, and again when a break ends. With no set length it adds up the songs left in the set."));
+    body.appendChild(h("label", { class: "fld" }, "Set length for “" + sh.name + "” (minutes, 0 = work it out from the songs)", h("input", { type: "number", min: 0, max: 240, inputmode: "numeric", value: sh.setMins || "", onInput: function () { sh.setMins = Math.max(0, Number(this.value) || 0); save(); } })));
+    sh.sets.forEach(function (st, i) {
+      body.appendChild(h("label", { class: "fld" }, (st.name || "Set " + (i + 1)) + " only (minutes, blank = the show's length)", h("input", { type: "number", min: 0, max: 240, inputmode: "numeric", value: st.mins || "", onInput: function () { st.mins = Math.max(0, Number(this.value) || 0); save(); } })));
+    });
+  }
+  body.appendChild(h("label", { class: "fld" }, "Set length for every show that has none (minutes, 0 = from the songs)", h("input", { type: "number", min: 0, max: 240, inputmode: "numeric", value: bp.setMins || "", onInput: function () { bp.setMins = Math.max(0, Number(this.value) || 0); save(); } })));
+  body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: bp.buzz !== false, onChange: function () { bp.buzz = this.checked; save(); } }), "Vibrate when it's break time"));
+  var btns = [{ label: "Done", primary: true }];
+  if (it && it.showId) btns.unshift({ label: "Restart this set's countdown", onClick: function () { TM.set = { showId: it.showId, no: it.setNo, began: Date.now(), buzzed: 0 }; tmSave(); toast("The countdown starts again from now."); } });
+  modal("Countdown to the next break", body, btns);
+}
+
+/* ---------------------------------------------------------------- show page: timer and played count */
+function akShowTimerBar(sh, redraw) {
+  var box = h("div", { class: "card akstb", "data-bk": "showtimer" });
+  function played() { return Object.keys(sh.played || {}).length; }
+  function draw() {
+    box.textContent = "";
+    var mine = TM.show === sh.id, p = TM.play, on = mine && p.on, began = mine && p.began, n = played();
+    box.appendChild(h("div", { class: "akstb-row" },
+      h("div", { class: "akstb-time" }, h("span", { class: "muted" }, "Show timer "), mine ? h("b", { "data-tm": "play" }, tmText("play", Date.now())) : h("b", null, "0:00"), mine && TM.brk.on ? h("span", { class: "muted" }, " · on a break") : null),
+      h("div", { class: "akstb-time" }, h("span", { class: "muted" }, "Played "), h("b", null, String(n)), h("span", { class: "muted" }, " of " + showItems(sh).length)),
+      h("div", { class: "akstb-btns" },
+        on ? h("button", { onClick: function () { tmPausePlay(); draw(); } }, "⏸ Pause")
+          : h("button", { class: "primary", onClick: function () { if (TM.show !== sh.id) { tmEndRun(); TM.show = sh.id; } tmStartPlay(); draw(); } }, began ? "▶ Resume" : "▶ Start"),
+        h("button", { disabled: !began && !n, onClick: function () { akShowReset(sh, function () { draw(); if (redraw) redraw(); }); } }, "↺ Reset"))));
+  }
+  box._redraw = draw; draw();
+  box.setAttribute("data-akrun", "1");
+  return box;
+}
+/* reset the timer and the played marks; plays counted since the timer started can be taken back too */
+function akShowReset(sh, done) {
+  var since = TM.show === sh.id && TM.play.began ? TM.play.began : 0, ids = Object.keys(sh.counted || {});
+  var recent = ids.filter(function (id) { return sh.counted[id] >= (since || Date.now() - 12 * 36e5); });
+  var undoChk = h("input", { type: "checkbox", checked: true });
+  var body = h("div", null, h("p", null, "Set the show timer back to 0:00 and clear the played marks for “" + sh.name + "”."),
+    recent.length ? h("label", { class: "chk" }, undoChk, "Also take back the " + recent.length + (recent.length === 1 ? " play" : " plays") + " counted " + (since ? "since the timer started" : "today") + " (play counts and history)") : null,
+    h("p", { class: "hint" }, "Handy after looking through songs before the show starts."));
+  modal("Reset the show?", body, [{ label: "Cancel" }, { label: "Reset", danger: true, onClick: function () {
+    snap("reset show");
+    if (recent.length && undoChk.checked) recent.forEach(function (id) { uncountPlay(id, sh.id); });
+    if (TM.show === sh.id) tmEndRun(false);
+    sh.played = {}; sh.counted = {};
+    if (typeof RUN !== "undefined" && RUN && RUN.showId === sh.id && !RUN.ended) { RUN.began = Date.now(); RUN.lastAct = Date.now(); RUN.resumedAt = 0; RUN.encore = 0; akRunSave(); }
+    if (TM.set && TM.set.showId === sh.id) TM.set = null;
+    save(); tmSave(); try { refreshListTicks(); } catch (e) {}
+    toastUndo("Show timer and played songs reset.");
+    if (done) done();
+  } }]);
+}
+
+/* ---------------------------------------------------------------- one-tap backup and rolling backups */
+var AKB_DB = "akashic-backups";
+function akbOpen(cb) {
+  try {
+    var r = indexedDB.open(AKB_DB, 1);
+    r.onupgradeneeded = function () { var db = r.result; if (!db.objectStoreNames.contains("copies")) db.createObjectStore("copies", { keyPath: "id" }); if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta"); };
+    r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); }; r.onblocked = function () { cb(null); };
+  } catch (e) { cb(null); }
+}
+function akbAll(cb) {
+  akbOpen(function (db) {
+    if (!db) { cb([]); return; }
+    try { var g = db.transaction("copies", "readonly").objectStore("copies").getAll(); g.onsuccess = function () { var a = (g.result || []).map(function (x) { return { id: x.id, at: x.at, songs: x.songs, size: x.size, label: x.label || "" }; }); a.sort(function (x, y) { return y.at - x.at; }); cb(a); db.close(); }; g.onerror = function () { cb([]); }; } catch (e) { cb([]); }
+  });
+}
+function akbGet(id, cb) {
+  akbOpen(function (db) { if (!db) { cb(null); return; } try { var g = db.transaction("copies", "readonly").objectStore("copies").get(id); g.onsuccess = function () { cb(g.result || null); db.close(); }; g.onerror = function () { cb(null); }; } catch (e) { cb(null); } });
+}
+function akbDel(id, cb) {
+  akbOpen(function (db) { if (!db) { if (cb) cb(); return; } try { var tx = db.transaction("copies", "readwrite"); tx.objectStore("copies").delete(id); tx.oncomplete = function () { db.close(); if (cb) cb(); }; } catch (e) { if (cb) cb(); } });
+}
+function akbMeta(key, val, cb) {
+  akbOpen(function (db) {
+    if (!db) { if (cb) cb(null); return; }
+    try {
+      var tx = db.transaction("meta", val === undefined ? "readonly" : "readwrite"), os = tx.objectStore("meta");
+      if (val === undefined) { var g = os.get(key); g.onsuccess = function () { if (cb) cb(g.result); }; }
+      else if (val === null) os.delete(key); else os.put(val, key);
+      tx.oncomplete = function () { db.close(); if (val !== undefined && cb) cb(val); };
+    } catch (e) { if (cb) cb(null); }
+  });
+}
+function akbStamp(d) { d = d || new Date(); function p(n) { return ("0" + n).slice(-2); } return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()); }
+function akbJSON() {
+  var o = settings().rollBackup || {};
+  if (o.pics !== false) return backupJSON(null);
+  var d = JSON.parse(backupJSON(null)); d.images = {}; return JSON.stringify(d, null, 1);
+}
+/* the folder you picked (only where the browser lets a web app write to a folder: Chrome or Edge on a computer) */
+function akbFolderOK() { return typeof window.showDirectoryPicker === "function"; }
+function akbPickFolder(done) {
+  if (!akbFolderOK()) { toast("This browser can't save into a folder you pick. Backups stay in the app, and a copy goes to Downloads."); return; }
+  window.showDirectoryPicker({ id: "akashic-backups", mode: "readwrite" }).then(function (dir) { akbMeta("folder", dir, function () { toast("Backups also go to the folder “" + dir.name + "”."); if (done) done(); }); }, function () {});
+}
+function akbToFolder(name, json, keep) {
+  return new Promise(function (res) {
+    if (!akbFolderOK()) { res(false); return; }
+    akbMeta("folder", undefined, function (dir) {
+      if (!dir) { res(false); return; }
+      var perm = dir.queryPermission ? dir.queryPermission({ mode: "readwrite" }) : Promise.resolve("granted");
+      perm.then(function (st) { return st === "granted" ? st : dir.requestPermission({ mode: "readwrite" }); }).then(function (st) {
+        if (st !== "granted") { res(false); return; }
+        return dir.getFileHandle(name, { create: true }).then(function (fh) { return fh.createWritable(); }).then(function (w) { return w.write(json).then(function () { return w.close(); }); }).then(function () {
+          /* keep only the newest ones in the folder too */
+          var names = [], it = dir.values();
+          function next() { return it.next().then(function (r) { if (r.done) return; if (r.value.kind === "file" && /^akashic-backup-.*\.json$/.test(r.value.name)) names.push(r.value.name); return next(); }); }
+          return next().then(function () { names.sort().reverse(); return Promise.all(names.slice(keep).map(function (n) { return dir.removeEntry(n).catch(function () {}); })); }).then(function () { res(true); });
+        });
+      }).catch(function () { res(false); });
+    });
+  });
+}
+var akbBusy = false;
+/* the one-tap backup: no questions. o.quiet: no toast; o.label: a note kept with the copy */
+function akQuickBackup(o) {
+  o = o || {};
+  if (akbBusy) return Promise.resolve(false);
+  if (songCount() === 0) { toast("There are no songs to back up yet."); return Promise.resolve(false); }
+  akbBusy = true; saveNow();
+  var opt = settings().rollBackup || {}, keep = Math.max(1, Number(opt.keep) || 10), now = new Date(), name = "akashic-backup-" + akbStamp(now) + ".json", json;
+  try { json = akbJSON(); } catch (e) { akbBusy = false; toast("Couldn't make the backup: " + e.message); return Promise.resolve(false); }
+  return new Promise(function (res) {
+    akbOpen(function (db) {
+      var rec = { id: uid(), at: now.getTime(), songs: songCount(), size: json.length, label: o.label || "", json: json };
+      function after(okApp) {
+        var jobs = [akbToFolder(name, json, keep)];
+        if (opt.download !== false && !o.noFile) jobs.push(Promise.resolve(plainDownloadQuiet(name, json)));
+        Promise.all(jobs).then(function (r) {
+          akbBusy = false;
+          if ((r[0] || r[1]) && !o.noMark) markBackedUp();
+          if (okApp || r[0] || r[1]) { store.lastQuick = now.toISOString(); saveNow(); }
+          if (!o.quiet) toast("Backed up " + songCount() + " songs · " + now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + (r[0] ? " · in your folder" : r[1] ? " · file in Downloads" : " · kept in the app"));
+          try { akbPaint(); } catch (e) {}
+          res(true);
+        });
+      }
+      if (!db) { after(false); return; }
+      try {
+        var tx = db.transaction("copies", "readwrite"), os = tx.objectStore("copies");
+        os.put(rec);
+        var g = os.getAll();
+        g.onsuccess = function () { var all = (g.result || []).sort(function (a, b) { return b.at - a.at; }); all.slice(keep).forEach(function (x) { os.delete(x.id); }); };
+        tx.oncomplete = function () { db.close(); after(true); };
+        tx.onerror = function () { after(false); };
+      } catch (e) { after(false); }
+    });
+  });
+}
+function plainDownloadQuiet(name, data) {
+  try {
+    var blob = new Blob([data], { type: "application/json" }), a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    return true;
+  } catch (e) { return false; }
+}
+function akbAgo() {
+  var t = store.lastQuick || store.lastBackup; if (!t) return "never";
+  var ms = Date.now() - new Date(t).getTime();
+  if (ms < 60000) return "just now"; if (ms < 3600e3) return Math.round(ms / 60000) + " min ago";
+  if (ms < 86400e3) return Math.round(ms / 3600e3) + " h ago";
+  return new Date(t).toLocaleDateString();
+}
+function akbPaint() { Array.prototype.forEach.call(document.querySelectorAll("[data-akb]"), function (b) { b.title = "Back up now · last backup " + akbAgo(); }); }
+function akBackupBtn(cls) {
+  var b = h("button", { class: cls || "", "data-akb": "1", "aria-label": "Back up everything now", onClick: function () { var me = this; me.classList.add("busy"); akQuickBackup().then(function () { me.classList.remove("busy"); }); } }, akIcon("backup"));
+  setTimeout(akbPaint, 0); return b;
+}
+/* the list of kept backups */
+function openBackups() {
+  var body = h("div"), close;
+  function kb(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
+  function draw() {
+    body.textContent = "";
+    var o = settings().rollBackup;
+    body.appendChild(h("div", { class: "row", style: "margin-top:0;flex-wrap:wrap" },
+      h("button", { class: "primary", onClick: function () { akQuickBackup().then(draw); } }, "Back up now"),
+      akbFolderOK() ? h("button", { onClick: function () { akbPickFolder(draw); } }, "Choose a folder…") : null));
+    body.appendChild(h("p", { class: "hint" }, "The app keeps your last " + o.keep + " backups inside the app. When a new one is made, the oldest is deleted." + (o.download !== false ? " Each one also saves a file to your Downloads folder (those files are not deleted by the app)." : "") + (akbFolderOK() ? " On a computer you can pick a folder, and the app keeps the newest " + o.keep + " files there too." : "")));
+    var list = h("div", { class: "list" }); body.appendChild(list);
+    list.appendChild(h("div", { class: "hint" }, "Loading…"));
+    akbAll(function (a) {
+      list.textContent = "";
+      if (!a.length) { list.appendChild(h("div", { class: "empty" }, "No backups kept in the app yet.")); return; }
+      a.forEach(function (x, i) {
+        var d = new Date(x.at);
+        list.appendChild(h("div", { class: "item" }, h("div", { class: "main-btn", style: "cursor:default" }, h("div", { class: "t" }, (i === 0 ? "Newest · " : "") + d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })), h("div", { class: "s" }, x.songs + " songs · " + kb(x.size) + (x.label ? " · " + x.label : ""))),
+          h("button", { onClick: function () { akbRestore(x, function () { if (close) close(); }); } }, "Restore"),
+          h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+            { label: "Export a copy (save as a file)", onClick: function () { akbGet(x.id, function (r) { if (r) saveFile("akashic-backup-" + akbStamp(new Date(x.at)) + ".json", r.json, "application/json"); }); } },
+            { label: "Delete this backup", danger: true, onClick: function () { akbDel(x.id, draw); } }]); } }, "⋯")));
+      });
+    });
+  }
+  draw();
+  close = modal("Backups", body, [{ label: "Close" }], { wide: true });
+}
+function akbRestore(x, done) {
+  var d = new Date(x.at);
+  modal("Restore this backup?", h("div", null, h("p", null, "Put everything back the way it was on " + d.toLocaleString() + " (" + x.songs + " songs)?"), h("p", { class: "hint" }, "Your songs, shows and settings right now are backed up first, so you can come back to them from this same list.")),
+    [{ label: "Cancel" }, { label: "Restore", danger: true, onClick: function () {
+      akQuickBackup({ quiet: true, noFile: true, noMark: true, label: "before restoring" }).then(function () {
+        akbGet(x.id, function (r) {
+          if (!r) { toast("That backup couldn't be read."); return; }
+          try {
+            var dd = parseBackup(r.json); snap("restore backup");
+            store.libs = clone(dd.libs); store.cur = store.libs[0].id;
+            var gh0 = settings().github; if (dd.settings) store.settings = deepMerge(clone(DEFAULTS), dd.settings); if (gh0) store.settings.github = gh0;
+            if (dd.banter) store.banter = dd.banter; if (dd.fingerings) store.fingerings = dd.fingerings;
+            imagesRestore(dd.images); fontsRestore(dd.fonts); normalizeStore(); applyLook(); saveNow(); render();
+            toastUndo("Restored the backup from " + d.toLocaleString() + ".");
+            if (done) done();
+          } catch (e) { toast("That backup couldn't be read."); }
+        });
+      });
+    } }]);
+}
+function akBackupSettings(c) {
+  var o = settings().rollBackup;
+  c.section("One-tap backup", "A Backup button, and the last backups kept");
+  c.out.appendChild(h("p", { class: "hint" }, "Press Backup and everything is saved at once, with no questions: songs, shows, settings" + (o.pics !== false ? " and pictures" : "") + ". Last backup: " + akbAgo() + "."));
+  c.range("How many backups to keep", function () { return o.keep; }, function (v) { o.keep = v; }, 1, 30, 1, function (v) { return v + (v === 1 ? " backup" : " backups"); });
+  c.check("Each backup also saves a file to Downloads", function () { return o.download !== false; }, function (v) { o.download = v; });
+  c.check("Include pictures (bigger backups)", function () { return o.pics !== false; }, function (v) { o.pics = v; });
+  c.check("Backup button in the bottom tab bar (every screen)", function () { return !!o.tab; }, function (v) { o.tab = v; });
+  c.check("Backup button at the top of every page", function () { return !!o.header; }, function (v) { o.header = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "On the playing screen, turn on “Backup (one tap)” under Top toolbar or Side buttons. You can have it in more than one place."));
+  c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akQuickBackup(); } }, "Back up now"), h("button", { onClick: openBackups }, "Backups kept in the app…"), akbFolderOK() ? h("button", { onClick: function () { akbPickFolder(); } }, "Choose a folder…") : null));
+}
+
+/* ---------------------------------------------------------------- Solo blocks: {solo}, {solo: 16 bars}, {solo: 0:30} */
+var AK_SOLO_RE = /^\s*\{\s*solo\s*(?::\s*([^}]*))?\}\s*$/i;
+function akSoloParse(line) {
+  var m = AK_SOLO_RE.exec(line || ""); if (!m) return null;
+  var raw = (m[1] || "").trim(), r = { raw: raw, secs: 0, bars: 0, text: raw };
+  var b = /(\d+)\s*(bars?|measures?)/i.exec(raw), t = /(\d+):(\d{2})/.exec(raw), s = /(\d+)\s*(s|sec|secs|seconds)\b/i.exec(raw);
+  if (b) r.bars = +b[1]; else if (t) r.secs = +t[1] * 60 + +t[2]; else if (s) r.secs = +s[1];
+  return r;
+}
+function akSoloSecs(info, song) {
+  if (info.secs) return info.secs;
+  if (info.bars) { var bpm = Number(song && song.tempo) || 0, per = parseInt(String((song && song.timeSig) || "4/4"), 10) || 4; if (bpm > 0) return Math.round(info.bars * per * 60 / bpm); }
+  return Number((settings().solo || {}).secs) || 0;
+}
+function akSoloEl(info) {
+  var el = h("div", { class: "aksolo", "data-solo": info.raw || "" }, h("span", { class: "aksolo-ic", "aria-hidden": "true" }, "🎸"), h("span", { class: "aksolo-t" }, "Solo" + (info.text ? " · " + info.text : "")), h("span", { class: "aksolo-st" }, ""));
+  return el;
+}
+/* auto-scroll waits when a Solo block reaches the reading line; it carries on after the solo's length or with a tap or the left pedal */
+var akSolo = null;
+function akSoloHold(sc, p, t, dt) {
+  var o = settings().solo || {}; if (o.pause === false) return false;
+  if (akSolo && akSolo.el.isConnected) {
+    if (akSolo.until && t >= akSolo.until) { akSoloRelease(); return false; }
+    var st = akSolo.el.querySelector(".aksolo-st");
+    if (st) { var txt = akSolo.until ? "resumes in " + Math.ceil((akSolo.until - t) / 1000) + "s · tap to go on" : "tap or press the left pedal to go on"; if (st.textContent !== txt) st.textContent = txt; }
+    return true;
+  }
+  akSolo = null;
+  var els = sc.querySelectorAll(".aksolo:not(.done)"); if (!els.length) return false;
+  var line = p + sc.clientHeight * (Number(o.at) || 0.3);
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i], top = el.offsetTop;
+    if (top < p - 4) { el.classList.add("done"); continue; }
+    if (top <= line) {
+      var song = curSong(), secs = akSoloSecs(akSoloParse("{solo:" + (el.getAttribute("data-solo") || "") + "}") || {}, song);
+      akSolo = { el: el, until: secs > 0 ? t + secs * 1000 : 0 };
+      el.classList.add("holding");
+      el.onclick = function () { akSoloRelease(); };
+      try { if (typeof akSoloStarted === "function") akSoloStarted(song, el); } catch (e) {}
+      return true;
+    }
+    break;
+  }
+  return false;
+}
+function akSoloRelease() {
+  if (!akSolo) return;
+  var el = akSolo.el; el.classList.remove("holding"); el.classList.add("done"); el.onclick = null;
+  var st = el.querySelector(".aksolo-st"); if (st) st.textContent = "";
+  akSolo = null; lastT = performance.now();
+  try { if (typeof akSoloEnded === "function") akSoloEnded(); } catch (e) {}
+}
+/* the left pedal during a solo: carry on scrolling */
+function akSoloPedal(act) { if (act === "toggle" && akSolo && autoOn) { akSoloRelease(); return true; } return false; }
+/* "+ Solo" in the song editor */
+function akSoloInsert(area, done) {
+  var kind = "tap", secs = h("input", { type: "number", min: 1, max: 600, value: 30, inputmode: "numeric", "aria-label": "Seconds" }), bars = h("input", { type: "number", min: 1, max: 128, value: 16, inputmode: "numeric", "aria-label": "Bars" });
+  var note = h("input", { type: "text", placeholder: "Note (optional), like Guitar solo over the verse", "aria-label": "Note" });
+  var chips = h("div", { class: "chips" });
+  function paint() { chips.textContent = ""; [["tap", "Until I tap"], ["secs", "Seconds"], ["bars", "Bars (uses the tempo)"]].forEach(function (k) { chips.appendChild(h("button", { class: "chip" + (kind === k[0] ? " on" : ""), onClick: function () { kind = k[0]; paint(); } }, k[1])); }); secs.parentNode.hidden = kind !== "secs"; bars.parentNode.hidden = kind !== "bars"; }
+  var body = h("div", null, h("p", { class: "hint", style: "margin-top:0" }, "Auto-scroll stops at the Solo and carries on when it's done. It goes in on its own line above the line you were on."), chips, h("label", { class: "fld" }, "How long, in seconds", secs), h("label", { class: "fld" }, "How many bars", bars), h("label", { class: "fld" }, "Note", note));
+  paint();
+  modal("Add a solo", body, [{ label: "Cancel" }, { label: "Add solo", primary: true, onClick: function () {
+    var bits = []; if (kind === "secs") bits.push(fmtTime(Number(secs.value) || 30)); if (kind === "bars") bits.push((Number(bars.value) || 16) + " bars"); if (note.value.trim()) bits.push(note.value.trim().replace(/[{}]/g, ""));
+    var tag = "{solo" + (bits.length ? ": " + bits.join(" · ") : "") + "}";
+    var t = area.value, pos = area.selectionStart || 0, ls = t.lastIndexOf("\n", pos - 1) + 1;
+    area.value = t.slice(0, ls) + tag + "\n" + t.slice(ls); if (done) done(); toast("Solo added.");
+  } }]);
+}
+
+/* ---------------------------------------------------------------- editing a past night afterwards */
+function akNightMeta(key, create) { var l = lib(); if (!l.nights || typeof l.nights !== "object") l.nights = {}; if (create && !l.nights[key]) l.nights[key] = {}; return l.nights[key] || null; }
+function akNightEdit(n, redraw) {
+  var entries = n.entries.slice().sort(function (a, b) { return a.at - b.at; }), meta = clone(akNightMeta(n.key) || {});
+  var first = entries[0] ? new Date(entries[0].at) : new Date();
+  var place = h("input", { type: "text", value: n.place === "Not in a show" ? "" : n.place, autocapitalize: "words", list: "aknvl", "aria-label": "Venue or place" });
+  var dl = h("datalist", { id: "aknvl" }, histAllPlaces().concat(akVenues().map(function (v) { return v.name; })).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).map(function (p) { return h("option", { value: p }); }));
+  var date = h("input", { type: "date", value: n.date, "aria-label": "Date" });
+  var time = h("input", { type: "time", value: ("0" + first.getHours()).slice(-2) + ":" + ("0" + first.getMinutes()).slice(-2), "aria-label": "First song at" });
+  var notes = h("textarea", { rows: 2, value: meta.notes || "", "aria-label": "Notes" });
+  var tips = h("input", { type: "number", min: 0, step: "0.01", inputmode: "decimal", value: meta.tips || "", "aria-label": "Tips" });
+  var pay = h("input", { type: "number", min: 0, step: "0.01", inputmode: "decimal", value: meta.pay || "", "aria-label": "Pay" });
+  /* songs, in sets, in order */
+  var sets = [], byName = {};
+  entries.forEach(function (e) { var nm = e.st || ""; if (!byName[nm]) { byName[nm] = { name: nm, mins: (meta.setLens || {})[nm] || "", items: [] }; sets.push(byName[nm]); } byName[nm].items.push(e); });
+  if (!sets.length) sets.push({ name: "Set 1", mins: "", items: [] });
+  var setsBox = h("div");
+  function drawSets() {
+    setsBox.textContent = "";
+    sets.forEach(function (st, si) {
+      var nameIn = h("input", { type: "text", value: st.name, placeholder: "Set name", "aria-label": "Set name", onInput: function () { st.name = this.value; } });
+      var minsIn = h("input", { type: "number", min: 0, inputmode: "numeric", value: st.mins, placeholder: "min", "aria-label": "Set length in minutes", style: "max-width:80px", onInput: function () { st.mins = this.value; } });
+      var span = st.items.length ? Math.round((st.items[st.items.length - 1].at - st.items[0].at) / 60000) : 0;
+      var card = h("div", { class: "card", style: "padding:8px 10px;margin:6px 0" }, h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, nameIn, minsIn, h("span", { class: "muted nowrap" }, "min" + (span ? " (≈" + span + " by the times)" : ""))));
+      st.items.forEach(function (e, i) {
+        card.appendChild(h("div", { class: "hline" }, h("span", { class: "bldn" }, String(i + 1)), h("div", { class: "grow" }, e.t),
+          h("button", { class: "icon sm", "aria-label": "Move up", disabled: i === 0 && si === 0, onClick: function () { if (i > 0) { st.items.splice(i - 1, 0, st.items.splice(i, 1)[0]); } else { sets[si - 1].items.push(st.items.shift()); } drawSets(); } }, "▲"),
+          h("button", { class: "icon sm", "aria-label": "Move down", disabled: i === st.items.length - 1 && si === sets.length - 1, onClick: function () { if (i < st.items.length - 1) { st.items.splice(i + 1, 0, st.items.splice(i, 1)[0]); } else { sets[si + 1].items.unshift(st.items.pop()); } drawSets(); } }, "▼"),
+          h("button", { class: "icon sm", "aria-label": "Take out " + e.t, onClick: function () { st.items.splice(i, 1); e._gone = true; gone.push(e); drawSets(); } }, "✕")));
+      });
+      card.appendChild(h("div", { class: "row", style: "margin:4px 0 0" }, h("button", { onClick: function () { histSongPicker("Add songs to " + (st.name || "this set"), function (ids) { ids.forEach(function (id) { var s = findSong(id); if (s) st.items.push({ id: uid(), at: 0, sid: s.id, t: s.title, a: s.artist || "", sh: n.sh || "", sn: "", pl: "", st: st.name, sk: si + 1, man: 1, _new: true }); }); drawSets(); }); } }, "+ Add songs"),
+        sets.length > 1 && !st.items.length ? h("button", { onClick: function () { sets.splice(si, 1); drawSets(); } }, "Remove empty set") : null));
+      setsBox.appendChild(card);
+    });
+    setsBox.appendChild(h("button", { onClick: function () { sets.push({ name: "Set " + (sets.length + 1), mins: "", items: [] }); drawSets(); } }, "+ Add a set"));
+  }
+  var gone = [];
+  drawSets();
+  var body = h("div",
+    null,
+    h("label", { class: "fld" }, "Venue or place", h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" }, place, h("button", { type: "button", onClick: function () { openVenues(function (v) { place.value = v.name; }); } }, "My venues…"), h("button", { type: "button", onClick: function () { akVenueEdit(null, function (v) { if (v) place.value = v.name; }, place.value.trim()); } }, "Search…"))), dl,
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Date", date), h("label", { class: "fld" }, "First song at", time)),
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Tips ($)", tips), h("label", { class: "fld" }, "Pay ($)", pay)),
+    h("label", { class: "fld" }, "Notes", notes),
+    h("h3", { style: "margin:10px 0 2px;font-size:1rem" }, "Sets and songs"),
+    h("p", { class: "hint", style: "margin:0 0 4px" }, "Put the songs in the order you played them. Times are spread out to keep that order."),
+    setsBox);
+  modal("Edit this night", body, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () {
+    if (!date.value) { toast("Choose a date."); return false; }
+    snap("edit night");
+    var log = lib().log, pl = place.value.trim();
+    var start = new Date(date.value + "T" + (time.value || "20:00") + ":00").getTime();
+    /* keep the old gaps between songs where we can, otherwise 4 minutes apart */
+    var olds = entries.map(function (e) { return e.at; }), t0 = start, prevOld = null, k = 0;
+    gone.forEach(function (e) { if (!e._new) histRemove(e); });
+    sets.forEach(function (st, si) {
+      st.items.forEach(function (e) {
+        var gap = 240000; if (prevOld !== null && olds[k] && olds[k] > prevOld) gap = Math.min(30 * 60000, Math.max(60000, olds[k] - prevOld));
+        if (k > 0) t0 += gap; prevOld = olds[k] || null; k++;
+        e.at = t0; e.st = st.name; e.sk = si + 1; if (pl) e.pl = pl; else delete e.pl;
+        if (e._new) { delete e._new; log.push(e); histAdjust(e.sid, 1, e.at); }
+      });
+    });
+    log.sort(function (a, b) { return a.at - b.at; });
+    var newKey = (n.sh || "none") + "|" + histDate(start), m = akNightMeta(n.key, true);
+    m.notes = notes.value.trim(); m.tips = Number(tips.value) || 0; m.pay = Number(pay.value) || 0; m.setLens = {};
+    sets.forEach(function (st) { if (Number(st.mins)) m.setLens[st.name] = Number(st.mins); });
+    if (newKey !== n.key) { lib().nights[newKey] = m; delete lib().nights[n.key]; try { histState().open = newKey; } catch (e) {} }
+    save(); if (redraw) redraw(); toastUndo("Night saved.");
+  } }], { wide: true });
+}
+/* the venue of a show changed: offer to use it for that show's nights in the history too */
+function akVenueBackfill(sh, before) {
+  var now = (sh.venue || "").trim(); if (!now || now === before) return;
+  var hit = (lib().log || []).filter(function (e) { return e.sh === sh.id && (!e.pl || e.pl === before || e.pl === sh.name); });
+  if (!hit.length) return;
+  var nights = {}; hit.forEach(function (e) { nights[histDate(e.at)] = 1; });
+  var nn = Object.keys(nights).length;
+  toast("Use “" + now + "” for the " + nn + (nn === 1 ? " night" : " nights") + " of this show in your history?", { label: "Yes", fn: function () { snap("venue for history"); hit.forEach(function (e) { e.pl = now; }); save(); toastUndo("History updated."); } });
+}
+/* every detail of a show in one box (also reachable from the ⋯ menu) */
+function akShowDetails(sh, redraw) {
+  var before = sh.venue || "";
+  var body = h("div", null,
+    h("label", { class: "fld" }, "Name", h("input", { type: "text", value: sh.name, onInput: function () { sh.name = this.value; save(); } })),
+    akVenueField(sh, function () {}),
+    h("div", { class: "two" },
+      h("label", { class: "fld" }, "Date", h("input", { type: "date", value: sh.date, onChange: function () { sh.date = this.value; save(); } })),
+      h("label", { class: "fld" }, "Planned length (minutes)", h("input", { type: "number", min: 0, value: sh.target || "", inputmode: "numeric", onInput: function () { sh.target = Number(this.value) || 0; save(); } }))),
+    h("div", { class: "two" },
+      h("label", { class: "fld" }, "Start time", h("input", { type: "time", value: sh.startTime || "", onChange: function () { sh.startTime = this.value; save(); } })),
+      h("label", { class: "fld" }, "End time", h("input", { type: "time", value: sh.endTime || "", onChange: function () { sh.endTime = this.value; save(); } }))),
+    h("div", { class: "two" },
+      h("label", { class: "fld" }, "Set length (minutes)", h("input", { type: "number", min: 0, value: sh.setMins || "", inputmode: "numeric", onInput: function () { sh.setMins = Math.max(0, Number(this.value) || 0); save(); } })),
+      h("label", { class: "fld" }, "Break length (minutes)", h("input", { type: "number", min: 0, value: sh.breakMins || "", inputmode: "numeric", onInput: function () { sh.breakMins = Math.max(0, Number(this.value) || 0); save(); } }))),
+    h("label", { class: "fld" }, "Notes", h("textarea", { rows: 3, value: sh.notes, onInput: function () { sh.notes = this.value; save(); } })),
+    h("div", { class: "row" }, h("button", { onClick: function () { akBreakPlanDialog(sh); } }, "Length of each set…"), h("button", { onClick: function () { var hs = histState(); hs.tab = "nights"; hs.place = ""; hs.show = sh.id; hs.open = ""; go("history"); } }, "Past nights of this show…")));
+  modal("Show details", body, [{ label: "Done", primary: true, onClick: function () { akVenueBackfill(sh, before); setTimeout(function () { if (redraw) redraw(); }, 0); } }], { wide: true });
+}
+
+/* ---------------------------------------------------------------- hooks */
+function akExtraTb7(id, song, root) {
+  if (id === "backup") return akBackupBtn();
+  if (typeof akExtraTb8 === "function") return akExtraTb8(id, song, root);
+  return null;
+}
+function akExtraFab3(song, root) {
+  var o = { backup: function () { return akBackupBtn("fb"); } };
+  if (typeof akExtraFab4 === "function") Object.assign(o, akExtraFab4(song, root));
+  return o;
+}
+function akPlayHooks4(song, item) {
+  setTimeout(function () { try { if (S.view === "play" && S.play && curSong() === song) akRetuneOnShow(song, item); } catch (e) {} }, 30);
+  try { akBrkOnShow(item); } catch (e) {}
+  akSolo = null;
+}
+function akSettingsExtra(c) {
+  c.again("songs-and-shows");
+  c.section("Tuning changes", "Drop D and other tunings per song: tag, heads-up and reminder");
+  var r = settings().retune;
+  c.out.appendChild(h("p", { class: "hint" }, "Pick a song's tuning in the song (under Playing), or give it a tag like “Drop D”. Your normal tuning is " + akBaseTuningName() + " (set under Instrument and tuning)."));
+  c.check("Heads-up when a song in another tuning comes up", function () { return r.headsUp !== false; }, function (v) { r.headsUp = v; });
+  c.check("At the end of such a song, remind me to tune back (not when the next song uses the same tuning)", function () { return r.endRemind !== false; }, function (v) { r.endRemind = v; });
+  c.section("Countdown to the next break", "Set lengths and the break countdown on the playing screen");
+  var bp = settings().breakPlan;
+  c.range("Set length when a show has none", function () { return bp.setMins || 0; }, function (v) { bp.setMins = v; }, 0, 120, 5, function (v) { return v ? v + " min" : "work it out from the songs"; });
+  c.check("Vibrate when it's break time", function () { return bp.buzz !== false; }, function (v) { bp.buzz = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "The countdown shows in the info bar (turn it on or off under Bottom bar). Each show can have its own set length, and each set its own, in the show's details."));
+  c.section("Solos", "Solo blocks in a song pause auto-scroll");
+  var so = settings().solo;
+  c.check("Auto-scroll waits at a Solo block", function () { return so.pause !== false; }, function (v) { so.pause = v; });
+  c.range("A solo with no length waits", function () { return so.secs || 0; }, function (v) { so.secs = v; }, 0, 120, 5, function (v) { return v ? v + " s" : "until I tap or press the left pedal"; });
+  c.range("It stops when the Solo reaches", function () { return Math.round((so.at || 0.3) * 100); }, function (v) { so.at = v / 100; }, 5, 80, 5, function (v) { return v + "% down the screen"; });
+  c.out.appendChild(h("p", { class: "hint" }, "Add one in a song with “+ Solo”. While it waits, tap the Solo block or press the left pedal to carry on."));
+  c.check("Show the capo and tuning changes in the info bar on the playing screen", function () { return settings().capoInfo !== false; }, function (v) { settings().capoInfo = v; });
+  c.again("data-and-extras");
+  akBackupSettings(c);
+}
+
+akCss("ak4-live", [
+  "button,a,input,select,label,summary,.ch,.cue{touch-action:manipulation}",
+  ".akbanner{display:flex;gap:8px;align-items:center;margin:4px 8px;padding:8px 12px;border-radius:12px;background:var(--panel);border:2px solid var(--accent);font-weight:700;font-size:1.05rem}",
+  ".akbanner.warn{border-color:#E5B800;background:color-mix(in srgb,#E5B800 18%,var(--panel))}",
+  ".tmpill.akbrk.soon{border-color:#E5B800}.tmpill.akbrk.due{background:#E5484D;color:#fff;border-color:#E5484D}",
+  ".akstb{padding:8px 12px}.akstb-row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}.akstb-time{font-size:1.05rem}.akstb-time b{font-variant-numeric:tabular-nums;font-size:1.25rem}",
+  ".akstb-btns{display:flex;gap:6px;margin-left:auto}",
+  ".aksolo{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:.5em 0;padding:.4em .7em;border:2px dashed var(--accent);border-radius:12px;font-weight:700;font-size:.8em;color:var(--accent)}",
+  ".aksolo.holding{border-style:solid;background:color-mix(in srgb,var(--accent) 16%,transparent);cursor:pointer}",
+  ".aksolo-st{font-weight:400;color:var(--muted);font-size:.85em}",
+  "button[data-akb].busy{opacity:.5}",
+  ".akcapo{font-weight:700;color:var(--accent);white-space:nowrap}",
+  ".tabbar .akbtab .ic svg{width:1.1em;height:1.1em}",
+  ".topbar .akbhead{min-width:0;padding:0 10px}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
@@ -15225,7 +15918,7 @@ function normalizeChart(raw, snap) {
       else if (k === "start_of_verse" || k === "sov") sec(d[2] || "Verse");
       else if (k === "start_of_chorus" || k === "soc") sec(d[2] || "Chorus");
       else if (k === "start_of_bridge" || k === "sob") sec(d[2] || "Bridge");
-      else if (k === "cue") out.push(t);
+      else if (k === "cue" || k === "solo") out.push(t);
       continue;
     }
     if (!t || isSec(t) || /\[[^\]]+\]/.test(t) && !isChordLineText(line)) { out.push(t ? line : ""); continue; }
