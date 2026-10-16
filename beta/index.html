@@ -20147,6 +20147,341 @@ function akSetlistGigsLine(sh) {
   return box;
 }
 
+/* ================= Akashic Chords batch 6, phase 3: the Write tab and the chord progression wheel =================
+   - Write tab (bottom bar, Songwrite mode): works in progress, the progression wheel, a lyric pad with rhymes and syllables,
+     and every writing tool in one place
+   - progression wheel: pick a key, build a progression; the wheel suggests the best next chord (top, ★) and the others
+     around it, colored from green (home, resolves) to red (tension, dissonance); tap a root for its other kinds (m, 7, sus…) */
+
+var AK_VIEWS = typeof AK_VIEWS === "object" ? AK_VIEWS : {};
+var AK_VIEW_TAB = typeof AK_VIEW_TAB === "object" ? AK_VIEW_TAB : {};
+
+/* ---------------------------------------------------------------- harmony */
+/* degrees: semitones above the key's root, the chord kind it has in the key, a roman numeral */
+var AKPW_MAJ = [[0, "", "I"], [2, "m", "ii"], [4, "m", "iii"], [5, "", "IV"], [7, "", "V"], [9, "m", "vi"], [11, "dim", "vii°"],
+  [10, "", "♭VII"], [5, "m", "iv"], [8, "", "♭VI"], [3, "", "♭III"], [2, "", "II"], [4, "", "III"], [9, "", "VI"]];
+var AKPW_MIN = [[0, "m", "i"], [2, "dim", "ii°"], [3, "", "III"], [5, "m", "iv"], [7, "m", "v"], [8, "", "VI"], [10, "", "VII"],
+  [7, "", "V"], [5, "", "IV"], [1, "", "♭II"], [0, "", "I"], [9, "dim", "vi°"]];
+/* how often one chord goes to another in pop, rock, folk and soul (by numeral) */
+var AKPW_NEXT_MAJ = {
+  "I": { "IV": 26, "V": 24, "vi": 20, "ii": 10, "iii": 5, "♭VII": 6, "I": 2, "iv": 2, "♭VI": 2, "II": 2, "III": 1 },
+  "ii": { "V": 45, "IV": 10, "vii°": 6, "I": 10, "vi": 8, "iii": 5, "♭VII": 4, "ii": 2 },
+  "iii": { "vi": 38, "IV": 28, "ii": 10, "I": 8, "V": 6, "VI": 4 },
+  "IV": { "V": 28, "I": 30, "ii": 8, "vi": 10, "iv": 8, "♭VII": 4, "iii": 3, "IV": 2 },
+  "V": { "I": 48, "vi": 24, "IV": 12, "ii": 4, "iii": 3, "♭VI": 3, "V": 2 },
+  "vi": { "IV": 32, "ii": 18, "V": 20, "iii": 8, "I": 10, "♭VII": 3 },
+  "vii°": { "I": 55, "iii": 15, "vi": 10, "V": 8 },
+  "♭VII": { "IV": 35, "I": 35, "V": 8, "♭VI": 8, "vi": 4 },
+  "iv": { "I": 55, "V": 15, "♭VII": 10, "♭VI": 8 },
+  "♭VI": { "♭VII": 40, "V": 18, "I": 18, "IV": 8, "iv": 6 },
+  "♭III": { "IV": 30, "♭VI": 25, "♭VII": 20, "I": 15 },
+  "II": { "V": 50, "IV": 25, "I": 10 },
+  "III": { "vi": 60, "IV": 20, "VI": 8 },
+  "VI": { "ii": 55, "V": 20, "IV": 10 }
+};
+var AKPW_NEXT_MIN = {
+  "i": { "iv": 22, "VI": 22, "VII": 18, "v": 8, "V": 12, "III": 10, "ii°": 4, "i": 2 },
+  "ii°": { "V": 50, "v": 15, "i": 15, "VII": 8 },
+  "III": { "VI": 28, "VII": 25, "iv": 18, "i": 15, "v": 6 },
+  "iv": { "i": 26, "V": 20, "VII": 18, "v": 10, "VI": 10, "III": 6 },
+  "v": { "i": 35, "VI": 25, "iv": 15, "III": 10 },
+  "VI": { "VII": 32, "III": 18, "iv": 16, "i": 14, "V": 10, "ii°": 4 },
+  "VII": { "i": 32, "III": 30, "VI": 15, "iv": 10, "v": 5 },
+  "V": { "i": 60, "VI": 22, "iv": 6 },
+  "IV": { "i": 40, "VII": 25, "VI": 15 },
+  "♭II": { "i": 45, "V": 35 },
+  "I": { "iv": 50, "IV": 25, "VI": 10 },
+  "vi°": { "V": 50, "i": 30 }
+};
+/* how settled a numeral feels in its key: 0 home … 1 far away */
+var AKPW_FUNC = { "I": 0, "i": 0, "vi": 0.12, "iii": 0.22, "III": 0.22, "IV": 0.26, "iv": 0.36, "ii": 0.32, "VI": 0.22, "VII": 0.38, "V": 0.56, "v": 0.38, "vii°": 0.72, "ii°": 0.6, "vi°": 0.66,
+  "♭VII": 0.36, "♭VI": 0.38, "♭III": 0.42, "II": 0.5, "♭II": 0.62 };
+var AKPW_QT = { "": 0, m: 0, "5": 0, sus2: 0.1, sus4: 0.16, "6": 0.06, m6: 0.1, "7": 0.2, maj7: 0.08, m7: 0.06, add9: 0.05, madd9: 0.07, "9": 0.2, maj9: 0.1, m9: 0.1,
+  "7sus4": 0.2, dim: 0.34, dim7: 0.42, m7b5: 0.3, aug: 0.4, aug7: 0.46, "7b9": 0.48, "7#9": 0.48, "7b5": 0.44, mmaj7: 0.32, "69": 0.08, "11": 0.24, "13": 0.22 };
+/* the kinds offered for any root */
+var AKPW_KINDS = ["", "m", "7", "maj7", "m7", "sus2", "sus4", "add9", "6", "9", "dim", "aug", "m7b5", "dim7", "7sus4", "mmaj7"];
+function akPwScale(key) { var iv = key.minor ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]; return iv.map(function (x) { return (key.pc + x) % 12; }); }
+function akPwTones(c) { var q = AK2_Q[c.q] || AK2_Q[""]; return q.t.map(function (t) { return (c.pc + t[0]) % 12; }); }
+function akPwName(c, key) {
+  var nm = akPwRaw(c, key);
+  try { return styleChord(nm, styleOf()); } catch (e) { return nm; }
+}
+function akPwRaw(c, key) {
+  var flat = key && ([5, 10, 3, 8, 1, 6].indexOf(key.pc) >= 0 || (key.minor && [2, 7, 0, 5].indexOf(key.pc) >= 0) || /^♭/.test(akPwRoman(c, key)));
+  return (flat || settings().acc === "flat" ? NAMES.flat : NAMES.sharp)[c.pc] + akQName(c.q);
+}
+function akPwParse(name) { var p = parseChordName(String(name || "").trim()); if (!p) return null; var q = /^([A-G][#b]?)(.*)$/.exec(name)[2]; Object.keys(AK2_Q_WRITE).forEach(function (k) { if (AK2_Q_WRITE[k] === q) q = k; }); if (AK2_Q[q] === undefined) q = q.replace(/\/.*$/, ""); if (AK2_Q[q] === undefined) q = p.q; return { pc: p.pc, q: AK2_Q[q] !== undefined ? q : (/^m(?!aj)/.test(q) ? "m" : "") }; }
+/* the numeral of a chord in a key (or "") */
+function akPwRoman(c, key) {
+  var rel = (c.pc - key.pc + 12) % 12, list = key.minor ? AKPW_MIN : AKPW_MAJ;
+  var base = c.q === "m" || c.q === "m7" || c.q === "m6" || c.q === "m9" || c.q === "madd9" ? "m" : /dim|m7b5/.test(c.q) ? "dim" : c.q === "aug" || c.q === "aug7" ? "aug" : "";
+  var hit = list.filter(function (d) { return d[0] === rel && d[1] === base; })[0];
+  if (hit) return hit[2];
+  var NUM = ["I", "♭II", "II", "♭III", "III", "IV", "♯IV", "V", "♭VI", "VI", "♭VII", "VII"][rel];
+  return base === "m" ? NUM.toLowerCase() : base === "dim" ? NUM.toLowerCase() + "°" : base === "aug" ? NUM + "+" : NUM;
+}
+/* tension 0…1 of chord c in key, coming from chord prev */
+function akPwTension(c, key, prev) {
+  var sc = akPwScale(key), out = akPwTones(c).filter(function (t) { return sc.indexOf(t) < 0; }).length, r = akPwRoman(c, key);
+  var f = AKPW_FUNC[r]; if (f === undefined) f = 0.5;
+  var t = f * 0.75 + out * 0.1 + (AKPW_QT[c.q] || 0.15);
+  /* landing home after a dominant chord feels like a release */
+  if (prev && (r === "I" || r === "i") && /^(V|vii°|v|♭VII|IV|iv)$/.test(akPwRoman(prev, key))) t -= 0.05;
+  return Math.max(0, Math.min(1, t));
+}
+function akPwColor(t) { var hue = Math.round(130 - t * 130); return "hsl(" + hue + ", 72%, " + (t > 0.7 ? 52 : 46) + "%)"; }
+function akPwWord(t, c, key, prev) {
+  var r = akPwRoman(c, key);
+  if (prev && (r === "I" || r === "i") && /^(V|vii°|♭VII|IV|iv|v)$/.test(akPwRoman(prev, key))) return "Resolves home";
+  if (t < 0.12) return "Home"; if (t < 0.28) return "Smooth"; if (t < 0.42) return "Lift"; if (t < 0.6) return "Pull"; if (t < 0.78) return "Tension"; return "Dissonant";
+}
+/* the next chords after prev, best first: [{c, w, r, t}] */
+function akPwSuggest(key, prev) {
+  var list = key.minor ? AKPW_MIN : AKPW_MAJ, table = key.minor ? AKPW_NEXT_MIN : AKPW_NEXT_MAJ;
+  var from = prev ? akPwRoman(prev, key) : (key.minor ? "i" : "I");
+  var row = table[from] || table[key.minor ? "i" : "I"], out = [];
+  list.forEach(function (d) {
+    var c = { pc: (key.pc + d[0]) % 12, q: d[1] };
+    if (prev && c.pc === prev.pc && c.q === prev.q && !row[d[2]]) return;
+    var w = row[d[2]] || (d === list[0] ? 4 : list.indexOf(d) < 7 ? 2 : 0.6);
+    out.push({ c: c, w: w, r: d[2], t: akPwTension(c, key, prev) });
+  });
+  if (!prev) out.forEach(function (x) { if (x.r === "I" || x.r === "i") x.w = 99; });
+  out.sort(function (a, b) { return b.w - a.w; });
+  return out;
+}
+function akPwMidis(c) { var base = 48 + c.pc; if (base > 54) base -= 12; return [base - 12].concat(akPwTones(c).map(function (t, i) { var q = AK2_Q[c.q] || AK2_Q[""]; return base + q.t[i][0]; })); }
+function akPwPlay(c, when) { akPwMidis(c).forEach(function (m, i) { akTone(m, 0.9, (when || 0) + i * 0.025, "keys", i === 0 ? 0.16 : 0.12); }); }
+
+/* ---------------------------------------------------------------- the wheel */
+function akPwState() {
+  var s = settings().progWheel = settings().progWheel || {};
+  if (!s.key) s.key = "C"; if (!Array.isArray(s.prog)) s.prog = []; if (!s.bpm) s.bpm = 80;
+  return s;
+}
+/* o.song: start from (and send to) this song */
+function akProgWheel(o) {
+  o = o || {};
+  var st = akPwState(), box = h("div", { class: "akpw" }), sel = null;
+  if (o.song) { var k0 = akSongKey(o.song); if (k0) st.key = NAMES.sharp[k0.pc] + (k0.minor ? "m" : ""); }
+  function key() { return akParseKey(st.key) || { pc: 0, minor: false }; }
+  function prog() { return st.prog.map(akPwParse).filter(Boolean); }
+  function last() { var p = prog(); return p.length ? p[p.length - 1] : null; }
+  function add(c) { st.prog.push(akPwRaw(c, key())); save(); akPwPlay(c); sel = null; draw(); }
+  function draw() {
+    box.textContent = "";
+    var k = key(), p = prog(), prev = last();
+    /* key */
+    var keySel = h("select", { "aria-label": "Key", onChange: function () { st.key = this.value; save(); draw(); } });
+    ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"].forEach(function (r) { [r, r + "m"].forEach(function (v) { keySel.appendChild(h("option", { value: v, selected: st.key === v }, v.replace(/m$/, " minor").replace(/^([^ ]+)$/, "$1 major"))); }); });
+    box.appendChild(h("div", { class: "row akpw-top" }, h("label", { class: "fld", style: "margin:0" }, "Key", keySel),
+      h("button", { onClick: function () { if (!p.length) return; var t = 0, spb = 60 / st.bpm * 2; p.forEach(function (c) { akPwPlay(c, t); t += spb; }); } , disabled: !p.length }, "▶ Play"),
+      h("button", { disabled: !p.length, onClick: function () { st.prog.pop(); save(); draw(); } }, "⌫"),
+      h("button", { disabled: !p.length, onClick: function () { confirmBox("Clear the progression?", "Clear", function () { st.prog = []; save(); draw(); }); } }, "Clear")));
+    /* the progression */
+    var strip = h("div", { class: "akpw-strip", "aria-label": "Your progression" });
+    if (!p.length) strip.appendChild(h("span", { class: "muted" }, "Tap a chord on the wheel to start. The best place to start is at the top."));
+    p.forEach(function (c, i) {
+      var t = akPwTension(c, k, i ? p[i - 1] : null);
+      strip.appendChild(h("button", { class: "akpw-chip", style: "border-color:" + akPwColor(t) + ";box-shadow:inset 0 -4px 0 " + akPwColor(t), onClick: function () {
+        var me = this; akPwPlay(c);
+        menu(me, [{ head: akPwName(c, k) + "  ·  " + akPwRoman(c, k) }, { label: "Play", onClick: function () { akPwPlay(c); } },
+          { label: "Move left", disabled: i === 0, onClick: function () { var a = st.prog; a.splice(i - 1, 0, a.splice(i, 1)[0]); save(); draw(); } },
+          { label: "Move right", disabled: i === p.length - 1, onClick: function () { var a = st.prog; a.splice(i + 1, 0, a.splice(i, 1)[0]); save(); draw(); } },
+          { label: "Duplicate", onClick: function () { st.prog.splice(i + 1, 0, st.prog[i]); save(); draw(); } },
+          { label: "Remove", danger: true, onClick: function () { st.prog.splice(i, 1); save(); draw(); } }]);
+      } }, h("b", null, akPwName(c, k)), h("small", null, akPwRoman(c, k))));
+    });
+    box.appendChild(strip);
+    /* the wheel */
+    var sug = akPwSuggest(k, prev).slice(0, 12), n = sug.length, W = 340, R = 150, r0 = 62, cx = W / 2, cy = W / 2;
+    var maxW = sug.reduce(function (a, x) { return Math.max(a, x.w); }, 1);
+    var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + W, class: "akpw-wheel", role: "group", "aria-label": "Next chord wheel: best at the top, going round clockwise" });
+    sug.forEach(function (x, i) {
+      var a0 = -Math.PI / 2 + (i - 0.5) * 2 * Math.PI / n, a1 = a0 + 2 * Math.PI / n, rr = r0 + (R - r0) * (0.55 + 0.45 * Math.sqrt(x.w / maxW));
+      function pt(a, rad) { return (cx + rad * Math.cos(a)).toFixed(1) + " " + (cy + rad * Math.sin(a)).toFixed(1); }
+      var d = "M " + pt(a0, r0) + " L " + pt(a0, rr) + " A " + rr + " " + rr + " 0 0 1 " + pt(a1, rr) + " L " + pt(a1, r0) + " A " + r0 + " " + r0 + " 0 0 0 " + pt(a0, r0) + " Z";
+      var on = sel && sel.pc === x.c.pc && sel.q === x.c.q;
+      var g = svgEl("g", { class: "akpw-seg" + (on ? " on" : ""), tabindex: "0", role: "button", "aria-label": akPwName(x.c, k) + ", " + x.r + ", " + akPwWord(x.t, x.c, k, prev) + (i === 0 ? ", best next chord" : "") });
+      g.appendChild(svgEl("path", { d: d, fill: akPwColor(x.t), "fill-opacity": on ? "1" : (0.5 + 0.5 * x.w / maxW).toFixed(2), stroke: "var(--bg, #000)", "stroke-width": "2" }));
+      var am = (a0 + a1) / 2, tr = (r0 + rr) / 2 + 4;
+      var t1 = svgEl("text", { x: cx + tr * Math.cos(am), y: cy + tr * Math.sin(am) - 2, "text-anchor": "middle", class: "akpw-tn" }); t1.textContent = (i === 0 ? "★" : "") + akPwName(x.c, k); if (t1.textContent.length > 4) t1.setAttribute("style", "font-size:" + (t1.textContent.length > 5 ? 12 : 14) + "px");
+      var t2 = svgEl("text", { x: cx + tr * Math.cos(am), y: cy + tr * Math.sin(am) + 14, "text-anchor": "middle", class: "akpw-tr" }); t2.textContent = x.r;
+      g.appendChild(t1); g.appendChild(t2);
+      function pick() { sel = x.c; akPwPlay(x.c); draw(); }
+      g.addEventListener("click", pick); g.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+      svg.appendChild(g);
+    });
+    var hub = svgEl("g", { class: "akpw-hub", role: "button", tabindex: "0", "aria-label": prev ? "Play " + akPwName(prev, k) : "Key of " + st.key });
+    hub.appendChild(svgEl("circle", { cx: cx, cy: cy, r: r0 - 6, fill: "var(--panel, #222)", stroke: "var(--accent)", "stroke-width": "2" }));
+    var ht = svgEl("text", { x: cx, y: cy - 2, "text-anchor": "middle", class: "akpw-hn" }); ht.textContent = prev ? akPwName(prev, k) : st.key;
+    var hs = svgEl("text", { x: cx, y: cy + 16, "text-anchor": "middle", class: "akpw-tr" }); hs.textContent = prev ? "now · " + akPwRoman(prev, k) : "key";
+    hub.appendChild(ht); hub.appendChild(hs); hub.addEventListener("click", function () { if (prev) akPwPlay(prev); });
+    svg.appendChild(hub);
+    var wheelWrap = h("div", { class: "akpw-wrap" }, svg);
+    /* the chosen root's other kinds */
+    var side = h("div", { class: "akpw-side" });
+    if (sel) {
+      var t0 = akPwTension(sel, k, prev);
+      side.appendChild(h("div", { class: "akpw-selh" }, h("b", null, akPwName(sel, k)), h("span", { class: "muted" }, "  " + akPwRoman(sel, k) + " · " + akPwWord(t0, sel, k, prev))));
+      side.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("button", { class: "primary", onClick: function () { add(sel); } }, "+ Add " + akPwName(sel, k)), h("button", { onClick: function () { akPwPlay(sel); } }, "▶")));
+      side.appendChild(h("div", { class: "muted", style: "margin:6px 0 2px" }, "Other kinds of " + akPwName({ pc: sel.pc, q: "" }, k) + ":"));
+      var kinds = h("div", { class: "akpw-kinds" });
+      AKPW_KINDS.forEach(function (q) {
+        var c = { pc: sel.pc, q: q }, t = akPwTension(c, k, prev);
+        kinds.appendChild(h("button", { class: "akpw-kind" + (q === sel.q ? " on" : ""), style: "border-color:" + akPwColor(t) + ";box-shadow:inset 4px 0 0 " + akPwColor(t), title: (AK2_Q[q] || {}).n + " · " + akPwWord(t, c, k, prev), onClick: function () { sel = c; akPwPlay(c); draw(); }, onDblclick: function () { add(c); } },
+          akPwName(c, k), h("small", null, akPwWord(t, c, k, prev))));
+      });
+      side.appendChild(kinds);
+      try { side.appendChild(akDiagramsRow(akPwRaw(sel, k), 2)); } catch (e) {}
+    } else side.appendChild(h("p", { class: "hint" }, "Tap a chord on the wheel to hear it and see its other kinds (minor, 7, sus, add9, diminished, augmented…). The ★ at the top is the most likely next chord; bigger slices are more common choices."));
+    box.appendChild(h("div", { class: "akpw-main" }, wheelWrap, side));
+    /* legend */
+    box.appendChild(h("div", { class: "akpw-legend", "aria-hidden": "true" }, [["Home", 0.02], ["Smooth", 0.2], ["Lift", 0.35], ["Pull", 0.5], ["Tension", 0.68], ["Dissonant", 0.9]].map(function (x) { return h("span", null, h("i", { style: "background:" + akPwColor(x[1]) }), x[0]); })));
+    /* send it */
+    box.appendChild(h("div", { class: "row" },
+      h("button", { disabled: !p.length, onClick: function () { var txt = st.prog.join(" "); try { navigator.clipboard.writeText(txt).then(function () { toast("Copied: " + txt); }, function () { askText("Copy this", txt, "Done", function () {}); }); } catch (e) { askText("Copy this", txt, "Done", function () {}); } } }, "Copy"),
+      h("button", { disabled: !p.length, onClick: function () { akPwToSong(o.song); } }, o.song ? "Add to this song" : "Add to a song…"),
+      h("button", { disabled: !p.length, onClick: function () { snap("new song"); var s = newSong({ title: "New idea in " + st.key, shelf: "wip", key: st.key, lyrics: "[Verse]\n" + st.prog.map(function (c) { return "[" + c + "]"; }).join(" ") + "\n" }); lib().songs.push(s); save(); toast("Started a song in Works in progress.", { label: "Open", fn: function () { go("song", { songId: s.id }); } }); } }, "Start a song with it")));
+  }
+  draw();
+  return box;
+}
+function akPwToSong(song) {
+  var st = akPwState(), line = st.prog.map(function (c) { return "[" + c + "]"; }).join(" ");
+  function put(s) {
+    snap("add progression"); s.lyrics = String(s.lyrics || "").replace(/\s+$/, "") + (s.lyrics ? "\n\n" : "") + "{cue: progression}\n" + line + "\n"; if (!s.key) s.key = st.key; save();
+    toast("Added to the end of “" + (s.title || "the song") + "”.", { label: "Open", fn: function () { go("song", { songId: s.id }); } });
+  }
+  if (song) { put(song); return; }
+  histSongPicker("Add the progression to which song?", function (ids) { var s = findSong(ids[0]); if (s) put(s); });
+}
+function akProgWheelDialog(song) { modal("Chord progression wheel", akProgWheel({ song: song }), [{ label: "Done", primary: true }], { wide: true }); }
+
+/* ---------------------------------------------------------------- the Write tab */
+function akWritePad() { var l = lib(); if (typeof l.writePad !== "string") l.writePad = ""; return l; }
+function akPickOneSong(title, cb) { histSongPicker(title, function (ids) { var s = findSong(ids[0]); if (s) cb(s); }); }
+var AK_SONG_SHAPES = [
+  ["Verse, chorus", ["Verse 1", "Chorus", "Verse 2", "Chorus", "Bridge", "Chorus"]],
+  ["With a pre-chorus", ["Verse 1", "Pre-chorus", "Chorus", "Verse 2", "Pre-chorus", "Chorus", "Bridge", "Chorus"]],
+  ["Folk / story (AAA)", ["Verse 1", "Verse 2", "Verse 3", "Verse 4"]],
+  ["32-bar (AABA)", ["A", "A", "B", "A"]],
+  ["12-bar blues", ["Verse 1", "Verse 2", "Solo", "Verse 3"]]
+];
+function viewWrite() {
+  var body = h("div", { "data-blocks": "write", "data-items": "1" });
+  var wip = lib().songs.filter(function (s) { return akShelfOf(s) === "wip"; }).sort(function (a, b) { return String(b.updated || b.added || "").localeCompare(String(a.updated || a.added || "")); });
+  var orig = lib().songs.filter(function (s) { return akShelfOf(s) === "orig"; }).length;
+  /* quick actions */
+  body.appendChild(h("div", { class: "row", "data-bk": "quick", "data-bt": "Quick actions" },
+    h("button", { class: "primary", onClick: function () { akIdeaDialog(); } }, "💡 Quick idea"),
+    h("button", { onClick: function () { akNewSongShape(); } }, "+ New song"),
+    h("button", { onClick: function () { akNotepad(); } }, "📝 Notepad")));
+  /* works in progress */
+  var wcard = h("div", { class: "card", "data-bk": "wip", "data-bt": "Works in progress" }, h("h3", { style: "margin:0 0 6px" }, "Works in progress (" + wip.length + ")"));
+  if (!wip.length) wcard.appendChild(h("p", { class: "hint" }, "Songs you're still writing live here. Start one with Quick idea or + New song."));
+  wip.slice(0, S.akWipAll ? 999 : 8).forEach(function (s) {
+    wcard.appendChild(h("div", { class: "item" }, h("button", { class: "main-btn", onClick: function () { go("song", { songId: s.id }); } }, h("div", { class: "t" }, (s.needsWork ? "⚑ " : "") + (s.title || "Untitled")), h("div", { class: "s" }, [s.key, s.updated ? "changed " + agoText(Date.parse(s.updated)) : "", (s.audio || []).length ? "🎙 " + s.audio.length : ""].filter(Boolean).join(" · ") || " ")),
+      h("button", { class: "icon", "aria-label": "Write screen for " + s.title, title: "Write screen: chart, scratch pad, rhymes", onClick: function () { S.playMode = "write"; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, function () { go("write"); }); } }, "✍")));
+  });
+  if (wip.length > 8 && !S.akWipAll) wcard.appendChild(h("button", { onClick: function () { S.akWipAll = true; render(); } }, "Show all " + wip.length));
+  wcard.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { S.shelf = "orig"; go("songs"); } }, "Originals (" + orig + ")"), h("button", { onClick: function () { S.shelf = "wip"; go("songs"); } }, "Open the list")));
+  body.appendChild(wcard);
+  /* wheel */
+  var pw = h("details", { class: "card", "data-bk": "wheel", "data-bt": "Chord progression wheel" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "🎡 Chord progression wheel", h("span", { class: "muted", style: "font-weight:400" }, "  · what to play next")));
+  if (settings().writeWheelOpen !== false) pw.open = true;
+  pw.addEventListener("toggle", function () { settings().writeWheelOpen = pw.open; save(); if (pw.open && !pw._in) { pw.appendChild(akProgWheel()); pw._in = 1; } });
+  if (pw.open) { pw.appendChild(akProgWheel()); pw._in = 1; }
+  body.appendChild(pw);
+  /* lyric pad */
+  var L = akWritePad(), ta = h("textarea", { rows: 8, value: L.writePad, placeholder: "Lines, hooks, a verse… Rhymes and syllables work on what you type here.", "aria-label": "Lyric pad", spellcheck: "true" });
+  ta.addEventListener("input", function () { L.writePad = ta.value; save(); });
+  body.appendChild(h("div", { class: "card", "data-bk": "pad", "data-bt": "Lyric pad" }, h("h3", { style: "margin:0 0 6px" }, "Lyric pad"), ta,
+    h("div", { class: "row" }, h("button", { onClick: function () { akWordPanel(ta, function () { L.writePad = ta.value; save(); }); } }, "📖 Rhymes and words"), h("button", { onClick: function () { akSyllableDialog(ta.value); } }, "Syllables"),
+      h("button", { onClick: function () { if (!ta.value.trim()) { toast("Write something first."); return; } snap("song from pad"); var s = newSong({ title: ta.value.trim().split("\n")[0].slice(0, 40) || "New song", shelf: "wip", lyrics: ta.value.trim() }); lib().songs.push(s); save(); toast("Made a song in Works in progress.", { label: "Clear the pad", fn: function () { L.writePad = ""; save(); render(); } }); go("song", { songId: s.id }); } }, "Make it a song"))));
+  /* tools */
+  var tools = [
+    ["✍ Write screen for a song", "Chart, scratch pad and rhymes next to the song", function () { akPickOneSong("Write which song?", function (s) { S.playMode = "write"; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, function () { go("write"); }); }); }],
+    ["🎯 Place chords", "Tap words to put chords on them", function () { akPickOneSong("Place chords in which song?", function (s) { snap("place chords"); openPlacer(s, { onClose: function () { save(); } }); }); }],
+    ["🎡 Wheel for a song", "Start the wheel in a song's key and add to it", function () { akPickOneSong("Which song?", function (s) { akProgWheelDialog(s); }); }],
+    ["🕘 Version history", "Every saved version of a song", function () { akPickOneSong("Versions of which song?", function (s) { akVerDialog(s); }); }],
+    ["🔎 Name a chord", "Build a shape and find its name", function () { openChordTools("name"); }],
+    ["📚 Chord library", "Every chord kind with shapes", function () { openChordTools("library"); }],
+    ["🔁 Chord swaps", "Other chords that fit in place of one", function () { openChordTools("swap"); }],
+    ["🎼 Scales", "Scales for melodies and solos", function () { openChordTools("scales"); }],
+    ["⏱ Metronome", "A steady beat while you write", function () { openChordTools("metro"); }],
+    ["🎙 Record an idea", "A voice memo becomes a new song idea", function () { akIdeaDialog(); }]
+  ];
+  var tg = h("div", { class: "akwr-tools", "data-bk": "tools", "data-bt": "Writing tools" });
+  tools.forEach(function (t) { tg.appendChild(h("button", { class: "akwr-tool", onClick: t[2] }, h("b", null, t[0]), h("span", { class: "muted" }, t[1]))); });
+  body.appendChild(h("h3", { style: "margin:14px 2px 6px" }, "Tools"));
+  body.appendChild(tg);
+  return shell("Write", body, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Write"), libButton()) });
+}
+function akNewSongShape() {
+  var title = h("input", { type: "text", placeholder: "Working title", autocapitalize: "words", "aria-label": "Title" }), shape = 0;
+  var chips = h("div", { class: "chips" });
+  function draw() { chips.textContent = ""; AK_SONG_SHAPES.concat([["Blank", []]]).forEach(function (x, i) { chips.appendChild(h("button", { class: "chip" + (shape === i ? " on" : ""), onClick: function () { shape = i; draw(); } }, x[0])); }); }
+  draw();
+  modal("New song", h("div", null, h("label", { class: "fld" }, "Title", title), h("div", { class: "fld" }, "Start with these sections", chips), h("p", { class: "hint" }, "It goes into Works in progress.")),
+    [{ label: "Cancel" }, { label: "Start writing", primary: true, onClick: function () {
+      var secs = (AK_SONG_SHAPES[shape] || ["", []])[1];
+      snap("new song"); var s = newSong({ title: title.value.trim() || "New song", shelf: "wip", lyrics: secs.map(function (x) { return "[" + x + "]\n"; }).join("\n") });
+      lib().songs.push(s); save(); go("song", { songId: s.id });
+    } }]);
+  setTimeout(function () { title.focus(); }, 30);
+}
+AK_VIEWS.write = viewWrite; AK_VIEW_TAB.write = "write";
+/* the bottom tab */
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) {
+    var bar = tb.apply(this, arguments);
+    if (!akModesOk("w") || settings().writeTab === false) return bar;
+    var learn = Array.prototype.filter.call(bar.children, function (b) { return /Learn$/.test(b.textContent); })[0], imp = Array.prototype.filter.call(bar.children, function (b) { return /Import$/.test(b.textContent); })[0];
+    var btn = h("button", { "aria-current": o.cur === "write" ? "page" : null, onClick: function () { o.leave(function () { go("write"); }); } }, h("span", { class: "ic" }, "✍"), "Write");
+    bar.insertBefore(btn, learn ? learn.nextSibling : imp || null);
+    return bar;
+  };
+})();
+/* the wheel on the playing screen (off until turned on) and in the song editor */
+TB_ITEMS.push(["progwheel", "Chord progression wheel"]); TB_SHORT.progwheel = "Wheel"; AK_TB_MODES.progwheel = "w";
+AK_IC.progwheel = "M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18z M12 3v9 M12 12l7.8 4.5 M12 12l-7.8 4.5 M12 9a3 3 0 1 0 0 6 3 3 0 1 0 0-6z";
+function akExtraTb16(id, song, root) {
+  if (id === "progwheel") return h("button", { "aria-label": "Chord progression wheel", onClick: function () { akProgWheelDialog(curSong()); } }, akIcon("progwheel"));
+  if (typeof akExtraTb17 === "function") return akExtraTb17(id, song, root);
+  return null;
+}
+(function () {
+  var ee = akEditorExtra;
+  akEditorExtra = function (s, rebuild) {
+    var el = ee.apply(this, arguments);
+    var b = h("button", { "data-akm": "w", onClick: function () { akProgWheelDialog(s); } }, "🎡 Progression wheel");
+    if (el && el.appendChild) { var row = el.querySelector && el.querySelector(".row"); (row || el).appendChild(b); return el; }
+    return h("div", null, el, h("div", { class: "row" }, b));
+  };
+})();
+function akSettingsExtra9(c) {
+  c.again("songs-and-shows");
+  c.section("Write tab", "The writing tab in the bottom bar");
+  c.check("Show the Write tab in the bottom bar (needs the Songwrite mode)", function () { return settings().writeTab !== false; }, function (v) { settings().writeTab = v; });
+  if (typeof akSettingsExtra10 === "function") akSettingsExtra10(c);
+}
+
+akCss("ak6-write", [
+  ".akpw-top{align-items:flex-end;flex-wrap:wrap}.akpw-top select{min-width:140px}",
+  ".akpw-strip{display:flex;flex-wrap:wrap;gap:6px;min-height:52px;align-items:center;padding:8px;margin:8px 0;border:1px dashed var(--line);border-radius:12px}",
+  ".akpw-chip{display:flex;flex-direction:column;align-items:center;min-width:54px;padding:4px 8px;border:2px solid;border-radius:10px;line-height:1.1}.akpw-chip b{font-size:1.15rem}.akpw-chip small{opacity:.75}",
+  ".akpw-main{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}.akpw-wrap{flex:1 1 300px;max-width:420px;margin:0 auto}.akpw-side{flex:1 1 240px;min-width:0}",
+  ".akpw-wheel{width:100%;height:auto;display:block;touch-action:manipulation}.akpw-seg{cursor:pointer}.akpw-seg:focus{outline:none}.akpw-seg.on path{stroke:var(--fg,#fff);stroke-width:4}",
+  ".akpw-tn{font-weight:800;font-size:17px;fill:#fff;paint-order:stroke;stroke:rgba(0,0,0,.55);stroke-width:3px;pointer-events:none}.akpw-tr{font-size:12px;fill:#fff;opacity:.92;paint-order:stroke;stroke:rgba(0,0,0,.5);stroke-width:2px;pointer-events:none}",
+  ".akpw-hub{cursor:pointer}.akpw-hn{font-weight:800;font-size:22px;fill:var(--fg,#fff)}.akpw-hub .akpw-tr{fill:var(--muted,#aaa);stroke:none}",
+  ".akpw-selh{font-size:1.1rem}.akpw-kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}",
+  ".akpw-kind{display:flex;flex-direction:column;align-items:flex-start;padding:4px 8px 4px 12px;border:1px solid;border-radius:8px;text-align:left;min-height:44px}.akpw-kind small{font-size:.72rem;opacity:.75}.akpw-kind.on{background:var(--accent-bg)}",
+  ".akpw-legend{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;font-size:.85rem}.akpw-legend i{display:inline-block;width:14px;height:14px;border-radius:4px;margin-right:4px;vertical-align:-2px}",
+  ".akwr-tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}.akwr-tool{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:10px 12px;gap:2px}.akwr-tool .muted{font-size:.85rem;font-weight:400}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
