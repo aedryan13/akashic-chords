@@ -4884,9 +4884,9 @@ function viewImport() {
   isub("A song someone sent you", "Open a Akashic Chords song file");
   out.appendChild(h("p", { class: "hint" }, "Choose the song file someone sent you (it ends in .chordbook.json). If you already have the song, you can add theirs as another version under a new name, or replace yours. A set list file works here too."));
   out.appendChild(fileBtn("Choose song file", anyFileInput()));
-  isub("Add a song from a photo", "A picture or screenshot of a chord sheet");
-  out.appendChild(h("p", { class: "hint" }, "Choose a photo or screenshot of a printed chord sheet (chords above the words, or ChordPro). The app reads it on this device, keeps each chord over the same letter as in the picture, and lets you check and fix it before saving."));
-  out.appendChild(fileBtn("Choose a photo", h("input", { type: "file", accept: "image/*", "aria-label": "Choose a photo of a chord sheet", onChange: function () { var f = this.files && this.files[0]; this.value = ""; if (f) openPhotoImport(f); } })));
+  isub("Add a song from photos", "Pictures or screenshots of a chord sheet, one page or several");
+  out.appendChild(h("p", { class: "hint" }, "Choose a photo or screenshot of a printed chord sheet (chords above the words, or ChordPro). If the song runs over several pages, choose all of them at once; you can put them in order and add more before saving. The app reads them on this device, keeps each chord over the same letter as in the picture, joins the pages into one song, and lets you check and fix it before saving."));
+  out.appendChild(fileBtn("Choose photos", h("input", { type: "file", accept: "image/*", multiple: true, "aria-label": "Choose one or more photos of a chord sheet", onChange: function () { var f = Array.prototype.slice.call(this.files || []); this.value = ""; if (f.length) openPhotoImport(f); } })));
   isub("Add a song from text", "Paste a chart or choose a text file");
   out.appendChild(h("div", { class: "fld" }, "Choose a text file", fileBtn("Choose text file", txtFile)));
   out.appendChild(h("div", { class: "fld" }, "or paste it", pasteTitle, pasteArea));
@@ -15249,64 +15249,169 @@ function akOcrLayout(words) {
   return { title: title, text: out.join("\n").replace(/\n{3,}/g, "\n\n").trim() };
 }
 
+/* ---------------------------------------------------------------- several photos make one song */
+/* pages: [{ title, text }] in order. The first page's title names the song; a later page that repeats it (a page header) drops it,
+   any other big first line on a later page is kept as an ordinary line. Pages are joined with one blank line. */
+function akOcrJoinPages(pages) {
+  var title = "", parts = [];
+  (pages || []).forEach(function (pg, i) {
+    if (!pg) return;
+    var t = String(pg.title || "").trim(), x = String(pg.text || "").replace(/\s+$/, "");
+    if (i === 0 || !title) { if (t && !title) title = t; else if (t) x = t + (x ? "\n" + x : ""); }
+    else if (t && t.toLowerCase().replace(/\W+/g, "") !== title.toLowerCase().replace(/\W+/g, "")) x = t + (x ? "\n" + x : "");
+    /* a later page often starts with the title again as a plain line */
+    if (i > 0 && title) { var ls = x.split("\n"); while (ls.length && !ls[0].trim()) ls.shift(); if (ls.length && ls[0].trim().toLowerCase().replace(/\W+/g, "") === title.toLowerCase().replace(/\W+/g, "") && !isChordLineText(ls[0])) ls.shift(); x = ls.join("\n"); }
+    x = x.replace(/^\s*\n/, ""); if (x.trim()) parts.push(x);
+  });
+  return { title: title, text: parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim() };
+}
+/* a small turned copy of a picture for the page list */
+function akOcrThumb(img, rot) {
+  var w = img.naturalWidth || img.width, hh = img.naturalHeight || img.height, sc = 220 / Math.max(w, hh), cw = Math.round(w * sc), ch = Math.round(hh * sc), turn = ((rot || 0) % 4 + 4) % 4;
+  var c = document.createElement("canvas"); c.width = turn % 2 ? ch : cw; c.height = turn % 2 ? cw : ch;
+  var x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height);
+  x.translate(c.width / 2, c.height / 2); x.rotate(turn * Math.PI / 2); x.drawImage(img, -cw / 2, -ch / 2, cw, ch);
+  return c.toDataURL("image/jpeg", 0.7);
+}
+
 /* ---------------------------------------------------------------- the review screen */
-function openPhotoImport(file) {
-  if (!file) { var inp = h("input", { type: "file", accept: "image/*", onChange: function () { if (this.files && this.files[0]) openPhotoImport(this.files[0]); } }); inp.click(); return; }
-  var pic = null, rot = 0, closed = false;
-  var status = h("div", { class: "akocr-status", role: "status" }, "Opening the picture…"), bar = h("div", { class: "akocr-bar" }, h("i"));
-  var imgBox = h("div", { class: "akocr-img" });
+/* files: one picture or a list of them (the pages of one song, in order) */
+function openPhotoImport(files) {
+  if (!files) { var inp = h("input", { type: "file", accept: "image/*", multiple: true, onChange: function () { if (this.files && this.files.length) openPhotoImport(Array.prototype.slice.call(this.files)); } }); inp.click(); return; }
+  files = files.length != null && !(files instanceof Blob) ? Array.prototype.slice.call(files) : [files];
+  /* pages: { id, name, pic, rot, res: {title,text,raw}|null, err } */
+  var pages = [], sel = null, closed = false, edited = false, seq = 0;
+  var status = h("div", { class: "akocr-status", role: "status" }, "Opening the pictures…"), bar = h("div", { class: "akocr-bar" }, h("i"));
+  var imgBox = h("div", { class: "akocr-img" }), list = h("div", { class: "akocr-pages" }), listHint = h("p", { class: "hint", style: "margin:4px 0" });
   var title = h("input", { type: "text", placeholder: "Song title", "aria-label": "Song title", autocapitalize: "words" });
   var artist = h("input", { type: "text", placeholder: "Artist", "aria-label": "Artist", autocapitalize: "words" });
   var ta = h("textarea", { class: "akocr-text", rows: 14, spellcheck: "false", autocapitalize: "off", wrap: "off", "aria-label": "What was read: chords above the words" });
   var prev = h("div", { class: "akocr-prev" }), snapChk = h("input", { type: "checkbox" });
   var showPrev = h("input", { type: "checkbox", checked: true, onChange: paintPrev });
-  var pt = 0; ta.addEventListener("input", function () { clearTimeout(pt); pt = setTimeout(paintPrev, 300); });
+  var addInp = h("input", { type: "file", accept: "image/*", multiple: true, "aria-label": "Add more photos", onChange: function () { var f = Array.prototype.slice.call(this.files || []); this.value = ""; if (f.length) guard(function () { addFiles(f); }); } });
+  var pt = 0; ta.addEventListener("input", function () { edited = true; clearTimeout(pt); pt = setTimeout(paintPrev, 300); });
   function paintPrev() {
     prev.textContent = ""; prev.style.display = showPrev.checked ? "" : "none"; if (!showPrev.checked || !ta.value.trim()) return;
     try { prev.appendChild(renderLyricChart(normalizeChart(ta.value, snapChk.checked).text, { n: 0, shift: 0, acc: "sharp", st: styleOf(), cues: true, cuesOpen: false })); } catch (e) {}
   }
   snapChk.addEventListener("change", paintPrev);
   function setBar(f) { bar.style.display = f == null ? "none" : ""; bar.firstChild.style.width = Math.round((f || 0) * 100) + "%"; }
+  var cur = { i: 0, n: 1 };
   AKO.onProgress = function (m) {
     if (closed) return;
-    var what = { "loading tesseract core": "Getting the reader ready", "loading language traineddata": "Loading the letters", "initializing api": "Getting ready", "recognizing text": "Reading the picture" }[m.status] || "Working";
-    status.textContent = what + "…"; setBar(m.progress);
+    var what = { "loading tesseract core": "Getting the reader ready", "loading language traineddata": "Loading the letters", "initializing api": "Getting ready", "recognizing text": cur.n > 1 ? "Reading page " + (cur.i + 1) + " of " + cur.n : "Reading the picture" }[m.status] || "Working";
+    status.textContent = what + "…"; setBar(m.status === "recognizing text" && cur.n > 1 ? (cur.i + (m.progress || 0)) / cur.n : m.progress);
   };
-  function read() {
-    if (!pic || AKO.busy) return;
-    AKO.busy = true; status.textContent = "Getting the reader ready…"; setBar(0); ta.disabled = true;
-    var c = akOcrCanvas(pic.img, rot);
-    imgBox.textContent = ""; var th = h("img", { alt: "The picture", src: c.toDataURL("image/jpeg", 0.7) }); imgBox.appendChild(th);
-    akOcrRead(c).then(function (r) {
-      var lay = akOcrLayout(r.words);
-      ta.value = lay.text || r.text || ""; if (lay.title && !title.value) title.value = lay.title.replace(/\b\w/g, function (x) { return x; });
-      var nChordLines = lay.text.split("\n").filter(function (x) { return x.trim() && isChordLineText(x); }).length;
-      status.textContent = ta.value.trim() ? "Done. Check it against the picture, fix anything that's off, then save." + (nChordLines ? "" : " No chord lines were found; if the chords are there, make the picture sharper or straighter and read it again.") : "No words were found. Try a sharper, straighter picture.";
-    }).catch(function (e) { status.textContent = (e && e.message) || "The picture couldn't be read."; }).then(function () { AKO.busy = false; setBar(null); ta.disabled = false; paintPrev(); });
+  function showSel() {
+    imgBox.textContent = "";
+    if (sel && sel.pic) imgBox.appendChild(h("img", { alt: "Page " + (pages.indexOf(sel) + 1), src: sel.big || (sel.big = akOcrThumbBig(sel)) }));
   }
+  function akOcrThumbBig(pg) { return akOcrCanvas(pg.pic.img, pg.rot).toDataURL("image/jpeg", 0.7); }
+  function drawList() {
+    list.textContent = ""; var rows = [];
+    var multi = pages.length > 1;
+    pages.forEach(function (pg, i) {
+      var grip = multi ? dragGrip("Drag page " + (i + 1) + " to move it") : null;
+      var state = pg.err ? "Couldn't read" : pg.res ? (pg.res.text.trim() ? "Read" : "No words found") : pg.pic ? "Waiting" : "Opening…";
+      var row = h("div", { class: "akocr-page" + (pg === sel ? " sel" : "") }, grip,
+        h("button", { class: "akocr-thumb", "aria-label": "Show page " + (i + 1), onClick: function () { sel = pg; showSel(); drawList(); } }, pg.thumb ? h("img", { alt: "", src: pg.thumb }) : null),
+        h("div", { class: "grow" }, h("strong", null, "Page " + (i + 1)), h("div", { class: "muted", style: "font-size:.85rem" }, state)),
+        h("button", { class: "icon sm", "aria-label": "Turn page " + (i + 1) + " left", onClick: function () { turn(pg, -1); } }, "⟲"),
+        h("button", { class: "icon sm", "aria-label": "Turn page " + (i + 1) + " right", onClick: function () { turn(pg, 1); } }, "⟳"),
+        multi ? h("button", { class: "icon sm", "aria-label": "Remove page " + (i + 1), onClick: function () { removePage(pg); } }, "✕") : null);
+      rows.push(row); list.appendChild(row);
+      if (grip) rowDrag({ handle: grip, self: row, rows: function () { return rows; }, onDrop: function (from, to) {
+        guard(function () { pages.splice(to, 0, pages.splice(from, 1)[0]); drawList(); combine(true); });
+      } });
+    });
+    listHint.textContent = multi ? "Pages are put together top to bottom. Drag ⠇⠇ to change the order." : "If the song goes on to another page, add that photo too.";
+  }
+  /* changing pages rebuilds the text from what was read; ask first if it was edited by hand */
+  function guard(fn) {
+    if (!edited || !ta.value.trim()) { fn(); return; }
+    confirmBox("You've made changes to the text. Changing the pages puts the text back to what was read from the photos, so your changes will be lost.", "Change pages", function () { edited = false; fn(); });
+  }
+  function turn(pg, d) { guard(function () { pg.rot += d; pg.res = null; pg.err = null; if (pg.pic) { pg.thumb = akOcrThumb(pg.pic.img, pg.rot); pg.big = null; } sel = pg; showSel(); drawList(); readAll(); }); }
+  function removePage(pg) {
+    guard(function () { var i = pages.indexOf(pg); if (i < 0) return; pages.splice(i, 1); if (pg.pic) URL.revokeObjectURL(pg.pic.url); if (sel === pg) sel = pages[Math.min(i, pages.length - 1)] || null; showSel(); drawList(); combine(true); });
+  }
+  function combine(force) {
+    if (edited && !force) return;
+    var done = pages.filter(function (pg) { return pg.res; });
+    var j = akOcrJoinPages(done.map(function (pg) { return { title: pg.res.title, text: pg.res.text || pg.res.raw }; }));
+    ta.value = j.text; edited = false;
+    if (j.title && !title.value) title.value = j.title;
+    paintPrev();
+  }
+  function readAll() {
+    if (AKO.busy) return; /* the running read picks up the rest when it finishes */
+    var todo = pages.filter(function (pg) { return pg.pic && !pg.res && !pg.err; });
+    if (!todo.length) { finish(); return; }
+    AKO.busy = true; ta.disabled = true; setBar(0);
+    var pg = todo[0]; cur.i = pages.indexOf(pg); cur.n = pages.length;
+    status.textContent = (pages.length > 1 ? "Reading page " + (cur.i + 1) + " of " + pages.length : "Getting the reader ready") + "…";
+    var rot0 = pg.rot, c = akOcrCanvas(pg.pic.img, pg.rot);
+    akOcrRead(c).then(function (r) {
+      if (pg.rot !== rot0) return; /* turned while reading: read it again */
+      var lay = akOcrLayout(r.words); pg.res = { title: lay.title, text: lay.text, raw: r.text || "" };
+    }).catch(function (e) { pg.err = (e && e.message) || "The picture couldn't be read."; }).then(function () {
+      AKO.busy = false; setBar(null); ta.disabled = false;
+      if (closed) return;
+      drawList(); combine(false); readAll();
+    });
+  }
+  function finish() {
+    setBar(null); ta.disabled = false;
+    var bad = pages.filter(function (pg) { return pg.err; }), multi = pages.length > 1;
+    if (!pages.length) { status.textContent = "Add a photo to read."; return; }
+    if (bad.length && bad.length === pages.length) { status.textContent = bad[0].err; return; }
+    var nChordLines = ta.value.split("\n").filter(function (x) { return x.trim() && isChordLineText(x); }).length;
+    status.textContent = ta.value.trim() ? "Done. Check it against the " + (multi ? "pictures" : "picture") + ", fix anything that's off, then save." +
+      (bad.length ? " Page " + bad.map(function (pg) { return pages.indexOf(pg) + 1; }).join(", ") + " couldn't be read." : "") +
+      (nChordLines ? "" : " No chord lines were found; if the chords are there, make the picture sharper or straighter and read it again.") : "No words were found. Try a sharper, straighter picture.";
+  }
+  function addFiles(fs) {
+    var start = pages.length;
+    fs.forEach(function (f) { pages.push({ id: ++seq, name: f.name || "", file: f, pic: null, rot: 0, res: null, err: null }); });
+    drawList();
+    var added = pages.slice(start);
+    Promise.all(added.map(function (pg) {
+      return akOcrLoadImage(pg.file).then(function (p) { pg.pic = p; pg.thumb = akOcrThumb(p.img, 0); }).catch(function (e) { pg.err = e.message; });
+    })).then(function () {
+      if (closed) return;
+      if (!sel || pages.indexOf(sel) < 0) sel = added.filter(function (pg) { return pg.pic; })[0] || pages[0] || null;
+      showSel(); drawList(); readAll();
+    });
+  }
+  function rereadAll() { guard(function () { pages.forEach(function (pg) { pg.res = null; if (pg.pic) pg.err = null; }); edited = false; drawList(); readAll(); }); }
   var body = h("div", { class: "akocr" },
     h("div", { class: "akocr-top" }, imgBox,
       h("div", { class: "akocr-side" }, status, bar,
-        h("div", { class: "row" }, h("button", { "aria-label": "Turn the picture left", onClick: function () { rot--; read(); } }, "⟲ Turn"), h("button", { "aria-label": "Turn the picture right", onClick: function () { rot++; read(); } }, "Turn ⟳"), h("button", { onClick: read }, "Read again")),
+        list, listHint,
+        h("div", { class: "row" }, fileBtn("Add more photos", addInp), h("button", { onClick: rereadAll }, "Read again")),
         h("div", { class: "two" }, h("label", { class: "fld" }, "Title", title), h("label", { class: "fld" }, "Artist", artist)))),
     h("label", { class: "fld" }, "What was read (chords above the words, in the same places as the picture)", ta),
     h("div", { class: "row" }, h("label", { class: "chk" }, showPrev, "Show how it will look"), h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word")),
     prev,
-    h("p", { class: "hint" }, "Works best with a clear, straight, printed sheet or a screenshot. Handwriting and slanted photos read poorly. Everything stays on this device."));
-  var close = modal("Song from a photo", body, [{ label: "Cancel", onClick: function () { closed = true; } }, { label: "Save song", primary: true, onClick: function () {
+    h("p", { class: "hint" }, "Works best with clear, straight, printed sheets or screenshots. Handwriting and slanted photos read poorly. Everything stays on this device."));
+  function cleanup() { closed = true; pages.forEach(function (pg) { if (pg.pic) URL.revokeObjectURL(pg.pic.url); }); }
+  var close = modal("Song from photos", body, [{ label: "Cancel", onClick: cleanup }, { label: "Save song", primary: true, onClick: function () {
     if (!ta.value.trim()) { toast("There's nothing to save yet."); return false; }
     var r = normalizeChart(ta.value, snapChk.checked);
     snap("add song");
     var s = newSong({ title: title.value.trim() || r.title || "Untitled", artist: artist.value.trim(), lyrics: r.text });
-    lib().songs.push(s); saveNow(); closed = true; if (pic) URL.revokeObjectURL(pic.url);
+    lib().songs.push(s); saveNow(); cleanup();
     toast("Song added."); go("song", { songId: s.id });
-  } }], { wide: true, onClose: function () { closed = true; } });
-  akOcrLoadImage(file).then(function (p) { pic = p; read(); }).catch(function (e) { status.textContent = e.message; });
+  } }], { wide: true, onClose: cleanup });
+  addFiles(files);
   return close;
 }
 akCss("ak3-ocr", [
   ".akocr-top{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start}.akocr-img{flex:0 1 260px;max-width:100%}.akocr-img img{width:100%;max-height:36vh;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff}",
-  ".akocr-side{flex:1 1 260px;min-width:0}.akocr-status{font-weight:600;margin-bottom:6px}",
+  ".akocr-side{flex:1 1 260px;min-width:0}.akocr-pages{display:flex;flex-direction:column;gap:4px;margin:4px 0;max-height:34vh;overflow:auto}",
+  ".akocr-page{display:flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.akocr-page.sel{border-color:var(--accent)}",
+  ".akocr-thumb{padding:0;width:44px;height:44px;flex:none;border-radius:6px;overflow:hidden;background:#fff}.akocr-thumb img{width:100%;height:100%;object-fit:cover;display:block}",
+  ".akocr-status{font-weight:600;margin-bottom:6px}",
   ".akocr-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-bottom:6px}.akocr-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}",
   ".akocr-text{font-family:ui-monospace,Menlo,Consolas,'Courier New',monospace;font-size:14px;line-height:1.35;white-space:pre;overflow:auto;width:100%;min-height:40vh}",
   ".akocr-prev{border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:46vh;overflow:auto;--lyric-size:18px;font-size:18px}"
