@@ -108,10 +108,17 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     add(app, h("header", null, h("h1", null, prof.name || "Song requests"),
       h("div", { class: "links" }, prof.website ? h("a", { class: "pill", href: prof.website, target: "_blank", rel: "noopener" }, "Website") : null, (prof.links || []).filter(function (l) { return l.url; }).map(function (l) { return h("a", { class: "pill", href: l.url, target: "_blank", rel: "noopener" }, l.label || "Link"); }))));
     if (prof.open === false) add(app, h("p", { class: "notice" }, "Requests are paused right now. Try again in a bit."));
+    var ML = prof.mail || {};
+    if (ML.on && !draft) {
+      var joined = store("akreq:joined");
+      add(app, h("div", { class: "card mail" }, h("strong", null, "Join " + (prof.name ? prof.name + "'s" : "my") + " email list"), ML.blurb ? h("span", { class: "muted" }, "  " + ML.blurb) : null,
+        joined ? h("div", { class: "muted", style: "margin-top:6px" }, "✓ You're on the list. Thank you!") :
+        h("div", { class: "row" }, ML.link ? h("a", { class: "pill primary", href: ML.link, target: "_blank", rel: "noopener" }, "Sign up") : h("button", { class: "primary", onClick: function () { draft = { kind: "signup", title: "" }; draw(); } }, "Sign up"))));
+    }
     var R = prof.rules || {};
     var tabs = [["songs", "Request"], ["more", R.learn || R.msg ? "Learn or message" : "Message"], ["tip", "Tip"]];
     if (!R.learn && !R.msg) tabs.splice(1, 1);
-    var mineList = Object.keys(mine).map(function (k) { return mine[k]; });
+    var mineList = Object.keys(mine).map(function (k) { return mine[k]; }).filter(function (r) { return r.kind !== "signup"; });
     if (mineList.length) tabs.push(["mine", "Mine (" + mineList.length + ")"]);
     var tb = h("nav", { class: "tabs", style: "grid-template-columns:repeat(" + tabs.length + ",1fr)" }); tabs.forEach(function (t) { add(tb, h("button", { "aria-pressed": view === t[0] ? "true" : "false", onClick: function () { view = t[0]; draft = null; draw(); } }, t[1])); }); add(app, tb);
     if (draft) { drawDraft(name); return; }
@@ -129,6 +136,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       (prof.pay || []).filter(function (p) { return p.url; }).forEach(function (p) { var c = qr(p.url); add(app, h("div", { class: "card center" }, h("a", { class: "pill primary", href: payUrl(p, R.price), target: "_blank", rel: "noopener" }, "Tip with " + (p.label || PAY[p.kind] || "a link")), c ? h("div", { style: "margin-top:10px" }, c) : null)); });
       if (!(prof.pay || []).some(function (p) { return p.url; })) add(app, h("p", { class: "muted center" }, "No tip links yet."));
     } else if (view === "mine") {
+      mineList = mineList.filter(function (r) { return r.kind !== "signup"; });
       mineList.sort(function (a, b) { return (b.at && b.at.toMillis ? b.at.toMillis() : b.at || 0) - (a.at && a.at.toMillis ? a.at.toMillis() : a.at || 0); }).forEach(function (r) {
         var st = { new: r.kind === "message" ? "Sent" : "Waiting", played: "Played!", declined: "Not tonight", looking: "I'll look into it", working: "Working on it" }[r.status] || r.status;
         add(app, h("div", { class: "card" }, h("div", null, h("strong", null, r.kind === "message" ? "Message" : r.title), r.kind === "learn" ? h("span", { class: "muted" }, "  (learn request)") : null), r.note ? h("div", { class: "muted" }, r.note) : null,
@@ -136,7 +144,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       });
     }
   }
+  function drawSignup(name) {
+    var ML = prof.mail || {}, who = prof.name || "the performer", card = h("div", { class: "card" });
+    var nIn = h("input", { type: "text", value: name, placeholder: "Your name (optional)", maxlength: 40, autocomplete: "name" });
+    var eIn = h("input", { type: "email", placeholder: "you@example.com", maxlength: 120, autocomplete: "email", inputmode: "email" });
+    var ok = h("input", { type: "checkbox" }), consent = "I agree to get emails from " + who + (ML.blurb ? " about " + ML.blurb : "") + ". I can unsubscribe any time.";
+    var err = h("p", { class: "notice hidden" });
+    add(card, [h("strong", null, "Join " + who + "'s email list"), h("label", null, "Email"), eIn, h("label", null, "Your name"), nIn, h("label", { class: "chk" }, ok, h("span", null, consent)),
+      h("p", { class: "muted", style: "font-size:.85rem" }, "Your name and email go only to " + who + ", for this list. They aren't sold or shared, and you can ask to be taken off at any time."), err,
+      h("div", { class: "row" }, h("button", { onClick: function () { draft = null; draw(); } }, "Back"), h("button", { class: "primary", onClick: function () {
+        var em = eIn.value.trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { err.textContent = "Type your email address."; err.classList.remove("hidden"); return; }
+        if (!ok.checked) { err.textContent = "Tick the box to agree to get emails."; err.classList.remove("hidden"); return; }
+        this.disabled = true; store("akreq:name", nIn.value.trim());
+        send({ kind: "signup", title: em, name: nIn.value.trim(), note: consent + " (" + new Date().toISOString() + ")" }).then(function () { store("akreq:joined", true); draft = null; view = "songs"; draw(); }, function () { err.textContent = "That didn't go through. Try again."; err.classList.remove("hidden"); });
+      } }, "Join"))]);
+    add(app, card);
+  }
   function drawDraft(name) {
+    if (draft.kind === "signup") { drawSignup(name); return; }
     var d = draft, R = prof.rules || {}, card = h("div", { class: "card" });
     var tIn = h("input", { type: "text", value: d.title || "", placeholder: "Song title", maxlength: 120 }), aIn = h("input", { type: "text", value: d.artist || "", placeholder: "Artist (optional)", maxlength: 80 });
     var nIn = h("input", { type: "text", value: name, placeholder: "Your name (optional)", maxlength: 40 }), note = h("textarea", { placeholder: d.kind === "message" ? "Your message" : "A note (optional): a dedication, a birthday…", maxlength: 600 });
