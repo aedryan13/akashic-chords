@@ -21086,6 +21086,204 @@ akCss("ak6-learn", [
   ".aksh-big .chip{padding:10px 14px}.aksh-nav{margin-top:12px}.aksh-song{display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}.aksh-song .grow{min-width:0}.aksh-e{flex:none;width:10px;height:10px;border-radius:50%}.aksh-why{font-size:.85rem}"
 ].join("\n"));
 
+/* ================= Akashic Chords batch 6: color any part of any screen ================= */
+/* Color mode freezes the screen (taps pick things instead of pressing them). Tap something, pick its background, text and
+   border colors, and Apply. Each color is a small CSS rule kept in settings().elColors: { sel, view ("" = every screen), bg, fg, bd, name }. */
+
+function akElc() { var s = settings(); if (!Array.isArray(s.elColors)) s.elColors = []; return s.elColors; }
+(function () {
+  var r0 = render;
+  render = function () { try { document.documentElement.setAttribute("data-akview", S.view || "songs"); } catch (e) {} return r0.apply(this, arguments); };
+})();
+function akElcRuleCss(r) {
+  if (!r || !r.sel || !(r.bg || r.fg || r.bd)) return "";
+  var pre = r.view ? 'html[data-akview="' + r.view + '"] ' : "", sels = r.sel.split(",").map(function (x) { return pre + x.trim(); }), out = "";
+  var one = sels.join(","), all = sels.map(function (x) { return x + " *"; }).join(",");
+  if (r.bg) out += one + "{background:" + r.bg + "!important}";
+  if (r.bd) out += one + "{border-color:" + r.bd + "!important;border-style:solid;border-width:2px}";
+  if (r.fg) out += one + "," + all + "{color:" + r.fg + "!important}";
+  return out;
+}
+function akElcApply() {
+  var css = akElc().map(akElcRuleCss).join("\n"), el = document.getElementById("akelc");
+  if (!el) { el = document.createElement("style"); el.id = "akelc"; document.head.appendChild(el); }
+  el.textContent = css;
+}
+setTimeout(function () { try { akElcApply(); } catch (e) {} }, 0);
+(function () { var ns = normalizeStore; normalizeStore = function () { var r = ns.apply(this, arguments); try { akElcApply(); } catch (e) {} return r; }; })();
+
+/* ---- picking a selector for what was tapped ---- */
+var AK_ELC_STATE = /^(on|sel|active|open|cur|now|done|playing|hit|focus|off|tiny|ghost|dragging|drag|over|lay-.*|akcm.*|akelc.*|pressed|ok|ready)$/;
+function akElcEsc(v) { return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
+function akElcPart(x, self) {
+  var tag = x.tagName.toLowerCase(), b = x.getAttribute("data-blocks"), k = x.getAttribute("data-bk");
+  if (b) return tag + '[data-blocks="' + akElcEsc(b) + '"]';
+  if (k && x.parentElement && x.parentElement.getAttribute("data-blocks")) return '[data-blocks="' + akElcEsc(x.parentElement.getAttribute("data-blocks")) + '"] > [data-bk="' + akElcEsc(k) + '"]';
+  if (x.id && /^[A-Za-z][\w-]*$/.test(x.id) && x.id !== "app") return "#" + x.id;
+  var cls = Array.prototype.filter.call(x.classList, function (c) { return /^[A-Za-z][\w-]*$/.test(c) && !AK_ELC_STATE.test(c); });
+  if (cls.length) return tag + "." + cls.slice(0, 3).join(".");
+  return self ? tag : null;
+}
+function akElcSel(el) {
+  var parts = [], cur = el, guard = 0;
+  while (cur && cur.nodeType === 1 && cur !== document.body && cur.id !== "app" && parts.length < 3 && guard++ < 12) {
+    var p = akElcPart(cur, cur === el); if (p) { parts.unshift(p); if (p.indexOf("[data-blocks=") >= 0 && cur !== el) break; }
+    cur = cur.parentElement;
+  }
+  var sel = parts.join(" ");
+  try { document.querySelectorAll(sel); return sel || el.tagName.toLowerCase(); } catch (e) { return el.tagName.toLowerCase(); }
+}
+function akElcName(el) {
+  var t = (el.getAttribute("aria-label") || el.getAttribute("title") || "").trim();
+  if (!t) { var f = el.querySelector && el.querySelector("h1,h2,h3,summary .st,.t,b,strong"); t = ((f || el).textContent || "").replace(/\s+/g, " ").trim(); }
+  t = t.slice(0, 32);
+  var c = el.classList, kind = el.tagName === "BUTTON" || el.tagName === "A" ? (c.contains("chip") ? "Chip" : "Button") : /^H[1-4]$/.test(el.tagName) ? "Heading" : c.contains("topbar") ? "Top bar" : c.contains("tabbar") ? "Bottom bar" : c.contains("card") || el.tagName === "DETAILS" ? "Card" : c.contains("item") ? "Row" : el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" ? "Field" : "Area";
+  return kind + (t ? " “" + t + "”" : "");
+}
+var AK_ELC_PICK = "button,a,.chip,.item,.card,details,summary,h1,h2,h3,.topbar,.tabbar,input,select,textarea,label,[data-bk],.sec,.chord,.lyr";
+function akElcStart(el) {
+  var x = el; while (x && x !== document.body) { if (x.matches && x.matches(AK_ELC_PICK)) return x; x = x.parentElement; }
+  return el;
+}
+
+/* ---- color mode ---- */
+var AKCM = null;
+function akColorMode(o) {
+  o = o || {};
+  if (AKCM) akColorModeEnd();
+  closeMenu();
+  try { stopAuto(); } catch (e) {}
+  AKCM = { el: null, stack: [], view: S.view, every: false, draft: null };
+  document.documentElement.classList.add("akcm-on");
+  var hl = h("div", { class: "akcm-hl", "aria-hidden": "true" }), sheet = h("div", { class: "akcm-sheet", role: "dialog", "aria-label": "Color this screen" });
+  var prev = h("style", { id: "akelc-prev" });
+  document.body.appendChild(hl); document.body.appendChild(sheet); document.head.appendChild(prev);
+  AKCM.hl = hl; AKCM.sheet = sheet; AKCM.prev = prev;
+  function ours(t) { return t && t.closest && (t.closest(".akcm-sheet") || t.closest(".modal") || t.closest(".menu") || t.closest(".toast")); }
+  function block(e) { if (ours(e.target)) return; e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation(); }
+  function tap(e) { if (ours(e.target)) return; block(e); akElcSelect(akElcStart(e.target)); }
+  AKCM.handlers = [["click", tap], ["pointerdown", block], ["pointerup", block], ["mousedown", block], ["touchstart", block], ["submit", block], ["change", block], ["input", block], ["keydown", function (e) { if (e.key === "Escape") { akColorModeEnd(); } }]];
+  AKCM.handlers.forEach(function (x) { document.addEventListener(x[0], x[1], { capture: true, passive: false }); });
+  AKCM.pos = function () { akElcHl(); };
+  window.addEventListener("scroll", AKCM.pos, true); window.addEventListener("resize", AKCM.pos);
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  if (o.el) akElcSelect(o.el, o); else akElcSheet();
+}
+function akColorModeEnd() {
+  if (!AKCM) return;
+  AKCM.handlers.forEach(function (x) { document.removeEventListener(x[0], x[1], { capture: true, passive: false }); });
+  window.removeEventListener("scroll", AKCM.pos, true); window.removeEventListener("resize", AKCM.pos);
+  [AKCM.hl, AKCM.sheet, AKCM.prev].forEach(function (n) { if (n && n.parentNode) n.parentNode.removeChild(n); });
+  document.documentElement.classList.remove("akcm-on");
+  var done = AKCM.onDone; AKCM = null; akElcApply();
+  if (done) done();
+}
+function akElcHl() {
+  if (!AKCM) return; var el = AKCM.el, hl = AKCM.hl;
+  if (!el || !el.isConnected) { hl.style.display = "none"; return; }
+  var r = el.getBoundingClientRect(); hl.style.display = "";
+  hl.style.left = (r.left - 3) + "px"; hl.style.top = (r.top - 3) + "px"; hl.style.width = (r.width + 6) + "px"; hl.style.height = (r.height + 6) + "px";
+  AKCM.sheet.classList.toggle("top", r.top + r.height / 2 > window.innerHeight * 0.55);
+}
+function akElcFind(sel, view) { var l = akElc(); for (var i = 0; i < l.length; i++) if (l[i].sel === sel && (l[i].view || "") === (view || "")) return l[i]; return null; }
+function akElcSelect(el, o) {
+  o = o || {};
+  if (!AKCM || !el) return;
+  AKCM.el = el; if (!o.keepStack) AKCM.stack = [];
+  var sel = o.sel || akElcSel(el), mine = akElcFind(sel, AKCM.view) || akElcFind(sel, "");
+  AKCM.every = mine ? !mine.view : !!o.every;
+  AKCM.draft = { sel: sel, view: AKCM.every ? "" : AKCM.view, bg: mine ? mine.bg || "" : "", fg: mine ? mine.fg || "" : "", bd: mine ? mine.bd || "" : "", name: akElcName(el) };
+  akElcPreview(); akElcHl(); akElcSheet();
+}
+function akElcPreview() { if (AKCM) AKCM.prev.textContent = AKCM.draft ? akElcRuleCss(Object.assign({}, AKCM.draft, { view: "" })) : ""; }
+function akElcCount(sel) { try { return document.querySelectorAll(sel).length; } catch (e) { return 0; } }
+function akElcSheet() {
+  var sh = AKCM.sheet, d = AKCM.draft; sh.textContent = "";
+  var head = h("div", { class: "akcm-head" }, h("b", { class: "grow" }, d ? d.name : "🎨 Tap anything on the screen to color it"), h("button", { class: "primary", onClick: function () { akColorModeEnd(); } }, "Done"));
+  sh.appendChild(head);
+  if (!d) { sh.appendChild(h("p", { class: "hint" }, "The screen is frozen while you color, so taps pick things instead of pressing them.")); return; }
+  var n = akElcCount(d.sel);
+  sh.appendChild(h("div", { class: "row akcm-nav" },
+    h("button", { class: "sm", disabled: !AKCM.el.parentElement || AKCM.el.parentElement.id === "app" || AKCM.el.parentElement === document.body, onClick: function () { var p = AKCM.el.parentElement; AKCM.stack.push(AKCM.el); akElcSelect(p, { keepStack: true }); } }, "▲ Bigger area"),
+    h("button", { class: "sm", disabled: !AKCM.stack.length, onClick: function () { akElcSelect(AKCM.stack.pop(), { keepStack: true }); } }, "▼ Smaller"),
+    h("span", { class: "muted" }, n > 1 ? n + " like it on this screen" : "")));
+  function row(label, key) {
+    return h("div", { class: "fld akcm-fld" }, label, colorPicker(d[key], function (c) { d[key] = c; akElcPreview(); akElcHl(); }));
+  }
+  sh.appendChild(row("Background", "bg")); sh.appendChild(row("Text", "fg")); sh.appendChild(row("Border", "bd"));
+  sh.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: AKCM.every, onChange: function () { AKCM.every = this.checked; } }), "Use it on every screen"));
+  sh.appendChild(h("div", { class: "row akcm-btns" },
+    h("button", { class: "primary", onClick: function () {
+      var l = akElc(); snap("color " + d.name);
+      for (var i = l.length - 1; i >= 0; i--) if (l[i].sel === d.sel) l.splice(i, 1);
+      if (d.bg || d.fg || d.bd) l.push({ sel: d.sel, view: AKCM.every ? "" : AKCM.view, bg: d.bg, fg: d.fg, bd: d.bd, name: d.name, at: Date.now() });
+      save(); akElcApply(); toast(d.bg || d.fg || d.bd ? "Colored. Tap something else, or Done." : "Back to the theme's colors.");
+    } }, "Apply"),
+    h("button", { onClick: function () { d.bg = d.fg = d.bd = ""; var l = akElc(); for (var i = l.length - 1; i >= 0; i--) if (l[i].sel === d.sel) l.splice(i, 1); save(); akElcApply(); akElcPreview(); akElcSheet(); } }, "Theme colors"),
+    h("button", { onClick: function () { AKCM.draft = null; AKCM.el = null; akElcPreview(); akElcHl(); akElcSheet(); } }, "Cancel")));
+}
+
+/* ---- the ways in: the Arrange banner, each block's ⋯ menu in arrange mode, the toolbar, Settings ---- */
+(function () {
+  var lb = layBannerEl;
+  layBannerEl = function () {
+    var el = lb.apply(this, arguments); if (!el) return el;
+    var act = el.querySelector(".layact"); if (act) act.insertBefore(h("button", { onClick: function () { akColorMode(); } }, "🎨 Colors"), act.firstChild);
+    return el;
+  };
+})();
+(function () {
+  var cm0 = layChipMenu;
+  layChipMenu = function (c, cid, el, k, anchor) {
+    var m0 = menu;
+    menu = function (a, items) {
+      menu = m0;
+      items.splice(Math.max(0, items.length - 1), 0, { label: "🎨 Color…", onClick: function () { akColorMode({ el: el, sel: '[data-blocks="' + akElcEsc(cid) + '"] > [data-bk="' + akElcEsc(k) + '"]' }); } });
+      return m0(a, items);
+    };
+    try { return cm0.apply(this, arguments); } finally { menu = m0; }
+  };
+})();
+TB_ITEMS.push(["colorpick", "Color this screen"]); TB_SHORT.colorpick = "Colors"; AK_TB_MODES.colorpick = "p";
+AK_IC.colorpick = "M12 3a9 9 0 1 0 0 18c1 0 1.6-.8 1.6-1.6 0-.5-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.3-4-7.7-9-7.7z M7.5 11a1 1 0 1 0 0 .1 M10 7.5a1 1 0 1 0 0 .1 M14.5 7.5a1 1 0 1 0 0 .1";
+function akExtraTb18(id, song, root) {
+  if (id === "colorpick") return h("button", { "aria-label": "Color this screen", onClick: function () { akColorMode(); } }, akIcon("colorpick"));
+  if (typeof akExtraTb19 === "function") return akExtraTb19(id, song, root);
+  return null;
+}
+var AK_ELC_VIEWS = { songs: "Songs", shows: "Set lists", show: "Set list", gig: "Show", song: "Song editor", play: "Playing screen", learn: "Learn", write: "Write", settings: "Settings", import: "Import", stats: "Stats", history: "History" };
+function akSettingsExtra11(c) {
+  c.again("look");
+  c.section("Colors for parts of the screen", "Tap anything on a screen and color it");
+  c.out.appendChild(h("p", { class: "hint" }, "Open any screen, tap ⇅ Arrange, then 🎨 Colors, and tap what you want to color. In arrange mode each block's ⋯ menu has 🎨 Color too. On the playing screen, add “Color this screen” to the toolbar."));
+  var list = h("div", { class: "akelc-list" });
+  function draw() {
+    list.textContent = "";
+    var l = akElc();
+    if (!l.length) { list.appendChild(h("p", { class: "muted" }, "Nothing colored yet.")); return; }
+    l.forEach(function (r, i) {
+      list.appendChild(h("div", { class: "item" },
+        h("span", { class: "akelc-sw", style: "background:" + (r.bg || "transparent") + ";color:" + (r.fg || "inherit") + ";border-color:" + (r.bd || "var(--line)") }, "Aa"),
+        h("div", { class: "grow" }, h("div", null, r.name || r.sel), h("div", { class: "muted" }, r.view ? "Only on " + (AK_ELC_VIEWS[r.view] || r.view) : "Every screen")),
+        h("button", { class: "icon", "aria-label": "Remove the color on " + (r.name || "this"), onClick: function () { snap("remove color"); l.splice(i, 1); save(); akElcApply(); draw(); toastUndo("Color removed."); } }, "✕")));
+    });
+    list.appendChild(h("button", { class: "danger", onClick: function () { confirmBox("Take every part-of-screen color off?", "Remove all", function () { snap("remove all colors"); settings().elColors = []; save(); akElcApply(); draw(); }); } }, "Remove them all"));
+  }
+  draw(); c.out.appendChild(list);
+  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akColorMode({}); } }, "🎨 Color this screen")));
+  if (typeof akSettingsExtra12 === "function") akSettingsExtra12(c);
+}
+
+akCss("ak6-color", [
+  ".akcm-hl{position:fixed;z-index:9990;pointer-events:none;border:3px dashed var(--accent,#9cf);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.25);transition:all .12s}",
+  "html.akcm-on .modal{z-index:9998}html.akcm-on .toast{z-index:9999}html.akcm-on .menu{z-index:9999}",
+  "html.akcm-on #app{cursor:crosshair}html.akcm-on #app *{cursor:crosshair!important}",
+  ".akcm-sheet{position:fixed;z-index:9995;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 8px);width:min(560px,calc(100vw - 16px));max-height:46vh;overflow:auto;padding:10px 12px;border-radius:14px;background:var(--panel,#222);color:var(--text,inherit);border:1px solid var(--line,#555);box-shadow:0 8px 30px rgba(0,0,0,.45)}",
+  ".akcm-sheet.top{bottom:auto;top:calc(env(safe-area-inset-top,0px) + 8px)}",
+  ".akcm-head{display:flex;gap:8px;align-items:center}.akcm-nav{align-items:center;margin:6px 0}.akcm-fld{margin:6px 0}.akcm-btns{margin:8px 0 0}",
+  ".akelc-sw{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:30px;border-radius:8px;border:2px solid;font-weight:700}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
