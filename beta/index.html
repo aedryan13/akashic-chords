@@ -1859,7 +1859,7 @@ function render() {
   if (v !== "settings") resetSettingsHist();
   if (v === "play") { app.appendChild(renderPlay()); try { akAfterRender(); } catch (e) {} return; }
   releaseWake();
-  var map = { songs: viewSongs, shows: viewShows, banter: viewBanter, discover: viewDiscover, build: viewBuild, history: viewHistory, guide: viewGuide, atmosphere: viewAtmosphere, import: viewImport, settings: viewSettings, song: viewSong, show: viewShow };
+  var map = { songs: viewSongs, shows: viewShows, banter: viewBanter, discover: viewDiscover, build: viewBuild, history: viewHistory, guide: viewGuide, atmosphere: viewAtmosphere, import: viewImport, settings: viewSettings, learn: viewLearn, song: viewSong, show: viewShow };
   app.appendChild((map[v] || viewSongs)());
   layRun(app);
   S.scrKey = scrollNow();
@@ -1905,6 +1905,7 @@ function shell(title, content, o) {
 function tabBarEl(o) {
   var tabs = [["songs", "♫", "Songs"], ["shows", "☰", "Shows"]];
   if (S.play) tabs.push(["play", "▶", "Playing"]);
+  if (typeof viewLearn === "function" && typeof akModesOk === "function" && akModesOk("l") && settings().learnTab !== false) tabs.push(["learn", "✎", "Learn"]);
   tabs.push(["import", "⇩", "Import"], ["settings", "⚙", "Settings"]);
   var bar = h("div", { class: "tabbar" + (o.compact ? " compact" : ""), role: "navigation" },
     h("button", { class: "tbback", "aria-label": "Back", disabled: !o.canBack, onClick: o.onBack }, h("span", { class: "ic" }, "←"), "Back"));
@@ -2479,6 +2480,7 @@ function viewSongs() {
       { label: "Play history…", onClick: function () { go("history"); } },
       { label: "Tour and feature guide…", onClick: function () { go("guide"); } },
       { label: "💡 Quick idea…", onClick: function () { akIdeaDialog(); } },
+      { label: "🎓 Learn and practice", onClick: function () { go("learn"); } },
       { label: "📝 Notepad", onClick: function () { akNotepad(); } },
       { label: "Song requests…" + (reqNewCount() ? " (" + reqNewCount() + " new)" : ""), onClick: openRequests },
       { label: "Find duplicate songs…", onClick: openDuplicates },
@@ -9981,7 +9983,7 @@ function viewSettings() {
   check("Open cues by default (otherwise they show as small icons)", function () { return s.cuesOpen; }, function (v) { s.cuesOpen = v; });
 
   section("Instrument and tuning", "Guitar or ukulele, tuning, chord diagrams");
-  select("Instrument", function () { return s.instrument; }, function (v) { s.instrument = v; }, [["guitar", "Guitar"], ["ukulele", "Ukulele"]], true);
+  select("Instrument", function () { return s.pianoMode ? "piano" : s.instrument; }, function (v) { if (v === "piano") s.pianoMode = true; else { s.pianoMode = false; s.instrument = v; } }, [["guitar", "Guitar"], ["ukulele", "Ukulele"], ["piano", "Piano / keyboard"]], true);
   akTuningControls(out, { mark: mark, refresh: refresh });
 
   section("Chord names and shapes", "How chords are spelled, your own chords and shapes");
@@ -12955,9 +12957,9 @@ function akRootChips(cur, onPick) {
 function akRootName(pc) { return ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][pc]; }
 function akToolLibrary(pane, ctx) {
   var st = S.ak2Lib || (S.ak2Lib = { root: 7, open: "" }), ins = settings().instrument;
-  pane.appendChild(h("p", { class: "hint cpnote" }, "Every chord up to 13ths, for " + INSTR[ins].name.toLowerCase() + " in " + akTuning(ins).name + ". Tap a chord to see more ways to play it."));
+  pane.appendChild(h("p", { class: "hint cpnote" }, "Every chord up to 13ths, for " + (typeof akPiano === "function" && akPiano() ? "piano, with inversions" : INSTR[ins].name.toLowerCase() + " in " + akTuning(ins).name) + ". Tap a chord to see more ways to play it."));
   pane.appendChild(akRootChips(st.root, function (pc) { st.root = pc; st.open = ""; ctx.redraw(); }));
-  AK2_Q_GROUPS.forEach(function (g) {
+  (typeof akLevelGroups === "function" ? akLevelGroups() : AK2_Q_GROUPS).forEach(function (g) {
     pane.appendChild(h("h3", { class: "cph" }, g[0]));
     var grid = h("div", { class: "cpgrid" });
     g[1].forEach(function (q) {
@@ -15734,6 +15736,7 @@ function akSoloHold(sc, p, t, dt) {
   for (var i = 0; i < els.length; i++) {
     var el = els[i], top = el.offsetTop;
     if (top < p - 4) { el.classList.add("done"); continue; }
+    if (!el.akSoon && top <= p + sc.clientHeight * 1.2) { el.akSoon = 1; try { if (typeof akSoloSoon === "function") akSoloSoon(curSong(), el); } catch (e) {} }
     if (top <= line) {
       var song = curSong(), secs = akSoloSecs(akSoloParse("{solo:" + (el.getAttribute("data-solo") || "") + "}") || {}, song);
       akSolo = { el: el, until: secs > 0 ? t + secs * 1000 : 0 };
@@ -16735,7 +16738,7 @@ function akGridEditor(c) {
 }
 
 /* ---------------------------------------------------------------- 3. info in the top bar, and the info window */
-var AK_TIPS = [
+var AK_INFO_TIPS = [
   "Tune between songs while you talk, not after the count-in.", "Say the song title before you start: it helps requests and tips.", "Drink water at each break, before you need it.",
   "A quick story about a song gets more applause than a perfect intro.", "Look up at the room at the end of each chorus.", "Mention the tip jar once a set, with a smile, not every song.",
   "If a song falls apart, finish it with confidence. Most people won't notice.", "Thank the staff by name at least once a night.", "Start the last set with a song people know.",
@@ -16772,7 +16775,7 @@ function akInfoBody(kind, song, short) {
     if (song.historyNote) box.appendChild(h("span", { class: "akinfo-txt" }, song.historyNote));
     if (!bits.length && !song.trivia) box.appendChild(h("span", { class: "muted" }, "No info for this song yet. “Get song info” in the song fills it in."));
   } else if (kind === "tips") {
-    var i = (S.akTipI || 0) % AK_TIPS.length; box.appendChild(h("span", { class: "akinfo-txt" }, "💡 " + AK_TIPS[i])); box.appendChild(h("button", { class: "sm", onClick: function (e) { e.stopPropagation(); S.akTipI = i + 1; akInfoRefresh(); } }, "Next tip"));
+    var i = (S.akTipI || 0) % AK_INFO_TIPS.length; box.appendChild(h("span", { class: "akinfo-txt" }, "💡 " + AK_INFO_TIPS[i])); box.appendChild(h("button", { class: "sm", onClick: function (e) { e.stopPropagation(); S.akTipI = i + 1; akInfoRefresh(); } }, "Next tip"));
   } else if (kind === "chords") {
     var ins = settings().instrument, seen = [], row = h("div", { class: "akinfo-dias" });
     String((song.lyrics || "") + "\n" + (song.chords || "")).replace(/\[([^\]]+)\]/g, function (s, c) { c = c.trim(); if (isChordLike(c) && seen.indexOf(c) < 0) seen.push(c); return s; });
@@ -16971,6 +16974,16 @@ var AK_FEAT_RAW = [
   ["loop", "Practice", "Loop a section", "Auto-scroll goes round one section again and again while you practice it.", "Toolbar button “Loop”", "l", "play", null, "top", ["practice"]],
   ["practice", "Practice", "Practice log and slow-down", "Time each practice, slow the scroll and metronome, and see what you've practiced.", "Toolbar button “Practice”", "l", "play", null, "top", ["needswork"]],
   ["needswork", "Practice", "Needs work", "Flag songs that need practice and list them in a smart list.", "Song editor or toolbar", "l", "songs", null, "list"],
+  ["learn", "Practice", "Learn and practice page", "One page for lessons, scales, the chord library, the note trainer, licks, warm-ups and practice plans.", "Learn tab at the bottom, or Songs ⋯", "l", function () { go("learn", { learnTab: "lessons" }); }, null, "list", ["lessons", "scales", "plans"]],
+  ["lessons", "Practice", "Theory lessons", "A small book of guitar and theory lessons with pictures and sound. Tip cards pop up when a lesson fits what you're doing.", "Learn, Lessons", "l", function () { go("learn", { learnTab: "lessons" }); }, null, "list"],
+  ["scales", "Practice", "Scale library", "Dozens of scales and modes by level, shown as whole neck, boxes, 3 notes per string or CAGED, in your tuning.", "Learn, Scales", "l", function () { go("learn", { learnTab: "scales" }); }, null, "list", ["soloscales"]],
+  ["levels", "Practice", "Beginner, Intermediate, Advanced", "Your level filters the scales, chords and lessons you're shown.", "Learn page, top", "l", function () { go("learn", { learnTab: "lessons" }); }, null, "list"],
+  ["trainer", "Practice", "Fretboard and keyboard trainer", "Find the note, name the note, octaves and notes by ear, with timed rounds and your weak spots.", "Learn, Trainer", "l", function () { go("learn", { learnTab: "trainer" }); }, null, "list"],
+  ["licks", "Practice", "Licks and riffs", "Original licks by style and level, as tab, played at your tempo and moved to any key.", "Learn, Licks", "l", function () { go("learn", { learnTab: "licks" }); }, null, "list"],
+  ["warmups", "Practice", "Vocal warm-ups", "Warm-up exercises with guide tones, in your range, with timed routines including a pre-show one.", "Learn, Warm-ups", "lp", function () { go("learn", { learnTab: "warmups" }); }, null, "list"],
+  ["plans", "Practice", "Practice plans", "Daily guided practice by goal and level, with timers and the metronome. It adapts as you go.", "Learn, Plans", "l", function () { go("learn", { learnTab: "plans" }); }, null, "list"],
+  ["piano", "Practice", "Piano and keyboard", "Pick Piano / keyboard as your instrument to see chords as keys, with inversions and fingering.", "Settings, Instrument and tuning", "", "settings", null, "list"],
+  ["soloscales", "Practice", "Solo scales", "Scales that fit the song’s key, ranked for its style, with the chord you’re on lit up. It can pop up just before a solo.", "Toolbar button “Solo scales”", "lp", "play", null, "float"],
   ["idea", "Songwriting", "Quick idea", "One tap makes a new work-in-progress song with a voice memo and a note.", "Songs page ⋯, or toolbar", "w", "songs", null, "list", ["shelves"]],
   ["sendto", "Songwriting", "Send to…", "Send a song to Place chords, the notepad, a show, practice or print, and come back where you were.", "Song editor ⋯, or toolbar", "", "songs", null, "editor"],
   ["shows", "Shows", "Shows and sets", "A show is a night made of sets. Timers, a break countdown and a show timer with Start, Pause and Reset.", "Shows tab", "p", "shows", null, "list", ["breaks"]],
@@ -17446,6 +17459,7 @@ function akSettingsExtra5(c) {
   c.check("Show works in progress in the main Library list", function () { return sc.wipInMain; }, function (v) { sc.wipInMain = v; });
   c.check("Show originals in the main Library list", function () { return sc.origInMain; }, function (v) { sc.origInMain = v; });
   c.out.appendChild(h("p", { class: "hint" }, "Switch lists with the chips at the top of the Songs page. A song moves with “✓ Mark finished” in the song, the ✓ on its row, or Send to…"));
+  if (typeof akSettingsExtra6 === "function") akSettingsExtra6(c);
 }
 
 akCss("ak4-write", [
@@ -17454,6 +17468,776 @@ akCss("ak4-write", [
   ".akver button.sm,.akmemo button.sm{padding:4px 10px;min-height:0;font-size:.85rem}.akmemo{margin:0 0 10px}",
   ".akprac-t{font-size:2rem;font-variant-numeric:tabular-nums;min-width:4ch}.akprac-log{font-size:.9rem;display:grid;gap:2px}",
   ".akrec.on{background:#E5484D;color:#fff;border-color:#E5484D}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 4, phase 4: learning tools (part 1) =================
+   - sound: simple guide tones (Web Audio), shared by the trainers, licks, warm-ups and scales
+   - piano / keyboard as an instrument: keyboard chord diagrams with inversions and fingering
+   - a skill level (Beginner / Intermediate / Advanced) that filters the chord and scale libraries
+   - a big scale library made from theory rules, with whole-neck, box, 3-notes-per-string and CAGED views
+   - Solo scales window: scales for the song ranked by style, best position or whole neck, chord tones lit up, can pop up before a Solo
+   - fretboard and keyboard note trainers: find the note, name the note, octaves and intervals, by ear, timed, with weak-spot review */
+
+/* ---------------------------------------------------------------- 1. sound */
+var akAC = null;
+function akAudio() { if (!akAC) { try { akAC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } } if (akAC.state === "suspended") akAC.resume(); return akAC; }
+function akHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+/* one note. kind: "pluck" | "keys" | "voice". when: seconds from now */
+function akTone(midi, dur, when, kind, vol) {
+  var ac = akAudio(); if (!ac) return;
+  var t = ac.currentTime + (when || 0), d = dur || 0.5, v = vol == null ? 0.22 : vol, g = ac.createGain(), f = ac.createBiquadFilter();
+  var o1 = ac.createOscillator(), o2 = ac.createOscillator();
+  o1.frequency.value = akHz(midi); o2.frequency.value = akHz(midi) * (kind === "voice" ? 1.002 : 2);
+  o1.type = kind === "pluck" ? "sawtooth" : kind === "voice" ? "triangle" : "triangle"; o2.type = "sine";
+  f.type = "lowpass"; f.frequency.setValueAtTime(kind === "pluck" ? 3200 : 2400, t); if (kind === "pluck") f.frequency.exponentialRampToValueAtTime(700, t + Math.min(d, 0.6));
+  var g2 = ac.createGain(); g2.gain.value = kind === "voice" ? 0.5 : 0.25;
+  o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(g); g.connect(ac.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + (kind === "voice" ? 0.06 : 0.008));
+  if (kind === "voice") { g.gain.setValueAtTime(v, t + d - 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + d); }
+  else g.gain.exponentialRampToValueAtTime(0.0001, t + d + (kind === "keys" ? 0.6 : 0.3));
+  o1.start(t); o2.start(t); o1.stop(t + d + 0.7); o2.stop(t + d + 0.7);
+}
+/* a list of [midi, beats] (midi null = rest) at a tempo; returns the length in seconds */
+function akPlaySeq(seq, bpm, kind, startIn) {
+  var spb = 60 / (bpm || 90), at = startIn || 0.05;
+  seq.forEach(function (n) { var m = Array.isArray(n) ? n[0] : n, b = Array.isArray(n) ? n[1] : 1; if (m != null) (Array.isArray(m) ? m : [m]).forEach(function (x) { akTone(x, b * spb * 0.95, at, kind); }); at += b * spb; });
+  return at;
+}
+function akNoteName(m, flat) { return (flat ? NAMES.flat : NAMES.sharp)[((m % 12) + 12) % 12]; }
+function akNoteOct(m, flat) { return akNoteName(m, flat) + (Math.floor(m / 12) - 1); }
+
+/* ---------------------------------------------------------------- 2. skill level */
+var AK_LEVELS = [["beginner", "Beginner"], ["intermediate", "Intermediate"], ["advanced", "Advanced"]];
+function akLevel() { return settings().level || "intermediate"; }
+function akLevelN(l) { return { beginner: 1, intermediate: 2, advanced: 3 }[l || akLevel()] || 2; }
+var AK_Q_LEVEL = { "": 1, m: 1, "5": 1, "7": 1, m7: 1, sus2: 1, sus4: 1, maj7: 2, "6": 2, m6: 2, add9: 2, dim: 2, aug: 2, "7sus4": 2, madd9: 2, "9": 2, m9: 2, dim7: 3, m7b5: 2, mmaj7: 3, aug7: 3, "7b5": 3, add11: 3, "69": 3, maj9: 3, "7b9": 3, "7#9": 3, "9sus4": 3, "11": 3, m11: 3, "7#11": 3, "maj7#11": 3, "13": 3, maj13: 3, m13: 3 };
+/* the chord library's groups, filtered by level */
+function akLevelGroups() {
+  var n = akLevelN();
+  return AK2_Q_GROUPS.map(function (g) { return [g[0], g[1].filter(function (q) { return (AK_Q_LEVEL[q] || 3) <= n; })]; }).filter(function (g) { return g[1].length; });
+}
+function akLevelChips(onChange) {
+  return h("div", { class: "chips aklevel" }, AK_LEVELS.map(function (l) { return h("button", { class: "chip" + (akLevel() === l[0] ? " on" : ""), "aria-pressed": akLevel() === l[0] ? "true" : "false", onClick: function () { settings().level = l[0]; save(); onChange && onChange(); } }, l[1]); }));
+}
+
+/* ---------------------------------------------------------------- 3. piano */
+function akPiano() { return !!settings().pianoMode; }
+/* inversions of a chord around middle C: [{ piano: true, notes: [midi], inv, fingers, bass }] */
+function akPianoVoicings(name) {
+  var p = parseChordName(name); if (!p) return { list: [], parsed: null, key: name, rec: {} };
+  var tones = akChordTones(p).map(function (t) { return t.iv; }).filter(function (iv, i, a) { return a.indexOf(iv) === i; }).sort(function (a, b) { return a - b; });
+  if (tones.length > 4) tones = tones.filter(function (iv) { return iv !== 7; }); /* leave the 5th out of big chords */
+  var root = 60 + p.pc; if (root > 66) root -= 12;
+  var base = tones.map(function (iv) { return root + iv; }), list = [];
+  for (var inv = 0; inv < base.length; inv++) {
+    var notes = base.slice(inv).concat(base.slice(0, inv).map(function (m) { return m + 12; }));
+    while (notes[0] > 67) notes = notes.map(function (m) { return m - 12; });
+    var fing = notes.length === 3 ? [1, 3, 5] : notes.length === 4 ? (notes[3] - notes[0] > 9 ? [1, 2, 3, 5] : [1, 2, 4, 5]) : [1, 2, 3, 4, 5].slice(0, notes.length);
+    if (notes.length === 3 && notes[2] - notes[0] > 7) fing = inv === 1 ? [1, 2, 5] : [1, 3, 5];
+    list.push({ piano: true, notes: notes, inv: inv, fingers: fing, bass: (p.bass != null ? p.bass : p.pc) + 36 + (((p.bass != null ? p.bass : p.pc) + 36) < 40 ? 12 : 0) });
+  }
+  return { list: list, parsed: p, key: name, rec: {} };
+}
+/* a keyboard: lo..hi (MIDI), marks { midi: { cls, label } }, o = { onTap(midi), scale, w } */
+function akKeyboard(lo, hi, marks, o) {
+  o = o || {}; marks = marks || {};
+  var isBlack = function (m) { return [1, 3, 6, 8, 10].indexOf(((m % 12) + 12) % 12) >= 0; };
+  while (isBlack(lo)) lo--; while (isBlack(hi)) hi++;
+  var whites = []; for (var m = lo; m <= hi; m++) if (!isBlack(m)) whites.push(m);
+  var WW = 24, WH = 92, BW = 15, BH = 58, W = whites.length * WW + 2, svg = svgEl("svg", { viewBox: "0 0 " + W + " " + (WH + 2), class: "akkb", role: "img", "aria-label": o.label || "Keyboard" });
+  if (o.scale) { svg.setAttribute("width", W * o.scale); svg.setAttribute("height", (WH + 2) * o.scale); }
+  function key(m, x, y, w, hh, black) {
+    var mk = marks[m], g = svgEl("g", { class: "akk" + (black ? " b" : " w") + (mk ? " " + (mk.cls || "on") : ""), "data-m": String(m) });
+    g.appendChild(svgEl("rect", { x: x, y: y, width: w, height: hh, rx: 3 }));
+    if (mk && mk.label != null) { var t = svgEl("text", { x: x + w / 2, y: y + hh - (black ? 8 : 10), "text-anchor": "middle", "font-size": black ? 9 : 11, "font-weight": 700 }); t.textContent = mk.label; g.appendChild(t); }
+    else if (o.names && !black) { var t2 = svgEl("text", { x: x + w / 2, y: y + hh - 8, "text-anchor": "middle", "font-size": 10, class: "akk-nm" }); t2.textContent = akNoteName(m); g.appendChild(t2); }
+    if (o.onTap) g.addEventListener("click", function (e) { e.stopPropagation(); o.onTap(m); });
+    return g;
+  }
+  whites.forEach(function (m, i) { svg.appendChild(key(m, 1 + i * WW, 1, WW - 1, WH, false)); });
+  whites.forEach(function (m, i) { if (m + 1 <= hi && isBlack(m + 1)) svg.appendChild(key(m + 1, 1 + (i + 1) * WW - BW / 2, 1, BW, BH, true)); });
+  return svg;
+}
+function akPianoDiagram(v, scale) {
+  var marks = {}; v.notes.forEach(function (m, i) { marks[m] = { cls: i === 0 ? "root" : "on", label: String(v.fingers[i] || "") }; });
+  var lo = Math.min(v.notes[0], 60) - 2, hi = Math.max(v.notes[v.notes.length - 1], 72) + 1;
+  var wrap = svgEl("svg", { viewBox: "0 0 260 130", width: 260 * (scale || 1) * 1.6, height: 130 * (scale || 1) * 1.6, role: "img", "aria-label": "Piano chord" });
+  var kb = akKeyboard(lo, hi, marks, {}); kb.setAttribute("x", "0"); kb.setAttribute("y", "0"); kb.setAttribute("width", "260"); kb.setAttribute("height", "100");
+  wrap.appendChild(kb);
+  var t = svgEl("text", { x: 130, y: 122, "text-anchor": "middle", "font-size": 13, fill: "var(--muted)" }); t.textContent = ["Root position", "1st inversion", "2nd inversion", "3rd inversion"][v.inv] + " · " + v.notes.map(function (m) { return akNoteName(m, true); }).join(" ");
+  wrap.appendChild(t);
+  return wrap;
+}
+/* the existing chord functions learn about the piano */
+var akCdBase = chordDiagram, akAvBase = allVoicings, akVidBase = voicingId;
+chordDiagram = function (v, instr, scale) { if (v && v.piano) return akPianoDiagram(v, scale); return akCdBase(v, instr, scale); };
+allVoicings = function (instr, name) { if (akPiano()) return akPianoVoicings(name); return akAvBase(instr, name); };
+voicingId = function (v) { return v && v.piano ? "p" + v.inv : akVidBase(v); };
+
+/* ---------------------------------------------------------------- 4. the scale library */
+/* [id, name, intervals, level 1-3, family, styles] */
+var AK_SCALE_RAW = [
+  ["majpent", "Major pentatonic", [0, 2, 4, 7, 9], 1, "Pentatonic and blues", "country pop rock folk"],
+  ["minpent", "Minor pentatonic", [0, 3, 5, 7, 10], 1, "Pentatonic and blues", "rock blues metal funk"],
+  ["blues", "Blues scale", [0, 3, 5, 6, 7, 10], 1, "Pentatonic and blues", "blues rock"],
+  ["majblues", "Major blues", [0, 2, 3, 4, 7, 9], 2, "Pentatonic and blues", "country blues"],
+  ["major", "Major (Ionian)", [0, 2, 4, 5, 7, 9, 11], 1, "Major modes", "pop folk country"],
+  ["dorian", "Dorian", [0, 2, 3, 5, 7, 9, 10], 2, "Major modes", "funk rock jazz"],
+  ["phrygian", "Phrygian", [0, 1, 3, 5, 7, 8, 10], 2, "Major modes", "metal flamenco"],
+  ["lydian", "Lydian", [0, 2, 4, 6, 7, 9, 11], 2, "Major modes", "jazz pop"],
+  ["mixo", "Mixolydian", [0, 2, 4, 5, 7, 9, 10], 2, "Major modes", "rock blues country funk"],
+  ["minor", "Natural minor (Aeolian)", [0, 2, 3, 5, 7, 8, 10], 1, "Major modes", "rock pop metal folk"],
+  ["locrian", "Locrian", [0, 1, 3, 5, 6, 8, 10], 3, "Major modes", "metal jazz"],
+  ["harmmin", "Harmonic minor", [0, 2, 3, 5, 7, 8, 11], 2, "Minor scales", "metal flamenco jazz"],
+  ["melmin", "Melodic minor (jazz minor)", [0, 2, 3, 5, 7, 9, 11], 3, "Minor scales", "jazz"],
+  ["phrydom", "Phrygian dominant", [0, 1, 4, 5, 7, 8, 10], 3, "Minor scales", "metal flamenco"],
+  ["lyddom", "Lydian dominant", [0, 2, 4, 6, 7, 9, 10], 3, "Minor scales", "jazz funk"],
+  ["altered", "Altered (super Locrian)", [0, 1, 3, 4, 6, 8, 10], 3, "Minor scales", "jazz"],
+  ["bebopdom", "Bebop dominant", [0, 2, 4, 5, 7, 9, 10, 11], 3, "Jazz", "jazz"],
+  ["bebopmaj", "Bebop major", [0, 2, 4, 5, 7, 8, 9, 11], 3, "Jazz", "jazz"],
+  ["wholetone", "Whole tone", [0, 2, 4, 6, 8, 10], 3, "Symmetric", "jazz"],
+  ["dimhw", "Diminished (half-whole)", [0, 1, 3, 4, 6, 7, 9, 10], 3, "Symmetric", "jazz metal"],
+  ["dimwh", "Diminished (whole-half)", [0, 2, 3, 5, 6, 8, 9, 11], 3, "Symmetric", "jazz metal"],
+  ["chromatic", "Chromatic", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 2, "Symmetric", ""],
+  ["hungmin", "Hungarian minor", [0, 2, 3, 6, 7, 8, 11], 3, "World", "metal"],
+  ["dblharm", "Double harmonic (Arabic)", [0, 1, 4, 5, 7, 8, 11], 3, "World", "metal flamenco"],
+  ["hirajoshi", "Hirajoshi (Japanese)", [0, 2, 3, 7, 8], 3, "World", "folk"],
+  ["insen", "In Sen (Japanese)", [0, 1, 5, 7, 10], 3, "World", "folk"],
+  ["egyptian", "Egyptian (suspended pentatonic)", [0, 2, 5, 7, 10], 2, "World", "folk rock"],
+  ["neapmin", "Neapolitan minor", [0, 1, 3, 5, 7, 8, 11], 3, "World", "metal"],
+  ["persian", "Persian", [0, 1, 4, 5, 6, 8, 11], 3, "World", ""],
+  ["enigmatic", "Enigmatic", [0, 1, 4, 6, 8, 10, 11], 3, "World", ""],
+  ["prometheus", "Prometheus", [0, 2, 4, 6, 9, 10], 3, "World", "jazz"],
+  ["gypsy", "Romani (Hungarian Gypsy) major", [0, 1, 4, 5, 7, 8, 10], 3, "World", "flamenco"]
+];
+var AK_SCALES2 = AK_SCALE_RAW.map(function (r) { return { id: r[0], n: r[1], iv: r[2], lv: r[3], fam: r[4], styles: r[5].split(" ").filter(Boolean) }; });
+var AK_STYLES = [["rock", "Rock"], ["blues", "Blues"], ["country", "Country"], ["pop", "Pop"], ["folk", "Folk"], ["funk", "Funk"], ["jazz", "Jazz"], ["metal", "Metal"], ["flamenco", "Flamenco"]];
+var AK_DEG_NAMES = ["1", "♭2", "2", "♭3", "3", "4", "♭5", "5", "♭6", "6", "♭7", "7"];
+function akScale(id) { return AK_SCALES2.filter(function (s) { return s.id === id; })[0]; }
+/* a song's style from its tags */
+function akSongStyle(song) {
+  var t = ((song && song.tags) || []).join(" ").toLowerCase();
+  for (var i = 0; i < AK_STYLES.length; i++) if (t.indexOf(AK_STYLES[i][0]) >= 0) return AK_STYLES[i][0];
+  if (/r&b|soul|disco/.test(t)) return "funk"; if (/punk|grunge|alt/.test(t)) return "rock"; if (/gospel|bluegrass|americana/.test(t)) return "country"; if (/reggae|latin/.test(t)) return "pop";
+  return "";
+}
+/* scales for a key, best first, for a style: [{ sc, root, score, why }] */
+function akScaleRank(key, style, chords) {
+  var out = [], lv = akLevelN();
+  chords = chords || [];
+  var dom7 = chords.filter(function (c) { return c.q === "7" || c.q === "9" || c.q === "13"; }).length;
+  function hasDeg(d, test) { return chords.some(function (c) { return akMod(c.pc - key.pc) === d && (!test || test(c)); }); }
+  AK_SCALES2.forEach(function (sc) {
+    if (sc.lv > lv || sc.id === "chromatic") return;
+    var minorish = sc.iv.indexOf(3) >= 0 && sc.iv.indexOf(4) < 0, root = key.pc, why = [], score = 0;
+    if (key.minor !== minorish) {
+      /* major-key song with a minor scale: the relative minor shares its notes for the pentatonic */
+      if (!key.minor && sc.id === "minpent") { root = akMod(key.pc - 3); score += 1.5; why.push("same notes as the major pentatonic, from the relative minor"); }
+      else if (!key.minor && sc.id === "blues" && (style === "blues" || style === "rock" || dom7 >= 2)) { score += 2; why.push("a bluesy edge over a major song"); }
+      else return;
+    } else score += 2;
+    if (style && sc.styles.indexOf(style) >= 0) { score += 3; why.push("a " + style + " sound"); }
+    if (sc.iv.length === 5) score += 1.2 - 0.2 * (lv - 1);
+    if (sc.id === "mixo" && (dom7 >= 2 || hasDeg(10))) { score += 2.5; why.push("the song has " + (dom7 >= 2 ? "7 chords" : "a ♭VII chord")); }
+    if (sc.id === "dorian" && key.minor && hasDeg(5, function (c) { return c.q === "" || c.q === "7"; })) { score += 2.5; why.push("the IV chord is major"); }
+    if (sc.id === "harmmin" && key.minor && hasDeg(7, function (c) { return c.q === "" || c.q === "7"; })) { score += 2.5; why.push("the V chord is major"); }
+    if (sc.lv === 3) score -= 0.8;
+    out.push({ sc: sc, root: root, score: score, why: why.join("; ") });
+  });
+  out.sort(function (a, b) { return b.score - a.score; });
+  return out;
+}
+/* positions on the neck: [{ name, cells: [[s, f]] }] */
+function akScalePositions(notes, root, iv, kind, maxF) {
+  maxF = maxF || 17; var set = {}; iv.forEach(function (i) { set[akMod(root + i)] = 1; });
+  if (kind === "boxes") return akScaleBoxes(notes, root, iv, maxF).map(function (b, i) { return { name: "Box " + (i + 1) + " (fret " + b.from + ")", cells: b.cells.map(function (c) { return [c[0], c[1]]; }), from: b.from }; });
+  if (kind === "3nps") {
+    var out = [], low = notes[0], degs = [];
+    for (var f = 0; f <= 12; f++) if (set[akMod(low + f)]) degs.push(f);
+    var sorted = iv.slice().sort(function (a, b) { return a - b; });
+    degs.slice(0, sorted.length).forEach(function (f0, k) {
+      var pitch = low + f0, cells = [];
+      var scalePitches = []; for (var m = pitch; m < pitch + 48; m++) if (set[akMod(m)]) scalePitches.push(m);
+      var idx = 0;
+      notes.forEach(function (open, s) { for (var j = 0; j < 3 && idx < scalePitches.length; j++, idx++) { var fr = scalePitches[idx] - open; if (fr < 0 || fr > maxF + 3) { idx -= 0; continue; } cells.push([s, fr]); } });
+      out.push({ name: "3 per string from " + akNoteName(low + f0, true) + " (fret " + f0 + ")", cells: cells, from: f0 });
+    });
+    return out;
+  }
+  if (kind === "caged") {
+    if (notes.length !== 6) return [];
+    var rE = akMod(root - notes[0]), rA = akMod(root - notes[1]), rD = akMod(root - notes[2]);
+    var spans = [["E shape", rE - 1, rE + 3], ["D shape", rD - 1, rD + 3], ["C shape", rA - 3, rA + 1], ["A shape", rA - 1, rA + 3], ["G shape", rE - 3, rE + 1]];
+    return spans.map(function (sp) {
+      var a = sp[1], b = sp[2]; if (a < 0) { a += 12; b += 12; }
+      var cells = []; notes.forEach(function (n, s) { for (var f = a; f <= b; f++) if (set[akMod(n + f)]) cells.push([s, f]); });
+      return { name: sp[0] + " (frets " + a + "–" + b + ")", cells: cells, from: a };
+    }).sort(function (x, y) { return x.from - y.from; });
+  }
+  var all = []; notes.forEach(function (n, s) { for (var f = 0; f <= maxF; f++) if (set[akMod(n + f)]) all.push([s, f]); });
+  return [{ name: "Whole neck", cells: all, from: 0 }];
+}
+/* a fretboard with roles: cells [[s, f, role]] role: root | third | fifth | tone | dim | plain | hit | miss | target ; o = { frets, from, onTap(s, f), label, names } */
+/* sharps or flats for a scale: flat keys (F, Bb, Eb, Ab, Db, Gb), minor-type scales by their relative major */
+function akFlatFor(root, iv) { iv = iv || []; var maj = iv.indexOf(3) >= 0 && iv.indexOf(4) < 0 ? akMod(root + 3) : root; return [1, 3, 5, 6, 8, 10].indexOf(maj) >= 0; }
+function akFb2(notes, cells, o) {
+  o = o || {}; var ns = notes.length, F0 = o.from || 0, F = o.frets || 15, gx = 44, gy = 26, x0 = 46, y0 = 16, W = x0 + gx * (F - F0) + 16, H = y0 + gy * (ns - 1) + 32;
+  var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, class: "akfb2", role: "img", "aria-label": o.label || "Fretboard" });
+  function X(f) { return f === 0 ? x0 - 14 : x0 + (f - F0 - 0.5) * gx; }
+  function Y(s) { return y0 + (ns - 1 - s) * gy; }
+  for (var f = F0 + 1; f <= F; f++) svg.appendChild(svgEl("line", { x1: x0 + (f - F0) * gx, y1: y0, x2: x0 + (f - F0) * gx, y2: Y(0), class: "akfb-fret" + (f === 12 ? " oct" : "") }));
+  svg.appendChild(svgEl("line", { x1: x0, y1: y0, x2: x0, y2: Y(0), class: F0 === 0 ? "akfb-nut" : "akfb-fret" }));
+  [3, 5, 7, 9, 12, 15, 17, 19, 21].forEach(function (f) { if (f <= F0 || f > F) return; var t = svgEl("text", { x: x0 + (f - F0 - 0.5) * gx, y: H - 4, "text-anchor": "middle", class: "akfb-num" }); t.textContent = String(f); svg.appendChild(t); });
+  notes.forEach(function (n, s) {
+    svg.appendChild(svgEl("line", { x1: x0, y1: Y(s), x2: x0 + gx * (F - F0), y2: Y(s), class: "akfb-str", "stroke-width": 1 + (ns - s) * 0.25 }));
+    var lb = svgEl("text", { x: 12, y: Y(s) + 5, "text-anchor": "middle", class: "akfb-num" }); lb.textContent = akNoteName(n, o.flat != null ? o.flat : o.root != null ? akFlatFor(o.root, o.iv) : true); svg.appendChild(lb);
+    if (o.onTap) for (var f2 = F0; f2 <= F; f2++) (function (s, f2) {
+      var hit = svgEl("rect", { x: f2 === 0 ? x0 - 28 : x0 + (f2 - F0 - 1) * gx, y: Y(s) - gy / 2, width: f2 === 0 ? 28 : gx, height: gy, class: "akfb-hit" });
+      hit.addEventListener("click", function () { o.onTap(s, f2); }); svg.appendChild(hit);
+    })(s, f2);
+  });
+  cells.forEach(function (c) {
+    if (c[1] < F0 || c[1] > F) return;
+    var g = svgEl("g", { class: "akfb-dot " + (c[2] || "plain"), "pointer-events": "none" });
+    g.appendChild(svgEl("circle", { cx: X(c[1]), cy: Y(c[0]), r: 10.5 }));
+    var lbl = c[3] != null ? c[3] : o.names === "deg" && o.root != null ? AK_DEG_NAMES[akMod(notes[c[0]] + c[1] - o.root)] : o.names === false ? "" : akNoteName(notes[c[0]] + c[1], o.flat != null ? o.flat : o.root != null ? akFlatFor(o.root, o.iv) : true);
+    var t = svgEl("text", { x: X(c[1]), y: Y(c[0]) + 4, "text-anchor": "middle" }); t.textContent = lbl; g.appendChild(t);
+    svg.appendChild(g);
+  });
+  return svg;
+}
+/* role of a note in a scale for the colours */
+function akRole(pc, root, chordPcs) {
+  var d = akMod(pc - root);
+  if (chordPcs && chordPcs.indexOf(pc) >= 0) return d === 0 ? "root tone" : "tone";
+  return d === 0 ? "root" : d === 3 || d === 4 ? "third" : d === 7 ? "fifth" : "plain";
+}
+
+/* ---------------------------------------------------------------- 5. scale explorer (Learn) */
+function akScaleExplorer(box, o) {
+  o = o || {}; var st = S.akScx = S.akScx || { root: 9, id: "minpent", view: "whole", pos: 0, names: "note" };
+  var ins = settings().instrument, notes = akShapeNotes(ins), piano = akPiano();
+  function draw() {
+    box.textContent = "";
+    box.appendChild(akLevelChips(draw));
+    box.appendChild(akRootChips(st.root, function (pc) { st.root = pc; draw(); }));
+    var fams = {}, lv = akLevelN(); AK_SCALES2.forEach(function (s) { if (s.lv <= lv) (fams[s.fam] = fams[s.fam] || []).push(s); });
+    Object.keys(fams).forEach(function (f) { box.appendChild(h("div", { class: "akscx-fam" }, h("span", { class: "muted" }, f), h("div", { class: "chips" }, fams[f].map(function (s) { return h("button", { class: "chip" + (st.id === s.id ? " on" : ""), onClick: function () { st.id = s.id; st.pos = 0; draw(); } }, s.n); })))); });
+    var sc = akScale(st.id) || AK_SCALES2[0];
+    box.appendChild(h("p", null, h("b", null, akRootName(st.root) + " " + sc.n + ": "), sc.iv.map(function (i) { return akRootName(akMod(st.root + i)); }).join(" "), h("br"), h("span", { class: "muted" }, "Formula " + sc.iv.map(function (i) { return AK_DEG_NAMES[i]; }).join(" ") + (sc.styles.length ? " · heard in " + sc.styles.join(", ") : ""))));
+    var playRow = h("div", { class: "row" }, h("button", { onClick: function () { var r = 48 + st.root + (st.root > 7 ? -12 : 0), up = sc.iv.map(function (i) { return r + i; }).concat([r + 12]); akPlaySeq(up.concat(up.slice(0, -1).reverse()).map(function (m) { return [m, 0.5]; }), 100, piano ? "keys" : "pluck"); } }, "▶ Play it"));
+    box.appendChild(playRow);
+    if (piano) {
+      var marks = {}, r0 = 60 + st.root; sc.iv.concat([12]).forEach(function (i) { marks[r0 + i] = { cls: i % 12 === 0 ? "root" : "on", label: AK_DEG_NAMES[i % 12] }; });
+      box.appendChild(h("div", { class: "akkbwrap" }, akKeyboard(r0 - 2, r0 + 14, marks, { onTap: function (m) { akTone(m, 0.6, 0, "keys"); } })));
+      return;
+    }
+    var views = [["whole", "Whole neck"], ["boxes", "Boxes"], ["3nps", "3 per string"]].concat(notes.length === 6 ? [["caged", "CAGED"]] : []);
+    box.appendChild(h("div", { class: "chips" }, views.map(function (v) { return h("button", { class: "chip" + (st.view === v[0] ? " on" : ""), onClick: function () { st.view = v[0]; st.pos = 0; draw(); } }, v[1]); }).concat([h("button", { class: "chip", onClick: function () { st.names = st.names === "deg" ? "note" : "deg"; draw(); } }, st.names === "deg" ? "Show notes" : "Show degrees")])));
+    var poss = akScalePositions(notes, st.root, sc.iv, st.view, 17);
+    if (st.view !== "whole" && poss.length) box.appendChild(h("div", { class: "chips" }, poss.map(function (p, i) { return h("button", { class: "chip" + (st.pos === i ? " on" : ""), onClick: function () { st.pos = i; draw(); } }, p.name); })));
+    var cur = poss[st.pos] || poss[0]; if (!cur) return;
+    var cells = cur.cells.map(function (c) { return [c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), st.root)]; });
+    var from = st.view === "whole" ? 0 : Math.max(0, Math.min.apply(null, cur.cells.map(function (c) { return c[1]; })) - 1), to = st.view === "whole" ? 17 : Math.max.apply(null, cur.cells.map(function (c) { return c[1]; })) + 1;
+    box.appendChild(h("div", { class: "akfbwrap" }, akFb2(notes, cells, { from: from, frets: Math.max(to, from + 5), names: st.names === "deg" ? "deg" : "note", root: st.root, iv: sc.iv, onTap: function (s, f) { akTone(notes[s] + f + (tuningOffset() || 0), 0.6, 0, "pluck"); } })));
+    box.appendChild(h("p", { class: "hint" }, "Root in the accent color, 3rd and 5th in their own colors. Tap the neck to hear a note." + (st.view === "caged" ? " CAGED positions are named after the open chord shape the root sits in." : st.view === "3nps" ? " Three notes on every string, for fast runs." : "")));
+  }
+  draw();
+}
+
+/* ---------------------------------------------------------------- 6. Solo scales window (playing screen) */
+function akCurChord() {
+  var sc = scroller(); if (!sc) return null;
+  var top = sc.getBoundingClientRect().top, els = sc.querySelectorAll(".ch"), best = null;
+  for (var i = 0; i < els.length; i++) { var r = els[i].getBoundingClientRect(); if (r.bottom > top + 4) { best = els[i]; break; } }
+  var n = best && (best.getAttribute("data-shape") || best.textContent); return n ? parseChordName(n.replace(/[^\w#b\/]+$/, "")) : null;
+}
+function akSoloWin() {
+  var song = curSong(); if (!song) return;
+  akFloat("solo", { title: "Solo scales", tabs: [["best", "Best position"], ["neck", "Whole neck"]], w: 520, h: 400, key: function () { var s = S.play && curSong(); return (s ? s.id : "") + ":" + (S.akSoloChord || ""); }, body: function (tab, el) {
+    var s = S.play && curSong(); if (!s) { el.appendChild(h("p", { class: "hint" }, "Open a song.")); return; }
+    var ins = settings().instrument, notes = akShapeNotes(ins), k = akChartKey(s);
+    if (!k) { el.appendChild(h("p", { class: "hint" }, "Add chords or a key to this song for scale ideas.")); return; }
+    var key = { pc: akMod(k.pc + (s.transpose || 0)), minor: k.minor }, cfg = akFloatCfg("solo");
+    var style = cfg.style || akSongStyle(s), chords = akSongChords(s).map(parseChordName).filter(Boolean);
+    var ranked = akScaleRank(key, style, chords).slice(0, 6), pick = Math.min(cfg.pick || 0, ranked.length - 1);
+    var stSel = h("select", { "aria-label": "Style", onChange: function () { cfg.style = this.value; cfg.pick = 0; save(); akFloatFill("solo"); } }, [h("option", { value: "" }, "Any style")].concat(AK_STYLES.map(function (x) { return h("option", { value: x[0] }, x[1]); })));
+    stSel.value = style || "";
+    var scSel = h("select", { "aria-label": "Scale", onChange: function () { cfg.pick = Number(this.value) || 0; save(); akFloatFill("solo"); } }, ranked.map(function (r, i) { return h("option", { value: String(i) }, (i === 0 ? "★ " : "") + akRootName(r.root) + " " + r.sc.n); }));
+    scSel.value = String(pick);
+    el.appendChild(h("div", { class: "row aksolo-pick", style: "margin:0 0 4px;gap:6px;flex-wrap:nowrap" }, stSel, scSel));
+    var r = ranked[pick]; if (!r) return;
+    el.appendChild(h("div", { class: "muted", style: "font-size:.85rem" }, "Key " + akLongKey(key.pc, key.minor) + (k.guessed ? " (guessed)" : "") + (r.why ? " · " + r.why : "")));
+    var ch = akCurChord(), chordPcs = ch ? akChordTones(ch).map(function (t) { return t.pc; }) : null; S.akSoloChord = ch ? ch.label : "";
+    var poss = tab === "best" ? akScalePositions(notes, r.root, r.sc.iv, "boxes", 17) : akScalePositions(notes, r.root, r.sc.iv, "whole", 17);
+    var cells = [], from = 0, to = 15;
+    if (tab === "best") {
+      var order = poss.slice().sort(function (a, b) { return Math.abs(a.from - 5) - Math.abs(b.from - 5); }), a = order[0], b2 = poss[poss.indexOf(a) + 1];
+      var cs = a.cells.concat(b2 ? b2.cells : []); from = Math.max(0, a.from - 1); to = Math.max(from + 6, (b2 || a).from + 5);
+      var seen = {}; cs.forEach(function (c) { var k2 = c[0] + ":" + c[1]; if (!seen[k2]) { seen[k2] = 1; cells.push([c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), r.root, chordPcs)]); } });
+    } else poss[0].cells.forEach(function (c) { cells.push([c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), r.root, chordPcs)]); });
+    el.appendChild(h("div", { class: "akfbwrap" }, akFb2(notes, cells, { from: from, frets: to, label: r.sc.n, root: r.root, iv: r.sc.iv })));
+    el.appendChild(h("div", { class: "akleg" }, h("span", { class: "k root" }, "root"), h("span", { class: "k third" }, "3rd"), h("span", { class: "k fifth" }, "5th"), ch ? h("span", { class: "k tone" }, "in " + ch.label + " (now)") : null));
+  } });
+  clearInterval(S.akSoloT); S.akSoloT = setInterval(function () { if (!akFloatOpen("solo")) { clearInterval(S.akSoloT); return; } var c = akCurChord(); if ((c ? c.label : "") !== (S.akSoloChord || "")) akFloatFill("solo"); }, 600);
+}
+/* pop up just before a Solo block (setting) */
+function akSoloSoon(song) { if ((settings().solo || {}).scalePop && !akFloatOpen("solo")) akSoloWin(); }
+
+/* ---------------------------------------------------------------- 7. note trainers (fretboard and keyboard) */
+function akTrainStats() { var t = settings().trainer = settings().trainer || {}; t.notes = t.notes || {}; t.rounds = t.rounds || []; return t; }
+function akTrainer(box) {
+  var T = S.akTr = S.akTr || { inst: akPiano() ? "keys" : "neck", game: "find", running: false };
+  var ins = settings().instrument, notes = akShapeNotes(ins), stats = akTrainStats();
+  var lv = akLevelN();
+  function cfgFor() {
+    if (T.inst === "keys") return { lo: lv === 1 ? 60 : 48, hi: lv === 1 ? 71 : lv === 2 ? 83 : 84, naturals: lv === 1 };
+    return { strings: lv === 1 ? [0, 1] : notes.map(function (n, i) { return i; }), maxF: lv === 1 ? 5 : lv === 2 ? 12 : 15, naturals: lv === 1 };
+  }
+  var GAMES = [["find", "Find the note"], ["name", "Name the note"], ["octave", "Octaves and intervals"], ["ear", "By ear"]];
+  function pickTarget() {
+    var c = cfgFor(), pool = [];
+    if (T.inst === "keys") { for (var m = c.lo; m <= c.hi; m++) if (!c.naturals || [1, 3, 6, 8, 10].indexOf(m % 12) < 0) pool.push({ m: m, pc: m % 12 }); }
+    else c.strings.forEach(function (s) { for (var f = 0; f <= c.maxF; f++) { var pc = akMod(notes[s] + f); if (!c.naturals || [1, 3, 6, 8, 10].indexOf(pc) < 0) pool.push({ s: s, f: f, pc: pc }); } });
+    /* weak spots come up more often */
+    var w = pool.map(function (p) { var st = stats.notes[(T.inst === "keys" ? "k" : "n") + p.pc] || { ok: 0, bad: 0 }; return 1 + st.bad * 2 / (1 + st.ok); }), sum = w.reduce(function (a, b) { return a + b; }, 0), r = Math.random() * sum;
+    for (var i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0) return pool[i]; }
+    return pool[0];
+  }
+  function mark(pc, ok, ms) { var k = (T.inst === "keys" ? "k" : "n") + pc, st = stats.notes[k] = stats.notes[k] || { ok: 0, bad: 0, ms: 0 }; if (ok) { st.ok++; st.ms = st.ms ? Math.round(st.ms * 0.7 + ms * 0.3) : ms; } else st.bad++; }
+  function newQ() {
+    T.q = pickTarget(); T.t0 = Date.now(); T.fb = null;
+    if (T.game === "octave") { var ivs = lv === 1 ? [12] : lv === 2 ? [12, 7, 5] : [12, 7, 5, 4, 3, 10]; T.q.iv = ivs[Math.floor(Math.random() * ivs.length)]; }
+    if (T.game === "ear") { var m = T.inst === "keys" ? T.q.m : notes[T.q.s] + T.q.f + (tuningOffset() || 0); akTone(m, 0.9, 0.05, T.inst === "keys" ? "keys" : "pluck"); }
+  }
+  function answer(pc, where) {
+    if (!T.running || !T.q) return;
+    var want = T.game === "octave" ? akMod(T.q.pc + T.q.iv) : T.q.pc, ok = pc === want;
+    if (T.game === "octave" && ok && where && T.inst !== "keys" && where.s === T.q.s && where.f === T.q.f) ok = false;
+    mark(T.q.pc, ok, Date.now() - T.t0); T.score[ok ? 0 : 1]++;
+    T.fb = { ok: ok, want: want, where: where };
+    if (ok) akTone(T.inst === "keys" ? (where ? where.m : 60 + pc) : (where ? notes[where.s] + where.f : 52 + pc) + (T.inst === "keys" ? 0 : tuningOffset() || 0), 0.4, 0, T.inst === "keys" ? "keys" : "pluck", 0.15);
+    save(); draw();
+    setTimeout(function () { if (T.running) { newQ(); draw(); } }, ok ? 450 : 1300);
+  }
+  function start() { T.running = true; T.score = [0, 0]; T.end = Date.now() + (T.secs || 60) * 1000; newQ(); draw(); clearInterval(T.iv); T.iv = setInterval(function () { if (!box.isConnected) { clearInterval(T.iv); T.running = false; return; } if (Date.now() >= T.end) { stop(); } else paintTime(); }, 250); }
+  function stop() { clearInterval(T.iv); if (T.running) { T.running = false; stats.rounds.push({ at: Date.now(), game: T.game, inst: T.inst, ok: T.score[0], bad: T.score[1] }); if (stats.rounds.length > 200) stats.rounds.shift(); save(); } draw(); }
+  var timeEl = h("b", { class: "aktr-time" });
+  function paintTime() { timeEl.textContent = T.running ? Math.max(0, Math.ceil((T.end - Date.now()) / 1000)) + " s" : ""; }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(akLevelChips(function () { stop(); draw(); }));
+    box.appendChild(h("div", { class: "chips" }, [["neck", notes.length === 4 ? "Ukulele neck" : "Guitar neck"], ["keys", "Keyboard"]].map(function (x) { return h("button", { class: "chip" + (T.inst === x[0] ? " on" : ""), onClick: function () { T.inst = x[0]; stop(); } }, x[1]); })));
+    box.appendChild(h("div", { class: "chips" }, GAMES.map(function (g) { return h("button", { class: "chip" + (T.game === g[0] ? " on" : ""), onClick: function () { T.game = g[0]; stop(); } }, g[1]); })));
+    var c = cfgFor();
+    box.appendChild(h("div", { class: "row", style: "align-items:center" },
+      T.running ? h("button", { onClick: stop }, "■ Stop") : h("button", { class: "primary", onClick: start }, "▶ Start a round"),
+      h("select", { "aria-label": "Round length", onChange: function () { T.secs = +this.value; } }, [30, 60, 120].map(function (n) { return h("option", { value: n, selected: (T.secs || 60) === n ? "" : null }, n + " s"); })),
+      timeEl, T.score ? h("span", null, "✓ " + T.score[0] + "  ✗ " + T.score[1]) : null));
+    paintTime();
+    var q = T.running ? T.q : null, prompt = "";
+    if (q) prompt = T.game === "find" ? "Find " + akNoteName(q.pc, true) + (T.inst === "neck" && c.strings.length < notes.length ? " (on the marked strings)" : "") : T.game === "name" ? "What note is lit up?" : T.game === "octave" ? "Find the " + { 12: "octave", 7: "5th", 5: "4th", 4: "major 3rd", 3: "minor 3rd", 10: "♭7" }[q.iv] + " above the lit note" : "Which note did you hear? (tap ▶ to hear it again)";
+    box.appendChild(h("div", { class: "aktr-q" + (T.fb ? (T.fb.ok ? " ok" : " bad") : "") }, q ? prompt : "Pick a game and start a round. Notes you miss come back more often.", T.fb && !T.fb.ok ? h("span", null, "  It was " + akNoteName(T.fb.want, true)) : null,
+      q && T.game === "ear" ? h("button", { class: "sm", onClick: function () { var m = T.inst === "keys" ? q.m : notes[q.s] + q.f + (tuningOffset() || 0); akTone(m, 0.9, 0, T.inst === "keys" ? "keys" : "pluck"); } }, "▶") : null));
+    var showLit = q && (T.game === "name" || T.game === "octave");
+    if (T.inst === "keys") {
+      var marks = {}; if (showLit) marks[q.m] = { cls: "target" }; if (T.fb && T.fb.where) marks[T.fb.where.m] = { cls: T.fb.ok ? "hit" : "miss" };
+      box.appendChild(h("div", { class: "akkbwrap" }, akKeyboard(c.lo, c.hi, marks, { names: !q, onTap: function (m) { if (T.game === "find" || T.game === "octave" || T.game === "ear") answer(m % 12, { m: m }); else akTone(m, 0.5, 0, "keys"); } })));
+    } else {
+      var cells = []; if (showLit) cells.push([q.s, q.f, "target", "?"]); if (T.fb && T.fb.where) cells.push([T.fb.where.s, T.fb.where.f, T.fb.ok ? "hit" : "miss"]);
+      var fbx = akFb2(notes, cells, { from: 0, frets: c.maxF, names: false, onTap: function (s, f) { if (T.game === "name") return; if (c.strings.indexOf(s) < 0 && T.game !== "octave") return; answer(akMod(notes[s] + f), { s: s, f: f }); } });
+      if (c.strings.length < notes.length) Array.prototype.forEach.call(fbx.querySelectorAll(".akfb-str"), function (ln, i) { if (c.strings.indexOf(i) >= 0) ln.classList.add("live"); });
+      box.appendChild(h("div", { class: "akfbwrap" }, fbx));
+    }
+    if (q && T.game === "name") box.appendChild(h("div", { class: "aktr-names" }, (c.naturals ? [0, 2, 4, 5, 7, 9, 11] : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]).map(function (pc) { return h("button", { onClick: function () { answer(pc, null); } }, akNoteName(pc, true)); })));
+    /* weak spots */
+    var pre = T.inst === "keys" ? "k" : "n", weak = [];
+    for (var pc = 0; pc < 12; pc++) { var st = stats.notes[pre + pc]; if (st && st.ok + st.bad >= 3) weak.push({ pc: pc, acc: st.ok / (st.ok + st.bad), ms: st.ms }); }
+    weak.sort(function (a, b) { return a.acc - b.acc || b.ms - a.ms; });
+    var last = stats.rounds.filter(function (r) { return r.inst === T.inst; }).slice(-5);
+    box.appendChild(h("p", { class: "hint" }, weak.length ? "Your weak spots: " + weak.slice(0, 4).map(function (w) { return akNoteName(w.pc, true) + " (" + Math.round(w.acc * 100) + "%" + (w.ms ? ", " + (w.ms / 1000).toFixed(1) + " s" : "") + ")"; }).join(", ") + ". They come up more often." : "Play a few rounds and your weak spots show here.",
+      last.length ? " Last rounds: " + last.map(function (r) { return r.ok + "/" + (r.ok + r.bad); }).join(", ") + "." : ""));
+  }
+  draw();
+}
+
+/* ================= Akashic Chords batch 4, phase 4: learning tools (part 2) =================
+   - the Learn page: lessons, scales, chords, note trainer, licks, warm-ups, practice plans, tuner, metronome
+   - a theory "book": lessons by level with pictures drawn by the app, progress, and tip cards that pop up in context
+   - vocal warm-ups with guide tones: voice type, start note, tempo, levels, and timed routines (pre-show and more)
+   - licks and riffs (original and traditional patterns): tab, fretboard, play at any tempo, loop, any key, your tuning
+   - guided practice plans by goal and level: timed steps with the metronome, and they adapt to how each step went
+   All lesson, lick and warm-up content here is original. */
+
+/* ---------------------------------------------------------------- 1. lessons */
+function akLessonVisChord(name) { return function () { return akDiagramsRow(name, 2); }; }
+function akLessonVisScale(root, iv, view) { return function () { var notes = akShapeNotes(settings().instrument); if (akPiano()) { var m = {}, r = 60 + root; iv.concat([12]).forEach(function (i) { m[r + i] = { cls: i % 12 ? "on" : "root", label: AK_DEG_NAMES[i % 12] }; }); return akKeyboard(r - 1, r + 13, m, { onTap: function (x) { akTone(x, 0.5, 0, "keys"); } }); } var p = akScalePositions(notes, root, iv, view || "boxes", 15)[0]; return p ? akFb2(notes, p.cells.map(function (c) { return [c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), root)]; }), { from: Math.max(0, p.from - 1), frets: p.from + 5, names: "deg", root: root }) : h("span"); }; }
+function akLessonVisPlay(label, seq, bpm, kind) { return function () { return h("button", { onClick: function () { akPlaySeq(seq, bpm || 90, kind || (akPiano() ? "keys" : "pluck")); } }, "▶ " + label); }; }
+function akLessonVisKeys() { return function () { var m = {}; [60, 62, 64, 65, 67, 69, 71, 72].forEach(function (x) { m[x] = { cls: x === 60 || x === 72 ? "root" : "on", label: akNoteName(x) }; }); return akKeyboard(58, 74, m, { onTap: function (x) { akTone(x, 0.5, 0, "keys"); } }); }; }
+function akLessonVisNaturals() { return function () { var notes = akShapeNotes(settings().instrument), cells = []; for (var f = 0; f <= 12; f++) { var pc = akMod(notes[0] + f); if ([0, 2, 4, 5, 7, 9, 11].indexOf(pc) >= 0) cells.push([0, f, pc === akMod(notes[0]) ? "root" : "plain"]); } return akFb2(notes, cells, { frets: 12 }); }; }
+var AK_LESSONS = [
+  ["start", 1, "Getting started", "Reading a chord diagram", ["A chord diagram is the neck standing up: the vertical lines are the strings, lowest on the left, and the horizontal lines are the frets. A dot means press there, an ○ above a string means play it open, an × means don't play it.", "The numbers in the dots are fingers: 1 is your index, 4 your little finger. Press just behind the fret, not on top of it, and keep your thumb behind the neck."], akLessonVisChord("G")],
+  ["switch", 1, "Getting started", "Changing chords in time", ["Changing chords is a skill on its own. Pick two chords and switch between them for one minute, counting how many clean changes you make. Write the number down and beat it tomorrow.", "Look for an anchor finger: a finger that stays on the same string between the two chords. Move the other fingers as one shape, and let the strum keep going even if the change isn't ready yet. Keeping time matters more than every note ringing."], akLessonVisChord("D")],
+  ["strum", 1, "Getting started", "Strumming and counting", ["Count 1 & 2 & 3 & 4 &. Your hand moves down on the numbers and up on the &s, all the time, even when it doesn't hit the strings. That steady swing is what keeps you in time.", "A good first pattern is Down, Down-Up, Up-Down-Up: miss the strings on the 3. Use the metronome slowly first, then speed up five beats a minute at a time."], akLessonVisPlay("Hear 1 & 2 & 3 & 4 &", [[57, 0.5], [60, 0.5], [57, 0.5], [60, 0.5], [57, 0.5], [60, 0.5], [57, 0.5], [60, 0.5]], 80)],
+  ["notes", 1, "Getting started", "The notes on the neck", ["There are 12 notes: A, A♯/B♭, B, C, C♯/D♭, D, D♯/E♭, E, F, F♯/G♭, G, G♯/A♭, then A again. Between B and C, and between E and F, there is no sharp: they are only one fret apart.", "Each fret is one of those steps. The 12th fret is the same as the open string, an octave higher. Learn the natural notes on the lowest string first: they name most barre chords."], akLessonVisNaturals()],
+  ["keys", 1, "Getting started", "The piano keyboard", ["The black keys come in groups of two and three. The white key just left of a group of two is C. From C, the white keys go C D E F G A B, then C again.", "Black keys are sharps or flats of the white keys beside them. Middle C sits near the middle of the keyboard, and most songs' melodies live around it."], akLessonVisKeys()],
+  ["intervals", 2, "Harmony", "Intervals: the distance between notes", ["An interval is how far apart two notes are, counted in half steps (frets or keys). 3 half steps is a minor 3rd, 4 a major 3rd, 7 a perfect 5th, 12 an octave.", "Chords are stacks of intervals: a major chord is a root, a major 3rd and a 5th. A minor chord swaps in the minor 3rd. That one fret is the whole difference between happy and sad."], akLessonVisPlay("Major 3rd, minor 3rd, 5th", [[60, 1], [64, 1], [null, 0.5], [60, 1], [63, 1], [null, 0.5], [60, 1], [67, 1]], 90)],
+  ["major", 2, "Harmony", "How a major scale is built", ["Every major scale follows the same pattern of steps: whole, whole, half, whole, whole, whole, half. A whole step is two frets, a half step is one.", "Start on any note, follow the pattern, and you have that key's major scale. That's why songs can move to any key and keep their shape."], akLessonVisScale(0, [0, 2, 4, 5, 7, 9, 11])],
+  ["diatonic", 2, "Harmony", "The chords in a key", ["Stack every other note of the major scale and you get the key's chords: I, ii, iii, IV, V, vi and vii°. Capital numerals are major chords, small ones minor.", "In G that's G, Am, Bm, C, D, Em and F♯dim. Most songs use I, IV, V and vi. Turn on numbers in Settings (Chord names or numbers) to see your songs this way: it shows how many songs share the same shape."], akLessonVisPlay("I – IV – V – I in C", [[[48, 52, 55], 2], [[48, 53, 57], 2], [[47, 50, 55], 2], [[48, 52, 55], 2]], 80, "keys")],
+  ["progressions", 2, "Harmony", "Progressions you'll meet everywhere", ["I – V – vi – IV is in hundreds of pop songs. ii – V – I is the heart of jazz. The 12-bar blues is I for four bars, IV for two, I for two, then V, IV, I, V.", "When you learn a new song, write its progression in numbers. Next time you'll recognise it, and you can play it in any key straight away."], akLessonVisPlay("I – V – vi – IV in C", [[[48, 52, 55], 2], [[43, 50, 55], 2], [[45, 52, 57], 2], [[41, 48, 53], 2]], 80, "keys")],
+  ["capo", 2, "Harmony", "Keys and the capo", ["A capo raises every open string by the same amount, so the same shapes sound higher. Capo 2 with G shapes sounds in A.", "Use it to fit a singer's range without learning new shapes. In the app, the capo shows in the song list and info bar, and “Sounding key” shows the real chords for other players."], null],
+  ["relminor", 2, "Harmony", "Minor keys and the relative minor", ["Every major key has a relative minor that uses the same notes, starting from the 6th: A minor for C, E minor for G.", "That's why a minor pentatonic box works over a major song when you start it three frets lower. If a song keeps coming home to the vi chord, it's probably in the minor key."], akLessonVisScale(9, [0, 2, 3, 5, 7, 8, 10])],
+  ["pent", 2, "Soloing", "The pentatonic box", ["The minor pentatonic has five notes: 1, ♭3, 4, 5, ♭7. Box one sits under your hand at one place on the neck, and every note in it works over the whole song in that key.", "Start on the root (the accent-colored dots), go up and down slowly with the metronome, then play short bits of it with gaps between them. Gaps make it sound like talking."], akLessonVisScale(9, [0, 3, 5, 7, 10])],
+  ["targets", 2, "Soloing", "Aiming for chord tones", ["Any scale note is safe, but the notes of the chord that's playing right now sound strongest, especially at the end of a phrase.", "In the Solo scales window, the notes of the current chord are lit up as you scroll. Try ending each phrase on one of them."], null],
+  ["techniques", 2, "Soloing", "Bends, slides and hammer-ons", ["A bend pushes the string to raise the pitch: aim for the next scale note up (usually two frets' worth). A slide moves one finger along the string while it rings. A hammer-on sounds a note by tapping a finger down, a pull-off by flicking it off.", "These turn notes into a voice. In tab, b means bend, / or \\ slide, h hammer-on, p pull-off."], null],
+  ["phrasing", 2, "Soloing", "Phrasing: call and response", ["Play a short idea (the call), leave a gap, then play an answer that starts the same and ends differently. Repeating and changing a little is what makes a solo memorable.", "Sing your phrase first, then find it on the neck. If you can sing it, it will sound like music."], null],
+  ["modes", 3, "Advanced", "Modes in plain words", ["A mode is a major scale started from another note, heard against that note as home. Dorian is minor with a bright 6th, Mixolydian is major with a ♭7, Lydian is major with a ♯4.", "Pick the mode from the chords: a minor song with a major IV chord wants Dorian; a major song with a ♭VII chord wants Mixolydian. The Solo scales window does this for you."], akLessonVisScale(2, [0, 2, 3, 5, 7, 9, 10])],
+  ["sevenths", 3, "Advanced", "Seventh chords and extensions", ["Add the 7th to a triad and you get maj7 (dreamy), 7 (bluesy, wants to move) or m7 (smooth). Keep stacking 3rds for 9, 11 and 13.", "On guitar you can leave out the 5th and even the root of big chords: the 3rd and 7th carry the sound. Turn the level to Advanced to see them all in the chord library."], akLessonVisChord("Cmaj7")],
+  ["secdom", 3, "Advanced", "Secondary dominants", ["A major or 7 chord that leads to a chord other than I is a secondary dominant: in C, E7 pulls to Am (V of vi), and D7 pulls to G (V of V).", "They add a lift right before the chord they point to. Try putting one in front of a chord in one of your songs."], null],
+  ["borrowed", 3, "Advanced", "Borrowed chords", ["Songs often borrow from the parallel minor: ♭VII (B♭ in C), iv (Fm in C) and ♭VI (A♭ in C). They darken a major song for a moment.", "The iv minor right before I is a classic ending. In numbers mode these show with a ♭ so you can spot them."], null],
+  ["caged", 3, "Advanced", "The CAGED system", ["The open chord shapes C, A, G, E and D can be moved up the neck with a barre, and they link together to cover all 12 frets in that order.", "Each shape has a scale position around it. In Learn, Scales, the CAGED view shows the five positions for any key."], null],
+  ["voicelead", 3, "Advanced", "Voice leading", ["Move from chord to chord with the smallest steps: keep common notes, and move the others by a fret or two. It sounds smooth and is easier to play.", "On piano, pick the inversion of each chord that's closest to the last one. The chord diagrams show every inversion."], null]
+];
+var AK_LESSONS2 = AK_LESSONS.map(function (r) { return { id: r[0], lv: r[1], ch: r[2], t: r[3], body: r[4], vis: r[5] }; });
+function akLessonsCfg() { var c = settings().lessons = settings().lessons || {}; c.done = c.done || {}; return c; }
+function akLessonsView(box) {
+  var c = akLessonsCfg(), lv = akLevelN(), open = S.akLesson;
+  box.textContent = "";
+  box.appendChild(akLevelChips(function () { akLessonsView(box); }));
+  if (open) {
+    var L = AK_LESSONS2.filter(function (x) { return x.id === open; })[0]; if (!L) { S.akLesson = null; akLessonsView(box); return; }
+    var i = AK_LESSONS2.indexOf(L), prev = AK_LESSONS2[i - 1], next = AK_LESSONS2[i + 1];
+    var card = h("div", { class: "card aklesson" }, h("div", { class: "muted" }, L.ch + " · " + AK_LEVELS[L.lv - 1][1]), h("h2", { style: "margin:4px 0 8px" }, L.t));
+    L.body.forEach(function (p) { card.appendChild(h("p", null, p)); });
+    if (L.vis) { try { card.appendChild(h("div", { class: "akles-vis" }, L.vis())); } catch (e) {} }
+    card.appendChild(h("div", { class: "row" },
+      h("button", { onClick: function () { S.akLesson = null; akLessonsView(box); } }, "← All lessons"),
+      prev ? h("button", { onClick: function () { S.akLesson = prev.id; akLessonsView(box); } }, "‹ Back") : null,
+      h("button", { class: c.done[L.id] ? "" : "primary", onClick: function () { if (c.done[L.id]) delete c.done[L.id]; else c.done[L.id] = Date.now(); save(); if (!c.done[L.id] || !next) akLessonsView(box); else { S.akLesson = next.id; akLessonsView(box); } } }, c.done[L.id] ? "✓ Learned (undo)" : "Mark learned" + (next ? " and go on" : "")),
+      next ? h("button", { onClick: function () { S.akLesson = next.id; akLessonsView(box); } }, "Next ›") : null));
+    box.appendChild(card); return;
+  }
+  var chapters = []; AK_LESSONS2.forEach(function (L) { if (chapters.indexOf(L.ch) < 0) chapters.push(L.ch); });
+  var all = AK_LESSONS2.filter(function (L) { return L.lv <= lv; }), done = all.filter(function (L) { return c.done[L.id]; }).length;
+  box.appendChild(h("div", { class: "akprog-bar", "aria-label": done + " of " + all.length + " lessons learned" }, h("i", { style: "width:" + (all.length ? Math.round(done * 100 / all.length) : 0) + "%" }), h("span", null, done + " of " + all.length + " learned")));
+  chapters.forEach(function (ch) {
+    var ls = AK_LESSONS2.filter(function (L) { return L.ch === ch && L.lv <= lv; }); if (!ls.length) return;
+    box.appendChild(h("h3", { class: "cph" }, ch));
+    ls.forEach(function (L) { box.appendChild(h("button", { class: "aklesrow", onClick: function () { S.akLesson = L.id; akLessonsView(box); } }, h("span", { class: "akles-ck" }, c.done[L.id] ? "✓" : "○"), h("span", { class: "grow" }, L.t))); });
+  });
+}
+/* tip cards that pop up the first time you meet something */
+var AK_TIP_CARDS = {
+  degrees: ["Numbers instead of names", "I, IV and V are the chords built on the 1st, 4th and 5th notes of the key. Songs that look different often share the same numbers.", "diatonic"],
+  solo: ["Solo scales", "Every lit note fits the song. The colored ones are the root, 3rd and 5th; the ringed ones belong to the chord playing now.", "targets"],
+  trainer: ["Learning the neck", "Five minutes a day beats an hour once a week. Notes you miss come back more often until they stick.", "notes"],
+  licks: ["Licks", "Learn one lick slowly with the loop on, then change one thing about it: the rhythm, the last note, or the key.", "phrasing"],
+  capo: ["Capo", "A capo moves the same shapes higher. The app can show the real (sounding) chords for other players.", "capo"]
+};
+function akLearnTip(id) {
+  var t = AK_TIP_CARDS[id], c = settings().learnTips = settings().learnTips || {}; if (!t || c[id] || c.off || !akModeOn("learn")) return;
+  c[id] = 1; save();
+  var card = h("div", { class: "aktipcard", role: "status" }, h("b", null, "💡 " + t[0]), h("p", null, t[1]),
+    h("div", { class: "row", style: "margin:0" }, h("button", { class: "sm", onClick: function () { card.remove(); S.akLesson = t[2]; go("learn", { learnTab: "lessons" }); } }, "Read the lesson"), h("button", { class: "sm", onClick: function () { card.remove(); } }, "Got it"), h("button", { class: "sm", onClick: function () { c.off = true; save(); card.remove(); } }, "No more tips")));
+  document.querySelectorAll(".aktipcard").forEach(function (x) { x.remove(); });
+  document.body.appendChild(card);
+  var view = S.view + ":" + (S.learnTab || ""), born = Date.now(), iv = setInterval(function () { if (!card.isConnected || S.view + ":" + (S.learnTab || "") !== view || Date.now() - born > 15000) { clearInterval(iv); card.remove(); } }, 500);
+}
+
+/* ---------------------------------------------------------------- 2. vocal warm-ups */
+var AK_VOICES = [["bass", "Bass", 40, 62], ["baritone", "Baritone", 43, 67], ["tenor", "Tenor", 48, 72], ["alto", "Alto", 53, 74], ["mezzo", "Mezzo-soprano", 57, 79], ["soprano", "Soprano", 60, 83]];
+/* [id, name, level, how, pattern (semitones from the start note, with beats), syllable] */
+var AK_WARMUPS = [
+  ["hum", "Humming five notes", 1, "Hum with lips closed and teeth apart. Feel the buzz on your lips and nose.", [[0, 1], [2, 1], [4, 1], [5, 1], [7, 1], [5, 1], [4, 1], [2, 1], [0, 2]], "mm"],
+  ["trill", "Lip trill", 1, "Blow through loose lips so they flutter (like a motorboat) while you sing the notes. Keeps the voice light and the breath even.", [[0, 1], [2, 1], [4, 1], [5, 1], [7, 1], [5, 1], [4, 1], [2, 1], [0, 2]], "brr"],
+  ["siren", "Sirens", 1, "Slide smoothly up and back down on “oo”, like a siren. Don't push at the top; let it get light.", [[0, 2], [12, 2], [0, 2]], "oo"],
+  ["mum", "Mum-mum", 1, "Short “mum” on each note, then a long one. Keep the jaw loose.", [[0, 1], [2, 1], [4, 1], [2, 1], [0, 2]], "mum"],
+  ["arp", "Arpeggio 1-3-5-8", 2, "Sing “ah” up the chord and back down. Open the mouth more as you go higher, and keep the sound the same color.", [[0, 1], [4, 1], [7, 1], [12, 1], [7, 1], [4, 1], [0, 2]], "ah"],
+  ["minor", "Minor arpeggio", 2, "Same as the major one, on “oh”. Listen for the darker 3rd.", [[0, 1], [3, 1], [7, 1], [12, 1], [7, 1], [3, 1], [0, 2]], "oh"],
+  ["staccato", "Staccato ha", 2, "Short, bouncy “ha”s from the belly, not the throat. Your stomach should pop out on each one.", [[0, 0.5], [4, 0.5], [7, 0.5], [12, 0.5], [7, 0.5], [4, 0.5], [0, 1]], "ha"],
+  ["fifth", "Nay on fifths", 2, "Bright, twangy “nay” jumping a fifth. Good for belting songs; keep it easy.", [[0, 1], [7, 1], [0, 1], [7, 1], [0, 2]], "nay"],
+  ["octave", "Octave leaps", 3, "Jump to the octave on “ee” and land softly. Think of the top note as lighter, not harder.", [[0, 1], [12, 2], [0, 2]], "ee"],
+  ["nine", "Nine-note scale", 3, "Up a scale and a bit past the octave and back, on “ah”, legato. Takes good breath: breathe low before you start.", [[0, 0.5], [2, 0.5], [4, 0.5], [5, 0.5], [7, 0.5], [9, 0.5], [11, 0.5], [12, 0.5], [14, 1], [12, 0.5], [11, 0.5], [9, 0.5], [7, 0.5], [5, 0.5], [4, 0.5], [2, 0.5], [0, 1.5]], "ah"],
+  ["messa", "Swell (messa di voce)", 3, "One long note: start soft, grow louder, then fade back to soft without the pitch moving.", [[0, 6]], "ah"]
+];
+var AK_ROUTINES = [["quick", "Quick 5 minutes", ["hum", "trill", "siren", "arp"]], ["preshow", "Pre-show 10 minutes", ["hum", "trill", "siren", "mum", "arp", "staccato", "fifth"]], ["full", "Full 20 minutes", ["hum", "trill", "siren", "mum", "arp", "minor", "staccato", "fifth", "octave", "nine", "messa"]], ["cool", "Cool-down after a show", ["hum", "siren", "trill"]]];
+function akWarmCfg() { var c = settings().warmups = settings().warmups || {}; if (!c.voice) c.voice = "baritone"; if (!c.bpm) c.bpm = 90; return c; }
+/* plays one exercise rising by half steps through the range; returns a stopper */
+function akWarmRun(ex, onStep, onEnd) {
+  var c = akWarmCfg(), v = AK_VOICES.filter(function (x) { return x[0] === c.voice; })[0] || AK_VOICES[1], top = Math.max.apply(null, ex[4].map(function (n) { return n[0]; }));
+  var start = v[2] + (c.shift || 0), stop = v[3] - top, cur = start, dir = 1, timer = 0, alive = true, beat = 60 / c.bpm;
+  function rep() {
+    if (!alive) return;
+    if (cur > stop) { dir = -1; cur = stop - 1; }
+    if (dir < 0 && cur < start) { alive = false; onEnd && onEnd(); return; }
+    onStep && onStep(cur);
+    akTone(cur, beat * 0.9, 0.02, "keys", 0.12); akTone(cur + 4, beat * 0.9, 0.02, "keys", 0.08); akTone(cur + 7, beat * 0.9, 0.02, "keys", 0.08);
+    var len = akPlaySeq(ex[4].map(function (n) { return [cur + n[0], n[1]]; }), c.bpm, "voice", beat * 1.2);
+    cur += dir; timer = setTimeout(rep, (len + beat * 0.6) * 1000);
+  }
+  rep();
+  return function () { alive = false; clearTimeout(timer); };
+}
+function akWarmupsView(box) {
+  var c = akWarmCfg(), lv = akLevelN(), stopper = null;
+  function stopAll() { if (stopper) stopper(); stopper = null; }
+  box.textContent = "";
+  box.appendChild(akLevelChips(function () { stopAll(); akWarmupsView(box); }));
+  box.appendChild(h("div", { class: "row" },
+    h("label", { class: "fld grow" }, "Voice", h("select", { onChange: function () { c.voice = this.value; save(); } }, AK_VOICES.map(function (v) { return h("option", { value: v[0], selected: c.voice === v[0] ? "" : null }, v[1] + " (" + akNoteOct(v[2]) + "–" + akNoteOct(v[3]) + ")"); }))),
+    h("label", { class: "fld grow" }, "Start", h("select", { onChange: function () { c.shift = +this.value; save(); } }, [-3, -2, -1, 0, 1, 2, 3].map(function (n) { return h("option", { value: n, selected: (c.shift || 0) === n ? "" : null }, n ? (n > 0 ? "+" : "") + n + " half steps" : "Normal"); }))),
+    h("label", { class: "fld grow" }, "Tempo", h("select", { onChange: function () { c.bpm = +this.value; save(); } }, [60, 75, 90, 105, 120].map(function (n) { return h("option", { value: n, selected: c.bpm === n ? "" : null }, n + " bpm"); })))));
+  var now = h("div", { class: "akwarm-now", role: "status" }, "Pick an exercise or a routine. A chord sounds first, then the notes to sing; each round moves up a half step and comes back down.");
+  box.appendChild(now);
+  box.appendChild(h("h3", { class: "cph" }, "Routines"));
+  box.appendChild(h("div", { class: "chips" }, AK_ROUTINES.map(function (r) { return h("button", { class: "chip", onClick: function () {
+    stopAll(); var list = r[2].map(function (id) { return AK_WARMUPS.filter(function (x) { return x[0] === id; })[0]; }).filter(function (x) { return x && x[2] <= Math.max(lv, 2); }), i = 0, t0 = Date.now();
+    function nextEx() { if (i >= list.length) { now.textContent = "✓ " + r[1] + " done in " + fmtTime(Math.round((Date.now() - t0) / 1000)) + "."; akPracticeLog().push({ sid: "", at: Date.now(), secs: Math.round((Date.now() - t0) / 1000), kind: "warmup" }); save(); stopper = null; return; }
+      var ex = list[i++]; stopper = akWarmRun(ex, function (m) { now.textContent = r[1] + " · " + i + "/" + list.length + ": " + ex[1] + " on “" + ex[5] + "” from " + akNoteOct(m) + ". " + ex[3]; }, nextEx); }
+    nextEx();
+  } }, "▶ " + r[1]); }).concat([h("button", { class: "chip", onClick: function () { stopAll(); now.textContent = "Stopped."; } }, "■ Stop")])));
+  box.appendChild(h("h3", { class: "cph" }, "Exercises"));
+  AK_WARMUPS.forEach(function (ex) {
+    if (ex[2] > lv) return;
+    box.appendChild(h("div", { class: "akwarm" }, h("div", { class: "grow" }, h("b", null, ex[1]), h("span", { class: "muted" }, " · " + AK_LEVELS[ex[2] - 1][1]), h("div", { class: "muted" }, ex[3])),
+      h("button", { onClick: function () { stopAll(); stopper = akWarmRun(ex, function (m) { now.textContent = ex[1] + " on “" + ex[5] + "” from " + akNoteOct(m) + "."; }, function () { now.textContent = "✓ " + ex[1] + " done."; stopper = null; }); } }, "▶")));
+  });
+  box.akStop = stopAll;
+}
+
+/* ---------------------------------------------------------------- 3. licks and riffs */
+/* written for standard guitar tuning in the key of A; notes are [string (0 = low E), fret, beats, technique] or [[s, f], [s, f]] for two at once */
+var AK_LICKS = [
+  ["walkdown", "Box one walk-down", "blues", 1, "minor", [[5, 8, 0.5], [5, 5, 0.5], [4, 8, 0.5], [4, 5, 0.5], [3, 7, 0.5], [3, 5, 1.5]]],
+  ["bendrel", "Bend and release", "rock", 1, "minor", [[3, 7, 1, "b9"], [4, 5, 0.5], [3, 7, 0.5], [3, 5, 2]]],
+  ["minarp", "Minor arpeggio", "pop", 1, "minor", [[1, 0, 0.5], [2, 2, 0.5], [3, 2, 0.5], [4, 1, 0.5], [5, 0, 1], [4, 1, 0.5], [3, 2, 0.5], [2, 2, 1]]],
+  ["folkhammer", "Folk hammer-ons", "folk", 1, "major", [[1, 0, 0.5], [1, 2, 0.5, "h"], [2, 0, 0.5], [2, 2, 0.5, "h"], [3, 1, 0.5], [3, 2, 0.5, "h"], [2, 2, 1]]],
+  ["slide5", "Slide into the 5th", "blues", 1, "minor", [[2, 5, 0.5], [2, 7, 1, "/"], [1, 7, 0.5], [2, 5, 0.5], [1, 5, 1.5]]],
+  ["doublestop", "Double-stop climb", "rock", 2, "minor", [[[3, 5], [4, 5]], [[3, 7], [4, 8]], [[3, 9], [4, 10]], [[3, 7], [4, 8]]].map(function (d) { return [d, 1]; })],
+  ["bluenote", "Blue note slide", "blues", 2, "minor", [[1, 5, 0.5], [1, 6, 0.5, "h"], [1, 7, 0.5, "h"], [2, 5, 0.5], [2, 7, 1], [1, 7, 1]]],
+  ["countryrun", "Major pentatonic run", "country", 2, "major", [[1, 2, 0.5], [1, 4, 0.5], [2, 2, 0.5], [2, 4, 0.5], [3, 2, 0.5], [3, 4, 0.5], [4, 2, 0.5], [4, 5, 1.5]]],
+  ["funk16", "Funky pentatonic 16ths", "funk", 2, "minor", [[1, 7, 0.25], [2, 5, 0.25], [2, 7, 0.5], [null, 0.25], [1, 7, 0.25], [2, 5, 0.5], [2, 7, 0.25], [2, 5, 0.25], [1, 7, 1]]],
+  ["gallop", "Gallop riff", "metal", 2, "minor", [[1, 0, 0.5], [1, 0, 0.25], [1, 0, 0.25], [1, 3, 0.5], [1, 0, 0.25], [1, 0, 0.25], [1, 1, 0.5], [1, 0, 0.5], [1, 0, 1]]],
+  ["trill", "Hammer-pull trill", "rock", 2, "minor", [[4, 5, 0.25], [4, 8, 0.25, "h"], [4, 5, 0.25, "p"], [4, 8, 0.25, "h"], [4, 5, 0.25, "p"], [4, 8, 0.25, "h"], [4, 5, 0.5, "p"], [3, 7, 1.5]]],
+  ["majarp", "Major arpeggio", "pop", 2, "major", [[1, 0, 0.5], [2, 2, 0.5], [3, 2, 0.5], [4, 2, 0.5], [5, 0, 1], [4, 2, 0.5], [3, 2, 0.5], [2, 2, 1]]],
+  ["chicken", "Country double-pick", "country", 3, "major", [[4, 5, 0.5], [3, 6, 0.5], [3, 4, 0.5], [2, 7, 0.5], [2, 4, 0.5], [1, 7, 0.5], [2, 7, 1]]],
+  ["enclose", "Jazz enclosure", "jazz", 3, "major", [[3, 7, 0.5], [3, 5, 0.5], [3, 6, 1], [4, 5, 0.5], [4, 7, 0.5], [4, 9, 1]]],
+  ["seq3", "Pentatonic in threes", "rock", 3, "minor", [[0, 5, 0.33], [0, 8, 0.33], [1, 5, 0.34], [0, 8, 0.33], [1, 5, 0.33], [1, 7, 0.34], [1, 5, 0.33], [1, 7, 0.33], [2, 5, 0.34], [1, 7, 0.33], [2, 5, 0.33], [2, 7, 1.34]]],
+  ["turnaround", "Blues turnaround", "blues", 3, "minor", [[[3, 8], [5, 5]], [[3, 7], [5, 5]], [[3, 6], [5, 5]], [[3, 5], [5, 5]]].map(function (d) { return [d, 1]; }).concat([[[1, 7], 2]])]
+];
+var AK_LICKS2 = AK_LICKS.map(function (r) { return { id: r[0], n: r[1], style: r[2], lv: r[3], type: r[4], notes: r[5] }; });
+var AK_STD = [40, 45, 50, 55, 59, 64];
+/* a lick's notes for a key (root pc) and the current strings: [{ cells: [[s, f]], midis, beats, tech }] */
+function akLickFor(L, root) {
+  var notes = akShapeNotes(settings().instrument), shift = akMod(root - 9); if (shift > 6) shift -= 12;
+  var events = L.notes.map(function (n) {
+    var pairs = Array.isArray(n[0]) ? n[0] : n[0] == null ? [] : [[n[0], n[1]]], beats = Array.isArray(n[0]) ? n[1] : n[2], tech = Array.isArray(n[0]) ? "" : n[3] || "";
+    return { pitches: pairs.map(function (p) { return AK_STD[p[0]] + p[1] + shift; }), strs: pairs.map(function (p) { return p[0]; }), beats: beats, tech: tech };
+  });
+  /* put every pitch on the current strings: same string when it fits, else the nearest that does */
+  var all = []; events.forEach(function (e) { e.pitches.forEach(function (p) { all.push(p); }); });
+  var lowest = Math.min.apply(null, all.length ? all : [notes[0]]), oct = 0;
+  while (lowest + oct < notes[0]) oct += 12;
+  var prevF = 5;
+  events.forEach(function (e) {
+    e.cells = e.pitches.map(function (p, i) {
+      p += oct; var want = Math.min(notes.length - 1, Math.round(e.strs[i] * (notes.length - 1) / 5)), best = null, bd = 1e9;
+      notes.forEach(function (open, s) { var f = p - open; if (f < 0 || f > 20) return; var d = Math.abs(s - want) * 3 + Math.abs(f - prevF) * 0.7; if (d < bd) { bd = d; best = [s, f]; } });
+      if (best) prevF = best[1];
+      return best;
+    }).filter(Boolean);
+    e.midis = e.pitches.map(function (p) { return p + oct; });
+  });
+  return events;
+}
+function akLickTab(events, notes) {
+  var rows = notes.map(function () { return ""; });
+  events.forEach(function (e) {
+    var w = 1 + Math.max(1, Math.round(e.beats * 2)) + (e.tech ? 2 : 0), cells = {};
+    e.cells.forEach(function (c) { cells[c[0]] = String(c[1]) + (e.tech ? e.tech.replace(/^b(\d+)$/, "b") : ""); });
+    rows = rows.map(function (r, s) { var t = cells[s] || ""; var seg = t + new Array(Math.max(1, w + 2 - t.length)).join("-"); return r + seg; });
+  });
+  var names = notes.map(function (n) { return akNoteName(n, true); });
+  return rows.map(function (r, s) { return (names[s] + " ").slice(0, 2) + "|-" + r + "|"; }).reverse().join("\n");
+}
+function akLicksCfg() { var c = settings().licks = settings().licks || {}; c.done = c.done || {}; c.plays = c.plays || {}; return c; }
+function akLicksView(box) {
+  var st = S.akLk = S.akLk || { style: "", root: 9, bpm: 80, open: "", loop: false };
+  var c = akLicksCfg(), lv = akLevelN(), notes = akShapeNotes(settings().instrument), loopT = 0;
+  function stopLoop() { clearTimeout(loopT); loopT = 0; }
+  function draw() {
+    stopLoop(); box.textContent = "";
+    box.appendChild(akLevelChips(draw));
+    box.appendChild(h("div", { class: "chips" }, [h("button", { class: "chip" + (!st.style ? " on" : ""), onClick: function () { st.style = ""; draw(); } }, "All styles")].concat(AK_STYLES.filter(function (x) { return AK_LICKS2.some(function (L) { return L.style === x[0]; }); }).map(function (x) { return h("button", { class: "chip" + (st.style === x[0] ? " on" : ""), onClick: function () { st.style = x[0]; draw(); } }, x[1]); }))));
+    box.appendChild(h("div", { class: "row", style: "align-items:center" }, h("span", null, "Key"), akRootChips(st.root, function (pc) { st.root = pc; draw(); })));
+    var out = h("output", null, st.bpm + " bpm");
+    box.appendChild(h("label", { class: "fld" }, "Tempo", h("div", { class: "range" }, h("input", { type: "range", min: 40, max: 160, step: 5, value: st.bpm, onInput: function () { st.bpm = +this.value; out.textContent = st.bpm + " bpm"; } }), out)));
+    AK_LICKS2.forEach(function (L) {
+      if (L.lv > lv || (st.style && L.style !== st.style)) return;
+      var isOpen = st.open === L.id, row = h("div", { class: "card aklick" + (isOpen ? " open" : "") });
+      row.appendChild(h("button", { class: "aklick-h", onClick: function () { st.open = isOpen ? "" : L.id; draw(); } }, h("b", null, (c.done[L.id] ? "✓ " : "") + L.n), h("span", { class: "muted" }, " · " + L.style + " · " + AK_LEVELS[L.lv - 1][1] + (c.plays[L.id] ? " · played " + c.plays[L.id] + "×" : ""))));
+      if (isOpen) {
+        var ev = akLickFor(L, st.root), cells = [];
+        ev.forEach(function (e, i) { e.cells.forEach(function (cc) { cells.push([cc[0], cc[1], i === 0 ? "root" : "plain", String(i + 1)]); }); });
+        var fs = cells.map(function (x) { return x[1]; }), from = Math.max(0, Math.min.apply(null, fs) - 1), to = Math.max(from + 5, Math.max.apply(null, fs) + 1);
+        row.appendChild(h("pre", { class: "tab aklick-tab" }, akLickTab(ev, notes)));
+        row.appendChild(h("div", { class: "akfbwrap" }, akFb2(notes, cells, { from: from, frets: to })));
+        function play() { var secs = akPlaySeq(ev.map(function (e) { return [e.midis.length ? e.midis.map(function (m) { return m + (tuningOffset() || 0); }) : null, e.beats]; }), st.bpm, "pluck"); c.plays[L.id] = (c.plays[L.id] || 0) + 1; save(); if (st.loop) loopT = setTimeout(play, secs * 1000 + 300); }
+        row.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { stopLoop(); play(); } }, "▶ Play"),
+          h("button", { class: st.loop ? "on" : "", "aria-pressed": st.loop ? "true" : "false", onClick: function () { st.loop = !st.loop; if (!st.loop) stopLoop(); this.classList.toggle("on", st.loop); this.setAttribute("aria-pressed", st.loop ? "true" : "false"); if (st.loop) { stopLoop(); play(); } } }, "⟲ Loop"),
+          h("button", { onClick: function () { stopLoop(); } }, "■"),
+          h("button", { onClick: function () { if (c.done[L.id]) delete c.done[L.id]; else c.done[L.id] = Date.now(); save(); draw(); } }, c.done[L.id] ? "✓ Learned" : "Mark learned")));
+        row.appendChild(h("p", { class: "hint" }, "In " + akRootName(st.root) + (L.type === "major" ? " major" : " minor") + ", on your strings" + (akTuning(settings().instrument).name ? " (" + akTuning(settings().instrument).name + ")" : "") + ". Numbers on the neck are the order. b = bend, h = hammer-on, p = pull-off, / = slide."));
+      }
+      box.appendChild(row);
+    });
+  }
+  draw(); box.akStop = stopLoop;
+}
+
+/* ---------------------------------------------------------------- 4. guided practice plans */
+var AK_PLAN_GOALS = [
+  ["stage", "Stage-ready songs", ["warm", "chords", "songs", "songs2"]],
+  ["neck", "Know the fretboard", ["warm", "trainer", "scale", "trainer2"]],
+  ["solo", "Better solos", ["warm", "scale", "lick", "improv"]],
+  ["time", "Rhythm and timing", ["warm", "strum", "chords", "songs"]],
+  ["sing", "Sing while you play", ["vocal", "strum", "songs", "songs2"]],
+  ["keys", "Piano basics", ["kwarm", "ktrainer", "kchords", "songs"]]];
+var AK_PLAN_STEPS = {
+  warm: ["Finger warm-up", "Play 1-2-3-4 on each string, one finger per fret, up and down the neck. Slow and even, every note clean.", 3, 60],
+  kwarm: ["Finger warm-up", "Play C D E F G and back with each hand, fingers 1 to 5, slow and even.", 3, 60],
+  chords: ["Chord changes", "Pick two chords that give you trouble and switch on every beat. Count your clean changes.", 4, 70],
+  kchords: ["Chord inversions", "Play C, F and G in root position, then find the closest inversion of each one.", 5, 60],
+  strum: ["Strumming in time", "Down, down-up, up-down-up on one chord, then two. Stay with the click; accent beat 2 and 4.", 4, 80],
+  songs: ["Song practice", "Play a song from your Needs work list from start to finish without stopping.", 8, 0],
+  songs2: ["Song run-through", "Play two songs as if on stage: no stopping, talk between them.", 8, 0],
+  trainer: ["Find the notes", "Note trainer, “Find the note”, at your level.", 4, 0, "trainer"],
+  trainer2: ["Notes by ear", "Note trainer, “By ear”.", 3, 0, "trainer"],
+  ktrainer: ["Keyboard notes", "Note trainer on the keyboard, “Find the note”.", 5, 0, "trainer"],
+  scale: ["Scale in a position", "Play the minor pentatonic box up and down with the click, then in a different key.", 5, 70, "scales"],
+  lick: ["Lick of the day", "Learn one lick slowly with the loop, then speed it up.", 5, 0, "licks"],
+  improv: ["Improvise", "Solo over a song with the Solo scales window open. End phrases on the lit chord tones.", 6, 0],
+  vocal: ["Voice warm-up", "The quick warm-up routine.", 5, 0, "warmups"]
+};
+function akPlanCfg() { var c = settings().plan = settings().plan || {}; c.days = c.days || {}; c.bpm = c.bpm || {}; return c; }
+function akDayKey(t) { var d = new Date(t || Date.now()); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function akPlanSteps(goal) {
+  var g = AK_PLAN_GOALS.filter(function (x) { return x[0] === goal; })[0] || AK_PLAN_GOALS[0], lv = akLevelN(), c = akPlanCfg();
+  return g[2].map(function (k) { var s = AK_PLAN_STEPS[k]; var mins = Math.round(s[2] * (lv === 1 ? 0.8 : lv === 3 ? 1.4 : 1)); return { k: k, t: s[0], how: s[1], mins: mins, bpm: s[3] ? (c.bpm[k] || s[3] + (lv - 1) * 15) : 0, tab: s[4] }; });
+}
+function akPlansView(box) {
+  var c = akPlanCfg();
+  box.textContent = "";
+  box.appendChild(akLevelChips(function () { akPlansView(box); }));
+  box.appendChild(h("div", { class: "chips" }, AK_PLAN_GOALS.map(function (g) { return h("button", { class: "chip" + ((c.goal || "stage") === g[0] ? " on" : ""), onClick: function () { c.goal = g[0]; save(); akPlansView(box); } }, g[1]); })));
+  var steps = akPlanSteps(c.goal || "stage"), total = steps.reduce(function (a, s) { return a + s.mins; }, 0);
+  /* this week */
+  var wk = h("div", { class: "akweek" }), streak = 0;
+  for (var i = 6; i >= 0; i--) { var k = akDayKey(Date.now() - i * 86400000); wk.appendChild(h("span", { class: "akday" + (c.days[k] ? " on" : ""), title: k }, ["S", "M", "T", "W", "T", "F", "S"][new Date(Date.now() - i * 86400000).getDay()])); }
+  for (var j = 0; j < 365; j++) { if (c.days[akDayKey(Date.now() - j * 86400000)]) streak++; else if (j > 0) break; }
+  box.appendChild(h("div", { class: "row", style: "align-items:center" }, wk, h("span", { class: "muted" }, streak ? streak + (streak === 1 ? " day" : " days") + " in a row" : "Start your streak today")));
+  box.appendChild(h("p", { class: "hint" }, "Today's session: " + total + " minutes. Each step has a timer" + (steps.some(function (s) { return s.bpm; }) ? " and the metronome" : "") + ". Say how it went and the next session adjusts."));
+  steps.forEach(function (s, i) { box.appendChild(h("div", { class: "akstep" }, h("b", null, (i + 1) + ". " + s.t), h("span", { class: "muted" }, " · " + s.mins + " min" + (s.bpm ? " · " + s.bpm + " bpm" : "")), h("div", { class: "muted" }, s.how))); });
+  box.appendChild(h("button", { class: "primary", onClick: function () { akPlanRun(steps, function () { akPlansView(box); }); } }, "▶ Start today's session"));
+}
+function akPlanRun(steps, done) {
+  var c = akPlanCfg(), i = 0, t0 = 0, iv = 0, body = h("div"), close = null, started = Date.now();
+  function step() {
+    clearInterval(iv); try { akMetStop(); } catch (e) {}
+    body.textContent = "";
+    if (i >= steps.length) {
+      c.days[akDayKey()] = true; akPracticeLog().push({ sid: "", at: Date.now(), secs: Math.round((Date.now() - started) / 1000), kind: "plan" }); save();
+      body.appendChild(h("h2", null, "✓ Session done")); body.appendChild(h("p", null, "Nice work. See you tomorrow."));
+      body.appendChild(h("button", { class: "primary", onClick: function () { closeAllModals(); done && done(); } }, "Close")); return;
+    }
+    var s = steps[i], left = s.mins * 60, timeEl = h("b", { class: "akprac-t" }, fmtTime(left));
+    body.appendChild(h("div", { class: "muted" }, "Step " + (i + 1) + " of " + steps.length));
+    body.appendChild(h("h2", { style: "margin:4px 0" }, s.t)); body.appendChild(h("p", null, s.how)); body.appendChild(timeEl);
+    if (s.bpm) { try { akMetStart({ bpm: s.bpm, sound: true }); } catch (e) {} body.appendChild(h("p", { class: "muted" }, "Metronome at " + s.bpm + " bpm.")); }
+    if (s.tab) body.appendChild(h("button", { onClick: function () { clearInterval(iv); try { akMetStop(); } catch (e) {} closeAllModals(); S.akPlanResume = { steps: steps, i: i }; go("learn", { learnTab: s.tab }); } }, "Open " + s.tab + " (come back with ▶ Resume)"));
+    t0 = Date.now(); iv = setInterval(function () { var l = Math.max(0, left - Math.floor((Date.now() - t0) / 1000)); timeEl.textContent = fmtTime(l); if (!l) { clearInterval(iv); timeEl.textContent = "Time!"; try { akTone(84, 0.3, 0, "keys"); } catch (e) {} } if (!body.isConnected) { clearInterval(iv); try { akMetStop(); } catch (e) {} } }, 500);
+    body.appendChild(h("p", { class: "hint" }, "How did it go?"));
+    body.appendChild(h("div", { class: "row" }, [["Hard", -5], ["OK", 0], ["Easy", 5]].map(function (x) { return h("button", { class: x[1] === 0 ? "primary" : "", onClick: function () { if (s.bpm) c.bpm[s.k] = Math.max(40, Math.min(200, s.bpm + x[1])); save(); i++; step(); } }, x[0]); })));
+  }
+  modal("Practice session", body, [{ label: "Stop", onClick: function () { clearInterval(iv); try { akMetStop(); } catch (e) {} } }], { wide: true });
+  step();
+}
+
+/* ---------------------------------------------------------------- 5. the Learn page */
+var AK_LEARN_TABS = [["lessons", "Lessons"], ["scales", "Scales"], ["chords", "Chords"], ["trainer", "Note trainer"], ["licks", "Licks"], ["warmups", "Warm-ups"], ["plans", "Practice plans"]];
+function viewLearn() {
+  var tab = S.learnTab || "lessons", pane = h("div", { class: "aklearn-pane" });
+  if (S.aklearnStop) { try { S.aklearnStop(); } catch (e) {} S.aklearnStop = null; }
+  var tabs = h("div", { class: "chips aklearn-tabs" }, AK_LEARN_TABS.map(function (t) { return h("button", { class: "chip" + (tab === t[0] ? " on" : ""), "aria-pressed": tab === t[0] ? "true" : "false", onClick: function () { S.learnTab = t[0]; render(); } }, t[1]); }).concat([
+    h("button", { class: "chip", onClick: function () { openChordTools("tuner"); } }, "Tuner"), h("button", { class: "chip", onClick: function () { openChordTools("metro"); } }, "Metronome")]));
+  var resume = S.akPlanResume ? h("div", { class: "card", style: "display:flex;align-items:center;gap:10px" }, h("span", { class: "grow" }, "You're in a practice session."), h("button", { class: "primary", onClick: function () { var r = S.akPlanResume; S.akPlanResume = null; r.steps = r.steps.slice(r.i); akPlanRun(r.steps); } }, "▶ Resume")) : null;
+  if (tab === "lessons") akLessonsView(pane);
+  else if (tab === "scales") akScaleExplorer(pane);
+  else if (tab === "chords") { pane.appendChild(akLevelChips(function () { render(); })); var inner = h("div"); pane.appendChild(inner); akToolLibrary(inner, { redraw: function () { inner.textContent = ""; akToolLibrary(inner, this); } }); }
+  else if (tab === "trainer") { akTrainer(pane); akLearnTip("trainer"); }
+  else if (tab === "licks") { akLicksView(pane); akLearnTip("licks"); }
+  else if (tab === "warmups") akWarmupsView(pane);
+  else if (tab === "plans") akPlansView(pane);
+  S.aklearnStop = function () { if (pane.akStop) pane.akStop(); };
+  return shell("Learn", h("div", { "data-blocks": "learn" }, tabs, resume, pane), {});
+}
+
+/* ---------------------------------------------------------------- 6. hooks */
+TB_ITEMS.push(["soloscales", "Solo scales window (scales for this song)"], ["learn", "Learn page"]);
+TB_SHORT.soloscales = "Scales"; TB_SHORT.learn = "Learn";
+AK_TB_MODES.soloscales = "l"; AK_TB_MODES.learn = "l";
+FAB_ITEMS.push(["soloscales", "Solo scales"]); FAB_OFF.soloscales = 1; FAB_SHORT.soloscales = "Scales";
+AK_IC.soloscales = "M3 6h18 M3 10h18 M3 14h18 M3 18h18 M8 4v16 M14 4v16 M11 8a1.5 1.5 0 1 0 0 .1 M17 12a1.5 1.5 0 1 0 0 .1";
+AK_IC.learn = "M2 9l10-5 10 5-10 5z M6 11v5c3 2 9 2 12 0v-5";
+function akExtraTb12(id, song, root) {
+  if (id === "soloscales") return h("button", { "aria-label": "Solo scales", onClick: function () { akSoloWin(); akLearnTip("solo"); } }, akIcon("soloscales"));
+  if (id === "learn") return h("button", { "aria-label": "Learn", onClick: function () { stopAuto(); go("learn"); } }, akIcon("learn"));
+  if (typeof akExtraTb13 === "function") return akExtraTb13(id, song, root);
+  return null;
+}
+function akExtraFab5(song, root) {
+  var o = { soloscales: function () { return h("button", { class: "fb", "aria-label": "Solo scales", onClick: function () { akSoloWin(); this.blur(); } }, akIcon("soloscales")); } };
+  if (typeof akExtraFab6 === "function") Object.assign(o, akExtraFab6(song, root));
+  return o;
+}
+var akDegCycleBase = akDegCycle;
+akDegCycle = function () { akDegCycleBase(); if (akDegSettings().mode !== "names") akLearnTip("degrees"); };
+function akSettingsExtra6(c) {
+  c.again("songs-and-shows");
+  c.section("Learning", "Skill level, solo scales, tip cards");
+  c.select("Skill level (chord and scale libraries, lessons, trainers)", function () { return akLevel(); }, function (v) { settings().level = v; }, AK_LEVELS);
+  var so = settings().solo = settings().solo || {};
+  c.check("Open the Solo scales window just before a Solo block", function () { return !!so.scalePop; }, function (v) { so.scalePop = v; });
+  var lt = settings().learnTips = settings().learnTips || {};
+  c.check("Show tip cards the first time I meet something", function () { return !lt.off; }, function (v) { lt.off = !v; });
+  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { go("learn"); } }, "Open the Learn page")));
+}
+
+akCss("ak4-learn", [
+  ".akkb .akk rect{stroke:#0008;stroke-width:1}.akkb .akk.w rect{fill:#f4f1ea}.akkb .akk.b rect{fill:#1d1d22}",
+  ".akkb .akk text{fill:#222;pointer-events:none}.akkb .akk.b text{fill:#fff}.akkb .akk.on rect{fill:color-mix(in srgb,var(--accent) 55%,#fff)}.akkb .akk.b.on rect{fill:color-mix(in srgb,var(--accent) 80%,#000)}",
+  ".akkb .akk.root rect{fill:var(--accent)}.akkb .akk.target rect{fill:#E5B800}.akkb .akk.hit rect{fill:#30A46C}.akkb .akk.miss rect{fill:#E5484D}.akkb .akk{cursor:pointer}.akkb .akk-nm{fill:#888}",
+  ".aksolo-pick select{flex:1 1 0;min-width:0;padding:6px 8px}",
+  ".akkbwrap,.akfbwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:8px 0}.akkbwrap svg{min-width:320px;width:100%;max-width:720px;height:auto}.akfbwrap svg{min-width:560px;width:100%;height:auto}",
+  ".akfb2 .akfb-fret{stroke:var(--muted);stroke-width:1.2;opacity:.7}.akfb2 .akfb-fret.oct{stroke-width:3}.akfb2 .akfb-nut{stroke:var(--fg);stroke-width:5}.akfb2 .akfb-str{stroke:var(--fg);opacity:.6}.akfb2 .akfb-str.live{stroke:var(--accent);opacity:1}",
+  ".akfb2 .akfb-num{fill:var(--muted);font-size:13px}.akfb2 .akfb-hit{fill:transparent;cursor:pointer}",
+  ".akfb-dot circle{fill:var(--panel,#222);stroke:var(--chord,#aaa);stroke-width:2}.akfb-dot text{font-size:11px;font-weight:700;fill:var(--fg)}",
+  ".akfb-dot.root circle{fill:var(--accent);stroke:var(--accent)}.akfb-dot.root text{fill:var(--on-accent,#000)}",
+  ".akfb-dot.third circle{fill:#3E9BFF;stroke:#3E9BFF}.akfb-dot.fifth circle{fill:#30A46C;stroke:#30A46C}.akfb-dot.third text,.akfb-dot.fifth text{fill:#fff}",
+  ".akfb-dot.tone circle{stroke:#E5B800;stroke-width:4}.akfb-dot.target circle{fill:#E5B800;stroke:#E5B800}.akfb-dot.target text{fill:#000}.akfb-dot.hit circle{fill:#30A46C;stroke:#30A46C}.akfb-dot.miss circle{fill:#E5484D;stroke:#E5484D}",
+  ".akleg{display:flex;gap:10px;flex-wrap:wrap;font-size:.8rem}.akleg .k::before{content:'';display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle;background:var(--panel);border:2px solid var(--chord)}",
+  ".akleg .k.root::before{background:var(--accent);border-color:var(--accent)}.akleg .k.third::before{background:#3E9BFF;border-color:#3E9BFF}.akleg .k.fifth::before{background:#30A46C;border-color:#30A46C}.akleg .k.tone::before{border:3px solid #E5B800}",
+  ".aklevel{margin:4px 0 8px}.akscx-fam{margin:4px 0}.akscx-fam .chips{margin-top:2px}",
+  ".aktr-q{font-size:1.2rem;font-weight:700;margin:10px 0;min-height:1.6em;display:flex;gap:8px;align-items:center}.aktr-q.ok{color:#30A46C}.aktr-q.bad{color:#E5484D}.aktr-time{font-variant-numeric:tabular-nums;min-width:3.5ch}",
+  ".aktr-names{display:grid;grid-template-columns:repeat(auto-fill,minmax(52px,1fr));gap:6px}",
+  ".aklesson p{line-height:1.5}.akles-vis{margin:10px 0;overflow-x:auto}.aklesrow{display:flex;gap:10px;width:100%;text-align:left;margin:0 0 6px;padding:10px 12px}.akles-ck{color:var(--accent);font-weight:700}",
+  ".akprog-bar{position:relative;height:22px;border-radius:11px;background:color-mix(in srgb,var(--fg) 10%,transparent);overflow:hidden;margin:6px 0}.akprog-bar i{position:absolute;inset:0 auto 0 0;background:var(--accent)}.akprog-bar span{position:relative;padding:0 10px;font-size:.8rem;line-height:22px;font-weight:700}",
+  ".aktipcard{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:90;width:min(92vw,420px);background:var(--panel,var(--bg));border:2px solid var(--accent);border-radius:14px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.5)}",
+  ".aktipcard p{margin:6px 0}.aktipcard button.sm{padding:5px 10px;min-height:0;font-size:.85rem}",
+  ".akwarm{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line,#8883)}.akwarm-now{padding:10px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent) 12%,transparent);margin:8px 0}",
+  ".aklick{padding:8px 12px}.aklick-h{display:block;width:100%;text-align:left;background:none;border:0;padding:4px 0;min-height:0}.aklick-tab{font-size:13px;overflow-x:auto;margin:6px 0}",
+  ".akweek{display:flex;gap:4px}.akday{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:.75rem;border:1px solid var(--line,#8886)}.akday.on{background:var(--accent);color:var(--on-accent,#000);border-color:var(--accent)}",
+  ".akstep{padding:6px 0;border-top:1px solid var(--line,#8883)}.aklearn-tabs{margin-bottom:8px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
