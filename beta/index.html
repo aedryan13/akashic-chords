@@ -7,7 +7,7 @@
 <meta name="ak-edition" content="test">
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#2A1650">
-<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2779,7 +2779,7 @@ function viewSong() {
       h("div", { class: "row" },
         h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word"),
         h("button", { onClick: function () { pushHist(); var r = normalizeChart(lyrArea.value, snapChk.checked); lyrArea.value = r.text; s.lyrics = r.text; if (r.title && !s.title) s.title = r.title; pushHist(); save(); toast("Converted."); } }, "Convert chords-above")),
-      h("div", { class: "row", style: "margin-bottom:0" }, h("button", { onClick: function () { makeChordFrom(chordsFld.querySelector("textarea"), "chords", "chords"); } }, "♪ Make chord"), h("button", { onClick: function () { findChordsFor(s, function () { pushHist(); save(); build(); }); } }, "✨ Find chords"), h("span", { class: "hint", style: "margin:0" }, "Select text that isn't showing as a chord, then tap Make chord.")),
+      h("div", { class: "row", style: "margin-bottom:0" }, h("button", { onClick: function () { makeChordFrom(chordsFld.querySelector("textarea"), "chords", "chords"); } }, "♪ Make chord"), h("span", { class: "hint", style: "margin:0" }, "Select text that isn't showing as a chord, then tap Make chord.")),
       chordsFld,
       versionsCard(s, function (swapped) { pushHist(); save(); if (swapped === true) build(); }),
       fld("Stage note (a short reminder that shows on the playing screen)", "stage", { area: true, rows: 2 }),
@@ -11892,7 +11892,7 @@ function renderPlay() {
   if (f.artist && song.artist) titleBits.push("  " + song.artist);
   var info = [];
   if (f.pos) info.push("Song " + (p.idx + 1) + " of " + p.list.length);
-  if (f.year && (song.year || song.origArtist)) info.push([song.origArtist, song.year].filter(Boolean).join(", "));
+  if (f.year && (song.year || song.origArtist)) { var oa = song.origArtist && normTitle(song.origArtist) !== normTitle(song.artist || "") || !f.artist ? song.origArtist : ""; if (oa || song.year) info.push([oa, song.year].filter(Boolean).join(", ")); }
   ui.info = h("span", { class: "muted" }, ""); 
   var two = Number(s.bottom.rows) === 2;
   var bb = h("div", { class: "pbottom" + (two ? " two" : "") }, h("div", { class: "tt" }, h("div", null, titleBits, info.length ? h("span", { class: "muted" }, (titleBits.length ? "  ·  " : "") + info.join(" · ")) : null), f.next ? nextUpEl(p, song) : null));
@@ -21168,8 +21168,10 @@ function akColorMode(o) {
   AKCM.hl = hl; AKCM.sheet = sheet; AKCM.prev = prev;
   function ours(t) { return t && t.closest && (t.closest(".akcm-sheet") || t.closest(".modal") || t.closest(".menu") || t.closest(".toast")); }
   function block(e) { if (ours(e.target)) return; e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation(); }
-  function tap(e) { if (ours(e.target)) return; block(e); akElcSelect(akElcStart(e.target)); }
-  AKCM.handlers = [["click", tap], ["pointerdown", block], ["pointerup", block], ["mousedown", block], ["touchstart", block], ["submit", block], ["change", block], ["input", block], ["keydown", function (e) { if (e.key === "Escape") { akColorModeEnd(); } }]];
+  /* pick on pointerup: on phones and tablets, blocking touchstart (so nothing scrolls or presses) also stops the browser's click, so a click handler alone never ran there */
+  var lastPick = 0;
+  function tap(e) { if (ours(e.target)) return; block(e); if (e.type === "click" && Date.now() - lastPick < 700) return; lastPick = Date.now(); akElcSelect(akElcStart(e.target)); }
+  AKCM.handlers = [["click", tap], ["pointerdown", block], ["pointerup", tap], ["mousedown", block], ["touchstart", block], ["submit", block], ["change", block], ["input", block], ["keydown", function (e) { if (e.key === "Escape") { akColorModeEnd(); } }]];
   AKCM.handlers.forEach(function (x) { document.addEventListener(x[0], x[1], { capture: true, passive: false }); });
   AKCM.pos = function () { akElcHl(); };
   window.addEventListener("scroll", AKCM.pos, true); window.addEventListener("resize", AKCM.pos);
@@ -21258,6 +21260,16 @@ function akExtraTb18(id, song, root) {
   if (typeof akExtraTb19 === "function") return akExtraTb19(id, song, root);
   return null;
 }
+/* from Settings: go to the screen to color first (coloring Settings itself is one choice) */
+function akColorScreenMenu(btn) {
+  var items = [{ head: "Which screen?" }];
+  [["songs", "Songs"], ["shows", "Shows and set lists"], ["learn", "Learn"], ["write", "Write"], ["import", "Import"], ["settings", "Settings (this screen)"]].forEach(function (x) {
+    if ((x[0] === "learn" || x[0] === "write") && typeof AK_VIEWS === "object" && !AK_VIEWS[x[0]] && typeof viewLearn !== "function") return;
+    items.push({ label: x[1], onClick: function () { if (S.view !== x[0]) go(x[0]); setTimeout(function () { akColorMode({}); }, 250); } });
+  });
+  if (S.play) items.push({ label: "Playing screen", onClick: function () { resumePlay(); setTimeout(function () { akColorMode({}); }, 350); } });
+  menu(btn, items);
+}
 var AK_ELC_VIEWS = { songs: "Songs", shows: "Set lists", show: "Set list", gig: "Show", song: "Song editor", play: "Playing screen", learn: "Learn", write: "Write", settings: "Settings", import: "Import", stats: "Stats", history: "History" };
 function akSettingsExtra11(c) {
   c.again("look");
@@ -21277,7 +21289,7 @@ function akSettingsExtra11(c) {
     list.appendChild(h("button", { class: "danger", onClick: function () { confirmBox("Take every part-of-screen color off?", "Remove all", function () { snap("remove all colors"); settings().elColors = []; save(); akElcApply(); draw(); }); } }, "Remove them all"));
   }
   draw(); c.out.appendChild(list);
-  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akColorMode({}); } }, "🎨 Color this screen")));
+  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akColorScreenMenu(this); } }, "🎨 Color a screen…")));
   if (typeof akSettingsExtra12 === "function") akSettingsExtra12(c);
 }
 
@@ -21321,6 +21333,190 @@ function akArtPicker(t, done) {
   return row;
 }
 akCss("akartcss", ".akartrow{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px}.akarttile{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;border-radius:10px;border:2px solid var(--line);background:transparent;min-width:0}.akarttile.on{border-color:var(--accent)}.akarttile img,.akartnone{width:60px;height:107px;object-fit:cover;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:1.2rem}.akarttile small{font-size:.72rem;max-width:72px;text-align:center;line-height:1.15}");
+
+/* ================= Akashic Chords batch 7, phase 1: bugs and phone layout =================
+   - Shows screen: the Shows / Set lists tabs each take half the width; the header keeps "+ New" and "⋯" (calendar and ✦ move into ⋯)
+   - "+ New" show: pick the set list right away (Personal: "-Current Restaurant Set" first), fill the details from an earlier show
+   - playing screen: the bottom bar is the same height as on the other screens
+   - playing screen on a phone: top buttons placed for the tablet that would overlap are packed into rows (not saved, so the tablet keeps its places);
+     side buttons placed past the screen edge are pulled back in
+   - Settings: Undo, Revert all, Reset look, Open all and Close all go into one ⋯ menu; the test version card is one line
+   (fixed in place: color mode picks on touch screens (ak6_color), the artist shows once on the play screen (play.js), the lower Claude
+   "Find chords" button in the song editor is gone (views_lib.js)) */
+
+/* ---------------------------------------------------------------- a ⋯ menu that gets extra items first */
+function akMenuPlus(btn, extra) {
+  btn.addEventListener("click", function () {
+    var m0 = menu, items = typeof extra === "function" ? extra() : extra;
+    menu = function (a, list) { menu = m0; return m0(a, items.concat([{ sep: true }], list || [])); };
+    setTimeout(function () { menu = m0; }, 0);
+  }, true);
+}
+
+/* ---------------------------------------------------------------- Shows screen header and tabs */
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      var bar = el.querySelector(".topbar"), more = null, moved = [];
+      if (bar) Array.prototype.forEach.call(bar.querySelectorAll("button"), function (b) {
+        var t = (b.textContent || "").trim();
+        if (t === "⋯") more = b;
+        else if (t === "📅" || t === "✦") moved.push(b);
+      });
+      if (more && moved.length) {
+        moved.forEach(function (b) { b.parentNode.removeChild(b); });
+        /* ✦ is already in ⋯ as "Build a set list…" (and the Set list helper chip is right below) */
+        var cal = moved.filter(function (b) { return b.textContent === "📅"; })[0];
+        if (cal) akMenuPlus(more, [{ label: "📅 Next shows from my calendar", onClick: function () { cal.click(); } }]);
+      }
+    } catch (e) {}
+    return el;
+  };
+})();
+akCss("ak8-shows", [
+  ".akshtabs{display:flex;flex-wrap:nowrap;gap:6px}.akshtabs .chip{flex:1 1 0;justify-content:center;text-align:center;min-width:0}",
+  ".topbar .ttl{min-width:0}.topbar .ttl h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- a new show */
+/* the set list a new show starts with: the last one picked, else (Personal) the current restaurant set, else the newest one used at a show */
+function akGigDefaultSet() {
+  var s = settings(), want = s.gigDefaultSet && findShow(s.gigDefaultSet);
+  if (want) return want;
+  if (akPersonal()) { var r = lib().shows.filter(function (sh) { return /current\s+restaurant\s+set/i.test(sh.name || ""); })[0]; if (r) return r; }
+  var gigs = akGigs().slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  for (var i = 0; i < gigs.length; i++) { var l = (gigs[i].setlists || []).map(findShow).filter(Boolean); if (l.length) return l[0]; }
+  return null;
+}
+/* earlier shows to copy from, one per name / venue, newest first */
+function akGigTemplates() {
+  var seen = {}, out = [];
+  akGigs().slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); }).forEach(function (g) {
+    var k = normTitle(akGigTitle(g)) + "|" + normTitle(g.venue); if (seen[k]) return; seen[k] = 1; out.push(g);
+  });
+  return out;
+}
+akGigNewDialog = function (pre) {
+  pre = pre || {};
+  var g = akNewGig({ date: pre.date || akTodayKey(), setlists: pre.setlists || [] });
+  var name = h("input", { type: "text", placeholder: "For example: Friday at the Wine Cellar", autocapitalize: "words", "aria-label": "Show name" });
+  var date = h("input", { type: "date", value: g.date, "aria-label": "Date" }), start = h("input", { type: "time", "aria-label": "Start time" }), end = h("input", { type: "time", "aria-label": "End time" });
+  var pay = h("input", { type: "number", inputmode: "decimal", min: "0", step: "1", placeholder: "0", "aria-label": "Pay" });
+  var vbox = h("div"); function dv() { vbox.textContent = ""; vbox.appendChild(akVenueField(g, dv)); } dv();
+  /* set list: picked now, changeable later on the show page */
+  var def = pre.setlists && pre.setlists.length ? findShow(pre.setlists[0]) : akGigDefaultSet();
+  var sl = h("select", { "aria-label": "Set list" }, [h("option", { value: "" }, "No set list yet")].concat(lib().shows.map(function (sh) { return h("option", { value: sh.id }, sh.name || "Set list"); })));
+  sl.value = def ? def.id : "";
+  /* copy from an earlier show */
+  var tpl = akGigTemplates(), from = null;
+  if (tpl.length) {
+    from = h("select", { "aria-label": "Fill in from an earlier show", onChange: function () {
+      var t = akGig(this.value); if (!t) return;
+      name.value = t.name || ""; g.venue = t.venue || ""; g.venueId = t.venueId || ""; g.address = t.address || ""; dv();
+      start.value = t.start || ""; end.value = t.end || ""; pay.value = t.pay ? String(t.pay) : "";
+      var l = (t.setlists || []).map(findShow).filter(Boolean); if (l.length) sl.value = l[0].id;
+      g.color = t.color || ""; g.payHow = t.payHow || ""; g.staff = t.staff ? clone(t.staff) : g.staff;
+    } }, [h("option", { value: "" }, "Type the details below, or pick an earlier show…")].concat(tpl.map(function (t) {
+      return h("option", { value: t.id }, akGigTitle(t) + (t.venue && t.venue !== akGigTitle(t) ? " · " + t.venue : "") + (t.start ? " · " + tmHM(t.start) : "") + (t.date ? " (last " + t.date + ")" : ""));
+    })));
+  }
+  modal("New show", h("div", null,
+    from ? h("label", { class: "fld" }, "Same as an earlier show", from) : null,
+    h("label", { class: "fld" }, "Name (optional, the venue is used if blank)", name), vbox,
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Date", date), h("div", { class: "two" }, h("label", { class: "fld" }, "Start", start), h("label", { class: "fld" }, "End", end))),
+    h("div", { class: "two" }, h("label", { class: "fld" }, "Set list", sl), h("label", { class: "fld" }, "Pay", pay))),
+    [{ label: "Cancel" }, { label: "Create show", primary: true, onClick: function () {
+      snap("new show"); g.name = name.value.trim(); g.date = date.value; g.start = start.value; g.end = end.value; g.pay = Number(pay.value) || 0;
+      if (sl.value) { g.setlists = [sl.value]; settings().gigDefaultSet = sl.value; }
+      akGigs().push(g); settings().showsTab = "gigs"; save(); go("gig", { gigId: g.id });
+    } }]);
+  setTimeout(function () { (from || name).focus(); }, 30);
+};
+
+/* ---------------------------------------------------------------- playing screen: bottom bar height */
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) { if (o && o.compact && settings().playTabsSmall !== true) o = Object.assign({}, o, { compact: false }); return tb.call(this, o); };
+})();
+
+/* ---------------------------------------------------------------- playing screen on a narrow screen */
+function akRectHit(a, b) { return a.left < b.right - 3 && b.left < a.right - 3 && a.top < b.bottom - 3 && b.top < a.bottom - 3; }
+/* free-placed top buttons that overlap or stick out are packed into rows, in the order they appear; nothing is saved */
+function akTopFreeFit() {
+  var tb = topBarEl(); if (!tb || !tb.classList.contains("free") || S.layout) return;
+  var btns = topButtons().filter(function (b) { return b.offsetWidth; }); if (!btns.length) return;
+  var tr = tb.getBoundingClientRect(), rs = btns.map(function (b) { return b.getBoundingClientRect(); }), bad = false;
+  for (var i = 0; i < rs.length && !bad; i++) {
+    if (rs[i].right > tr.right + 1 || rs[i].left < tr.left - 1) bad = true;
+    for (var j = 0; j < i && !bad; j++) if (akRectHit(rs[i], rs[j])) bad = true;
+  }
+  if (!bad) return;
+  var W = tr.width, gap = parseFloat(getComputedStyle(tb).getPropertyValue("--tb-gap")) || 6, padTop = parseFloat(getComputedStyle(tb).paddingTop) || 6;
+  var rowH = btns.reduce(function (m, b) { return Math.max(m, b.offsetHeight); }, 36);
+  var order = btns.map(function (b, k) { return { b: b, r: rs[k] }; }).sort(function (a, b) { var ra = Math.round((a.r.top - tr.top) / rowH), rb = Math.round((b.r.top - tr.top) / rowH); return ra - rb || a.r.left - b.r.left; });
+  var x = 6, row = 0;
+  order.forEach(function (o) {
+    var w = o.b.offsetWidth; if (x + w > W - 6 && x > 6) { row++; x = 6; }
+    o.b.style.left = x + "px"; o.b.style.top = (padTop + row * (rowH + gap)) + "px"; x += w + gap;
+  });
+  tb.style.height = "calc(" + (row + 1) + " * (var(--tbh, var(--tb)) + var(--tb-gap, 6px)) + 6px + var(--tb-pad, 0px))";
+  tb.setAttribute("data-akfit", String(row + 1));
+}
+/* side buttons with their own place: keep them on the screen and off each other */
+function akFabFit() {
+  var root = document.querySelector(".play"); if (!root || S.layout) return;
+  var wrap = root.querySelector(".fabwrap"); if (!wrap) return;
+  var W = window.innerWidth, H = window.innerHeight, els = Array.prototype.slice.call(wrap.querySelectorAll("[data-fab]")).filter(function (e) { return e.style.position === "absolute" && e.offsetWidth; });
+  var wr = wrap.getBoundingClientRect(), done = [];
+  els.forEach(function (e) {
+    var r = e.getBoundingClientRect(), dx = 0, dy = 0;
+    if (r.right > W - 4) dx = W - 4 - r.right; if (r.left + dx < 4) dx = 4 - r.left;
+    if (r.bottom > H - 4) dy = H - 4 - r.bottom;
+    if (dx || dy) { e.style.left = (r.left + dx - wr.left) + "px"; e.style.top = (r.top + dy - wr.top) + "px"; r = e.getBoundingClientRect(); }
+    var tries = 0;
+    while (tries++ < 12 && done.some(function (q) { return akRectHit(r, q); })) { e.style.top = (r.top - wr.top + r.height * 0.5 + 4) + "px"; r = e.getBoundingClientRect(); }
+    done.push(r);
+  });
+}
+(function () {
+  var pt = placeTopFree;
+  placeTopFree = function () { pt.apply(this, arguments); try { akTopFreeFit(); } catch (e) {} };
+  var ur = updateReserve;
+  updateReserve = function () { try { akFabFit(); } catch (e) {} return ur.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- Settings: the tool buttons in one menu, a one-line version card */
+(function () {
+  var vs = viewSettings;
+  viewSettings = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      var tools = el.querySelector(".settools");
+      if (tools) {
+        var btns = Array.prototype.slice.call(tools.querySelectorAll("button"));
+        btns.forEach(function (b) { b.style.display = "none"; });
+        var undo = btns[0];
+        var undoMini = h("button", { class: "sm", disabled: undo.disabled, title: "Undo a setting", onClick: function () { undo.click(); } }, "↶ Undo");
+        var more = h("button", { class: "sm", "aria-label": "More setting tools", onClick: function () {
+          menu(this, btns.map(function (b) { return { label: b.textContent, disabled: b.disabled, onClick: function () { b.click(); } }; }));
+        } }, "⋯");
+        var bar = el.querySelector(".topbar"), h1 = bar && bar.querySelector("h1");
+        if (h1 && h1.nextSibling) { undoMini.classList.add("icon"); more.classList.add("icon"); undoMini.textContent = "↶"; undoMini.setAttribute("aria-label", "Undo a setting"); bar.insertBefore(more, h1.nextSibling); bar.insertBefore(undoMini, more); tools.style.display = "none"; }
+        else { tools.classList.add("ak8-tools"); tools.appendChild(undoMini); tools.appendChild(more); }
+        new MutationObserver(function () { undoMini.disabled = undo.disabled; }).observe(undo, { attributes: true, attributeFilter: ["disabled"] });
+      }
+      var ver = el.querySelector(".akver");
+      if (ver) { ver.classList.add("ak8-ver"); var n = ver.querySelector(".hint"); if (n) { ver.title = n.textContent; n.style.display = "none"; } }
+    } catch (e) {}
+    return el;
+  };
+})();
+akCss("ak8-settings", [
+  ".ak8-tools{justify-content:flex-end;margin:0 0 4px!important}",
+  ".ak8-ver{padding:6px 10px!important;margin-bottom:8px}.ak8-ver .row{flex-wrap:nowrap}.ak8-ver button{min-height:34px;padding:4px 10px;font-size:.9rem}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
