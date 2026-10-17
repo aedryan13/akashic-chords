@@ -5731,7 +5731,7 @@ function akApply() {
   akAtmo();
 }
 /* the person's own background photo: one for the current theme, or one for every theme */
-function akPhotoFor(t) { return (t && IMG["bg:" + t.id]) || IMG["bg:all"] || null; }
+function akPhotoFor(t) { return (t && IMG["bg:" + t.id]) || IMG["bg:all"] || akArtFor(t) || null; }
 function akPhotoScope(t) { return t && IMG["bg:" + t.id] ? "theme" : IMG["bg:all"] ? "all" : ""; }
 function akPickPhoto(file, key, done) {
   if (!file) return;
@@ -5768,7 +5768,7 @@ function akAtmo() {
   var iv = ak.intensity == null ? 50 : ak.intensity; el.style.filter = photo || iv === 50 ? "" : "saturate(" + (iv < 50 ? 0.3 + iv / 50 * 0.7 : 1 + (iv - 50) / 50 * 0.9).toFixed(2) + ")";
   if (!show) return;
   if (photo) {
-    var psig = "P:" + photo.data.length + ":" + (ak.photoDim == null ? 45 : ak.photoDim) + ":" + (ak.photoBlur || 0) + ":" + (v === "play" ? "p" : "n");
+    var psig = "P:" + (photo.art ? photo.data : photo.data.length) + ":" + (ak.photoDim == null ? 45 : ak.photoDim) + ":" + (ak.photoBlur || 0) + ":" + (v === "play" ? "p" : "n");
     if (psig === akSig && el.firstChild) return;
     akSig = psig;
     var bl = Number(ak.photoBlur) || 0;
@@ -5811,19 +5811,26 @@ function akashicControls(out, ctx) {
   var pct = function (v) { return v + "%"; };
   var th = akCurTheme(), scope = akPhotoScope(th), ph = akPhotoFor(th);
   if (ctx.only !== "fx") {
+  if (akArtList(th).length) {
+    subgroup("Theme picture");
+    box.appendChild(h("p", { class: "hint" }, scope ? "Your own photo is in use, so it shows instead of these. Remove it below to see the theme picture." : "A background picture made for " + th.name + ". Pick Original look for the theme without a picture. Each theme remembers its own choice. Dim and blur are under My background photo."));
+    box.appendChild(akArtPicker(th, function () { rerenderKeepScroll(); }));
+  }
   subgroup("My background photo");
-  box.appendChild(h("p", { class: "hint" }, ph ? "A photo of yours is behind the screens" + (scope === "all" ? " in every theme." : " in this theme (" + th.name + ").") : "Use a picture of your own instead of the drawn Atmosphere. It stays on this device and is included in your backup file."));
+  box.appendChild(h("p", { class: "hint" }, ph && !ph.art ? "A photo of yours is behind the screens" + (scope === "all" ? " in every theme." : " in this theme (" + th.name + ").") : "Use a picture of your own instead of the drawn Atmosphere. It stays on this device and is included in your backup file."));
   function pickBtn(label, key) {
     var inp = h("input", { type: "file", accept: "image/*", style: "position:absolute;left:-9999px;width:1px;height:1px;opacity:0", "aria-label": label, onChange: function () { var f = this.files && this.files[0], el = this; akPickPhoto(f, key, function () { el.value = ""; rerenderKeepScroll(); toast("Background photo set."); }); } });
     return h("label", { class: "filebtn" }, label, inp);
   }
   box.appendChild(h("div", { class: "row", style: "margin:6px 0" }, pickBtn("Photo for this theme…", "bg:" + th.id), pickBtn("Photo for every theme…", "bg:all")));
-  if (ph) {
+  if (ph && !ph.art) {
     box.appendChild(h("div", { class: "row", style: "margin:6px 0;align-items:center" }, h("img", { src: ph.data, alt: "", style: "width:48px;height:76px;object-fit:cover;border-radius:8px;border:1px solid var(--line)" }), h("div", { class: "grow muted" }, ph.name || "Photo"),
       h("button", { class: "danger", onClick: function () { mark(); imgDel(IMG["bg:" + th.id] ? "bg:" + th.id : "bg:all"); akSig = ""; akApply(); rerenderKeepScroll(); } }, "Remove")));
-    rng("Dim the photo (so words stay readable)", function () { return ak.photoDim == null ? 45 : ak.photoDim; }, function (v) { ak.photoDim = v; }, pct);
+  }
+  if (ph) {
+    rng("Dim the picture (so words stay readable)", function () { return ak.photoDim == null ? 45 : ak.photoDim; }, function (v) { ak.photoDim = v; }, pct);
     rng("Blur", function () { return (ak.photoBlur || 0) * 5; }, function (v) { ak.photoBlur = Math.round(v / 5); }, function (v) { return v === 0 ? "None" : Math.round(v / 5) + " px"; });
-    chk("Also show it behind the chords on the playing screen (dimmed extra)", function () { return !!ak.photoPlay; }, function (v) { ak.photoPlay = v; });
+    chk("Also show the picture behind the chords on the playing screen (dimmed extra)", function () { return !!ak.photoPlay; }, function (v) { ak.photoPlay = v; });
   }
   subgroup("Atmosphere");
   box.appendChild(h("p", { class: "hint" }, "Soft decoration behind the screens, drawn in the colors of your theme: " + (ak.on === false ? "off now" : (function () { var n = ak.style === "off" ? "none" : ak.style === "auto" || !ak.style ? "matches the theme" : (function () { var r = ak.style; AK_STYLES2.forEach(function (f) { f[2].forEach(function (x) { if (x[0] === ak.style) r = x[1]; }); }); return r; })(); return n; })()) + ". It never goes behind the words on the playing screen: there you only get a faint glow around the edges."));
@@ -21283,6 +21290,37 @@ akCss("ak6-color", [
   ".akcm-head{display:flex;gap:8px;align-items:center}.akcm-nav{align-items:center;margin:6px 0}.akcm-fld{margin:6px 0}.akcm-btns{margin:8px 0 0}",
   ".akelc-sw{flex:none;display:inline-flex;align-items:center;justify-content:center;width:40px;height:30px;border-radius:8px;border:2px solid;font-weight:700}"
 ].join("\n"));
+
+/* made by make_art_data.py from vendor/art/: theme id -> its pictures */
+var AK_ART_FILES = {"a_archive":["bg1"],"a_aurora":["bg1"],"a_autumn":["bg1"],"a_bedrock":["bg1"],"a_birch":["bg1"],"a_blacklight":["bg1"],"a_blueprint":["bg1"],"a_breeze":["bg1"],"a_candle":["bg1"],"a_celestial":["bg1"],"a_clay":["bg1"],"a_cloudlight":["bg1"],"a_console":["bg1"],"a_crystal":["bg1"],"a_deepfield":["bg1"],"a_eclipse":["bg1"],"a_ember":["bg1"],"a_feather":["bg1"],"a_fern":["bg1"],"a_forest":["bg1"],"a_gale":["bg1"],"a_granite":["bg1"],"a_inferno":["bg1"],"a_kaleido":["bg1"],"a_limestone":["bg1"],"a_metatron":["bg1"],"a_moss":["bg1"],"a_mycelium":["bg1"],"a_neuron":["bg1"],"a_opal":["bg1"],"a_orion":["bg1"],"a_pinemist":["bg1"],"a_quartz":["bg1"],"a_shadow":["bg1"],"a_shallows":["bg1"],"a_sigil":["bg1"],"a_smoke":["bg1"],"a_springleaf":["bg1"],"a_synapse":["bg1"],"a_tide":["bg1"],"a_toadstool":["bg1"],"a_trip":["bg1"],"a_void":["bg1"],"a_walnut":["bg1"],"black":["bg1"],"dark":["bg1"],"light":["bg1"],"p_daylight":["bg1"],"p_deepsea":["bg1"],"p_ember":["bg1"],"p_graphite":["bg1"],"p_harbor":["bg1"],"p_indigo":["bg1","bg1b"],"p_lagoon":["bg1"],"p_lavender":["bg1"],"p_mint":["bg1"],"p_mocha":["bg1"],"p_neon":["bg1"],"p_nightred":["bg1"],"p_paper":["bg1"],"p_pine":["bg1"],"p_plum":["bg1"],"p_quartz":["bg1"],"p_rosewood":["bg1"],"p_sand":["bg1"],"p_sepia":["bg1","bg1b"],"p_sky":["bg1"]};
+
+/* Theme pictures (2026-10-17): a ready-made background picture for each theme, served from the test build's art/ folder
+   (cached for offline the first time each one is shown). akCfg().art[themeId] = picture slot ("bg1", "bg1b"...) or "none" for
+   the theme's original look; unset means the first picture. The person's own background photo still wins over these. */
+var AK_ART_BASE = "art/";
+function akArtOn() { return /^https?:$/.test(location.protocol); }
+function akArtList(t) { return (t && akArtOn() && AK_ART_FILES[t.id]) || []; }
+function akArtChoice(t) {
+  var l = akArtList(t), c = ((akCfg().art || {})[t && t.id]);
+  if (!l.length || c === "none") return "";
+  return l.indexOf(c) >= 0 ? c : l[0];
+}
+function akArtName(slot) { var r = /^bg(\d)([a-z]?)$/.exec(slot) || []; return "Picture " + (r[1] || "1") + (r[2] ? " (other version)" : ""); }
+function akArtFor(t) { var c = akArtChoice(t); return c ? { data: AK_ART_BASE + t.id + "_" + c + ".webp", name: akArtName(c), art: true } : null; }
+function akArtPick(t, slot) { var ak = akCfg(); if (!ak.art) ak.art = {}; ak.art[t.id] = slot; akSig = ""; saveNow(); akApply(); }
+/* the row of picture choices for the current theme, in Settings > Atmosphere */
+function akArtPicker(t, done) {
+  var cur = akArtChoice(t) || "none", row = h("div", { class: "akartrow" });
+  function tile(slot, label, img) {
+    return h("button", { class: "akarttile" + (cur === slot ? " on" : ""), "aria-pressed": cur === slot ? "true" : "false", title: label,
+      onClick: function () { akArtPick(t, slot); done && done(); } },
+      img ? h("img", { src: img, alt: "", loading: "lazy" }) : h("span", { class: "akartnone", style: "background:" + themePalette(t).bg + ";color:" + themePalette(t).fg }, "Aa"), h("small", null, label));
+  }
+  row.appendChild(tile("none", "Original look"));
+  akArtList(t).forEach(function (s) { row.appendChild(tile(s, akArtName(s), AK_ART_BASE + t.id + "_" + s + ".thumb.webp")); });
+  return row;
+}
+akCss("akartcss", ".akartrow{display:flex;gap:8px;overflow-x:auto;padding:4px 0 8px}.akarttile{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px;border-radius:10px;border:2px solid var(--line);background:transparent;min-width:0}.akarttile.on{border-color:var(--accent)}.akarttile img,.akartnone{width:60px;height:107px;object-fit:cover;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:1.2rem}.akarttile small{font-size:.72rem;max-width:72px;text-align:center;line-height:1.15}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
