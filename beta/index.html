@@ -21518,6 +21518,493 @@ akCss("ak8-settings", [
   ".ak8-ver{padding:6px 10px!important;margin-bottom:8px}.ak8-ver .row{flex-wrap:nowrap}.ak8-ver button{min-height:34px;padding:4px 10px;font-size:.9rem}"
 ].join("\n"));
 
+/* ================= Akashic Chords batch 7, phase 2: the playing screen and its buttons =================
+   - a permanent "ⓘ Info" tab under the top toolbar flips it to the info bar (banter, next up, song info, tips) and back; remembered
+   - a "Buttons ▾" tab under the top toolbar: switch between saved button sets, turn buttons on and off on the spot, mark chords, grids
+   - the side buttons can be an even grid too (rows and columns, any button in any cell), like the top toolbar
+   - sensible default buttons for new installs (essentials on, gimmicks off), also offered as the "Recommended" set
+   - icon styles: Line, Bold, Soft fill, Rounded tile, the same shapes and size for every button; each button can have its own
+   - mark words as chords right on the playing screen: tap them, then Make chords (every match in the song, spelling remembered)
+   - tap a Solo block: pick one or more scales (suggested for the song first), with the scale drawn on the neck or keyboard
+   - Tuner and Metronome buttons for the top toolbar and the side */
+
+/* ---------------------------------------------------------------- new buttons and icons */
+TB_ITEMS.push(["tuner", "Tuner"], ["metro", "Metronome"], ["markchord", "Mark words as chords"]);
+TB_SHORT.tuner = "Tuner"; TB_SHORT.metro = "Metronome"; TB_SHORT.markchord = "Make chords";
+FAB_ITEMS.push(["tuner", "Tuner"], ["metro", "Metronome"]);
+FAB_OFF.tuner = 1; FAB_OFF.metro = 1; FAB_SHORT.tuner = "Tuner"; FAB_SHORT.metro = "Metronome";
+AK_TB_MODES.markchord = "lw";
+Object.assign(AK_IC, {
+  tuner: "M9 3v7a3 3 0 0 0 6 0V3 M12 13v8 M9.5 21h5",
+  metro: "M7 21h10L14 3h-4z M12 16l5-8 M9 12h6",
+  markchord: "M3 19 8 5l5 14 M5 14h6 M18 8v8 M14 12h8",
+  btnsets: "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z",
+  auto: "M7 4.5v15l12-7.5z", pause: "M8 5v14 M16 5v14",
+  sharp: "M10 4 8 20 M16 4l-2 16 M5 9h15 M4 15h15",
+  flat: "M8 3v17c5 0 9-2.4 9-5.5 0-2-1.6-3.3-3.6-3.3-2.2 0-4.1 1.6-5.4 3.3",
+  slower: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M8 12h8", faster: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M8 12h8 M12 8v8",
+  speed: "M4 17a8 8 0 1 1 16 0 M12 17l4-5",
+  chordpanel: "M6 4h12 M6 4v16 M10 4v16 M14 4v16 M18 4v16 M6 9h12 M6 14h12 M10 11.5v.1 M14 16.5v.1 M18 6.5v.1",
+  title: "M4 6h16 M4 12h10 M4 18h13", theme: AK_IC.sun
+});
+/* any button still without a drawing gets a plain dot, so an icon set never leaves a button blank */
+function akIcFill() { TB_ITEMS.concat(FAB_ITEMS).forEach(function (x) { if (!AK_IC[x[0]]) AK_IC[x[0]] = "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"; }); }
+function akExtraTb19(id, song, root) {
+  if (id === "tuner") return h("button", { "aria-label": "Tuner", onClick: function () { openChordTools("tuner", { song: song }); } }, akIcon("tuner"));
+  if (id === "metro") return h("button", { "aria-label": "Metronome", onClick: function () { openChordTools("metro", { song: song }); } }, akIcon("metro"));
+  if (id === "markchord") return h("button", { "aria-label": "Mark words as chords", "aria-pressed": S.akMark ? "true" : "false", class: S.akMark ? "on" : "", onClick: function () { akMarkStart(); } }, akIcon("markchord"));
+  if (typeof akExtraTb20 === "function") return akExtraTb20(id, song, root);
+  return null;
+}
+function akExtraFab7(song, root) {
+  var o = {
+    tuner: function () { return h("button", { class: "fb", "aria-label": "Tuner", onClick: function () { openChordTools("tuner", { song: song }); this.blur(); } }, akIcon("tuner")); },
+    metro: function () { return h("button", { class: "fb", "aria-label": "Metronome", onClick: function () { openChordTools("metro", { song: song }); this.blur(); } }, akIcon("metro")); }
+  };
+  if (typeof akExtraFab8 === "function") Object.assign(o, akExtraFab8(song, root));
+  return o;
+}
+
+/* ---------------------------------------------------------------- recommended buttons (new installs, and the "Recommended" set) */
+/* essentials first, in a sensible order; gimmicks and rarely used tools stay off but can be turned on any time */
+var AK_REC_TOP = ["prev", "title", "next", "mode", "a-", "a+", "fit", "notes", "jokes", "markreq", "pracmode", "live", "request", "image", "view", "edit", "theme"];
+var AK_REC_SIDE = ["auto", "sharp", "flat", "chordpanel", "list"];
+function akRecTop() { return AK_REC_TOP.filter(function (id) { return id !== "jokes" || akPersonal(); }); }
+function akRecItems(all, on) {
+  var ids = all.map(function (x) { return x[0]; }), first = on.filter(function (id) { return ids.indexOf(id) >= 0; });
+  return first.map(function (id) { return { id: id, on: true }; }).concat(ids.filter(function (id) { return first.indexOf(id) < 0; }).map(function (id) { return { id: id, on: false }; }));
+}
+(function () {
+  Object.keys(TB_ON).forEach(function (k) { delete TB_ON[k]; }); akRecTop().forEach(function (id) { TB_ON[id] = 1; });
+  FAB_ITEMS.forEach(function (x) { if (AK_REC_SIDE.indexOf(x[0]) < 0) FAB_OFF[x[0]] = 1; else delete FAB_OFF[x[0]]; });
+  DEFAULTS.rickTop = true; /* the old "put Rickroll on the top bar" step is for installs from before; new ones leave it off */
+  /* store.settings is still the brand-new copy here (saved settings are read later and replace these lists) */
+  [DEFAULTS, store.settings].forEach(function (d) {
+    if (!d || !d.toolbar) return;
+    d.toolbar.items = akRecItems(TB_ITEMS, akRecTop()); d.fab.items = akRecItems(FAB_ITEMS, AK_REC_SIDE); d.rickTop = true;
+  });
+})();
+
+/* ---------------------------------------------------------------- the side buttons as a grid */
+function akFabGrid() {
+  var f = settings().fab, g = f.grid = f.grid || {};
+  if (g.on === undefined) g.on = false; if (!g.cols) g.cols = 2; if (!g.rows) g.rows = 4; if (!Array.isArray(g.cells)) g.cells = [];
+  return g;
+}
+function akGridSeedFrom(g, items) { if (g.cells.some(Boolean)) return; g.cells = items.filter(function (it) { return it.on && akModesOk(AK_TB_MODES[it.id]); }).map(function (it) { return it.id; }).slice(0, g.cols * g.rows); }
+/* an editor for either grid: tap a cell to choose its button */
+function akGridBox(g, all, short, items, onChange) {
+  var box = h("div");
+  function label(id) { var it = all.filter(function (x) { return x[0] === id; })[0]; return id ? (short[id] || (it ? it[1] : id)) : ""; }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!g.on, onChange: function () { g.on = this.checked; if (g.on) akGridSeedFrom(g, items); save(); onChange(); draw(); } }), "Lay these buttons out as a grid"));
+    if (!g.on) return;
+    function num(lbl, key, min, max) {
+      return h("label", { class: "fld akg-num" }, lbl, h("select", { onChange: function () { g[key] = Number(this.value); save(); onChange(); draw(); } }, (function () { var o = []; for (var i = min; i <= max; i++) o.push(h("option", { value: String(i), selected: g[key] === i }, String(i))); return o; })()));
+    }
+    box.appendChild(h("div", { class: "row", style: "gap:10px" }, num("Columns", "cols", 1, 10), num("Rows", "rows", 1, 8)));
+    var grid = h("div", { class: "akgedit", style: "grid-template-columns:repeat(" + g.cols + ",minmax(0,1fr))" });
+    for (var i = 0; i < g.cols * g.rows; i++) (function (i) {
+      var id = g.cells[i];
+      grid.appendChild(h("button", { class: "akgc" + (id ? " on" : ""), "aria-label": "Cell " + (i + 1) + (id ? ": " + label(id) : ", empty"), onClick: function () {
+        var list = [{ head: "Cell " + (i + 1) }, { label: "Empty", onClick: function () { g.cells[i] = null; save(); onChange(); draw(); } }, { sep: true }];
+        all.forEach(function (x) { if (!akModesOk(AK_TB_MODES[x[0]])) return; list.push({ label: (g.cells[i] === x[0] ? "✓ " : "") + x[1] + (g.cells.indexOf(x[0]) >= 0 && g.cells[i] !== x[0] ? " (moves here)" : ""), onClick: function () { var j = g.cells.indexOf(x[0]); if (j >= 0) g.cells[j] = g.cells[i] || null; g.cells[i] = x[0]; save(); onChange(); draw(); } }); });
+        menu(this, list);
+      } }, id ? label(id) : "+"));
+    })(i);
+    box.appendChild(grid);
+    box.appendChild(h("p", { class: "hint" }, "Tap a cell to pick its button. A button sits in one cell; picking it again moves it. Empty cells stay blank so the others keep their place."));
+    box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { g.cells = []; akGridSeedFrom(g, items); save(); onChange(); draw(); } }, "Fill from my buttons"), h("button", { onClick: function () { g.cells = []; save(); onChange(); draw(); } }, "Clear all")));
+  }
+  draw(); return box;
+}
+/* while the play screen is drawn, the side buttons in the grid are the ones shown; then they are put in their cells */
+(function () {
+  var rp = renderPlay;
+  renderPlay = function () {
+    if (S.akMark) { var m = S.akMark; document.removeEventListener("click", m.tap, true); if (m.bar && m.bar.parentNode) m.bar.parentNode.removeChild(m.bar); S.akMark = null; }
+    var s = settings(), g = akFabGrid(), saved = null, savedPos = null;
+    if (S.tbInfo === undefined && s.tbInfoOn) S.tbInfo = true;
+    if (g.on && !S.layout) {
+      saved = s.fab.items.map(function (it) { return it.on; }); savedPos = s.fab.pos;
+      s.fab.items.forEach(function (it) { it.on = g.cells.indexOf(it.id) >= 0; }); s.fab.pos = {};
+    }
+    var root;
+    try { root = rp.apply(this, arguments); }
+    finally { if (saved) { s.fab.items.forEach(function (it, i) { it.on = saved[i]; }); s.fab.pos = savedPos; } }
+    try { if (saved) akFabGridLay(root, g); } catch (e) {}
+    try { akPlayTabs(root); } catch (e) {}
+    try { akIconsPlay(root); } catch (e) {}
+    try { akSoloHook(root); } catch (e) {}
+    return root;
+  };
+})();
+function akFabGridLay(root, g) {
+  var col = root.querySelector(".fabcol"); if (!col) return;
+  var by = {}; Array.prototype.forEach.call(col.querySelectorAll("[data-fab]"), function (el) { by[el.getAttribute("data-fab")] = el; });
+  col.textContent = ""; col.classList.add("akfgrid"); col.style.gridTemplateColumns = "repeat(" + g.cols + ", var(--btn, 56px))";
+  for (var i = 0; i < g.cols * g.rows; i++) { var el = by[g.cells[i]]; col.appendChild(el || h("span", { class: "akfgcell", "aria-hidden": "true" })); }
+}
+
+/* ---------------------------------------------------------------- tabs under the top toolbar: ⓘ Info and Buttons ▾ */
+function akPlayTabs(root) {
+  var wrap = root.querySelector(".ptopwrap"); if (!wrap || S.layout) return;
+  var s = settings(), box = h("div", { class: "ak8-tabs" });
+  if (s.infoTab !== false) box.appendChild(h("button", { class: "ak8-tab" + (S.tbInfo ? " on" : ""), "aria-pressed": S.tbInfo ? "true" : "false", "aria-label": S.tbInfo ? "Show the buttons in the top toolbar" : "Show info in the top toolbar (banter, next up, song info, tips)", onClick: function () {
+    S.tbInfo = !S.tbInfo; settings().tbInfoOn = S.tbInfo; save();
+    this.classList.toggle("on", S.tbInfo); this.setAttribute("aria-pressed", S.tbInfo ? "true" : "false"); this.textContent = S.tbInfo ? "▦ Buttons" : "ⓘ Info";
+    var fl = document.querySelector('.ptop [data-tb="infoflip"]'); if (fl) { fl.classList.toggle("on", S.tbInfo); fl.setAttribute("aria-pressed", S.tbInfo ? "true" : "false"); }
+    akInfoRefresh(); setTimeout(function () { try { updateTbArrows(); updateReserve(); } catch (e) {} }, 0);
+  } }, S.tbInfo ? "▦ Buttons" : "ⓘ Info"));
+  if (s.setsTab !== false) box.appendChild(h("button", { class: "ak8-tab", "aria-label": "Button sets and quick changes", onClick: function () { akSetsMenu(this); } }, "Buttons ▾"));
+  if (box.children.length) wrap.appendChild(box);
+}
+/* the info view stays on between songs (and the old toolbar button keeps working) */
+(function () {
+  var r = akInfoRefresh;
+  akInfoRefresh = function () { if (S.view === "play") settings().tbInfoOn = !!S.tbInfo; return r.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- button sets */
+function akSets() { var s = settings(); if (!Array.isArray(s.btnSets)) s.btnSets = []; return s.btnSets; }
+function akSetSnap() {
+  var s = settings(), t = s.toolbar, f = s.fab;
+  return { tb: clone({ items: t.items, grid: t.grid || null, rows: t.rows, free: t.free, pos: t.pos, spread: t.spread, labels: t.labels }),
+    fab: clone({ items: f.items, grid: f.grid || null, pos: f.pos, side: f.side, top: f.top, labels: f.labels }) };
+}
+function akSetApply(cfg) {
+  var s = settings();
+  Object.keys(cfg.tb || {}).forEach(function (k) { if (cfg.tb[k] !== null && cfg.tb[k] !== undefined) s.toolbar[k] = clone(cfg.tb[k]); else if (k === "grid") delete s.toolbar.grid; });
+  Object.keys(cfg.fab || {}).forEach(function (k) { if (cfg.fab[k] !== null && cfg.fab[k] !== undefined) s.fab[k] = clone(cfg.fab[k]); else if (k === "grid") delete s.fab.grid; });
+  normalizeStore(); save();
+}
+/* ready-made sets, built from the buttons that exist */
+function akSetBuilt(kind) {
+  var top, side;
+  if (kind === "stage") { top = ["prev", "title", "next", "a-", "a+", "fit", "markreq", "theme"]; side = ["auto", "sharp", "flat", "list"]; }
+  else if (kind === "practice") { top = ["prev", "title", "next", "mode", "loop", "practice", "soloscales", "tuner", "metro", "beat", "needswork", "edit"]; side = ["auto", "slower", "faster", "chordpanel", "list"]; }
+  else if (kind === "write") { top = ["prev", "title", "next", "mode", "notepad", "idea", "placer", "markchord", "progwheel", "takes", "edit"]; side = ["chordpanel", "list"]; }
+  else { top = akRecTop(); side = AK_REC_SIDE; }
+  return { tb: { items: akRecItems(TB_ITEMS, top), grid: { on: false, cols: 6, rows: 2, cells: [] }, free: false, rows: 1 }, fab: { items: akRecItems(FAB_ITEMS, side), grid: { on: false, cols: 2, rows: 4, cells: [] }, pos: {} } };
+}
+var AK_SETS_BUILT = [["rec", "Recommended"], ["stage", "Stage: fewest buttons"], ["practice", "Practice"], ["write", "Songwriting"]];
+function akSetSwitch(next) {
+  var sets = akSets(), s = settings(), cur = sets.filter(function (x) { return x.id === s.btnSetCur; })[0];
+  /* keep what's on the screen now: in the current set, or (the very first time) as "My buttons" */
+  if (cur) { var sn = akSetSnap(); cur.tb = sn.tb; cur.fab = sn.fab; }
+  else if (!sets.length) { var sn2 = akSetSnap(); sets.push({ id: uid(), name: "My buttons", tb: sn2.tb, fab: sn2.fab }); }
+  akSetApply(next.cfg || next); s.btnSetCur = next.id || ""; save(); keepAutoRender();
+  toast("Buttons: " + (next.name || "set") + ".");
+}
+function akSetsMenu(btn) {
+  var sets = akSets(), cur = settings().btnSetCur || "", items = [{ head: "Button sets" }];
+  sets.forEach(function (x) { items.push({ label: (x.id === cur ? "✓ " : "") + x.name, onClick: function () { if (x.id !== cur) akSetSwitch(x); } }); });
+  if (!sets.length) items.push({ label: "✓ My buttons (as they are now)", onClick: function () {} });
+  items.push({ head: "Ready-made" });
+  AK_SETS_BUILT.forEach(function (b) { items.push({ label: b[1], onClick: function () { akSetSwitch({ id: "", name: b[1], cfg: akSetBuilt(b[0]) }); } }); });
+  items.push({ sep: true });
+  items.push({ label: "Turn buttons on and off…", onClick: function () { akQuickButtons(); } });
+  items.push({ label: "Save these buttons as a set…", onClick: function () { askText("Name for this button set", "", "Save", function (nm) { var sn = akSetSnap(), x = { id: uid(), name: nm, tb: sn.tb, fab: sn.fab }; akSets().push(x); settings().btnSetCur = x.id; save(); toast("Saved “" + nm + "”."); }, "For example: Restaurant night"); } });
+  if (sets.length) items.push({ label: "Rename or delete sets…", onClick: function () { akSetsManage(); } });
+  items.push({ sep: true });
+  items.push({ label: (S.akMark ? "✓ " : "") + "Mark words as chords", onClick: function () { akMarkStart(); } });
+  items.push({ label: "Tuner", onClick: function () { openChordTools("tuner"); } }, { label: "Metronome", onClick: function () { openChordTools("metro"); } });
+  items.push({ label: "Button icons…", onClick: function () { akIconPicker(); } });
+  menu(btn, items);
+}
+function akSetsManage() {
+  var box = h("div");
+  function draw() {
+    box.textContent = ""; var sets = akSets();
+    if (!sets.length) { box.appendChild(h("p", { class: "muted" }, "No saved sets yet.")); return; }
+    sets.forEach(function (x, i) {
+      box.appendChild(h("div", { class: "item" }, h("div", { class: "grow" }, (x.id === settings().btnSetCur ? "✓ " : "") + x.name),
+        h("button", { class: "sm", onClick: function () { askText("Rename the set", x.name, "Rename", function (nm) { x.name = nm; save(); draw(); }); } }, "Rename"),
+        h("button", { class: "sm danger", onClick: function () { confirmBox("Delete the button set “" + x.name + "”? The buttons on the screen stay as they are.", "Delete", function () { sets.splice(i, 1); if (settings().btnSetCur === x.id) settings().btnSetCur = ""; save(); draw(); }); } }, "Delete")));
+    });
+  }
+  draw(); modal("Button sets", box, [{ label: "Done", primary: true }]);
+}
+/* turn buttons on and off while looking at the playing screen */
+function akQuickButtons(tab) {
+  var s = settings(), st = { tab: tab || "top" }, body = h("div", { class: "akqb" }), tabs = h("div", { class: "chips akqb-tabs" });
+  function redraw() { try { if (S.view === "play") keepAutoRender(); } catch (e) {} }
+  function draw() {
+    tabs.textContent = ""; body.textContent = "";
+    [["top", "Top bar"], ["side", "Side buttons"]].forEach(function (x) { tabs.appendChild(h("button", { class: "chip" + (st.tab === x[0] ? " on" : ""), onClick: function () { st.tab = x[0]; draw(); } }, x[1])); });
+    var top = st.tab === "top", grp = top ? s.toolbar : s.fab, all = top ? TB_ITEMS : FAB_ITEMS, g = top ? akGrid() : akFabGrid();
+    if (g.on) body.appendChild(h("p", { class: "hint" }, "This bar is a grid: pick each cell's button below, or turn the grid off for a plain list."));
+    else {
+      var list = h("div", { class: "akqb-list" });
+      grp.items.forEach(function (it) {
+        var lab = all.filter(function (x) { return x[0] === it.id; })[0]; if (!lab || !akModesOk(AK_TB_MODES[it.id])) return;
+        list.appendChild(h("label", { class: "chk akqb-row" }, h("input", { type: "checkbox", checked: !!it.on, onChange: function () { it.on = this.checked; save(); redraw(); } }), h("span", { class: "akqb-ic" }, akIcon(it.id)), lab[1]));
+      });
+      body.appendChild(list);
+    }
+    body.appendChild(h("details", { class: "card", open: g.on }, h("summary", null, top ? "Top bar as a grid" : "Side buttons as a grid"), akGridBox(g, all, top ? TB_SHORT : FAB_SHORT, grp.items, function () { redraw(); draw(); })));
+  }
+  draw();
+  modal("Buttons", h("div", null, tabs, body, h("p", { class: "hint" }, "Changes show on the playing screen right away. To keep a mix you like, use Buttons ▾ > Save these buttons as a set. Order, colors and words are in Settings > Playing screen.")), [{ label: "Done", primary: true }], { wide: true });
+}
+
+/* ---------------------------------------------------------------- icon styles */
+var AK_ICON_SETS = [["line", "Line", "Thin outlines (the original look)"], ["bold", "Bold", "The same outlines, thicker"], ["soft", "Soft fill", "Outlines with a soft filled middle"], ["tile", "Rounded tile", "Each icon on its own rounded tile"]];
+function akIconCfg() { var s = settings(), c = s.iconSet = s.iconSet || {}; if (!c.set) c.set = "line"; if (!c.per || typeof c.per !== "object") c.per = {}; if (c.side === undefined) c.side = false; return c; }
+function akIconsApply() { try { document.documentElement.setAttribute("data-akics", akIconCfg().set); } catch (e) {} }
+function akIconsPlay(root) {
+  akIcFill(); akIconsApply();
+  var c = akIconCfg();
+  Array.prototype.forEach.call(root.querySelectorAll("[data-tb],[data-fab]"), function (el) { var id = el.getAttribute("data-tb") || el.getAttribute("data-fab"); if (c.per[id]) el.setAttribute("data-akics", c.per[id]); });
+  if (c.side) ["sharp", "flat", "slower", "faster"].forEach(function (id) { var b = root.querySelector('.fabwrap [data-fab="' + id + '"]'); if (b) akSetIcon(b, id); });
+}
+(function () {
+  var sa = setAutoUI;
+  setAutoUI = function () { sa.apply(this, arguments); try { if (akIconCfg().side && ui.auto) akSetIcon(ui.auto, autoOn ? "pause" : "auto"); } catch (e) {} };
+})();
+function akIconPicker() {
+  akIcFill();
+  var c = akIconCfg(), body = h("div");
+  var ids = TB_ITEMS.map(function (x) { return x[0]; }).concat(FAB_ITEMS.map(function (x) { return x[0]; }).filter(function (id) { return !TB_ITEMS.some(function (x) { return x[0] === id; }); })).filter(function (id) { return id !== "title"; });
+  function names(id) { var x = TB_ITEMS.concat(FAB_ITEMS).filter(function (y) { return y[0] === id; })[0]; return x ? x[1] : id; }
+  function draw() {
+    body.textContent = "";
+    body.appendChild(h("div", { class: "akics-sets" }, AK_ICON_SETS.map(function (x) {
+      var sample = h("span", { class: "akics-sample", "data-akics": x[0] }, ["prev", "next", "notes", "fit", "edit", "tuner"].map(function (id) { return h("span", { class: "akics-cell" }, akIcon(id)); }));
+      return h("button", { class: "akics-set" + (c.set === x[0] ? " on" : ""), "aria-pressed": c.set === x[0] ? "true" : "false", onClick: function () { c.set = x[0]; save(); akIconsApply(); draw(); try { if (S.view === "play") keepAutoRender(); } catch (e) {} } }, h("b", null, (c.set === x[0] ? "✓ " : "") + x[1]), h("span", { class: "muted" }, x[2]), sample);
+    })));
+    var lbl = settings().toolbar.labels;
+    body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: lbl !== "words", onChange: function () { settings().toolbar.labels = this.checked ? "under" : "words"; save(); try { if (S.view === "play") keepAutoRender(); } catch (e) {} } }), "Show icons on the top toolbar (with small words under them) instead of words only"));
+    body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.side, onChange: function () { c.side = this.checked; save(); try { if (S.view === "play") keepAutoRender(); } catch (e) {} } }), "Use these icons on the side buttons too (instead of ▶ ♯ ♭ − +)"));
+    var grid = h("div", { class: "akics-all" });
+    ids.forEach(function (id) {
+      var own = c.per[id];
+      grid.appendChild(h("button", { class: "akics-one", "data-akics": own || c.set, title: names(id), "aria-label": names(id) + (own ? ", own style " + own : ""), onClick: function () {
+        var list = [{ head: names(id) }, { label: (!own ? "✓ " : "") + "Same as all", onClick: function () { delete c.per[id]; save(); draw(); } }];
+        AK_ICON_SETS.forEach(function (x) { list.push({ label: (own === x[0] ? "✓ " : "") + x[1], onClick: function () { c.per[id] = x[0]; save(); draw(); } }); });
+        menu(this, list);
+      } }, akIcon(id), h("span", { class: "akics-nm" }, TB_SHORT[id] || FAB_SHORT[id] || names(id)), own ? h("span", { class: "akics-own" }, "•") : null));
+    });
+    body.appendChild(h("p", { class: "hint" }, "Every button has an icon in each style, all the same size. Tap one to give that button its own style."));
+    body.appendChild(grid);
+  }
+  draw();
+  modal("Button icons", body, [{ label: "Done", primary: true, onClick: function () { try { if (S.view === "play") keepAutoRender(); } catch (e) {} } }], { wide: true });
+}
+akIconsApply();
+
+/* ---------------------------------------------------------------- mark words as chords on the playing screen */
+function akMarkStart() {
+  if (S.view !== "play" || !S.play) return;
+  if (S.akMark) { akMarkEnd(); return; }
+  try { stopAuto(); } catch (e) {}
+  S.akMark = { sel: {} };
+  var root = document.querySelector(".play"); if (!root) return;
+  root.classList.add("akmark-on");
+  Array.prototype.forEach.call(root.querySelectorAll("#lyrPane, #chPane"), function (p) { akMarkWrap(p); });
+  var bar = h("div", { class: "akmark-bar", role: "dialog", "aria-label": "Mark words as chords" });
+  document.body.appendChild(bar); S.akMark.bar = bar;
+  S.akMark.tap = function (e) {
+    var w = e.target.closest && e.target.closest(".akmw"); if (!w) { if (e.target.closest && e.target.closest(".play .pane")) { e.preventDefault(); e.stopPropagation(); } return; }
+    e.preventDefault(); e.stopPropagation();
+    var t = w.getAttribute("data-w"); if (S.akMark.sel[t]) delete S.akMark.sel[t]; else S.akMark.sel[t] = 1;
+    akMarkPaint();
+  };
+  document.addEventListener("click", S.akMark.tap, true);
+  akMarkPaint();
+}
+/* every word that isn't already a chord becomes a tappable span */
+function akMarkWrap(pane) {
+  var walk = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null), nodes = [], n;
+  while ((n = walk.nextNode())) { if (!n.nodeValue.trim()) continue; var p = n.parentNode; if (p.closest && (p.closest(".ch") || p.closest(".sec") || p.closest(".aksolo") || p.closest(".cue") || p.closest(".tab"))) continue; nodes.push(n); }
+  nodes.forEach(function (tn) {
+    var frag = document.createDocumentFragment();
+    tn.nodeValue.split(/(\s+)/).forEach(function (part) {
+      if (!part) return;
+      if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+      frag.appendChild(h("span", { class: "akmw", "data-w": part }, part));
+    });
+    tn.parentNode.replaceChild(frag, tn);
+  });
+}
+function akMarkPaint() {
+  var m = S.akMark; if (!m) return;
+  var root = document.querySelector(".play"), sel = Object.keys(m.sel);
+  if (root) Array.prototype.forEach.call(root.querySelectorAll(".akmw"), function (el) { el.classList.toggle("on", !!m.sel[el.getAttribute("data-w")]); });
+  var bar = m.bar; bar.textContent = "";
+  bar.appendChild(h("div", { class: "akmark-h" }, sel.length ? h("b", null, sel.length + (sel.length === 1 ? " word: " : " words: ")) : h("b", null, "Tap the words that should be chords"), sel.length ? h("span", { class: "akmark-list" }, sel.join("  ")) : h("span", { class: "muted" }, " (every match in the song is marked)")));
+  var all = h("input", { type: "checkbox" });
+  bar.appendChild(h("div", { class: "row", style: "margin:6px 0 0;align-items:center" },
+    h("label", { class: "chk grow", style: "margin:0" }, all, "In every song too"),
+    h("button", { onClick: function () { akMarkEnd(); } }, "Cancel"),
+    h("button", { class: "primary", disabled: !sel.length, onClick: function () { akMarkApply(sel, all.checked); } }, "Make chords")));
+}
+function akMarkEnd() {
+  var m = S.akMark; if (!m) return;
+  document.removeEventListener("click", m.tap, true);
+  if (m.bar && m.bar.parentNode) m.bar.parentNode.removeChild(m.bar);
+  S.akMark = null; try { keepAutoRender(); } catch (e) { render(); }
+}
+/* the words become chords: remembered as chord spellings, and in the song's words every match goes into brackets */
+function akMarkLyrics(text, toks) {
+  var want = {}; toks.forEach(function (t) { want[t] = 1; });
+  var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), out = [], n = 0;
+  function hasTok(l) { return l.replace(/\[[^\]]*\]/g, " ").split(/\s+/).some(function (t) { return want[t]; }); }
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (!hasTok(l)) { out.push(l); continue; }
+    if (!/\[/.test(l) && isChordLineText(l)) {
+      var nx = lines[i + 1];
+      if (nx != null && nx.trim() && !isChordLineText(nx) && !/\[[^\]]+\]/.test(nx) && !/^\s*\{/.test(nx)) { out.push(mergeAbove(l, nx, false)); i++; }
+      else out.push(l.replace(/\S+/g, function (t) { return isChordTok(t) ? "[" + t + "]" : t; }));
+      n++; continue;
+    }
+    out.push(l.split(/(\[[^\]]*\])/).map(function (part) {
+      if (/^\[[^\]]*\]$/.test(part)) return part;
+      return part.replace(/(^|\s)(\S+)(?=\s|$)/g, function (m0, sp, t) { if (want[t]) { n++; return sp + "[" + t + "]"; } return m0; });
+    }).join(""));
+  }
+  return { text: out.join("\n"), n: n };
+}
+function akMarkApply(toks, everySong) {
+  var song = curSong(); if (!song) return;
+  snap("make chords");
+  var l = settings().customChords = settings().customChords || [], added = [];
+  toks.forEach(function (t) { if (!isChordTok(t) && l.indexOf(t) < 0) { l.push(t); added.push(t); } });
+  syncCustomChords();
+  var songs = everySong ? lib().songs : [song], lines = 0;
+  songs.forEach(function (s2) { if (!s2.lyrics) return; var r = akMarkLyrics(s2.lyrics, toks); if (r.n) { s2.lyrics = r.text; lines += r.n; } });
+  save();
+  var m = S.akMark; if (m) { document.removeEventListener("click", m.tap, true); if (m.bar && m.bar.parentNode) m.bar.parentNode.removeChild(m.bar); S.akMark = null; }
+  keepAutoRender();
+  toast("Made " + (toks.length === 1 ? toks[0] : toks.length + " words") + " into chords" + (lines ? " (" + lines + (lines === 1 ? " place)." : " places).") : "."), { label: "Undo", fn: function () { settings().customChords = (settings().customChords || []).filter(function (n) { return added.indexOf(n) < 0; }); syncCustomChords(); undoLast(); } });
+}
+
+/* ---------------------------------------------------------------- tap a Solo block: scales for the solo */
+function akSoloHook(root) {
+  root.addEventListener("click", function (e) {
+    var el = e.target.closest && e.target.closest(".aksolo"); if (!el || S.akMark || S.layout) return;
+    if (el.classList.contains("holding")) return; /* a tap while auto-scroll waits carries on, as before */
+    var all = Array.prototype.slice.call(root.querySelectorAll(".aksolo")), idx = all.indexOf(el);
+    akSoloPicker(curSong(), Math.max(0, idx), el.getAttribute("data-solo") || "");
+  });
+}
+function akSoloPicks(song) { if (!song.soloPick || typeof song.soloPick !== "object") song.soloPick = {}; return song.soloPick; }
+function akSoloLabel(p) { var sc = akScale(p.id); return sc ? akRootName(p.root) + " " + sc.n : ""; }
+/* show the picked scales on each Solo block */
+(function () {
+  var fc = fillCharts;
+  fillCharts = function () {
+    var r = fc.apply(this, arguments);
+    try {
+      var song = S.play && curSong(), picks = song && song.soloPick; if (!picks) return r;
+      Array.prototype.forEach.call(document.querySelectorAll(".play .aksolo"), function (el, i) {
+        var p = picks[i]; if (!p || !p.length) return; var t = el.querySelector(".aksolo-t"); if (!t || t.querySelector(".aksolo-sc")) return;
+        t.appendChild(h("span", { class: "aksolo-sc" }, " · " + p.map(akSoloLabel).filter(Boolean).join(", ")));
+      });
+    } catch (e) {}
+    return r;
+  };
+})();
+function akSoloPicker(song, idx, raw) {
+  if (!song) return;
+  var picks = akSoloPicks(song), mine = (picks[idx] || []).slice(), body = h("div", { class: "aksp" }), st = { view: "best", style: "" };
+  var k = akChartKey(song), key = k ? { pc: akMod(k.pc + (song.transpose || 0)), minor: k.minor } : { pc: 9, minor: true };
+  var chords = (typeof akSongChords === "function" ? akSongChords(song) : []).map(parseChordName).filter(Boolean);
+  st.style = (typeof akSongStyle === "function" ? akSongStyle(song) : "") || "";
+  function same(a, b) { return a.root === b.root && a.id === b.id; }
+  function has(p) { return mine.some(function (x) { return same(x, p); }); }
+  function toggle(p) { if (has(p)) mine = mine.filter(function (x) { return !same(x, p); }); else { mine.push(p); if (mine.length > 3) mine.shift(); } draw(); }
+  function draw() {
+    body.textContent = "";
+    var ranked = akScaleRank(key, st.style, chords).slice(0, 8);
+    body.appendChild(h("p", { class: "muted", style: "margin:0 0 6px" }, (k ? "Key " + akLongKey(key.pc, key.minor) + (k.guessed ? " (guessed from the chords)" : "") : "No key yet: pick a scale below") + (raw ? " · Solo: " + raw : "")));
+    var stSel = h("select", { "aria-label": "Style", onChange: function () { st.style = this.value; draw(); } }, [h("option", { value: "" }, "Any style")].concat(AK_STYLES.map(function (x) { return h("option", { value: x[0] }, x[1]); })));
+    stSel.value = st.style;
+    body.appendChild(h("label", { class: "fld" }, "Suggested for this song", stSel));
+    body.appendChild(h("div", { class: "chips" }, ranked.map(function (r, i) { var p = { root: r.root, id: r.sc.id }; return h("button", { class: "chip" + (has(p) ? " on" : ""), "aria-pressed": has(p) ? "true" : "false", title: r.why || "", onClick: function () { toggle(p); } }, (i === 0 ? "★ " : "") + akRootName(r.root) + " " + r.sc.n); })));
+    /* any scale, any root */
+    var rootSel = h("select", { "aria-label": "Root" }, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(function (pc) { return h("option", { value: String(pc) }, akRootName(pc)); })); rootSel.value = String(key.pc);
+    var scSel = h("select", { "aria-label": "Scale" }, AK_SCALES2.filter(function (s2) { return s2.id !== "chromatic"; }).map(function (s2) { return h("option", { value: s2.id }, s2.n); }));
+    body.appendChild(h("div", { class: "row", style: "gap:6px;flex-wrap:nowrap;align-items:flex-end" }, h("label", { class: "fld", style: "margin:0" }, "Or any scale", rootSel), h("label", { class: "fld grow", style: "margin:0" }, " ", scSel), h("button", { onClick: function () { toggle({ root: Number(rootSel.value), id: scSel.value }); } }, "Add")));
+    if (!mine.length) { body.appendChild(h("p", { class: "hint" }, "Tap one or more scales (up to three) to see them on the " + (akPiano() ? "keyboard" : "neck") + ".")); return; }
+    if (!akPiano()) body.appendChild(h("div", { class: "chips", style: "margin-top:8px" }, [["best", "Best position"], ["neck", "Whole neck"]].map(function (x) { return h("button", { class: "chip" + (st.view === x[0] ? " on" : ""), onClick: function () { st.view = x[0]; draw(); } }, x[1]); })));
+    var notes = akShapeNotes(settings().instrument);
+    mine.forEach(function (p) {
+      var sc = akScale(p.id); if (!sc) return;
+      var card = h("div", { class: "card aksp-card" }, h("div", { class: "row", style: "margin:0;align-items:center" }, h("b", { class: "grow" }, akRootName(p.root) + " " + sc.n), h("button", { class: "icon sm", "aria-label": "Remove " + sc.n, onClick: function () { toggle(p); } }, "✕")));
+      card.appendChild(h("div", { class: "muted" }, sc.iv.map(function (i) { return akNoteName(p.root + i, akFlatFor(p.root, sc.iv)); }).join("  ") + "   (" + sc.iv.map(function (i) { return AK_DEG_NAMES[i]; }).join(" ") + ")"));
+      if (akPiano()) {
+        var marks = {}; sc.iv.forEach(function (i) { var m = 60 + akMod(p.root + i); marks[m] = { cls: i === 0 ? "root" : "on", label: AK_DEG_NAMES[i] }; marks[m + 12] = { cls: i === 0 ? "root" : "on" }; });
+        card.appendChild(h("div", { class: "akfbwrap" }, akKeyboard(60, 84, marks, { label: sc.n })));
+      } else {
+        var poss = akScalePositions(notes, p.root, sc.iv, st.view === "best" ? "boxes" : "whole", 17), cells = [], from = 0, to = 15;
+        if (st.view === "best" && poss.length) {
+          var a = poss.slice().sort(function (x, y) { return Math.abs(x.from - 5) - Math.abs(y.from - 5); })[0];
+          from = Math.max(0, a.from - 1); to = from + 6; a.cells.forEach(function (c) { cells.push([c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), p.root, null)]); });
+        } else if (poss[0]) poss[0].cells.forEach(function (c) { cells.push([c[0], c[1], akRole(akMod(notes[c[0]] + c[1]), p.root, null)]); });
+        card.appendChild(h("div", { class: "akfbwrap" }, akFb2(notes, cells, { from: from, frets: to, label: sc.n, root: p.root, iv: sc.iv, onTap: function (s, f) { try { akTone(notes[s] + f + (tuningOffset() || 0), 0.6, 0, "pluck"); } catch (e) {} } })));
+      }
+      body.appendChild(card);
+    });
+  }
+  draw();
+  modal("Scales for this solo", body, [{ label: "Clear", onClick: function () { delete picks[idx]; save(); keepAutoRender(); } }, { label: "Save", primary: true, onClick: function () { if (mine.length) picks[idx] = mine; else delete picks[idx]; save(); keepAutoRender(); } }], { wide: true });
+}
+
+/* ---------------------------------------------------------------- settings */
+function akSettingsExtra12(c) {
+  c.again("playing-screen");
+  c.section("Side buttons grid", "The side buttons as an even grid of cells");
+  c.out.appendChild(akGridBox(akFabGrid(), FAB_ITEMS, FAB_SHORT, settings().fab.items, function () {}));
+  c.section("Button sets and icons", "Switch whole sets of buttons, the Info tab, icon styles");
+  c.check("Show the “ⓘ Info” tab under the top toolbar (flips it to banter, next up, song info and tips)", function () { return settings().infoTab !== false; }, function (v) { settings().infoTab = v; });
+  c.check("Show the “Buttons ▾” tab under the top toolbar (button sets, turn buttons on and off)", function () { return settings().setsTab !== false; }, function (v) { settings().setsTab = v; });
+  c.out.appendChild(h("div", { class: "row" },
+    h("button", { onClick: function () { akIconPicker(); } }, "Button icons…"),
+    h("button", { onClick: function () { akSetsManage(); } }, "Saved button sets…"),
+    h("button", { onClick: function () { confirmBox("Put the top toolbar and side buttons back to the recommended ones? (Your current buttons are kept as a set you can switch back to.)", "Use recommended", function () { akSetSwitch({ id: "", name: "Recommended", cfg: akSetBuilt("rec") }); go("settings"); }); } }, "Use the recommended buttons")));
+  if (typeof akSettingsExtra13 === "function") akSettingsExtra13(c);
+}
+
+akCss("ak8-play", [
+  ".ak8-tabs{position:absolute;left:8px;bottom:-21px;z-index:6;display:flex;gap:4px}",
+  ".ak8-tab{min-height:0;height:calc(21px * var(--uk,1));padding:0 9px;font-size:calc(12px * var(--uk,1));font-weight:700;border-radius:0 0 10px 10px;border:1px solid var(--line);border-top:0;background:var(--panel);color:var(--muted);opacity:.92}",
+  ".ak8-tab.on{color:var(--on-accent,#000);background:var(--accent)}",
+  ".ptopwrap.collapsed .ak8-tabs{display:none}",
+  ".fabcol.akfgrid{display:grid;gap:8px;align-items:center;justify-items:center}.akfgcell{width:var(--btn,56px);height:var(--btn,56px)}",
+  ".fabcol.akfgrid.left{left:8px;right:auto}",
+  ".akg-num{margin:0}.akg-num select{min-width:70px}",
+  ".akqb-tabs{margin-bottom:8px}.akqb-tabs .chip{flex:1 1 0;justify-content:center}",
+  ".akqb-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 10px;max-height:52vh;overflow:auto}",
+  ".akqb-row{align-items:center;gap:8px;margin:2px 0}.akqb-ic{display:inline-flex;width:24px;justify-content:center;color:var(--muted)}",
+  /* icon styles */
+  "html[data-akics=bold] .akic,[data-akics=bold] .akic{stroke-width:2.6}",
+  "html[data-akics=soft] .akic path,[data-akics=soft] .akic path{fill:currentColor;fill-opacity:.22}",
+  "html[data-akics=tile] .akic,[data-akics=tile] .akic{padding:3px;border-radius:30%;background:color-mix(in srgb,currentColor 16%,transparent);box-sizing:content-box;stroke-width:2}",
+  "[data-akics=line] .akic{stroke-width:1.8;padding:0;background:none}[data-akics=line] .akic path{fill:none}",
+  "[data-akics=bold] .akic path{fill:none}[data-akics=bold] .akic{padding:0;background:none}",
+  "[data-akics=soft] .akic{stroke-width:1.8;padding:0;background:none}",
+  "[data-akics=tile] .akic path{fill:none}",
+  ".fb .akic{width:1.15em;height:1.15em}",
+  ".akics-sets{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:10px}",
+  ".akics-set{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:10px;min-height:0}.akics-set.on{border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}",
+  ".akics-sample{display:flex;gap:8px;font-size:22px;margin-top:4px}.akics-cell{display:inline-flex}",
+  ".akics-all{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:6px;max-height:42vh;overflow:auto}",
+  ".akics-one{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;min-height:0;font-size:22px}",
+  ".akics-nm{font-size:11px;line-height:1.1;color:var(--muted);text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akics-own{position:absolute;top:2px;right:6px;color:var(--accent);font-size:16px}",
+  /* mark chords */
+  ".akmark-on .akmw{cursor:pointer;border-radius:4px;box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--accent) 55%,transparent)}",
+  ".akmark-on .akmw.on{background:var(--accent);color:var(--on-accent,#000)}",
+  ".akmark-bar{position:fixed;z-index:9000;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 70px);width:min(560px,calc(100vw - 16px));padding:10px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--accent);box-shadow:0 8px 30px rgba(0,0,0,.45)}",
+  ".akmark-list{font-family:var(--chord-font,inherit);color:var(--chord);font-weight:700}",
+  /* solo */
+  ".aksolo{cursor:pointer}.aksolo-sc{color:var(--chord);font-weight:600}",
+  ".aksp-card{margin:8px 0;padding:8px}.aksp .akfbwrap{overflow-x:auto}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
