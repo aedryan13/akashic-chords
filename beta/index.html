@@ -22803,14 +22803,11 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "8.3";
+var AK_VERSION = "8.4";
 var AK_WHATS_NEW = [
-  "Learn has a 🔁 Loop player: pick a chord progression in any style (pop, rock, blues, country and folk, funk, jazz, borrowed chords), any key, slow it down to half speed or 75 %, or let it speed up a little each time round",
-  "While it loops you see the bars, the chord now and the next one, which scale and arpeggio fit it and why, the 3rds and 7ths and where they go, and the notes that lead into the next chord, on the neck or the keyboard (tap a note to hear it)",
-  "Pick what to practise: roots, arpeggios, guide tones, the scale, approach notes or motifs. It plays chords with your guitar sound (or piano), a walking bass and a click on 2 and 4, and can move to a new key each time round",
-  "New lessons, Borrowed chords: modal interchange, the minor iv, ♭VI and ♭VII, borrowing from other modes, secondary dominants, secondary ii–V and the tritone sub, and using them in your songs",
-  "New lessons, Jazz soloing: seventh chords, the ii–V–I, guide tones, arpeggios, which scale over which chord and why, the minor ii–V–i, bebop approach notes, motifs, swing feel, the jazz blues and rhythm changes",
-  "Every new lesson has a tip for guitar, ukulele or piano (whichever you're learning), ▶ Hear it, and a button that opens it in the loop player"
+  "Your own guitar sound: Settings > Songs and shows > Chord sound > 🎙 Record my guitar walks you through playing one note at a time (and a few strums), and every chord in the app then plays with your real guitar",
+  "Each note is tuned exactly for you (it shows how many cents it fixed), trimmed and evened out; a take that clipped, stopped early or was far out of tune is flagged so you can re-take it",
+  "Record more than one (acoustic, nylon, electric, ukulele), switch between them, redo any note, and Export / Import a sound to move it to your phone or tablet. The built-in sound is still there when you have none"
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -25159,6 +25156,456 @@ akCss("ak9-d", [
   ".akkb .akk.akjz-sc rect{fill:#b9c3d4}.akkb .akk.b.akjz-sc rect{fill:#5a6378}",
   ".akjz-tip{margin:4px 0 8px}.akjz-opts{margin:8px 0}.akjz-opts summary{cursor:pointer;font-weight:600}"
 ].join("\n"));
+
+/* ================= Akashic Chords: your own guitar sound (recorded samples) =================
+   - "Record my guitar" (Settings > Songs and shows > Chord sound): a guided recorder that asks for one note at a time
+     (every 3 semitones from the lowest open string to the 15th fret of the highest, in your tuning), optional soft notes and
+     a few open-chord strums. It waits for you to play, trims the silence, finds the pitch, evens out the loudness and warns
+     about a clipped, quiet, short or out-of-tune take so you can re-take it.
+   - Pitch fix: each take's real pitch is measured; playback shifts it to the exact note (on by default, per sound).
+   - Playback: the nearest recorded note is shifted (never more than about a semitone and a half), each string rings until
+     it is struck again, strums keep the phase B timing. A recorded strum is used when the chord matches it.
+     With no recordings (or none loaded yet) the built-in sound from phase B plays.
+   - Sounds live in IndexedDB "akashic-gtrsound" on this device only (not in backups); Export / Import moves one as a file.
+   - settings().hear.smp = { guitar: setId, ukulele: setId } */
+
+var AKS = { loaded: {}, loading: {}, ac: null, bus: null, voices: {}, last: null };
+(function () { [DEFAULTS, store.settings].forEach(function (d) { if (d && d.hear && !d.hear.smp) d.hear.smp = {}; }); })();
+function akSmpCfg() { var c = akHearCfg(); if (!c.smp || typeof c.smp !== "object") c.smp = {}; return c.smp; }
+function akSmpActiveId(ins) { return akSmpCfg()[ins || akHearIns()] || ""; }
+function akSmpHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+function akSmpName(m) { return akMidiName(m, false) + Math.floor(m / 12 - 1); }
+
+/* ---------------------------------------------------------------- storage */
+function akSmpDb(cb) {
+  try {
+    var r = indexedDB.open("akashic-gtrsound", 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore("sets", { keyPath: "id" }); var s = r.result.createObjectStore("smp", { keyPath: "id" }); s.createIndex("set", "set"); };
+    r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); };
+  } catch (e) { cb(null); }
+}
+function akSmpSets(cb) { akSmpDb(function (db) { if (!db) { cb([]); return; } var q = db.transaction("sets").objectStore("sets").getAll(); q.onsuccess = function () { cb((q.result || []).sort(function (a, b) { return (a.created || 0) - (b.created || 0); })); }; q.onerror = function () { cb([]); }; }); }
+function akSmpGetSet(id, cb) {
+  akSmpDb(function (db) {
+    if (!db) { cb(null, []); return; }
+    var tx = db.transaction(["sets", "smp"]), set = null, list = [];
+    tx.objectStore("sets").get(id).onsuccess = function (e) { set = e.target.result || null; };
+    tx.objectStore("smp").index("set").getAll(id).onsuccess = function (e) { list = e.target.result || []; };
+    tx.oncomplete = function () { cb(set, list); }; tx.onerror = function () { cb(null, []); };
+  });
+}
+function akSmpPutSet(set, cb) { set.updated = Date.now(); akSmpDb(function (db) { if (!db) { cb && cb(false); return; } var tx = db.transaction("sets", "readwrite"); tx.objectStore("sets").put(set); tx.oncomplete = function () { akSmpUnload(set.id); cb && cb(true); }; tx.onerror = function () { cb && cb(false); }; }); }
+function akSmpPut(rec, cb) { rec.id = rec.set + "|" + rec.k; akSmpDb(function (db) { if (!db) { cb && cb(false); return; } var tx = db.transaction("smp", "readwrite"); tx.objectStore("smp").put(rec); tx.oncomplete = function () { akSmpUnload(rec.set); cb && cb(true); }; tx.onerror = function () { cb && cb(false); }; }); }
+function akSmpDelOne(setId, k, cb) { akSmpDb(function (db) { if (!db) { cb && cb(); return; } var tx = db.transaction("smp", "readwrite"); tx.objectStore("smp").delete(setId + "|" + k); tx.oncomplete = function () { akSmpUnload(setId); cb && cb(); }; }); }
+function akSmpDelSet(id, cb) {
+  akSmpDb(function (db) {
+    if (!db) { cb && cb(); return; }
+    var tx = db.transaction(["sets", "smp"], "readwrite"), st = tx.objectStore("smp");
+    tx.objectStore("sets").delete(id);
+    st.index("set").getAllKeys(id).onsuccess = function (e) { (e.target.result || []).forEach(function (k) { st.delete(k); }); };
+    tx.oncomplete = function () { akSmpUnload(id); var c = akSmpCfg(); Object.keys(c).forEach(function (k) { if (c[k] === id) c[k] = ""; }); save(); cb && cb(); };
+  });
+}
+function akSmpTo16(f) { var o = new Int16Array(f.length); for (var i = 0; i < f.length; i++) { var v = Math.max(-1, Math.min(1, f[i])); o[i] = v < 0 ? v * 32768 : v * 32767; } return o; }
+function akSmpFrom16(a) { var o = new Float32Array(a.length); for (var i = 0; i < a.length; i++) o[i] = a[i] / 32768; return o; }
+function akSmpB64(i16) { var u = new Uint8Array(i16.buffer, i16.byteOffset, i16.byteLength), s = ""; for (var i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
+function akSmpUn64(b) { var s = atob(b), u = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new Int16Array(u.buffer, 0, u.length >> 1); }
+
+/* ---------------------------------------------------------------- what to record */
+/* the notes: every 3 semitones from the lowest open string to the 15th fret of the highest, each with a string and fret to play */
+function akSmpPlan(ins, o) {
+  o = o || {}; var tu = o.notes || akTuning(ins).notes, lo = Math.min.apply(null, tu), top = Math.max.apply(null, tu), hi = top + (ins === "ukulele" ? 12 : 15), out = [];
+  for (var m = lo; m <= hi; m += 3) out.push(m);
+  if (out[out.length - 1] < hi - 1) out.push(hi);
+  var steps = [];
+  out.forEach(function (m) { steps.push({ k: "n" + m, m: m, where: akSmpWhere(tu, m) }); });
+  if (o.soft) out.forEach(function (m) { steps.push({ k: "s" + m, m: m, soft: true, where: akSmpWhere(tu, m) }); });
+  if (o.strums !== false) (ins === "ukulele" ? ["C", "G", "F", "Am"] : ["G", "C", "D", "Em", "Am"]).forEach(function (c) { steps.push({ k: "c" + c, chord: c }); });
+  return steps;
+}
+/* the string to play a note on: the one that needs the lowest fret (strings counted 1 = highest, like guitar books) */
+function akSmpWhere(tu, m) {
+  var best = null; tu.forEach(function (n, i) { var f = m - n; if (f >= 0 && f <= 15 && (!best || f < best.f)) best = { i: i, f: f }; });
+  if (!best) return "";
+  var num = tu.length - best.i;
+  return "String " + num + " (" + akMidiName(tu[best.i], false) + ")" + (best.f ? ", fret " + best.f : ", open");
+}
+
+/* ---------------------------------------------------------------- cleaning a take */
+/* the pitch near a target note: normalised autocorrelation (NSDF) in a few windows after the attack, searched within 7 semitones
+   of the target so it can't jump an octave. -> { midi, c (0..1 how clear) } */
+function akSmpPitch(d, sr, target) {
+  var f0 = akSmpHz(target), lagLo = Math.floor(sr / (f0 * Math.pow(2, 7 / 12))), lagHi = Math.ceil(sr / (f0 * Math.pow(2, -7 / 12))), res = [];
+  var W = Math.min(8192, Math.max(2048, Math.ceil(lagHi * 4)));
+  [0.12, 0.25, 0.4, 0.6, 0.85].forEach(function (t) {
+    var st = Math.floor(t * sr); if (st + W + lagHi + 2 > d.length) return;
+    var best = -1, bl = -1, cs = {};
+    for (var l = lagLo - 1; l <= lagHi + 1; l++) {
+      var ac = 0, en = 0;
+      for (var i = 0; i < W; i++) { var a = d[st + i], b = d[st + i + l]; ac += a * b; en += a * a + b * b; }
+      cs[l] = en > 0 ? 2 * ac / en : 0;
+    }
+    for (var l2 = lagLo; l2 <= lagHi; l2++) if (cs[l2] >= cs[l2 - 1] && cs[l2] >= cs[l2 + 1] && cs[l2] > best) { best = cs[l2]; bl = l2; }
+    if (bl < 0) return;
+    var A = cs[bl - 1], B = cs[bl], C = cs[bl + 1], sh = (A - C) / (2 * (A - 2 * B + C)) || 0;
+    if (Math.abs(sh) > 1) sh = 0;
+    res.push({ hz: sr / (bl + sh), c: best });
+  });
+  if (!res.length) return { midi: target, c: 0 };
+  var good = res.filter(function (r) { return r.c > 0.7; }); if (!good.length) good = res;
+  var hz = good.map(function (r) { return r.hz; }).sort(function (a, b) { return a - b; })[Math.floor((good.length - 1) / 2)];
+  return { midi: 69 + 12 * Math.log2(hz / 440), c: good.reduce(function (s, r) { return s + r.c; }, 0) / good.length };
+}
+/* raw take -> { data, det, cents, clar, secs, warn: [text], bad (re-take suggested) } or { err } */
+function akSmpProcess(raw, sr, target, o) {
+  o = o || {}; var n = raw.length, peak = 0, clip = 0, i;
+  for (i = 0; i < n; i++) { var a = Math.abs(raw[i]); if (a > peak) peak = a; if (a >= 0.985) clip++; }
+  if (peak < 0.004) return { err: "I didn't hear anything. Check the microphone and play a little louder." };
+  var on = 0; while (on < n && Math.abs(raw[on]) < peak * 0.2) on++; on = Math.max(0, on - Math.floor(sr * 0.008));
+  var blk = Math.floor(sr * 0.01), env = [], pk = 0;
+  for (var b = on; b + blk <= n; b += blk) { var s = 0; for (i = b; i < b + blk; i++) s += raw[i] * raw[i]; var r = Math.sqrt(s / blk); env.push(r); if (r > pk) pk = r; }
+  var last = 0; env.forEach(function (r, j) { if (r > pk * 0.006) last = j; });
+  var ringEnd = 0; env.forEach(function (r, j) { if (r > pk * 0.03) ringEnd = j; });
+  var end = Math.min(n, on + (last + 10) * blk, on + Math.floor(sr * 4.5)), d = raw.slice(on, end), len = d.length;
+  var fi = Math.min(len, Math.floor(sr * 0.002)); for (i = 0; i < fi; i++) d[i] *= i / fi;
+  var fo = Math.min(Math.floor(len * 0.2), Math.floor(sr * 0.25)); for (i = 0; i < fo; i++) d[len - 1 - i] *= i / fo;
+  /* even loudness: the first 0.4 s after the pick */
+  var a0 = Math.floor(sr * 0.02), a1 = Math.min(len, Math.floor(sr * 0.42)), e2 = 0, dp = 0;
+  for (i = a0; i < a1; i++) e2 += d[i] * d[i]; var rms = Math.sqrt(e2 / Math.max(1, a1 - a0));
+  for (i = 0; i < len; i++) dp = Math.max(dp, Math.abs(d[i]));
+  var gain = Math.min((o.soft ? 0.055 : 0.11) / Math.max(rms, 1e-6), 0.95 / Math.max(dp, 1e-6));
+  for (i = 0; i < len; i++) d[i] *= gain;
+  var out = { data: d, secs: len / sr, ring: ringEnd * blk / sr, warn: [], bad: false, det: null, cents: 0, clar: 1 };
+  if (clip > 3) { out.warn.push("It was too loud and clipped. Pick a little softer or move the mic back."); out.bad = true; }
+  if (peak < 0.05) out.warn.push("It was quite quiet. Move closer to the mic or turn the input up.");
+  if (target != null) {
+    if (out.ring < 1.2) { out.warn.push("The note stopped quickly. Let it ring about 4 seconds."); out.bad = true; }
+    var p = akSmpPitch(d, sr, target); out.det = p.midi; out.clar = p.c; out.cents = Math.round((p.midi - target) * 100);
+    if (p.c < 0.75) { out.warn.push("I couldn't hear one clear note. Play only that string and keep the others quiet."); out.bad = true; }
+    else if (Math.abs(out.cents) > 30) { out.warn.push("It was " + Math.abs(out.cents) + " cents " + (out.cents > 0 ? "sharp" : "flat") + ". I can fix that, but tuning up and re-taking will sound more natural."); out.bad = true; }
+  } else if (out.ring < 1) out.warn.push("The strum stopped quickly. Let it ring.");
+  return out;
+}
+
+/* ---------------------------------------------------------------- playing your sound */
+function akSmpUnload(id) { delete AKS.loaded[id]; delete AKS.loading[id]; }
+function akSmpLoad(id, cb) {
+  var ac = akAudio(); if (!ac || !id) { cb && cb(null); return; }
+  if (AKS.loading[id]) { if (cb) AKS.loading[id].push(cb); return; }
+  AKS.loading[id] = cb ? [cb] : [];
+  akSmpGetSet(id, function (set, list) {
+    var waiting = AKS.loading[id] || []; delete AKS.loading[id];
+    if (!set) { waiting.forEach(function (f) { f(null); }); return; }
+    var L = { set: set, ac: ac, notes: [], strums: [] };
+    list.forEach(function (r) {
+      try {
+        var f = akSmpFrom16(r.pcm), buf = ac.createBuffer(1, f.length, r.rate); buf.getChannelData(0).set(f);
+        if (r.chord) L.strums.push({ chord: r.chord, sig: r.sig || [], buf: buf });
+        else L.notes.push({ k: r.k, m: r.m, det: r.det == null ? r.m : r.det, soft: !!r.soft, buf: buf });
+      } catch (e) {}
+    });
+    AKS.loaded[id] = L;
+    waiting.forEach(function (f) { f(L); });
+  });
+}
+/* the loaded sound for the instrument, or null (then the built-in sound plays; loading starts in the background) */
+function akSmpReady() {
+  var id = akSmpActiveId(); if (!id) return null;
+  var L = AKS.loaded[id], ac = akAudio();
+  if (L && L.ac === ac && L.notes.length) return L;
+  if (!L || L.ac !== ac) akSmpLoad(id);
+  return null;
+}
+function akSmpBus() {
+  var ac = akAudio(); if (!ac) return null;
+  if (AKS.ac === ac && AKS.bus) return AKS.bus;
+  AKS.ac = ac; AKS.voices = {};
+  var inp = ac.createGain(), comp = ac.createDynamicsCompressor(), master = ac.createGain();
+  try { comp.threshold.value = -12; comp.knee.value = 10; comp.ratio.value = 3; comp.attack.value = 0.003; comp.release.value = 0.25; } catch (e) {}
+  inp.connect(comp); comp.connect(master); master.connect(ac.destination);
+  try {
+    var len = Math.floor(ac.sampleRate * 0.7), ir = ac.createBuffer(2, len, ac.sampleRate);
+    for (var ch = 0; ch < 2; ch++) { var d = ir.getChannelData(ch); for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.5); }
+    var conv = ac.createConvolver(), wet = ac.createGain(); conv.buffer = ir; wet.gain.value = 0.08; comp.connect(conv); conv.connect(wet); wet.connect(master);
+  } catch (e) {}
+  AKS.bus = { inp: inp };
+  return AKS.bus;
+}
+/* the recorded note to use: the nearest one (a little in favour of shifting down), soft takes for quiet notes when there are any */
+function akSmpPick(list, midi, soft) {
+  var pool = list.filter(function (x) { return !!x.soft === !!soft; }); if (!pool.length) pool = list;
+  var best = null, bc = 1e9;
+  pool.forEach(function (x) { var c = Math.abs(midi - x.m) + (midi > x.m ? 0.1 : 0); if (c < bc) { bc = c; best = x; } });
+  return best;
+}
+/* how fast to play it back so it lands on the exact note (the pitch fix uses the measured pitch) */
+function akSmpRate(x, midi, fix) { return Math.pow(2, (midi - (fix === false ? x.m : x.det)) / 12); }
+function akSmpVoiceStop(id, t) { var v = AKS.voices[id]; if (!v) return; try { v.g.gain.setTargetAtTime(0, t, 0.02); v.src.stop(t + 0.2); } catch (e) {} delete AKS.voices[id]; }
+function akSmpStart(buf, rate, vol, t, sid, o) {
+  var ac = AKS.ac, bus = akSmpBus(); if (!bus) return null;
+  var src = ac.createBufferSource(), g = ac.createGain(), ring = akHearCfg().ring;
+  src.buffer = buf; src.playbackRate.value = rate; g.gain.value = vol; src.connect(g); g.connect(bus.inp);
+  akSmpVoiceStop(sid, t);
+  AKS.voices[sid] = { src: src, g: g };
+  src.onended = function () { if (AKS.voices[sid] && AKS.voices[sid].src === src) delete AKS.voices[sid]; };
+  src.start(t);
+  var stopAt = o && o.len ? o.len : ring === "short" ? 1.1 : 0;
+  if (stopAt) { try { g.gain.setValueAtTime(vol, t + stopAt); g.gain.setTargetAtTime(0, t + stopAt, 0.07); src.stop(t + stopAt + 0.6); } catch (e) {} }
+  AKS.last = { buf: buf, rate: rate };
+  return src;
+}
+function akSmpNote(L, midi, o) {
+  o = o || {}; var ac = akAudio(); if (!ac) return false; akSmpBus();
+  var cfg = akHearCfg(), vol0 = o.vol == null ? 0.6 : o.vol, x = akSmpPick(L.notes, midi, vol0 < 0.3); if (!x) return false;
+  var t = ac.currentTime + Math.max(0, o.when || 0) + 0.01, vol = vol0 * (0.9 + Math.random() * 0.2) * (cfg.vol / 100) * 1.3;
+  akSmpStart(x.buf, akSmpRate(x, midi, L.set.fix), vol, t, o.str != null ? "s" + o.str : "m" + Math.round(midi), o);
+  return true;
+}
+/* a recorded strum fits when the chord's notes are the same, or all moved by up to 2 semitones (a capo, a nearby key) */
+function akSmpStrumFor(L, notes) {
+  var ms = notes.map(function (x) { return x.m; }).sort(function (a, b) { return a - b; });
+  for (var i = 0; i < L.strums.length; i++) {
+    var sg = L.strums[i].sig.slice().sort(function (a, b) { return a - b; }); if (sg.length !== ms.length || !sg.length) continue;
+    var k = ms[0] - sg[0]; if (Math.abs(k) > 2) continue;
+    if (ms.every(function (m, j) { return m - sg[j] === k; })) return { st: L.strums[i], k: k };
+  }
+  return null;
+}
+(function () {
+  var note0 = akGtrNote;
+  akGtrNote = function (midi, o) { var L = akSmpReady(); if (L && akSmpNote(L, midi, o)) return; return note0(midi, o); };
+  var strum0 = akHearStrum;
+  akHearStrum = function (notes, o) {
+    o = o || {}; var L = akSmpReady(), dir = o.dir || akHearCfg().dir;
+    if (L && dir === "down" && L.set.strums !== false && L.strums.length) {
+      var f = akSmpStrumFor(L, notes);
+      if (f) {
+        var ac = akAudio(), t = ac.currentTime + Math.max(0, o.when || 0) + 0.01;
+        Object.keys(AKS.voices).forEach(function (k) { akSmpVoiceStop(k, t); });
+        akSmpStart(f.st.buf, Math.pow(2, f.k / 12), (o.vol == null ? 0.75 : o.vol) * (akHearCfg().vol / 100) * 1.25, t, "strum", o);
+        return;
+      }
+    }
+    return strum0(notes, o);
+  };
+  var hush0 = akGtrHush;
+  akGtrHush = function () { hush0(); if (AKS.ac) Object.keys(AKS.voices).forEach(function (k) { akSmpVoiceStop(k, AKS.ac.currentTime); }); };
+  /* load the chosen sound early so the first tap already uses it */
+  setTimeout(function () { try { if (akSmpActiveId()) document.addEventListener("pointerdown", function once() { document.removeEventListener("pointerdown", once, true); akSmpReady(); }, true); } catch (e) {} }, 0);
+})();
+
+/* ---------------------------------------------------------------- the microphone */
+/* opens the mic with no voice processing; calls onLevel(peak) for the meter and onTake(Float32Array) after each note */
+function akSmpMic(devId, onLevel) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(new Error("This browser can't use the microphone."));
+  var c = { echoCancellation: false, noiseSuppression: false, autoGainControl: false }; if (devId) c.deviceId = { exact: devId };
+  return navigator.mediaDevices.getUserMedia({ audio: c }).then(function (stream) {
+    var AC = window.AudioContext || window.webkitAudioContext, ctx = new AC(), src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(2048, 1, 1), mute = ctx.createGain();
+    mute.gain.value = 0; src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+    var M = { stream: stream, ctx: ctx, sr: ctx.sampleRate, armed: null, floor: 0.002, pre: [], rec: null, quiet: 0, loud: 0 };
+    proc.onaudioprocess = function (e) {
+      var x = e.inputBuffer.getChannelData(0), pk = 0, s = 0; for (var i = 0; i < x.length; i++) { var a = Math.abs(x[i]); if (a > pk) pk = a; s += x[i] * x[i]; }
+      var rms = Math.sqrt(s / x.length), blk = new Float32Array(x); onLevel && onLevel(pk);
+      if (!M.rec) {
+        M.floor = M.floor * 0.95 + Math.min(rms, 0.05) * 0.05;
+        M.pre.push(blk); if (M.pre.length > 4) M.pre.shift();
+        if (M.armed && pk > Math.max(0.03, M.floor * 8)) { M.rec = M.pre.slice(); M.pre = []; M.loud = rms; M.quiet = 0; }
+        return;
+      }
+      M.rec.push(blk); M.loud = Math.max(M.loud, rms);
+      var secs = M.rec.length * x.length / M.sr;
+      M.quiet = rms < Math.max(M.loud * 0.01, M.floor * 2) ? M.quiet + x.length / M.sr : 0;
+      if (secs >= 5 || (secs > 1 && M.quiet > 0.35)) {
+        var all = new Float32Array(M.rec.length * x.length); M.rec.forEach(function (b, j) { all.set(b, j * x.length); });
+        var cb = M.armed; M.rec = null; M.armed = null; cb && cb(all, M.sr);
+      }
+    };
+    M.arm = function (cb) { M.rec = null; M.armed = cb; };
+    M.stop = function () { M.armed = null; try { proc.onaudioprocess = null; stream.getTracks().forEach(function (t) { t.stop(); }); ctx.close(); } catch (e) {} };
+    return M;
+  });
+}
+
+/* ---------------------------------------------------------------- the guided recorder */
+var AK_SMP_KINDS = [["steel", "Steel-string acoustic"], ["nylon", "Nylon (classical)"], ["electric", "Electric"], ["ukulele", "Ukulele"], ["custom", "Something else"]];
+function akSmpNewSet(o, cb) {
+  var ins = o.kind === "ukulele" ? "ukulele" : akHearIns() === "ukulele" ? "ukulele" : "guitar", tu = akTuning(ins);
+  var set = { id: "gs" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: o.name, kind: o.kind, ins: ins, notes: tu.notes, tname: tu.name, fix: true, soft: !!o.soft, strums: o.strums !== false, created: Date.now() };
+  akSmpPutSet(set, function () { cb(set); });
+}
+function akSmpRecorder(setId) {
+  if (setId) { akSmpGetSet(setId, function (set, list) { if (set) akSmpWizard(set, list); }); return; }
+  var name = h("input", { type: "text", value: "My guitar", "aria-label": "Name of this sound" });
+  var kind = h("select", { "aria-label": "Which guitar" }, AK_SMP_KINDS.map(function (k) { return h("option", { value: k[0], selected: k[0] === (akHearIns() === "ukulele" ? "ukulele" : "steel") }, k[1]); }));
+  var soft = h("input", { type: "checkbox" }), strums = h("input", { type: "checkbox", checked: true });
+  var ins = akHearIns(), tu = akTuning(ins), n = akSmpPlan(ins, {}).filter(function (s) { return !s.chord; }).length;
+  modal("Record my guitar", h("div", null,
+    h("p", null, "You'll play one note at a time and the app keeps each one. It takes about 15 minutes. Tune up first: the app tunes each note exactly, but the closer you start, the more natural it sounds."),
+    h("label", { class: "field" }, "Name", name), h("label", { class: "field" }, "Which guitar", kind),
+    h("label", { class: "row" }, soft, " Also record each note played softly (twice the notes, a more natural sound when quiet)"),
+    h("label", { class: "row" }, strums, " Also record a few open-chord strums"),
+    h("p", { class: "hint" }, "Tuning: " + tu.name + " (" + tu.notes.map(akSmpName).join(" ") + "), " + n + " notes. Play in this tuning. Quiet room, phone or mic about a foot from the soundhole (or plug in), and let every note ring for about 4 seconds.")
+  ), [{ label: "Cancel" }, { label: "Start", primary: true, onClick: function () {
+    akSmpNewSet({ name: name.value.trim() || "My guitar", kind: kind.value, soft: soft.checked, strums: strums.checked }, function (set) { akSmpWizard(set, []); });
+  } }]);
+}
+function akSmpWizard(set, list) {
+  var steps = akSmpPlan(set.ins, { notes: set.notes, soft: set.soft, strums: set.strums }), have = {}, M = null, idx = 0, take = null, auto = true;
+  list.forEach(function (r) { have[r.k] = r; });
+  while (idx < steps.length - 1 && have[steps[idx].k]) idx++;
+  var chips = h("div", { class: "aks-chips" }), big = h("div", { class: "aks-big" }), where = h("div", { class: "aks-where" }), meterIn = h("div", { class: "aks-lvl" }), meter = h("div", { class: "aks-meter" }, meterIn);
+  var status = h("div", { class: "aks-status", "aria-live": "polite" }), warn = h("div", { class: "aks-warn" }), btns = h("div", { class: "row" });
+  var autoBox = h("input", { type: "checkbox", checked: true, onChange: function () { auto = this.checked; } });
+  var fixBox = h("input", { type: "checkbox", checked: set.fix !== false, onChange: function () { set.fix = this.checked; akSmpPutSet(set); paintChips(); } });
+  var devSel = h("select", { "aria-label": "Input", hidden: true, onChange: function () { openMic(this.value); } });
+  var body = h("div", { class: "aks-wiz" }, chips, big, where, meter, status, warn, btns,
+    h("details", null, h("summary", null, "Options"),
+      h("label", { class: "row" }, autoBox, " Go to the next note by itself after a good take"),
+      h("label", { class: "row" }, fixBox, " Fix the tuning of every note (tunes each one exactly; the cents fixed show on each note)"),
+      h("label", { class: "field" }, "Input (mic or a plugged-in guitar)", devSel)));
+  var close = modal(set.name + ": record", body, [{ label: "Done", primary: true }], { wide: true, onClose: function () { if (M) M.stop(); M = null; akSmpUnload(set.id); try { if (typeof render === "function" && S.view === "settings") render(); } catch (e) {} } });
+  function label(s) { return s.chord ? s.chord : akSmpName(s.m) + (s.soft ? " soft" : ""); }
+  function paintChips() {
+    chips.innerHTML = "";
+    steps.forEach(function (s, i) {
+      var r = have[s.k], fixed = r && r.det != null && set.fix !== false ? Math.round((r.m - r.det) * 100) : null;
+      chips.appendChild(h("button", { class: "aks-chip" + (r ? " done" : "") + (r && r.bad ? " warn" : "") + (i === idx ? " cur" : ""), title: r ? (fixed ? "pitch fixed by " + (fixed > 0 ? "+" : "") + fixed + " cents" : "recorded") : "not recorded yet", onClick: function () { go(i); } },
+        label(s), fixed ? h("small", null, " " + (fixed > 0 ? "+" : "") + fixed + "¢") : null));
+    });
+  }
+  function go(i) { idx = Math.max(0, Math.min(steps.length - 1, i)); take = null; paint(); if (M) listen(); }
+  function paint() {
+    var s = steps[idx]; paintChips(); warn.innerHTML = "";
+    big.textContent = s.chord ? "Strum an open " + s.chord + " chord" : "Play " + akSmpName(s.m) + (s.soft ? " softly" : "");
+    where.textContent = s.chord ? "Once, downwards, all the strings of the open shape, and let it ring." : s.where + (s.soft ? ". Gently, like a quiet ballad." : ". A normal, firm pick.");
+    var done = steps.filter(function (x) { return have[x.k]; }).length;
+    status.textContent = (idx + 1) + " of " + steps.length + " · " + done + " recorded" + (M ? "" : " · tap Start listening");
+    btns.innerHTML = "";
+    if (!M) btns.appendChild(h("button", { class: "primary", onClick: function () { openMic(devSel.value); } }, "🎙 Start listening"));
+    if (have[s.k]) btns.appendChild(h("button", { onClick: function () { playRec(have[s.k]); } }, "▶ Hear the saved one"));
+    if (take) btns.appendChild(h("button", { onClick: function () { playTake(); } }, "▶ Hear this take"));
+    if (take && !take.err) btns.appendChild(h("button", { class: "primary", onClick: keep }, take.bad ? "Keep it anyway" : "Keep it"));
+    if (M) btns.appendChild(h("button", { onClick: function () { take = null; paint(); listen(); } }, "↺ Re-take"));
+    if (have[s.k]) btns.appendChild(h("button", { class: "danger", onClick: function () { akSmpDelOne(set.id, s.k, function () { delete have[s.k]; paint(); }); } }, "Delete this note"));
+    btns.appendChild(h("button", { onClick: function () { go(idx - 1); } }, "← Back"));
+    btns.appendChild(h("button", { onClick: function () { go(idx + 1); } }, idx === steps.length - 1 ? "Last one" : "Skip →"));
+  }
+  function openMic(dev) {
+    if (M) { M.stop(); M = null; }
+    status.textContent = "Opening the microphone…";
+    akSmpMic(dev, function (pk) { meterIn.style.width = Math.min(100, Math.round(Math.sqrt(pk) * 100)) + "%"; meter.classList.toggle("hot", pk > 0.95); }).then(function (m) {
+      if (!body.isConnected) { m.stop(); return; }
+      M = m; paint(); listen();
+      try { navigator.mediaDevices.enumerateDevices().then(function (ds) { var ins = ds.filter(function (d) { return d.kind === "audioinput"; }); if (ins.length < 2 || devSel.options.length) return; ins.forEach(function (d, i) { devSel.appendChild(h("option", { value: d.deviceId }, d.label || "Input " + (i + 1))); }); devSel.hidden = false; }); } catch (e) {}
+    }, function (e) { status.textContent = (e && e.name === "NotAllowedError") ? "The microphone wasn't allowed. Allow it in the browser's site settings, then try again." : (e && e.message) || "The microphone didn't open."; });
+  }
+  function listen() { if (!M) return; status.textContent = "Listening… play when you're ready."; M.arm(function (raw, sr) { setTimeout(function () { gotTake(raw, sr); }, 0); }); }
+  function gotTake(raw, sr) {
+    var s = steps[idx]; take = akSmpProcess(raw, sr, s.chord ? null : s.m, { soft: s.soft }); take.sr = sr;
+    paint();
+    if (take.err) { status.textContent = take.err; listen(); return; }
+    var msg = s.chord ? "Got it (" + take.secs.toFixed(1) + " s)." : "Heard " + akSmpName(Math.round(take.det)) + ", " + (take.cents === 0 ? "right in tune" : Math.abs(take.cents) + " cents " + (take.cents > 0 ? "sharp" : "flat") + (set.fix !== false ? " (fixed)" : "")) + ", " + take.secs.toFixed(1) + " s.";
+    status.textContent = msg;
+    take.warn.forEach(function (w) { warn.appendChild(h("p", null, "⚠ " + w)); });
+    if (!take.bad && auto) setTimeout(function () { if (take && body.isConnected) keep(); }, 900);
+  }
+  function keep() {
+    var s = steps[idx], t = take; if (!t || t.err) return; take = null;
+    var rec = { set: set.id, k: s.k, m: s.m == null ? null : s.m, det: t.det, soft: !!s.soft, rate: t.sr, pcm: akSmpTo16(t.data), bad: t.bad, clar: t.clar, at: Date.now() };
+    if (s.chord) { rec.chord = s.chord; rec.sig = akHearNotes(s.chord, { capo: 0, oct: 0, pos: "low", ins: set.ins }).map(function (x) { return x.m; }); }
+    akSmpPut(rec, function (ok) {
+      if (!ok) { toast("Couldn't save that note on this device."); return; }
+      have[s.k] = rec; akSmpPutSet(set);
+      var next = -1; for (var i = 1; i <= steps.length; i++) { var j = (idx + i) % steps.length; if (!have[steps[j].k]) { next = j; break; } }
+      if (next < 0) { paint(); status.textContent = "All done. Your sound is ready."; if (!akSmpActiveId(set.ins)) { akSmpCfg()[set.ins] = set.id; save(); } return; }
+      go(next);
+    });
+  }
+  function playBuf(f, sr, rate) { var ac = akAudio(); if (!ac) return; var b = ac.createBuffer(1, f.length, sr); b.getChannelData(0).set(f); var src = ac.createBufferSource(); src.buffer = b; src.playbackRate.value = rate || 1; src.connect(ac.destination); src.start(); }
+  function playTake() { var s = steps[idx]; if (take && take.data) playBuf(take.data, take.sr, s.chord || set.fix === false ? 1 : Math.pow(2, (s.m - take.det) / 12)); }
+  function playRec(r) { playBuf(akSmpFrom16(r.pcm), r.rate, r.chord || set.fix === false || r.det == null ? 1 : Math.pow(2, (r.m - r.det) / 12)); }
+  paint();
+  return close;
+}
+
+/* ---------------------------------------------------------------- moving a sound between devices */
+function akSmpExport(id) {
+  akSmpGetSet(id, function (set, list) {
+    if (!set) return;
+    var out = { type: "akashic-guitar-sound", v: 1, set: set, samples: list.map(function (r) { var o = {}; Object.keys(r).forEach(function (k) { if (k !== "pcm") o[k] = r[k]; }); o.pcm = akSmpB64(r.pcm); return o; }) };
+    saveFile((set.name || "guitar").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") + ".akguitar.json", JSON.stringify(out), "application/json");
+  });
+}
+function akSmpImportData(d, cb) {
+  if (!d || d.type !== "akashic-guitar-sound" || !d.set || !Array.isArray(d.samples)) { cb && cb(null, "That isn't a guitar sound file from this app."); return; }
+  akSmpSets(function (sets) {
+    var set = clone(d.set), oldId = set.id;
+    if (sets.some(function (s) { return s.id === oldId; })) { set.id = "gs" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); set.name += " (imported)"; }
+    akSmpPutSet(set, function () {
+      var left = d.samples.length; if (!left) { cb && cb(set); return; }
+      d.samples.forEach(function (r) { var rec = clone(r); rec.set = set.id; rec.pcm = akSmpUn64(r.pcm); akSmpPut(rec, function () { if (--left === 0) cb && cb(set); }); });
+    });
+  });
+}
+function akSmpImport() {
+  var inp = h("input", { type: "file", accept: ".json,application/json", hidden: true });
+  inp.addEventListener("change", function () {
+    var f = inp.files && inp.files[0]; if (!f) return;
+    readFileAs(f).then(function (t) {
+      var d = null; try { d = JSON.parse(t); } catch (e) {}
+      akSmpImportData(d, function (set, err) {
+        if (!set) { toast(err || "Couldn't import that file."); return; }
+        if (!akSmpActiveId(set.ins)) { akSmpCfg()[set.ins] = set.id; save(); }
+        toast("Added the sound “" + set.name + "”"); render();
+      });
+    }, function () { toast("Couldn't read that file."); });
+  });
+  document.body.appendChild(inp); inp.click(); setTimeout(function () { inp.remove(); }, 60000);
+}
+
+/* ---------------------------------------------------------------- settings: Chord sound > My recorded sound */
+function akSmpSettings(out) {
+  var box = h("div", { class: "aks-set" }, h("p", { class: "muted" }, "Loading your recorded sounds…"));
+  out.appendChild(h("h3", { class: "aks-h" }, "🎸 My recorded sound"));
+  out.appendChild(box);
+  akSmpSets(function (sets) {
+    box.innerHTML = "";
+    var ins = akHearIns(), cur = akSmpActiveId(ins), mine = sets.filter(function (s) { return (s.ins || "guitar") === ins; });
+    box.appendChild(h("p", { class: "hint" }, "Record your own " + (ins === "ukulele" ? "ukulele" : "guitar") + " one note at a time and every chord in the app plays with your real sound, tuned exactly. Sounds stay on this device; use Export and Import to move one to your phone or tablet."));
+    var opts = [h("option", { value: "" }, "Built-in sound (" + (ins === "ukulele" ? "ukulele" : AK_GTR[akHearCfg().type] ? AK_GTR[akHearCfg().type].n : "steel") + ")")].concat(mine.map(function (s) { return h("option", { value: s.id, selected: s.id === cur }, "My recording: " + s.name); }));
+    box.appendChild(h("label", { class: "field" }, "Chords play with", h("select", { onChange: function () { akSmpCfg()[ins] = this.value; save(); if (this.value) akSmpLoad(this.value, function () { akHearDemo(); }); } }, opts)));
+    mine.forEach(function (s) {
+      box.appendChild(h("div", { class: "row aks-item" }, h("b", null, s.name), h("span", { class: "muted" }, " " + (AK_SMP_KINDS.filter(function (k) { return k[0] === s.kind; })[0] || ["", ""])[1] + ", " + (s.tname || "")),
+        h("button", { class: "sm", onClick: function () { akSmpRecorder(s.id); } }, "🎙 Record or redo notes"),
+        h("button", { class: "sm", onClick: function () { akSmpCfg()[ins] = s.id; save(); akSmpLoad(s.id, function () { akHearDemo(); }); render(); } }, "▶ Try it"),
+        h("button", { class: "sm", onClick: function () { askText("Rename this sound", s.name, "Rename", function (v) { s.name = v; akSmpPutSet(s, function () { render(); }); }); } }, "✎ Name"),
+        h("button", { class: "sm", onClick: function () { akSmpExport(s.id); } }, "⇪ Export"),
+        h("button", { class: "sm danger", onClick: function () { confirmBox("Delete the sound “" + s.name + "” and all its recorded notes from this device?", "Delete", function () { akSmpDelSet(s.id, function () { render(); }); }); } }, "Delete")));
+    });
+    box.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akSmpRecorder(); } }, "🎙 Record my " + (ins === "ukulele" ? "ukulele" : "guitar")), h("button", { onClick: akSmpImport }, "⇩ Import a sound file")));
+  });
+}
+(function () {
+  var x15 = typeof akSettingsExtra15 === "function" ? akSettingsExtra15 : null;
+  akSettingsExtra15 = function (c) { try { akSmpSettings(c.out); } catch (e) {} if (x15) x15(c); };
+})();
+
+akCss("ak9-e", [
+  ".aks-chips{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 10px}",
+  ".aks-chip{padding:3px 8px;font-size:.8rem;border-radius:999px;opacity:.75}",
+  ".aks-chip.done{background:color-mix(in srgb,#30A46C 30%,transparent);opacity:1}",
+  ".aks-chip.warn{background:color-mix(in srgb,#E5B800 35%,transparent)}",
+  ".aks-chip.cur{outline:2px solid currentColor;opacity:1}",
+  ".aks-big{font-size:1.9rem;font-weight:700;text-align:center;margin:6px 0 2px}",
+  ".aks-where{text-align:center;opacity:.85;margin-bottom:10px}",
+  ".aks-meter{height:14px;border-radius:7px;background:rgba(127,127,127,.25);overflow:hidden;margin:8px 0}",
+  ".aks-lvl{height:100%;width:0;background:#30A46C;transition:width .05s}",
+  ".aks-meter.hot .aks-lvl{background:#E5484D}",
+  ".aks-status{text-align:center;min-height:1.4em;margin:6px 0}",
+  ".aks-warn p{margin:4px 0;color:#E5B800}",
+  ".aks-h{margin:14px 0 4px;font-size:1rem}",
+  ".aks-item{flex-wrap:wrap;gap:6px;align-items:center}"
+]);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
