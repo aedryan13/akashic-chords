@@ -2668,7 +2668,7 @@ function viewSong() {
         if (!open && !on) return;
         host.appendChild(h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { s.tags = s.tags || []; var i = s.tags.indexOf(t.name); if (i >= 0) s.tags.splice(i, 1); else s.tags.push(t.name); pushHist(); save(); draw(); } }, on ? "✓ " + t.name : t.name));
       });
-      host.appendChild(h("button", { class: "chip", onClick: function () { suggestTagsForSong(s, function () { pushHist(); save(); build(); }); } }, "✨ Suggest tags"));
+      if (akClaudeOk()) host.appendChild(h("button", { class: "chip", onClick: function () { suggestTagsForSong(s, function () { pushHist(); save(); build(); }); } }, "✨ Suggest tags"));
       host.appendChild(h("button", { class: "chip", onClick: function () { askText("New tag", "", "Add tag", function (v) { if (!lib().tags.some(function (x) { return x.name === v; })) lib().tags.push({ name: v, color: "" }); s.tags = s.tags || []; if (s.tags.indexOf(v) < 0) s.tags.push(v); pushHist(); save(); draw(); }); } }, "+ New tag"));
     }
     draw(); return host;
@@ -2761,7 +2761,7 @@ function viewSong() {
           } }]); } }, "⋯")),
       h("div", { class: "muted", style: "margin:2px 0 6px" }, playStatsLine(s)),
       fld("Title", "title"), fld("Artist", "artist"),
-      h("div", { class: "row", style: "margin-top:0" }, h("button", { onClick: function () { songInfoFor(s, function () { pushHist(); save(); build(); }); } }, "Get song info"), link("Check online", "song history writer year")),
+      h("div", { class: "row", style: "margin-top:0" }, !akClaudeOk() ? null : h("button", { onClick: function () { songInfoFor(s, function () { pushHist(); save(); build(); }); } }, "Get song info"), link("Check online", "song history writer year")),
       metaCard,
       h("div", { class: "fld" }, "Tags", tagChips()),
       h("div", { class: "fld" }, "Color", colorPicker(s.color, function (c) { s.color = c; later(); })),
@@ -2810,7 +2810,7 @@ function viewSong() {
       h("p", { class: "hint" }, "In “by length” mode the song's Length (under Key, time, tempo and length) sets how long the scroll takes. The − and + buttons on the playing screen change that same number."),
       fld("Wait before scrolling starts (seconds)", "preRoll", { type: "number", num: true, cap: "off", inputmode: "numeric" }),
       h("h2", null, "Song info and trivia"),
-      h("div", { class: "row", style: "margin-top:0" }, h("button", { onClick: function () { songInfoFor(s, function () { pushHist(); save(); build(); }); } }, "Get song info"), link("Check online", "song history writer year")),
+      h("div", { class: "row", style: "margin-top:0" }, !akClaudeOk() ? null : h("button", { onClick: function () { songInfoFor(s, function () { pushHist(); save(); build(); }); } }, "Get song info"), link("Check online", "song history writer year")),
       h("div", { class: "two" }, fld("Year", "year", { cap: "off", inputmode: "numeric" }), fld("Original artist", "origArtist")),
       fld("Written by", "writers"),
       akCoversCard(s, { edit: function () { pushHist(); save(); build(); } }),
@@ -3981,7 +3981,7 @@ function exportShow(sh) {
     if (f === "text") { var t = textExport(sh, o); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { toast("Copied to the clipboard."); }, function () {}); saveFile(fname + ".txt", t, "text/plain"); return; }
     if (f === "csv") { saveFile(fname + ".csv", csvExport(sh, o), "text/csv"); return; }
     out.textContent = "Making the PDF…";
-    (window.PDFLib ? Promise.resolve() : loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js")).then(function () { return pdfExport(sh, o); }).then(function (blob) { return saveFile(fname + ".pdf", blob, "application/pdf"); }).then(function () { close(); }).catch(function (e) { out.textContent = e.message || "Couldn't make the PDF."; });
+    akPdfLib().then(function () { return pdfExport(sh, o); }).then(function (blob) { return saveFile(fname + ".pdf", blob, "application/pdf"); }).then(function () { close(); }).catch(function (e) { out.textContent = e.message || "Couldn't make the PDF."; });
     return false;
   } }]);
 }
@@ -4755,9 +4755,11 @@ function viewBanter() {
   var list = h("div", { class: "list" }), filter = S.banterFilter || "all", q = "";
   function fill() {
     list.textContent = "";
-    var items = store.banter.filter(function (j) { return (filter === "all" || (filter === "fav" && j.fav) || (filter === "fresh" && !j.used)) && (!q || (j.text + " " + (j.cat || "")).toLowerCase().indexOf(q) >= 0); });
-    if (!items.length) list.appendChild(h("div", { class: "empty" }, store.banter.length ? "Nothing matches." : "No banter yet. Add your own jokes and stories, or ask Claude for some."));
-    items.forEach(function (j) {
+    var items = akBanterPool(store.banter).filter(function (j) { return (filter === "all" || (filter === "fav" && j.fav) || (filter === "fresh" && !j.used)) && (!q || (j.text + " " + (j.cat || "")).toLowerCase().indexOf(q) >= 0); });
+    if (!items.length) list.appendChild(h("div", { class: "empty" }, store.banter.length ? "Nothing matches." : "No banter yet. Add your own jokes and stories" + (akClaudeOk() ? ", or ask Claude for some." : ".")));
+    /* a long list draws 100 at a time */
+    var lim = S.banterShow || 100, more = items.length - lim;
+    items.slice(0, lim).forEach(function (j) {
       var song = j.songId && findSong(j.songId);
       list.appendChild(h("div", { class: "card jk" },
         h("div", { class: "jtext" + (j.used ? " used" : "") }, j.text),
@@ -4769,13 +4771,15 @@ function viewBanter() {
           h("button", { onClick: function () { editJoke(j, fill); } }, "Edit"),
           h("button", { class: "danger", onClick: function () { snap("delete joke"); store.banter = store.banter.filter(function (x) { return x !== j; }); save(); fill(); toastUndo("Deleted."); } }, "Delete"))));
     });
+    if (more > 0) list.appendChild(h("button", { class: "akbmore", style: "width:100%;margin:8px 0", onClick: function () { S.banterShow = lim + 200; fill(); } }, "Show more (" + more + " left)"));
   }
   var seg = h("div", { class: "chips" });
   function drawSeg() { seg.textContent = ""; [["all", "All"], ["fav", "Favorites"], ["fresh", "Not used yet"]].forEach(function (o) { seg.appendChild(h("button", { class: "chip" + (filter === o[0] ? " on" : ""), onClick: function () { filter = S.banterFilter = o[0]; drawSeg(); fill(); } }, o[1])); }); }
   drawSeg(); fill();
+  var picker = akBanterPicker(fill);
   var body = h("div", null,
-    h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { editJoke(null, fill); } }, "+ Add"), h("button", { onClick: function () { suggestDialog(fill); } }, "Suggest some"), h("button", { onClick: function () { importBanterDialog(fill); } }, "Import…"), h("button", { onClick: function () { var pool = store.banter.filter(function (j) { return !j.used; }); if (!pool.length) pool = store.banter; if (!pool.length) { toast("Add some banter first."); return; } showJoke(pool[Math.floor(Math.random() * pool.length)], fill); } }, "Random one")),
-    h("div", { class: "row" }, h("div", { class: "grow" }, h("input", { type: "search", placeholder: "Search banter", "aria-label": "Search banter", onInput: function () { q = this.value.trim().toLowerCase(); fill(); } }))), seg, list);
+    h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { editJoke(null, fill); } }, "+ Add"), !akClaudeOk() ? null : h("button", { onClick: function () { suggestDialog(fill); } }, "Suggest some"), h("button", { onClick: function () { importBanterDialog(fill); } }, "Import…"), h("button", { onClick: function () { var all = akBanterPool(store.banter), pool = all.filter(function (j) { return !j.used; }); if (!pool.length) pool = all; if (!pool.length) { toast("Add some banter first."); return; } showJoke(pool[Math.floor(Math.random() * pool.length)], fill); } }, "Random one")),
+    h("div", { class: "row" }, h("div", { class: "grow" }, h("input", { type: "search", placeholder: "Search banter", "aria-label": "Search banter", onInput: function () { q = this.value.trim().toLowerCase(); fill(); } }))), picker, seg, list);
   return shell("Banter", body);
 }
 function editJoke(j, done) {
@@ -4883,7 +4887,7 @@ function viewImport() {
   } });
   root.appendChild(h("div", { class: "row settools", style: "margin:4px 0" }, h("button", { onClick: function () { secEls.forEach(function (d) { d.open = true; }); } }, "Open all"), h("button", { onClick: function () { secEls.forEach(function (d) { d.open = false; }); } }, "Close all")));
 
-  isec("Songs", "Bring songs in from a file, from text or from Claude");
+  isec("Songs", "Bring songs in from a file" + (akClaudeOk() ? ", from text or from Claude" : " or from text"));
   isub("A song someone sent you", "Open a Akashic Chords song file");
   out.appendChild(h("p", { class: "hint" }, "Choose the song file someone sent you (it ends in .chordbook.json). If you already have the song, you can add theirs as another version under a new name, or replace yours. A set list file works here too."));
   out.appendChild(fileBtn("Choose song file", anyFileInput()));
@@ -4901,9 +4905,9 @@ function viewImport() {
       var s = newSong({ title: pasteTitle.value.trim() || r.title || "Untitled", lyrics: r.text });
       lib().songs.push(s); saveNow(); pasteArea.value = ""; pasteTitle.value = ""; toast("Song added."); go("song", { songId: s.id });
     } }, "Add song")));
-  isub("Song info, tags and chords from Claude", "Send songs to Claude and load what it finds");
-  out.appendChild(h("p", { class: "hint" }, "Want years, original artists, trivia and tags for your songs, checked on the web? Save a song list, give it to Claude in a chat, then load the file Claude sends back. You can also ask Claude for banter and load it under Banter below."));
-  out.appendChild(h("div", { class: "row" }, h("button", { onClick: exportForClaudeDialog }, "Save a song list for Claude…"), h("button", { class: "primary", onClick: importInfoDialog }, "Load info and tags from Claude…")));
+  if (akClaudeOk()) isub("Song info, tags and chords from Claude", "Send songs to Claude and load what it finds");
+  if (akClaudeOk()) out.appendChild(h("p", { class: "hint" }, "Want years, original artists, trivia and tags for your songs, checked on the web? Save a song list, give it to Claude in a chat, then load the file Claude sends back. You can also ask Claude for banter and load it under Banter below."));
+  if (akClaudeOk()) out.appendChild(h("div", { class: "row" }, h("button", { onClick: exportForClaudeDialog }, "Save a song list for Claude…"), h("button", { class: "primary", onClick: importInfoDialog }, "Load info and tags from Claude…")));
   isub("Send songs", "Pick songs and share them as a file, PDF or text");
   out.appendChild(h("p", { class: "hint" }, "To send one song, open it and use ⋯ then Share. To send several, go to the song list, tap ⋯, choose Select, tick the songs and tap Share."));
   out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { go("songs"); } }, "Go to the song list")));
@@ -4972,7 +4976,7 @@ function parseBanter(text) {
       var d = JSON.parse(text); if (d && !Array.isArray(d)) d = d.banter || d.jokes || d.items || [];
       (d || []).forEach(function (x) {
         if (typeof x === "string") { if (x.trim()) out.push({ text: x.trim() }); }
-        else if (x && (x.text || x.joke || x.banter || x.line)) out.push({ text: String(x.text || x.joke || x.banter || x.line).trim(), cat: x.category || x.cat || x.type || "", fav: !!x.fav, song: x.songTitle || x.song || "", artist: x.artist || "", songIds: Array.isArray(x.songIds) ? x.songIds : x.songId ? [x.songId] : [] });
+        else if (x && (x.text || x.joke || x.banter || x.line)) out.push({ text: String(x.text || x.joke || x.banter || x.line).trim(), cat: x.category || x.cat || x.type || "", kind: x.kind || "", rating: x.rating || "", fav: !!x.fav, song: x.songTitle || x.song || "", artist: x.artist || "", songIds: Array.isArray(x.songIds) ? x.songIds : x.songId ? [x.songId] : [] });
       });
       return out;
     } catch (e) { /* not JSON: read it as plain text */ }
@@ -4994,7 +4998,9 @@ function banterSongFor(it) {
   var songs = lib().songs, i;
   for (i = 0; i < (it.songIds || []).length; i++) { var byId = findSong(it.songIds[i]); if (byId) return byId; }
   if (!it.song) return null;
-  var t = normTitle(it.song), a = normTitle(it.artist), same = songs.filter(function (s) { return normTitle(s.title) === t; });
+  /* titles indexed once per library, so a big import doesn't re-read every song for every line */
+  var ix = banterSongFor._ix; if (!ix || ix.l !== songs || ix.n !== songs.length) { ix = banterSongFor._ix = { l: songs, n: songs.length, t: {} }; songs.forEach(function (s) { var k = normTitle(s.title); (ix.t[k] = ix.t[k] || []).push(s); }); }
+  var t = normTitle(it.song), a = normTitle(it.artist), same = ix.t[t] || [];
   if (a) { var both = same.filter(function (s) { return normTitle(s.artist) === a || normTitle(s.origArtist) === a; }); if (both.length) return both[0]; }
   return same.length === 1 ? same[0] : null;
 }
@@ -5013,10 +5019,17 @@ function importBanterDialog(done) {
     h("label", { class: "chk" }, skipDup, "Skip ones I already have")),
     [{ label: "Cancel" }, { label: "Add them", primary: true, onClick: function () {
       var items = parseBanter(area.value); if (!items.length) { toast("Nothing to add yet."); return false; }
+      area.value = ""; /* a big file in the box makes every redraw slow, and it's read now */
       snap("import banter");
-      var have = {}; store.banter.forEach(function (j) { have[j.text.toLowerCase()] = 1; });
+      var have = {}; store.banter.forEach(function (j) { have[j.text.toLowerCase()] = j; });
       var added = 0, skipped = 0;
-      items.forEach(function (it) { if (skipDup.checked && have[it.text.toLowerCase()]) { skipped++; return; } have[it.text.toLowerCase()] = 1; var sg = banterSongFor(it); store.banter.push({ id: uid(), text: it.text, cat: it.cat || "", fav: !!it.fav, used: false, songId: sg ? sg.id : "" }); added++; });
+      items.forEach(function (it) {
+        var old = have[it.text.toLowerCase()];
+        /* one already here: keep it, but give it the kind and rating from the file if it had none */
+        if (skipDup.checked && old) { if (old !== 1) { if (!old.kind && it.kind) old.kind = it.kind; if (!old.rating && it.rating) old.rating = it.rating; } skipped++; return; }
+        have[it.text.toLowerCase()] = 1; var sg = banterSongFor(it);
+        store.banter.push({ id: uid(), text: it.text, cat: it.cat || "", kind: it.kind || akBanterKind(it), rating: it.rating || "", fav: !!it.fav, used: false, songId: sg ? sg.id : "" }); added++;
+      });
       save(); done();
       toast("Added " + added + (added === 1 ? " item" : " items") + (skipped ? ", skipped " + skipped + " you already had" : "") + ".", { label: "Undo", fn: function () { undoLast(); done(); } });
     } }]);
@@ -10036,9 +10049,9 @@ function viewSettings() {
     draw(); out.appendChild(det);
   })();
 
-  section("Song info and tags", "Years, trivia, tags, and files to and from Claude");
-  out.appendChild(h("div", { class: "row" }, h("button", { onClick: fillAllInfo }, "Fill in years and trivia for all songs…")));
-  out.appendChild(h("div", { class: "row" }, h("button", { onClick: suggestTagsAll }, "Suggest tags for all songs…"), h("button", { onClick: exportForClaudeDialog }, "Save a song list for Claude…"), h("button", { onClick: importInfoDialog }, "Load info and tags from Claude…")));
+  if (akClaudeOk()) section("Song info and tags", "Years, trivia, tags, and files to and from Claude");
+  if (akClaudeOk()) out.appendChild(h("div", { class: "row" }, h("button", { onClick: fillAllInfo }, "Fill in years and trivia for all songs…")));
+  if (akClaudeOk()) out.appendChild(h("div", { class: "row" }, h("button", { onClick: suggestTagsAll }, "Suggest tags for all songs…"), h("button", { onClick: exportForClaudeDialog }, "Save a song list for Claude…"), h("button", { onClick: importInfoDialog }, "Load info and tags from Claude…")));
 
   again("look");
   section("Saved looks", "Save and switch between whole looks");
@@ -10827,7 +10840,7 @@ function openRequests() {
     var btns = [];
     if (inPlay && have) { btns.push(h("button", { onClick: function () { playInsert(have.id, false); toast("“" + have.title + "” is next."); } }, "Play next")); btns.push(h("button", { onClick: function () { close(); playInsert(have.id, true); } }, "Play now")); }
     if (!have) btns.push(h("button", { onClick: function () { snap("add requested song"); var s = requestSong(r); save(); draw(); toastUndo("Added “" + s.title + "” to your library."); } }, "Add to library"));
-    btns.push(h("button", { onClick: function () { snap("add requested song"); var s = requestSong(r); save(); findChordsFor(s, function () { save(); draw(); }); } }, "Find chords…"));
+    if (akClaudeOk()) btns.push(h("button", { onClick: function () { snap("add requested song"); var s = requestSong(r); save(); findChordsFor(s, function () { save(); draw(); }); } }, "Find chords…"));
     if (have) btns.push(h("button", { onClick: function () { close(); stopAuto(); releaseWake(); S.play = null; go("song", { songId: have.id }); } }, "Open song"));
     if (r.status !== "played") btns.push(h("button", { onClick: function () { r.status = "played"; save(); draw(); } }, "Played"));
     if (r.status !== "skipped" && r.status !== "played") btns.push(h("button", { onClick: function () { r.status = "skipped"; save(); draw(); } }, "Skip"));
@@ -10844,7 +10857,7 @@ function openRequests() {
     var pending = l.filter(function (r) { return r.status === "new" && !((r.songId && findSong(r.songId)) || findSongByTitle(r.title, r.artist)); });
     if (l.length) listBox.appendChild(h("div", { class: "row", style: "flex-wrap:wrap" },
       h("button", { disabled: !pending.length, onClick: function () { snap("add requested songs"); pending.forEach(requestSong); save(); draw(); toastUndo("Added " + pending.length + (pending.length === 1 ? " song" : " songs") + " to your library."); } }, "Add all new to library (" + pending.length + ")"),
-      h("button", { disabled: !lib().songs.some(function (s) { return s.requested; }), onClick: function () { close(); exportForClaudeDialog("requested"); } }, "Save requested songs for Claude…"),
+      !akClaudeOk() ? null : h("button", { disabled: !lib().songs.some(function (s) { return s.requested; }), onClick: function () { close(); exportForClaudeDialog("requested"); } }, "Save requested songs for Claude…"),
       h("button", { disabled: !l.some(function (r) { return r.status !== "new"; }), onClick: function () { var l2 = reqList(); lib().requests = l2.filter(function (r) { return r.status === "new"; }); save(); draw(); } }, "Clear finished")));
     l.forEach(function (r) { listBox.appendChild(row(r)); });
   }
@@ -11163,7 +11176,7 @@ function shareDialog(songs) {
     if (f === "text") return Promise.resolve({ name: base + ".txt", data: shareText(songs, o), mime: "text/plain" });
     var ex = typeof akExportMake === "function" ? akExportMake(f, songs, o) : null; if (ex) { out.textContent = f === "leadsheet" ? "Drawing the lead sheet…" : ""; return ex; }
     out.textContent = "Making the PDF…";
-    return (window.PDFLib ? Promise.resolve() : loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js")).then(function () { return sharePdf(songs, o); }).then(function (blob) { return { name: base + ".pdf", data: blob, mime: "application/pdf" }; });
+    return akPdfLib().then(function () { return sharePdf(songs, o); }).then(function (blob) { return { name: base + ".pdf", data: blob, mime: "application/pdf" }; });
   }
   if (navigator.share) buttons.push({ label: "Send…", onClick: function (close) {
     make().then(function (f) {
@@ -12289,17 +12302,18 @@ function openTalk(song) {
   if (info.length || song.trivia) body.appendChild(h("div", { class: "card" }, h("strong", null, "About this song" + (song.infoChecked ? "" : " (unchecked)")), info.map(function (x) { return h("div", null, h("span", { class: "muted" }, x[0] + ": "), x[1]); }), song.trivia ? h("p", { style: "white-space:pre-wrap;margin:8px 0 0;font-size:1.1em" }, song.trivia) : null));
   var cvc = akCoversCard(song); if (cvc) body.appendChild(cvc);
   if (/\[[^\]]+\]/.test(song.lyrics || song.chords || "")) { var pgc = akProgCard(song, function () { save(); fillCharts(); }); pgc.open = true; pgc.dispatchEvent(new Event("toggle")); body.appendChild(pgc); }
-  var jokes = store.banter.filter(function (j) { return j.songId === song.id; });
+  var jokes = akBanterPool(store.banter).filter(function (j) { return j.songId === song.id; });
   if (jokes.length) body.appendChild(h("div", { class: "card" }, h("strong", null, "Banter for this song"), jokes.map(function (j) { return h("p", { style: "margin:8px 0 0;font-size:1.1em" }, j.text); })));
   if (!body.firstChild) body.appendChild(h("p", { class: "hint" }, "No notes or info for this song yet. Add them in the song editor."));
   body.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { openBanterPanel(song); } }, "More banter…")));
   modal(song.title, body, [{ label: "Close", primary: true }], { wide: true });
 }
 function openBanterPanel(song) {
-  var pool = store.banter, body = h("div"), cur = null;
+  var pool = akBanterPool(store.banter), body = h("div"), cur = null;
+  var picker = akBanterPicker(function () { pool = akBanterPool(store.banter); cur = null; draw(); }, true);
   function draw() {
-    body.textContent = "";
-    if (!pool.length) { body.appendChild(h("p", { class: "hint" }, "No banter yet. Add some under Import, in the Banter section.")); return; }
+    body.textContent = ""; if (store.banter.length) body.appendChild(picker);
+    if (!pool.length) { body.appendChild(h("p", { class: "hint" }, store.banter.length ? "Nothing of these kinds yet. Pick more kinds above." : "No banter yet. Add some under Import, in the Banter section.")); return; }
     var unused = pool.filter(function (j) { return !j.used; });
     var attached = pool.filter(function (j) { return j.songId === song.id; });
     cur = cur || (attached[0] || (unused.length ? unused : pool)[Math.floor(Math.random() * (unused.length ? unused : pool).length)]);
@@ -16892,8 +16906,8 @@ function akSongBits(s) { return [s.key ? "Key " + s.key : "", Number(s.capo) ? "
 function akInfoBody(kind, song, short) {
   var box = h("div", { class: "akinfo-b" });
   if (kind === "banter") {
-    var mine = store.banter.filter(function (j) { return j.songId === song.id; }), pool = mine.length ? mine : store.banter.filter(function (j) { return !j.used; });
-    if (!pool.length) pool = store.banter;
+    var bp = akBanterPool(store.banter), mine = bp.filter(function (j) { return j.songId === song.id; }), pool = mine.length ? mine : bp.filter(function (j) { return !j.used; });
+    if (!pool.length) pool = bp;
     if (!pool.length) box.appendChild(h("span", { class: "muted" }, "No banter yet. Add some under Import, Banter."));
     else { S.akBanterI = ((S.akBanterI || 0) + (short ? 0 : 0)) % pool.length; var j = pool[S.akBanterI % pool.length]; box.appendChild(h("span", { class: "akinfo-txt" }, j.text)); box.appendChild(h("button", { class: "sm", onClick: function (e) { e.stopPropagation(); S.akBanterI = (S.akBanterI || 0) + 1; akInfoRefresh(); } }, "Another")); }
   } else if (kind === "next") {
@@ -22600,7 +22614,7 @@ function akSetSearchEl() {
     var feats = typeof akFeatAll === "function" ? akFeatAll().filter(function (f) { return hit(f.name, q) || hit(f.desc, q); }) : [];
     head("Features", feats.map(function (f) { return row("✦", f.name, f.where || f.cat, function () { akFeatGo(f); }); }));
     /* screens */
-    var scrs = [["songs", "Songs"], ["shows", "Shows"], ["learn", "Learn"], ["write", "Write"], ["import", "Import"], ["banter", "Banter"], ["discover", "Discover"], ["stats", "Stats"], ["history", "History"], ["guide", "Guide"]].filter(function (x) { return hit(x[1], q) && (x[0] !== "learn" || typeof viewLearn === "function") && (x[0] !== "write" || (typeof AK_VIEWS === "object" && AK_VIEWS.write)); });
+    var scrs = [["songs", "Songs"], ["shows", "Shows"], ["learn", "Learn"], ["write", "Write"], ["import", "Import"], ["banter", "Banter"], ["discover", "Discover"], ["stats", "Stats"], ["history", "History"], ["guide", "Guide"], ["tonight", "Tonight"], ["tidy", "Tidy my library"]].filter(function (x) { return hit(x[1], q) && (x[0] !== "learn" || typeof viewLearn === "function") && (x[0] !== "write" || (typeof AK_VIEWS === "object" && AK_VIEWS.write)); });
     head("Screens", scrs.map(function (x) { return row("▣", x[1], "screen", function () { go(x[0]); }); }));
     /* songs, set lists, shows */
     var songs = lib().songs.filter(function (s) { return hit(s.title, q) || hit(s.artist, q); });
@@ -22628,6 +22642,326 @@ akCss("ak8-settings2", [
   ".linkbtn{background:none;border:0;padding:0;min-height:0;color:var(--accent);text-decoration:underline;font:inherit;cursor:pointer}",
   ".ak8-custbtn{font-size:1.15rem}",
   ".ak8-cust details.subsec{margin:6px 0}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 7, phase 4: banter kinds =================
+   Every banter line can carry a kind (joke, quip, trivia, history, artist story, style, crowd work, intro) and a rating
+   (clean or raunchy). The import keeps both (lines imported before this get their kind from their group name), and the Banter
+   screen and the playing screen's banter window let you pick which kinds you want, with Jokes as a choice of its own and
+   raunchy ones only when you ask for them. */
+var AK_BANTER_KINDS = [["joke", "Jokes"], ["quip", "Quips"], ["trivia", "Trivia"], ["history", "History"], ["artist story", "Artist stories"], ["style", "Music styles"], ["crowd", "Crowd work"], ["intro", "Song intros"], ["other", "Other"]];
+/* the kind of a line: its own, else read from its group name ("Trivia · Wagon Wheel", "# Tuning jokes") */
+function akBanterKind(j) {
+  if (j.kind) return j.kind;
+  var c = String(j.cat || "").toLowerCase();
+  if (/joke/.test(c)) return "joke"; if (/quip|one-?liner/.test(c)) return "quip"; if (/trivia|fact/.test(c)) return "trivia"; if (/histor/.test(c)) return "history";
+  if (/artist|story|stories/.test(c)) return "artist story"; if (/style|genre/.test(c)) return "style"; if (/crowd|audience/.test(c)) return "crowd"; if (/intro/.test(c)) return "intro";
+  return "other";
+}
+function akBanterCfg() { var s = settings(); if (!s.banterPick || typeof s.banterPick !== "object") s.banterPick = { kinds: [], raunchy: false }; return s.banterPick; }
+/* the lines that fit the kinds and rating picked */
+function akBanterPool(list) {
+  var c = akBanterCfg(), ks = c.kinds || [];
+  return (list || []).filter(function (j) { if (j.rating === "raunchy" && !c.raunchy) return false; return !ks.length || ks.indexOf(akBanterKind(j)) >= 0; });
+}
+/* the picker: All, then one chip per kind you have (tap to add or remove), and the raunchy switch */
+function akBanterPicker(onChange, compact) {
+  var box = h("div", { class: "akbk" + (compact ? " sm" : "") });
+  function draw() {
+    box.textContent = "";
+    var c = akBanterCfg(), have = {}, rated = false;
+    store.banter.forEach(function (j) { have[akBanterKind(j)] = (have[akBanterKind(j)] || 0) + 1; if (j.rating === "raunchy") rated = true; });
+    var row = h("div", { class: "chips akbk-row", role: "group", "aria-label": "Kinds of banter" });
+    row.appendChild(h("button", { class: "chip" + (!c.kinds.length ? " on" : ""), "aria-pressed": !c.kinds.length ? "true" : "false", onClick: function () { c.kinds = []; save(); draw(); onChange(); } }, "All"));
+    AK_BANTER_KINDS.forEach(function (k) {
+      if (!have[k[0]]) return;
+      var on = c.kinds.indexOf(k[0]) >= 0;
+      row.appendChild(h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "data-kind": k[0], onClick: function () {
+        if (on) c.kinds = c.kinds.filter(function (x) { return x !== k[0]; }); else c.kinds = c.kinds.concat([k[0]]);
+        save(); draw(); onChange();
+      } }, k[1] + (compact ? "" : " " + have[k[0]])));
+    });
+    box.appendChild(row);
+    if (rated) box.appendChild(h("label", { class: "chk akbk-r" }, h("input", { type: "checkbox", checked: !!c.raunchy, onChange: function () { c.raunchy = this.checked; save(); onChange(); } }), "Include raunchy jokes"));
+  }
+  draw();
+  return box;
+}
+akCss("ak8-banter", [
+  ".akbk{margin:6px 0 8px}.akbk-row{flex-wrap:wrap;gap:6px}.akbk-r{margin:6px 0 0}",
+  ".akbk.sm .chip{min-height:36px;padding:4px 10px;font-size:.9rem}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 7, phase 4: tidier navigation and store readiness =================
+   - Bottom bar on a phone: Back, up to four tabs you pick, and More (the rest, plus "Choose the tabs").
+   - "+ New" on Songs offers every way to add something: blank song, photos, pasted or file text, a quick idea, a show, a set list.
+   - "Tonight": an optional start screen with the next show, a big Play button, the last song and practice.
+   - Learn: the chips in three labelled rows (Practice, Reference, Tools).
+   - "Tidy my library": empty songs, likely duplicates, songs with no chords and stray custom chords, each with what to do.
+   - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
+     and there is a version number with a "What's new" card after each update. */
+
+var AK_VERSION = "7.0";
+var AK_WHATS_NEW = [
+  "Playing screen: an ⓘ Info / ▦ Buttons switch under the toolbar, button sets in Buttons ▾, grids for the side buttons, icon styles, mark words as chords, tap a Solo for scales",
+  "Mode ▸ Rhythm: a jazz-style chart with beat slashes, strums and words, and ▶ Hear it",
+  "Build a chord on a real-looking guitar neck, with sound; new chord kinds like m(maj7), 11ths and 13ths",
+  "Each screen has its own ⚙ options; Settings has a search box that finds anything",
+  "Banter: pick the kinds you want (jokes, trivia, stories…), raunchy only when you ask",
+  "Shows: + New picks the set list; Shows and Set lists tabs share the width",
+  "Tidy my library, a Tonight start screen, a shorter bottom bar on phones, and one + New for everything",
+  "Fixed: Color this screen on touch screens, overlapping buttons on phones"
+];
+
+/* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
+/* features that ask Claude (or make files for a Claude chat) are in the Personal edition only */
+function akClaudeOk() { return typeof akPersonal !== "function" || akPersonal(); }
+/* pdf-lib is bundled with the app (notation/pdf-lib.min.js) so PDFs work offline; the Personal edition can still fall back to the internet */
+function akPdfLib() {
+  if (window.PDFLib) return Promise.resolve();
+  return loadScript("notation/pdf-lib.min.js").catch(function () {
+    if (!akClaudeOk()) throw new Error("The PDF maker didn't load. Open the app once with internet, then try again.");
+    return loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js");
+  });
+}
+
+/* ---------------------------------------------------------------- version and What's new */
+function akWhatsNewCard() {
+  var s = settings(); if (s.seenVer === AK_VERSION) return null;
+  if (!s.seenVer && akOnlySamplesSafe()) { s.seenVer = AK_VERSION; return null; }
+  return h("details", { class: "card ak8-new", "data-bk": "whats-new" },
+    h("summary", null, h("b", null, "What's new in version " + AK_VERSION), h("span", { class: "muted" }, "  · tap to read")),
+    h("ul", null, AK_WHATS_NEW.map(function (t) { return h("li", null, t); })),
+    h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "primary", onClick: function () { settings().seenVer = AK_VERSION; save(); render(); } }, "Got it")));
+}
+function akOnlySamplesSafe() { try { return songCount() === 0 || (typeof akOnlySamples === "function" && akOnlySamples()); } catch (e) { return false; } }
+(function () {
+  var vs = viewSongs;
+  viewSongs = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      var card = akWhatsNewCard(), sc = el.querySelector("#mainScroll > div");
+      if (card && sc) sc.insertBefore(card, sc.firstChild);
+      /* "+ New" offers every way to add something */
+      var nb = Array.prototype.filter.call(el.querySelectorAll(".topbar button.primary"), function (b) { return b.textContent.trim() === "+ New"; })[0];
+      if (nb) { var nb2 = h("button", { class: "primary", "aria-haspopup": "menu", onClick: function () { akQuickAdd(this); } }, "+ New"); nb.parentNode.replaceChild(nb2, nb); }
+      var more = el.querySelector('.topbar button[aria-label="More"]');
+      if (more) akMenuPlus(more, [{ label: "🧹 Tidy my library…", onClick: function () { go("tidy"); } }]);
+    } catch (e) {}
+    return el;
+  };
+  var vst = viewSettings;
+  viewSettings = function () {
+    var el = vst.apply(this, arguments);
+    try { var v = el.querySelector(".akver strong, .akver b"); if (v && v.textContent.indexOf(AK_VERSION) < 0) v.appendChild(document.createTextNode(" · version " + AK_VERSION)); } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- one + New for everything */
+function akNewBlankSong() { snap("new song"); var s = newSong({ title: "New song" }); if (S.shelf === "wip" || S.shelf === "orig") s.shelf = S.shelf; lib().songs.push(s); save(); go("song", { songId: s.id }); }
+function akPasteSong(text, name) {
+  var title = h("input", { type: "text", placeholder: "Title (optional)", "aria-label": "Title", value: name || "" });
+  var area = h("textarea", { rows: 10, spellcheck: "false", placeholder: "Paste the chart: chords above the words, or ChordPro like [G]words", "aria-label": "Song text" }); area.value = text || "";
+  var snapChk = h("input", { type: "checkbox", checked: true });
+  modal("Add a song from text", h("div", null, h("label", { class: "fld" }, "Title", title), area, h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word")),
+    [{ label: "Cancel" }, { label: "Add song", primary: true, onClick: function () {
+      if (!area.value.trim()) { toast("Paste some text first."); return false; }
+      var r = normalizeChart(area.value, snapChk.checked); snap("add song");
+      var s = newSong({ title: title.value.trim() || r.title || "Untitled", lyrics: r.text }); lib().songs.push(s); saveNow(); toast("Song added."); go("song", { songId: s.id });
+    } }], { wide: true });
+}
+function akQuickAdd(btn) {
+  var items = [{ head: "Add a song" },
+    { label: "✎ Blank song", onClick: akNewBlankSong },
+    { label: "📷 From photos of a chord sheet", onClick: function () { openPhotoImport(); } },
+    { label: "📋 Paste or type a chart", onClick: function () { akPasteSong(); } },
+    { label: "📄 From a text file", onClick: function () {
+      var inp = h("input", { type: "file", accept: ".txt,.pro,.cho,.chordpro,.crd,text/plain", onChange: function () { var f = this.files && this.files[0]; if (f) readFileAs(f, "text").then(function (t) { akPasteSong(t, f.name.replace(/\.[^.]+$/, "")); }); } });
+      inp.click();
+    } },
+    { label: "📨 A song file someone sent me", onClick: function () { go("import"); } }];
+  if (typeof akIdeaDialog === "function") items.push({ label: "💡 Quick idea (Write)", onClick: function () { akIdeaDialog(); } });
+  items.push({ head: "Add to Shows" });
+  if (typeof akGigNewDialog === "function") items.push({ label: "🎤 New show", onClick: function () { settings().showsTab = "gigs"; save(); go("shows"); setTimeout(function () { akGigNewDialog(); }, 50); } });
+  items.push({ label: "☰ New set list", onClick: function () { snap("new set list"); var sh = newShow("New set list"); lib().shows.unshift(sh); save(); go("show", { showId: sh.id }); } });
+  menu(btn, items);
+}
+
+/* ---------------------------------------------------------------- the bottom bar: four tabs and More on a phone */
+var AK_TAB_ALL = [["songs", "Songs"], ["shows", "Shows"], ["learn", "Learn"], ["write", "Write"], ["import", "Import"], ["settings", "Settings"], ["tonight", "Tonight"]];
+var AK_TAB_DEF = ["songs", "shows", "learn", "settings"];
+function akTabPick() { var p = settings().tabsPick; return Array.isArray(p) && p.length ? p : AK_TAB_DEF; }
+function akTabsMore() { return !settings().tabsAll && window.innerWidth < 600; }
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) {
+    var bar = tb.apply(this, arguments);
+    try {
+      if (!akTabsMore()) return bar;
+      var pick = akTabPick(), btns = Array.prototype.slice.call(bar.children).filter(function (b) { return b.tagName === "BUTTON" && !b.classList.contains("tbback") && !b.classList.contains("akbtab"); });
+      var labOf = function (b) { var ic = b.querySelector(".ic"); return b.textContent.slice(ic ? ic.textContent.length : 0).trim(); };
+      var idOf = function (b) { var t = labOf(b).toLowerCase(); return t === "playing" ? "play" : t; };
+      var hidden = [], curHidden = false;
+      btns.forEach(function (b) { var id = idOf(b); if (id === "play" || pick.indexOf(id) >= 0) return; hidden.push({ id: id, b: b, label: labOf(b) }); if (b.getAttribute("aria-current") === "page") curHidden = true; b.parentNode.removeChild(b); });
+      /* the tabs you picked in your order (Playing stays where it is) */
+      var keep = Array.prototype.slice.call(bar.children).filter(function (b) { return b.tagName === "BUTTON" && !b.classList.contains("tbback") && idOf(b) !== "play" && pick.indexOf(idOf(b)) >= 0; });
+      keep.sort(function (a, b) { return pick.indexOf(idOf(a)) - pick.indexOf(idOf(b)); });
+      var play = Array.prototype.filter.call(bar.children, function (b) { return idOf(b) === "play"; })[0];
+      keep.forEach(function (b, i) { bar.appendChild(b); if (i === 1 && play) bar.appendChild(play); });
+      /* picked tabs that the bar doesn't have yet (Tonight) */
+      pick.forEach(function (id) { if (id !== "tonight" || bar.querySelector('[data-tab="tonight"]')) return; var t = h("button", { "data-tab": "tonight", "aria-current": S.view === "tonight" ? "page" : null, onClick: function () { o.leave(function () { go("tonight"); }); } }, h("span", { class: "ic" }, "☾"), "Tonight"); bar.appendChild(t); });
+      var more = h("button", { class: "ak8-more", "aria-current": curHidden ? "page" : null, "aria-haspopup": "menu", onClick: function () {
+        var items = hidden.map(function (x) { return { label: x.label, onClick: function () { x.b.click(); } }; });
+        if (pick.indexOf("tonight") < 0) items.push({ label: "Tonight", onClick: function () { o.leave(function () { go("tonight"); }); } });
+        items.push({ label: "Tidy my library", onClick: function () { o.leave(function () { go("tidy"); }); } });
+        items.push({ sep: true }, { label: "Choose the tabs…", onClick: akTabsDialog });
+        menu(this, items);
+      } }, h("span", { class: "ic" }, "⋯"), "More");
+      var bk = bar.querySelector(".akbtab"); if (bk) bar.insertBefore(more, bk); else bar.appendChild(more);
+      bar.classList.add("ak8-tabs5"); bar.classList.remove("compact");
+    } catch (e) {}
+    return bar;
+  };
+})();
+function akTabsDialog() {
+  var pick = akTabPick().slice(), body = h("div");
+  function draw() {
+    body.textContent = "";
+    body.appendChild(h("p", { class: "hint" }, "Pick up to four tabs for the bottom bar on a phone. The rest are under More. Playing shows by itself while a set is on."));
+    AK_TAB_ALL.forEach(function (t) {
+      var i = pick.indexOf(t[0]);
+      body.appendChild(h("div", { class: "row", style: "margin:4px 0;align-items:center" },
+        h("label", { class: "chk grow", style: "margin:0" }, h("input", { type: "checkbox", checked: i >= 0, disabled: i < 0 && pick.length >= 4, onChange: function () { if (this.checked) pick.push(t[0]); else pick.splice(pick.indexOf(t[0]), 1); draw(); } }), t[1]),
+        i >= 0 ? h("button", { class: "icon sm", "aria-label": "Move " + t[1] + " left", disabled: i === 0, onClick: function () { pick.splice(i, 1); pick.splice(i - 1, 0, t[0]); draw(); } }, "◀") : null,
+        i >= 0 ? h("button", { class: "icon sm", "aria-label": "Move " + t[1] + " right", disabled: i === pick.length - 1, onClick: function () { pick.splice(i, 1); pick.splice(i + 1, 0, t[0]); draw(); } }, "▶") : null));
+    });
+    body.appendChild(h("label", { class: "chk", style: "margin-top:10px" }, h("input", { type: "checkbox", checked: !!settings().tabsAll, onChange: function () { settings().tabsAll = this.checked; } }), "Show every tab instead (no More)"));
+    body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!settings().homeTonight, onChange: function () { settings().homeTonight = this.checked; } }), "Open the app on Tonight"));
+  }
+  draw();
+  modal("Bottom bar tabs", body, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () { if (!pick.length) { toast("Pick at least one tab."); return false; } settings().tabsPick = pick; save(); render(); } }]);
+}
+
+/* ---------------------------------------------------------------- Tonight */
+function akNextGig() {
+  var today = akTodayKeySafe(), list = (typeof akGigs === "function" ? akGigs() : []).filter(function (g) { return g.date && g.date >= today; });
+  list.sort(function (a, b) { return (a.date + (a.start || "")) < (b.date + (b.start || "")) ? -1 : 1; });
+  return list[0] || null;
+}
+function akTodayKeySafe() { var d = new Date(); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function viewTonight() {
+  var body = h("div", { class: "ak8-tonight", "data-blocks": "tonight" }), g = akNextGig();
+  if (g) {
+    var lists = (g.setlists || []).map(findShow).filter(Boolean), isToday = g.date === akTodayKeySafe();
+    body.appendChild(h("div", { class: "card ak8-gig", "data-bk": "next-show" },
+      h("div", { class: "muted" }, isToday ? "Tonight" : "Next show"),
+      h("h2", { style: "margin:2px 0 4px" }, akGigTitle(g)),
+      h("div", null, akGigDateText(g) + (g.start ? " · " + g.start + (g.end ? "–" + g.end : "") : "") + (g.venue && g.venue !== g.name ? " · " + g.venue : "")),
+      lists.length ? h("div", { class: "muted", style: "margin-top:4px" }, "Set list: " + lists.map(function (x) { return x.name; }).join(", ")) : h("div", { class: "muted", style: "margin-top:4px" }, "No set list picked yet."),
+      h("div", { class: "row", style: "margin:10px 0 0" },
+        h("button", { class: "primary ak8-bigplay", disabled: !lists.length, onClick: function () { akGigPlay(g); } }, "▶ Play"),
+        h("button", { onClick: function () { go("gig", { gigId: g.id }); } }, "Open the show"))));
+  } else {
+    body.appendChild(h("div", { class: "card", "data-bk": "next-show" }, h("b", null, "No show coming up"), h("p", { class: "hint" }, "Add your next booking and it shows here with its set list and a big Play button."),
+      h("div", { class: "row", style: "margin:0" }, typeof akGigNewDialog === "function" ? h("button", { class: "primary", onClick: function () { settings().showsTab = "gigs"; save(); go("shows"); setTimeout(function () { akGigNewDialog(); }, 50); } }, "+ New show") : null)));
+  }
+  if (S.play) body.appendChild(h("div", { class: "card", "data-bk": "playing" }, h("b", null, "A set is playing"), h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "primary", onClick: function () { resumePlay(); } }, "Back to the playing screen"))));
+  var recent = (store.recent || []).map(findSong).filter(Boolean).slice(0, 3);
+  if (recent.length) body.appendChild(h("div", { class: "card", "data-bk": "last-song" }, h("b", null, "Last songs"),
+    recent.map(function (s) { return h("div", { class: "row", style: "margin:6px 0 0;align-items:center;flex-wrap:nowrap" }, h("span", { class: "grow" }, s.title, s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null), h("button", { class: "sm", onClick: function () { go("song", { songId: s.id }); } }, "Open"), h("button", { class: "sm", "aria-label": "Play " + s.title, onClick: function () { playFromSongs([s], 0); } }, "▶")); })));
+  var t0 = new Date(); t0.setHours(0, 0, 0, 0); var mins = typeof akPracMins === "function" ? Math.round(akPracMins(t0.getTime())) : 0;
+  body.appendChild(h("div", { class: "card", "data-bk": "practice" }, h("b", null, "Practice"), h("p", { class: "hint", style: "margin:4px 0" }, mins ? "Practiced " + mins + " min today." : "Nothing practiced yet today."),
+    h("div", { class: "row", style: "margin:0" }, typeof viewLearn === "function" ? h("button", { onClick: function () { S.learnTab = "plans"; go("learn"); } }, "Practice plans") : null, h("button", { onClick: function () { akQuickAdd(this); } }, "+ New…"))));
+  body.appendChild(h("label", { class: "chk", style: "margin:8px 4px" }, h("input", { type: "checkbox", checked: !!settings().homeTonight, onChange: function () { settings().homeTonight = this.checked; save(); } }), "Open the app on this screen"));
+  return shell("Tonight", body);
+}
+AK_VIEWS.tonight = viewTonight; AK_VIEW_TAB.tonight = "tonight";
+(function () {
+  var first = true, ar = akAfterRender;
+  akAfterRender = function () {
+    var r = ar.apply(this, arguments);
+    if (first) { first = false; try { if (settings().homeTonight && S.view === "songs" && !S.play) setTimeout(function () { go("tonight"); }, 0); } catch (e) {} }
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- Learn: three rows of chips */
+var AK_LEARN_ROWS = [["Practice", ["🎓 Teacher", "Practice plans", "Practice log", "Warm-ups"]], ["Reference", ["Lessons", "Chords", "Scales", "Licks"]], ["Tools", ["Tuner", "Metronome", "Note trainer"]]];
+(function () {
+  if (typeof viewLearn !== "function") return;
+  var vl = viewLearn;
+  viewLearn = function () {
+    var el = vl.apply(this, arguments);
+    try {
+      var tabs = el.querySelector(".aklearn-tabs"); if (!tabs) return el;
+      var chips = Array.prototype.slice.call(tabs.children), used = [], box = h("div", { class: "ak8-lrows" });
+      AK_LEARN_ROWS.forEach(function (r) {
+        var row = h("div", { class: "ak8-lrow" }, h("span", { class: "ak8-lhead" }, r[0])), cs = h("div", { class: "chips" });
+        r[1].forEach(function (lab) { var c = chips.filter(function (x) { return x.textContent.trim() === lab; })[0]; if (c) { cs.appendChild(c); used.push(c); } });
+        if (cs.children.length) { row.appendChild(cs); box.appendChild(row); }
+      });
+      var rest = chips.filter(function (c) { return used.indexOf(c) < 0; });
+      if (rest.length) { var cs2 = h("div", { class: "chips" }); rest.forEach(function (c) { cs2.appendChild(c); }); box.appendChild(h("div", { class: "ak8-lrow" }, h("span", { class: "ak8-lhead" }, "More"), cs2)); }
+      tabs.parentNode.replaceChild(box, tabs);
+    } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- Tidy my library */
+function akSongEmpty(s) { return !String(s.lyrics || "").trim() && !String(s.chords || "").trim(); }
+function akSongNoChords(s) { var t = String(s.lyrics || "") + "\n" + String(s.chords || ""); return t.trim() && !/\[[A-G][^\]]*\]/.test(t) && !t.split("\n").some(function (l) { return l.trim() && isChordLineText(l); }); }
+function akStrayChords() {
+  var used = {}, out = [];
+  lib().songs.forEach(function (s) { String((s.lyrics || "") + "\n" + (s.chords || "")).split(/[\s\[\]|]+/).forEach(function (t) { if (t) used[t] = 1; }); });
+  var seen = {};
+  (settings().customChords || []).forEach(function (c) {
+    if (seen[c]) return; seen[c] = 1;
+    var odd = /^N\.?C\.?$/i.test(c) ? false : !/^[A-G]/.test(c) || /[a-z]{3,}/i.test(c.replace(/^[A-G][#b♯♭]?/, "").replace(/maj|min|sus|dim|aug|add|omit|no/gi, "")) || /'/.test(c);
+    if (!used[c] || odd) out.push({ c: c, why: !used[c] ? "not in any song" : "doesn't look like a chord" });
+  });
+  return out;
+}
+function viewTidy() {
+  var keep = settings().tidyKeep = settings().tidyKeep || [], body = h("div", { "data-blocks": "tidy" });
+  function sec(t, n, desc) { var d = h("details", { class: "card", open: n > 0 && n < 40 }, h("summary", null, h("b", null, t), h("span", { class: "muted" }, "  " + (n ? n : "none") + (desc ? " · " + desc : "")))); body.appendChild(d); return d; }
+  function songRow(s, extra) { return h("div", { class: "row", style: "margin:4px 0;align-items:center;flex-wrap:nowrap" }, h("span", { class: "grow" }, s.title || "Untitled", s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null), h("button", { class: "sm", onClick: function () { go("song", { songId: s.id }); } }, "Open"), extra || null); }
+  /* empties */
+  var empty = lib().songs.filter(function (s) { return akSongEmpty(s) && keep.indexOf(s.id) < 0; });
+  var d1 = sec("Empty songs", empty.length, "no words and no chords");
+  if (empty.length) {
+    d1.appendChild(h("div", { class: "row" }, h("button", { class: "danger", onClick: function () { confirmBox("Move all " + empty.length + " empty songs to the trash? You can bring them back from the trash.", "Move to trash", function () { snap("tidy: empty songs"); empty.forEach(trashSong); save(); render(); toastUndo("Moved " + empty.length + " to the trash."); }); } }, "Trash all " + empty.length)));
+    empty.slice(0, 200).forEach(function (s) { d1.appendChild(songRow(s, h("button", { class: "sm", onClick: function () { snap("tidy: trash song"); trashSong(s); save(); render(); toastUndo("Moved to the trash."); } }, "Trash"))); });
+  }
+  /* duplicates */
+  var dups = typeof dupClusters === "function" ? dupClusters() : [];
+  var d2 = sec("Likely duplicates", dups.length, "same title and artist");
+  if (dups.length) { d2.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { openDuplicates(); } }, "Review and merge…"))); dups.slice(0, 30).forEach(function (c) { d2.appendChild(h("div", { class: "muted", style: "margin:2px 0" }, c.list[0].title + (c.list[0].artist ? " · " + c.list[0].artist : "") + "  ×" + c.list.length)); }); }
+  /* no chords */
+  var bare = lib().songs.filter(function (s) { return akSongNoChords(s) && keep.indexOf(s.id) < 0; });
+  var d3 = sec("Songs with words but no chords", bare.length);
+  bare.slice(0, 200).forEach(function (s) { d3.appendChild(songRow(s, h("button", { class: "sm", onClick: function () { keep.push(s.id); save(); render(); } }, "Keep"))); });
+  /* stray custom chords */
+  var stray = akStrayChords();
+  var d4 = sec("Odd custom chords", stray.length, "words you marked as chords");
+  if (stray.length) {
+    d4.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { snap("tidy: custom chords"); var gone = stray.map(function (x) { return x.c; }); settings().customChords = (settings().customChords || []).filter(function (c) { return gone.indexOf(c) < 0; }); syncCustomChords(); save(); render(); toastUndo("Removed " + gone.length + "."); } }, "Remove all " + stray.length)));
+    stray.forEach(function (x) { d4.appendChild(h("div", { class: "row", style: "margin:4px 0;align-items:center;flex-wrap:nowrap" }, h("b", { class: "grow" }, x.c, h("span", { class: "muted", style: "font-weight:400" }, "  " + x.why)), h("button", { class: "sm", onClick: function () { snap("tidy: custom chord"); settings().customChords = settings().customChords.filter(function (c) { return c !== x.c; }); syncCustomChords(); save(); render(); } }, "Remove"))); });
+  }
+  if (keep.length) body.appendChild(h("p", { class: "hint" }, keep.length + " songs marked Keep are left out. ", h("button", { class: "linkbtn", onClick: function () { settings().tidyKeep = []; save(); render(); } }, "Show them again")));
+  return shell("Tidy my library", body, { back: function () { navBack(); } });
+}
+AK_VIEWS.tidy = viewTidy; AK_VIEW_TAB.tidy = "songs";
+
+akCss("ak8-more", [
+  ".tabbar.ak8-tabs5 > button{flex:1 1 0;min-width:0}",
+  ".ak8-new ul{margin:6px 0 0;padding-left:1.2em}.ak8-new li{margin:3px 0}",
+  ".ak8-bigplay{font-size:1.25rem;padding:12px 28px;min-height:56px}",
+  ".ak8-lrows{display:flex;flex-direction:column;gap:6px;margin:4px 0 8px}",
+  ".ak8-lrow{display:flex;gap:8px;align-items:baseline}.ak8-lrow .chips{flex:1;margin:0}",
+  ".ak8-lhead{flex:0 0 5.6em;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}",
+  "@media (max-width:480px){.ak8-lrow{flex-direction:column;gap:2px}.ak8-lhead{flex:none}}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */

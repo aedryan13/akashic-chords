@@ -1,11 +1,11 @@
 /* Akashic Chords TEST version offline helper. Only looks after the /beta/ folder; its caches are named akbeta-... so the current version's cache is never touched. */
-var CACHE = "akbeta-a0fa3f892a";
+var CACHE = "akbeta-d7baf03b1c";
 var OCR = "akbeta-ocr-25cd554a"; /* the photo reader files: kept across app updates, fetched again only when they change */
 var FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "favicon.png"];
 var OCR_FILES = ["ocr/tesseract.min.js", "ocr/worker.min.js", "ocr/tesseract-core-lstm.wasm.js", "ocr/tesseract-core-simd-lstm.wasm.js", "ocr/eng.traineddata.gz"];
 var ART = "akbeta-art"; /* theme pictures: each is cached the first time it is shown and kept across app updates */
-var EXTRA = "akbeta-extra-1d731180"; /* rhymes, words and the notation drawer: kept across app updates */
-var EXTRA_FILES = ["words/words.json", "notation/abcjs-basic-min.js"];
+var EXTRA = "akbeta-extra-16bcc6e7"; /* rhymes, words and the notation drawer: kept across app updates */
+var EXTRA_FILES = ["words/words.json", "notation/abcjs-basic-min.js", "notation/pdf-lib.min.js"];
 function fillExtra() { return caches.open(EXTRA).then(function (c) { return c.match(EXTRA_FILES[0]).then(function (m) { if (!m) return c.addAll(EXTRA_FILES); }); }); }
 /* a voice memo (or other audio) shared from another app: keep it for the app to pick up, then open the app */
 function shareDb(cb) { var r = indexedDB.open("akashic-share", 1); r.onupgradeneeded = function () { r.result.createObjectStore("s"); }; r.onsuccess = function () { cb(r.result); }; r.onerror = function () { cb(null); }; }
