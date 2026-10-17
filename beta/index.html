@@ -3112,7 +3112,7 @@ function openPlacer(song, o) {
     foot.textContent = "";
     var pal = palette(), sug = pal.length < 4 ? plKeyChords(song).filter(function (c, i, a) { return pal.indexOf(c) < 0 && a.indexOf(c) === i; }) : [];
     var row = h("div", { class: "prow" });
-    pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { tapChip(c); } }, styleChord(c, styleOf()))); });
+    pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { if (typeof akHearPlace === "function") akHearPlace(c, song); tapChip(c); } }, styleChord(c, styleOf()))); });
     row.appendChild(h("button", { class: "chip pchipbtn" + (erase ? " on" : ""), "aria-pressed": erase ? "true" : "false", onClick: tapErase }, "⌫ Erase"));
     row.appendChild(h("button", { class: "chip", onClick: addChordDialog }, "+ Chord"));
     if (typeof akShapePicker === "function") row.appendChild(h("button", { class: "chip", "aria-label": "Build a chord by picking its shape", onClick: function () { akShapePicker(function (c) {
@@ -22803,19 +22803,15 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "8.0";
+var AK_VERSION = "8.1";
 var AK_WHATS_NEW = [
-  "New names on the playing screen: the Button bar (the row of buttons), the Info bar (title, key, clock, timers) and the Menu (Back, Songs, Shows…). Each bar can go at the top or the bottom",
-  "Key buttons in a corner of the Info bar: Start / End show, Next, Scroll, Requests with a count, Edit (choose them in ⚙ Playing screen options)",
-  "A clear “♪ Sounding key” or “✋ My shapes” sign in the Info bar, and sounding chords are tinted",
-  "The Info window starts small and stays put; choose full size or off in ⚙ Playing screen options",
-  "How see-through each part of the playing screen is: one slider for all, or each part on its own",
-  "Hold a button's name and slide it to reorder (the others move out of the way); buttons already in use are marked in the pickers",
-  "↺ Reset next to each setting, plus Reset this section and Reset this page; ✎ Name shows each button's own word",
-  "Long lists: a quick-scroll handle on the right edge, and a search box at the top of long pop-ups",
-  "Place chords: a + before the first word puts a chord before the words come in",
-  "Share this song can include its recordings and audio files",
-  "Fixed: the chord shapes panel shows the shape when you tap a chord; arranging buttons no longer opens the Info window; the little Info and Buttons tabs no longer cover the first line"
+  "A much better guitar sound: a real-sounding strum that rings and fades naturally, at the guitar's true pitch, in your tuning and capo",
+  "Pick the guitar: steel-string acoustic, nylon (classical) or clean electric. The ukulele gets its own nylon sound",
+  "Choose which shape plays (the one you chose, the lowest open shape, or one higher up the neck), how high it sounds, strum direction and speed, how long notes ring, and the volume (Settings > Songs and shows > Chord sound, with ▶ Try it)",
+  "Tap a chord to hear it: chord pictures anywhere, the chord pop-up, the chord panel, lessons and the writing wheel",
+  "Place chords: hear each chord as you pick it",
+  "Tapping a chord in the lyrics while playing a song stays silent unless you turn that on, so nothing sounds by accident at a show",
+  "Lessons, trainers, the shape builder and the Rhythm view's ▶ Hear it all use the new guitar"
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -23429,6 +23425,266 @@ akCss("ak9-a", [
   ".ak9-fs::before{content:'';position:absolute;left:6px;right:6px;top:14px;bottom:14px;border-top:2px solid var(--on-accent,#000);border-bottom:2px solid var(--on-accent,#000);opacity:.6}",
   ".ak9-fs.vis,.ak9-fs.on{opacity:.85;pointer-events:auto}.ak9-fs.on{opacity:1}"
 ].join("\n"));
+
+/* ================= Akashic Chords batch 8, phase B: the guitar sound and tap to hear =================
+   - akGtrNote: a better plucked string (Karplus-Strong with the pick position, exact tuning, damping per guitar, a guitar body and a
+     little room). Three guitars: steel-string acoustic, nylon (classical), clean electric. The ukulele sounds like nylon, shorter.
+     A string that is struck again stops ringing first, like a real one.
+   - akHearChord(shape, o): one strum of a chord in the shape you chose (your default fingering, or lowest / higher up the neck),
+     in your tuning (E standard, D standard, any other) and the song's capo, at its real pitch (or an octave up / down)
+   - the old sounds use it: akPluck (shape builder neck, Rhythm view's ▶ Hear it), akTone "pluck" (lessons, trainers, scales),
+     the writing wheel (akPwPlay) on guitar and ukulele
+   - tap to hear: chord pictures anywhere, the chord pop-up, chord panel tiles, Place chords chips (hear each chord as you place it).
+     On the playing screen, tapping a chord in the lyrics stays silent unless "also while playing" is on.
+   - settings().hear { type, pos, oct, dir, speed, ring, vol, tap, live, place } (Settings > Songs and shows > Chord sound) */
+
+var AK_HEAR_DEF = { type: "steel", pos: "mine", oct: 0, dir: "down", speed: "normal", ring: "normal", vol: 80, tap: true, live: false, place: true };
+(function () {
+  [DEFAULTS, store.settings].forEach(function (d) { if (d && !d.hear) d.hear = clone(AK_HEAR_DEF); });
+})();
+function akHearCfg() { var s = settings(), c = s.hear = s.hear || {}; Object.keys(AK_HEAR_DEF).forEach(function (k) { if (c[k] === undefined) c[k] = AK_HEAR_DEF[k]; }); return c; }
+
+/* ---------------------------------------------------------------- the guitars */
+/* bright: how bright the pick is (0..1); t60: seconds a low E and a high e ring; pick: where the pick hits (part of the string);
+   body: peaking filters [Hz, dB, Q]; lp/hp: tone; room: how much room sound */
+var AK_GTR = {
+  steel: { n: "Steel-string acoustic", bright: 0.6, t60: [5.2, 2.6], pick: 0.14, body: [[110, 5, 1.5], [220, 3, 1.4], [480, -2, 1], [2700, 2.5, 1]], lp: 8000, hp: 70, room: 0.16, snap: 0.12 },
+  nylon: { n: "Nylon (classical)", bright: 0.3, t60: [3.8, 1.9], pick: 0.2, body: [[98, 6, 1.3], [200, 4, 1.3], [1200, -2, 1]], lp: 4200, hp: 60, room: 0.2, snap: 0.04 },
+  electric: { n: "Clean electric", bright: 0.68, t60: [7, 3.6], pick: 0.09, body: [[160, 1.5, 0.9], [1500, 3.5, 1.1], [3800, -4, 1]], lp: 5400, hp: 90, room: 0.24, snap: 0.08 }
+};
+var AKG = { cache: {}, bus: null, ac: null, voices: {}, last: { k: "", t: 0 } };
+function akGtrType() { var ins = settings().instrument; if (ins === "ukulele") return "uke"; var t = akHearCfg().type; return AK_GTR[t] ? t : "steel"; }
+function akGtrSpec(type) { if (type === "uke") { var u = clone(AK_GTR.nylon); u.t60 = [2.2, 1.3]; u.bright = 0.42; u.body = [[220, 4, 1.3], [440, 2, 1.2]]; u.lp = 5200; u.hp = 120; return u; } return AK_GTR[type] || AK_GTR.steel; }
+/* one shared output per guitar type: body filters, tone, a soft limiter and a little room */
+function akGtrBus(type) {
+  var ac = akAudio(); if (!ac) return null;
+  if (AKG.ac !== ac) { AKG.ac = ac; AKG.bus = {}; AKG.cache = {}; AKG.voices = {}; }
+  if (AKG.bus[type]) return AKG.bus[type];
+  var sp = akGtrSpec(type), inp = ac.createGain(), node = inp;
+  var hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = sp.hp; node.connect(hp); node = hp;
+  sp.body.forEach(function (b) { var f = ac.createBiquadFilter(); f.type = "peaking"; f.frequency.value = b[0]; f.gain.value = b[1]; f.Q.value = b[2]; node.connect(f); node = f; });
+  var lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = sp.lp; lp.Q.value = 0.5; node.connect(lp); node = lp;
+  var comp = ac.createDynamicsCompressor(); try { comp.threshold.value = -14; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.25; } catch (e) {}
+  var master = ac.createGain(); master.gain.value = 1;
+  node.connect(comp); comp.connect(master); master.connect(ac.destination);
+  try { /* a small room: a short decaying noise as the impulse */
+    var len = Math.floor(ac.sampleRate * 0.9), ir = ac.createBuffer(2, len, ac.sampleRate);
+    for (var ch = 0; ch < 2; ch++) { var d = ir.getChannelData(ch); for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+    var conv = ac.createConvolver(), wet = ac.createGain(); conv.buffer = ir; wet.gain.value = sp.room; comp.connect(conv); conv.connect(wet); wet.connect(master);
+  } catch (e) {}
+  AKG.bus[type] = { inp: inp, master: master };
+  return AKG.bus[type];
+}
+/* the string itself, worked out once per note and guitar and kept */
+function akGtrBuf(type, midi, ringK) {
+  var ac = AKG.ac, sr = ac.sampleRate, key = type + ":" + midi + ":" + ringK;
+  if (AKG.cache[key]) return AKG.cache[key];
+  var sp = akGtrSpec(type), hz = 440 * Math.pow(2, (midi - 69) / 12);
+  var x = Math.max(0, Math.min(1, (midi - 40) / 36)), t60 = (sp.t60[0] * (1 - x) + sp.t60[1] * x) * ringK;
+  if (midi > 76) t60 *= Math.pow(0.97, midi - 76);
+  var dur = Math.min(8, t60 * 1.05 + 0.1), n = Math.floor(sr * dur), buf = ac.createBuffer(1, n, sr), out = buf.getChannelData(0);
+  /* delay = N samples + half a sample from the loop filter + a fraction from an all-pass, so every note is in tune */
+  var D = sr / hz - 0.5, N = Math.max(2, Math.floor(D - 0.1)), frac = D - N, C = (1 - frac) / (1 + frac);
+  var g = Math.pow(0.001, 1 / (hz * t60)), line = new Float32Array(N), pk = Math.max(1, Math.round(sp.pick * N));
+  /* the pick: soft noise, brighter or darker, with the notch that comes from where the string is struck */
+  var raw = new Float32Array(N), lp = 0, br = sp.bright * (0.75 + 0.25 * (1 - x));
+  for (var i = 0; i < N; i++) { lp += br * ((Math.random() * 2 - 1) - lp); raw[i] = lp; }
+  var mean = 0; for (var i2 = 0; i2 < N; i2++) { line[i2] = raw[i2] - (i2 >= pk ? raw[i2 - pk] : 0); mean += line[i2]; }
+  mean /= N; var peak = 0; for (var i3 = 0; i3 < N; i3++) { line[i3] -= mean; peak = Math.max(peak, Math.abs(line[i3])); }
+  if (peak > 0) for (var i4 = 0; i4 < N; i4++) line[i4] /= peak;
+  var idx = 0, prev = 0, apx = 0, apy = 0;
+  for (var j = 0; j < n; j++) {
+    var v = line[idx]; out[j] = v;
+    var f = g * 0.5 * (v + prev); prev = v;
+    var y = C * (f - apy) + apx; apx = f; apy = y;
+    line[idx] = y; idx++; if (idx >= N) idx = 0;
+  }
+  /* a little pick noise on top for steel and electric */
+  var sn = Math.floor(sr * 0.004); for (var k = 0; k < sn && k < n; k++) out[k] += sp.snap * (Math.random() * 2 - 1) * (1 - k / sn);
+  for (var a = 0; a < 48 && a < n; a++) out[a] *= a / 48;
+  var fade = Math.floor(sr * 0.08); for (var e = 0; e < fade; e++) out[n - 1 - e] *= e / fade;
+  AKG.cache[key] = buf;
+  return buf;
+}
+var AK_RING = { short: 0.5, normal: 1, long: 1.6 };
+/* one note. o = { when (seconds from now), vol (0..1), str (a string id: the same string stops before it rings again), len (stop after) } */
+function akGtrNote(midi, o) {
+  o = o || {}; var ac = akAudio(); if (!ac) return;
+  try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  var type = akGtrType(), bus = akGtrBus(type); if (!bus) return;
+  var cfg = akHearCfg(), ringK = AK_RING[cfg.ring] || 1, m = Math.round(midi);
+  var src = ac.createBufferSource(), g = ac.createGain(), t = ac.currentTime + Math.max(0, o.when || 0) + 0.01;
+  src.buffer = akGtrBuf(type, m, ringK);
+  var vol = (o.vol == null ? 0.6 : o.vol) * (0.9 + Math.random() * 0.2) * (cfg.vol / 100) * 0.9;
+  g.gain.value = vol; src.connect(g); g.connect(bus.inp);
+  var sid = o.str != null ? type + "s" + o.str : type + "m" + m, old = AKG.voices[sid];
+  if (old) { try { old.g.gain.setTargetAtTime(0, t, 0.015); old.src.stop(t + 0.15); } catch (e) {} }
+  AKG.voices[sid] = { src: src, g: g };
+  src.onended = function () { if (AKG.voices[sid] && AKG.voices[sid].src === src) delete AKG.voices[sid]; };
+  src.start(t);
+  if (o.len) { try { g.gain.setValueAtTime(vol, t + o.len); g.gain.setTargetAtTime(0, t + o.len, 0.06); src.stop(t + o.len + 0.5); } catch (e) {} }
+}
+/* stop everything ringing (used before a new run of chords) */
+function akGtrHush() { var ac = AKG.ac; if (!ac) return; Object.keys(AKG.voices).forEach(function (k) { var v = AKG.voices[k]; try { v.g.gain.setTargetAtTime(0, ac.currentTime, 0.02); v.src.stop(ac.currentTime + 0.2); } catch (e) {} }); AKG.voices = {}; }
+
+/* the older sounds now use this guitar */
+akPluck = function (midi, when, vol) { akGtrNote(midi, { when: when, vol: (vol == null ? 0.55 : vol) * 1.1 }); };
+(function () {
+  var tone0 = akTone;
+  akTone = function (midi, dur, when, kind, vol) {
+    if (kind === "pluck" && !akPiano()) { akGtrNote(midi, { when: when, vol: Math.min(1, (vol == null ? 0.22 : vol) * 3), len: Math.max(0.25, (dur || 0.5) + 0.25) }); return; }
+    return tone0(midi, dur, when, kind, vol);
+  };
+})();
+
+/* ---------------------------------------------------------------- which notes a chord plays */
+function akHearIns() { var ins = settings().instrument; return ins === "ukulele" ? "ukulele" : "guitar"; }
+/* the lowest fretted fret of a shape (0 for all-open) */
+function akHearPos(v) { var f = v.frets.filter(function (x) { return x > 0; }); return f.length ? Math.min.apply(null, f) : 0; }
+function akHearPick(list, pos) {
+  var g = list.filter(function (v) { return v && v.frets; }); if (!g.length) return null;
+  if (pos === "low") return g.slice().sort(function (a, b) { return akHearPos(a) - akHearPos(b) || b.frets.filter(function (x) { return x >= 0; }).length - a.frets.filter(function (x) { return x >= 0; }).length; })[0];
+  if (pos === "high") { var hi = g.filter(function (v) { return akHearPos(v) >= 5; }).sort(function (a, b) { return akHearPos(a) - akHearPos(b); }); return hi[0] || null; }
+  return g[0];
+}
+/* frets (one per string, -1 = not played) -> sounding notes [{ m, s }] in the tuning, plus the capo */
+function akHearFrets(frets, ins, capo) {
+  var notes = akTuning(ins).notes;
+  return frets.map(function (f, i) { return f >= 0 ? { m: notes[i] + f + (capo || 0), s: i } : null; }).filter(Boolean);
+}
+/* a chord name with no picture: root position near the bottom of the neck */
+function akHearBuilt(shape, ins, capo) {
+  var p = parseChordName(shape); if (!p) return [];
+  var ivs = []; try { ivs = akChordTones(p).map(function (t) { return t.iv % 12; }); } catch (e) {} if (!ivs.length) ivs = [0, 4, 7];
+  var tu = akTuning(ins), low = ins === "ukulele" ? 60 : tu.notes[0], r = low + ((p.pc - low) % 12 + 12) % 12, out = [r];
+  if (ivs.indexOf(7) >= 0) out.push(r + 7);
+  out.push(r + 12); ivs.forEach(function (iv) { if (iv !== 0 && iv !== 7) out.push(r + 12 + iv); });
+  if (p.bass != null && p.bass !== p.pc) out.unshift(low + ((p.bass - low) % 12 + 12) % 12);
+  return out.map(function (m, i) { return { m: m + (capo || 0), s: i }; });
+}
+/* o = { v (a fingering to play exactly), capo, pos, oct } -> [{ m, s }] */
+function akHearNotes(shape, o) {
+  o = o || {}; var cfg = akHearCfg(), ins = o.ins || akHearIns(), oct = (o.oct != null ? o.oct : Number(cfg.oct) || 0) * 12, capo = o.capo || 0, list = [];
+  if (o.v && o.v.piano) return o.v.notes.map(function (m, i) { return { m: m + oct, s: i }; });
+  if (o.v && o.v.frets) list = akHearFrets(o.v.frets, ins, capo);
+  else if (shape) {
+    var d = null; try { d = allVoicings(ins, shape); } catch (e) {}
+    var v = d && akHearPick(d.list, o.pos || cfg.pos);
+    if (!v && d && (o.pos || cfg.pos) === "high") { v = akHearPick(d.list, "mine"); if (v) oct += 12; }
+    list = v ? akHearFrets(v.frets, ins, capo) : akHearBuilt(shape, ins, capo);
+  }
+  return list.map(function (x) { return { m: x.m + oct, s: x.s }; });
+}
+var AK_HEAR_SPEED = { slow: 0.045, normal: 0.024, fast: 0.012 };
+/* strum notes: o = { when, dir ("down" | "up" | "arp"), vol } */
+function akHearStrum(notes, o) {
+  o = o || {}; var cfg = akHearCfg(), dir = o.dir || cfg.dir, gap = dir === "arp" ? 0.16 : (AK_HEAR_SPEED[cfg.speed] || 0.024), list = dir === "up" ? notes.slice().reverse() : notes, t = o.when || 0;
+  var each = (o.vol == null ? 0.75 : o.vol) / Math.sqrt(Math.max(1, list.length)) * 1.5;
+  list.forEach(function (x, i) { akGtrNote(x.m, { when: t + i * gap * (0.85 + Math.random() * 0.3), vol: each * (dir === "up" ? 0.85 : 1) * (i === 0 && dir !== "up" ? 1.1 : 1), str: x.s }); });
+}
+/* the song whose capo counts: the one playing, or the one passed in */
+function akHearCapo(o) { var song = o && o.song || (S.play && typeof curSong === "function" ? curSong() : null); return song ? Number(song.capo) || 0 : 0; }
+/* play a chord by its shape name (what you finger). o = { v, song, capo, when, dir, force } */
+function akHearChord(shape, o) {
+  o = o || {};
+  if (akPiano() && !(o.v && o.v.frets)) {
+    var pv = o.v && o.v.piano ? o.v : null; if (!pv) { try { pv = akPianoVoicings(shape).list[0]; } catch (e) {} }
+    if (!pv) return; var oc = (Number(akHearCfg().oct) || 0) * 12, ms = [pv.bass].concat(pv.notes).filter(function (m) { return m != null; });
+    if (!akHearOnce("p" + ms.join(","), o)) return;
+    ms.forEach(function (m, i) { akTone(m + oc, 1.4, (o.when || 0) + i * 0.018, "keys", i === 0 ? 0.14 : 0.12); }); return;
+  }
+  var capo = o.capo != null ? o.capo : akHearCapo(o), notes = akHearNotes(shape, { v: o.v, capo: capo }); if (!notes.length) return;
+  if (!akHearOnce(notes.map(function (x) { return x.m; }).join(","), o)) return;
+  akHearStrum(notes, o);
+}
+/* the same chord tapped twice at once (a picture inside a tile, then its pop-up) only sounds once */
+function akHearOnce(k, o) { if (o.when) return true; var now = Date.now(); if (AKG.last.k === k && now - AKG.last.t < 300) return false; AKG.last = { k: k, t: now }; return true; }
+
+/* ---------------------------------------------------------------- tap to hear */
+/* a tap on the playing screen's lyrics counts as "while playing"; pop-ups, panels and practice views don't */
+function akHearAllowed(el, deliberate) {
+  var c = akHearCfg(); if (!c.tap) return false;
+  if (deliberate) return true;
+  var live = el && el.isConnected && el.closest && el.closest(".play") && !el.closest(".chordpanel,.chordpop,.akr-scroll,.akm-scroll,.modal,.akfloat");
+  return !live || !!c.live;
+}
+/* chord pictures: tap one to hear exactly that fingering */
+(function () {
+  var cd0 = chordDiagram;
+  chordDiagram = function (v, instr, scale) {
+    var el = cd0(v, instr, scale);
+    if (el && v && (v.frets || v.piano) && el.addEventListener) {
+      try { el.classList.add("akh-tap"); } catch (e) {}
+      el.addEventListener("click", function () { if (!akHearAllowed(el)) return; var vv = v.frets ? { frets: v.frets } : v; if (v.frets && instr && instr !== akHearIns() && INSTR[instr]) akHearStrum(akHearFrets(v.frets, instr, akHearCapo()), {}); else akHearChord(null, { v: vv }); });
+    }
+    return el;
+  };
+})();
+/* the chord pop-up sounds when it opens (tiles, the chord panel, Rhythm and bar charts; the lyrics only if "while playing" is on) */
+(function () {
+  var pop0 = openChordPop;
+  openChordPop = function (root, el) {
+    var r = pop0(root, el);
+    try {
+      var shape = el.getAttribute("data-shape"), fromLyrics = el.isConnected && el.closest(".play") && !el.closest(".akr-scroll,.akm-scroll,.chordpanel");
+      if (shape && akHearCfg().tap && (!fromLyrics || akHearCfg().live) && Date.now() - AKG.last.t > 300) akHearChord(shape);
+    } catch (e) {}
+    return r;
+  };
+})();
+/* Place chords: hear each chord as you pick it */
+function akHearPlace(c, song) { var cfg = akHearCfg(); if (!cfg.tap || !cfg.place || !c) return; akHearChord(c, { song: song }); }
+/* the writing wheel plays the guitar on guitar and ukulele */
+(function () {
+  if (typeof akPwPlay !== "function") return;
+  var pw0 = akPwPlay;
+  akPwPlay = function (c, when) {
+    if (akPiano()) return pw0(c, when);
+    var nm = null; try { nm = akPwRaw(c, null); } catch (e) {}
+    if (!nm) return pw0(c, when);
+    akHearChord(nm, { when: when || 0, capo: 0 });
+  };
+})();
+/* Rhythm view's ▶ Hear it uses the same shape choice as everywhere else */
+(function () {
+  if (typeof akRVoicing !== "function") return;
+  var rv0 = akRVoicing;
+  akRVoicing = function (song, c) {
+    try {
+      var o = chartOpts(song), shape = transposeChord(c, o.n || 0, o.acc), n = akHearNotes(shape, { capo: Number(song.capo) || 0 });
+      if (n.length) return n.map(function (x) { return x.m; });
+    } catch (e) {}
+    return rv0(song, c);
+  };
+})();
+
+/* ---------------------------------------------------------------- settings */
+function akHearDemo() { akGtrHush(); ["G", "C", "D", "Em"].forEach(function (c, i) { akHearChord(c, { when: i * 1.1, capo: 0 }); }); }
+function akSettingsExtra14(c) {
+  c.again("songs-and-shows");
+  c.section("Chord sound", "How chords sound when you tap them, strum them or hear a rhythm");
+  var hc = akHearCfg(), t = akTuning(akHearIns());
+  c.check("Tap a chord to hear it (chord pictures, the chord pop-up and panel, lessons, Place chords, the writing wheel)", function () { return hc.tap; }, function (v) { hc.tap = v; });
+  c.check("Also when I tap a chord in the lyrics while playing a song", function () { return hc.live; }, function (v) { hc.live = v; });
+  c.check("Hear each chord as I place it in Place chords", function () { return hc.place; }, function (v) { hc.place = v; });
+  c.select("Guitar", function () { return hc.type; }, function (v) { hc.type = v; }, Object.keys(AK_GTR).map(function (k) { return [k, AK_GTR[k].n]; }));
+  c.select("Which shape plays", function () { return hc.pos; }, function (v) { hc.pos = v; }, [["mine", "The shape I chose (my default for each chord)"], ["low", "The lowest shape on the neck (open chords)"], ["high", "A shape higher up the neck (5th fret and up)"]]);
+  c.select("How high it sounds", function () { return String(hc.oct); }, function (v) { hc.oct = Number(v); }, [["0", "Real pitch"], ["1", "One octave higher"], ["-1", "One octave lower"]]);
+  c.select("Strum", function () { return hc.dir; }, function (v) { hc.dir = v; }, [["down", "Down (low string to high)"], ["up", "Up (high string to low)"], ["arp", "One string at a time"]]);
+  c.select("Strum speed", function () { return hc.speed; }, function (v) { hc.speed = v; }, [["slow", "Slow"], ["normal", "Normal"], ["fast", "Fast"]]);
+  c.select("How long notes ring", function () { return hc.ring; }, function (v) { hc.ring = v; }, [["short", "Short"], ["normal", "Normal"], ["long", "Long"]]);
+  c.range("Volume", function () { return hc.vol; }, function (v) { hc.vol = v; }, 10, 100, 5, function (v) { return v + "%"; });
+  c.out.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: akHearDemo }, "▶ Try it (G C D Em)")));
+  c.out.appendChild(h("p", { class: "hint" }, "Chords play in your tuning (" + (akPiano() ? "piano" : INSTR[akHearIns()].name + ", " + t.name) + ") with the song's capo, so you hear what your " + (akHearIns() === "ukulele" ? "ukulele" : "guitar") + " would. The ukulele always uses a nylon-string sound." + (akPiano() ? " On the piano, chords play as piano chords." : "")));
+  if (typeof akSettingsExtra15 === "function") akSettingsExtra15(c);
+}
+
+akCss("ak9-b", [
+  "svg.akh-tap{cursor:pointer}",
+  "body.akh-on .chordpop .cp-dia::after{content:'tap the shape to hear it';display:block;text-align:center;font-size:.75rem;opacity:.6}"
+]);
+/* the "tap to hear" note under the pop-up's picture follows the setting */
+(function () { function paint() { try { document.body.classList.toggle("akh-on", !!akHearCfg().tap); } catch (e) {} } document.addEventListener("click", paint, true); setTimeout(paint, 0); })();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
