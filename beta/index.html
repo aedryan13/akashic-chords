@@ -22803,15 +22803,14 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "8.1";
+var AK_VERSION = "8.3";
 var AK_WHATS_NEW = [
-  "A much better guitar sound: a real-sounding strum that rings and fades naturally, at the guitar's true pitch, in your tuning and capo",
-  "Pick the guitar: steel-string acoustic, nylon (classical) or clean electric. The ukulele gets its own nylon sound",
-  "Choose which shape plays (the one you chose, the lowest open shape, or one higher up the neck), how high it sounds, strum direction and speed, how long notes ring, and the volume (Settings > Songs and shows > Chord sound, with ▶ Try it)",
-  "Tap a chord to hear it: chord pictures anywhere, the chord pop-up, the chord panel, lessons and the writing wheel",
-  "Place chords: hear each chord as you pick it",
-  "Tapping a chord in the lyrics while playing a song stays silent unless you turn that on, so nothing sounds by accident at a show",
-  "Lessons, trainers, the shape builder and the Rhythm view's ▶ Hear it all use the new guitar"
+  "Learn has a 🔁 Loop player: pick a chord progression in any style (pop, rock, blues, country and folk, funk, jazz, borrowed chords), any key, slow it down to half speed or 75 %, or let it speed up a little each time round",
+  "While it loops you see the bars, the chord now and the next one, which scale and arpeggio fit it and why, the 3rds and 7ths and where they go, and the notes that lead into the next chord, on the neck or the keyboard (tap a note to hear it)",
+  "Pick what to practise: roots, arpeggios, guide tones, the scale, approach notes or motifs. It plays chords with your guitar sound (or piano), a walking bass and a click on 2 and 4, and can move to a new key each time round",
+  "New lessons, Borrowed chords: modal interchange, the minor iv, ♭VI and ♭VII, borrowing from other modes, secondary dominants, secondary ii–V and the tritone sub, and using them in your songs",
+  "New lessons, Jazz soloing: seventh chords, the ii–V–I, guide tones, arpeggios, which scale over which chord and why, the minor ii–V–i, bebop approach notes, motifs, swing feel, the jazz blues and rhythm changes",
+  "Every new lesson has a tip for guitar, ukulele or piano (whichever you're learning), ▶ Hear it, and a button that opens it in the loop player"
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -23685,6 +23684,1481 @@ akCss("ak9-b", [
 ]);
 /* the "tap to hear" note under the pop-up's picture follows the setting */
 (function () { function paint() { try { document.body.classList.toggle("akh-on", !!akHearCfg().tap); } catch (e) {} } document.addEventListener("click", paint, true); setTimeout(paint, 0); })();
+
+/* ================= Akashic Chords batch 8, phase C: writing =================
+   - The Write tab opens straight into a song: the last one you were writing ("Pick up where I left off") or a blank page.
+     Typing saves by itself into a new Works-in-progress song, titled from its first line until you name it.
+     Big lyric pad first, a big Record button, section buttons (Verse, Chorus, Bridge…), a rhyme panel that follows the line
+     you are on, tap tempo with a click, the screen stays awake. The chord chart and wheel sit under the pad; every other tool is
+     in one short row or the ⋯ menu. A "Write now" home-screen shortcut opens a new song with the Record button ready.
+   - The chord wheel: "Add" puts the chord into a chart of bars (a panel you can tuck away) with a length per chord, an optional
+     strum pattern, and a Repeat tool. Borrowed chords (modal interchange) and secondary dominants are offered as extra colors.
+     Tap a chord in the chart to make it the "current" chord: the suggestions then follow it, using the chords before it.
+   - Rhythm view: "✋ Timing" lets you drag a word (or a chord) to the beat it belongs on, across bar lines too.
+   - Shows: the show page starts with its set lists and ▶ Play; the details fold into one small line above; the cards can be
+     arranged; "New show like this one". Requests: the audience sees only the set list you're playing (or lists you pick),
+     and their page can search by song or artist, sort A–Z and filter by genre.
+   - settings().write9 { cur, awake, rhymes, bpm, click }; song.wheel = the song's own wheel and chart;
+     measure bars get b.wa (the slot of each word in b.w); settings().live.reqFrom { mode, lists }. */
+
+var AK_W9_DEF = { cur: "", awake: true, rhymes: true, bpm: 90, click: false };
+function akW9() { var s = settings(), c = s.write9 = s.write9 || {}; Object.keys(AK_W9_DEF).forEach(function (k) { if (c[k] === undefined) c[k] = AK_W9_DEF[k]; }); return c; }
+function akW9Song() { var c = akW9(), s = c.cur ? findSong(c.cur) : null; return s && !s.deleted && !s.trashed ? s : null; }
+function akW9Now() { return new Date().toISOString(); }
+/* the title a song gets from its words: the first line that isn't a section label, without chords */
+function akW9AutoTitle(text) {
+  var lines = String(text || "").split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    var t = lines[i].trim(); if (!t) continue;
+    var sm = /^\[([^\]]+)\]$/.exec(t); if (sm && !isChordLike(sm[1].trim())) continue;
+    if (/^\{[^}]*\}$/.test(t)) continue;
+    t = t.replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim(); if (!t) continue;
+    return t.length > 40 ? t.slice(0, 40).replace(/\s+\S*$/, "") + "…" : t;
+  }
+  return "";
+}
+function akW9NewSong(o) {
+  o = o || {};
+  var s = newSong({ title: o.title || "New song", shelf: "wip", lyrics: o.lyrics || "", tags: [] });
+  s.autoTitle = !o.title; s.updated = akW9Now();
+  lib().songs.push(s); akW9().cur = s.id; save();
+  return s;
+}
+function akW9Touch(s) { s.updated = akW9Now(); save(); }
+
+/* ---------------------------------------------------------------- keep the screen awake while writing */
+var AKW9 = { wake: null, tap: [], click: 0, clickOn: false, ac: null };
+function akW9Wake(on) {
+  if (on) {
+    if (AKW9.wake || !navigator.wakeLock) return;
+    try { navigator.wakeLock.request("screen").then(function (w) { AKW9.wake = w; w.addEventListener && w.addEventListener("release", function () { AKW9.wake = null; }); }, function () {}); } catch (e) {}
+  } else if (AKW9.wake) { try { AKW9.wake.release(); } catch (e) {} AKW9.wake = null; }
+}
+(function () {
+  var ar = akAfterRender2;
+  akAfterRender2 = function () {
+    try { ar.apply(this, arguments); } catch (e) {}
+    var on = S.view === "write";
+    akW9Wake(on && akW9().awake);
+    if (!on && AKW9.clickOn) akW9ClickStop();
+  };
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && S.view === "write" && akW9().awake) { AKW9.wake = null; akW9Wake(true); } });
+})();
+
+/* ---------------------------------------------------------------- tap tempo and the click */
+function akW9ClickStop() { AKW9.clickOn = false; clearInterval(AKW9.click); AKW9.click = 0; Array.prototype.forEach.call(document.querySelectorAll(".akw9-click"), function (b) { b.classList.remove("on"); b.textContent = "▶ Click"; }); }
+function akW9ClickStart(bpm) {
+  akW9ClickStop(); var n = 0; AKW9.clickOn = true;
+  function tick() { try { akRClick(0.01, n % 4 === 0); } catch (e) {} n++; }
+  tick(); AKW9.click = setInterval(tick, 60000 / Math.max(30, Math.min(260, bpm)));
+  Array.prototype.forEach.call(document.querySelectorAll(".akw9-click"), function (b) { b.classList.add("on"); b.textContent = "■ Click"; });
+}
+function akW9Tempo(song) {
+  var c = akW9(), out = h("output", { class: "akw9-bpm", "aria-live": "polite" });
+  function bpm() { return Number(song && song.tempo) || c.bpm || 90; }
+  function setBpm(v) { v = Math.max(30, Math.min(260, Math.round(v))); if (song) { song.tempo = v; akW9Touch(song); } c.bpm = v; save(); paint(); if (AKW9.clickOn) akW9ClickStart(v); }
+  function paint() { out.textContent = "♩ = " + bpm(); }
+  paint();
+  var tap = h("button", { class: "sm", title: "Tap along four times or more", onClick: function () {
+    var t = Date.now(), a = AKW9.tap; if (a.length && t - a[a.length - 1] > 2000) a.length = 0; a.push(t); if (a.length > 8) a.shift();
+    if (a.length >= 2) { var d = (a[a.length - 1] - a[0]) / (a.length - 1); setBpm(60000 / d); }
+    else toast("Keep tapping on the beat.");
+  } }, "Tap tempo");
+  var click = h("button", { class: "sm akw9-click" + (AKW9.clickOn ? " on" : ""), onClick: function () { if (AKW9.clickOn) akW9ClickStop(); else akW9ClickStart(bpm()); } }, AKW9.clickOn ? "■ Click" : "▶ Click");
+  return h("div", { class: "akw9-tempo" }, tap, h("button", { class: "sm", "aria-label": "Slower", onClick: function () { setBpm(bpm() - 2); } }, "−"), out, h("button", { class: "sm", "aria-label": "Faster", onClick: function () { setBpm(bpm() + 2); } }, "+"), click);
+}
+
+/* ---------------------------------------------------------------- the big Record button */
+function akW9Record(getSong, after) {
+  var btn = h("button", { class: "akw9-rec" + (S.akW9Mic ? " ready" : ""), "aria-label": "Record" }, h("span", { class: "dot" }), h("span", { class: "lbl" }, "Record")), st = h("span", { class: "muted akw9-recst" }), rec = null, chunks = [], t0 = 0, iv = 0;
+  btn.addEventListener("click", function () {
+    S.akW9Mic = false; btn.classList.remove("ready");
+    if (rec) { rec.stop(); return; }
+    if (!navigator.mediaDevices || !window.MediaRecorder) { toast("This browser can't record. Attach a file in the song editor instead."); return; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      chunks = []; rec = new MediaRecorder(stream); t0 = Date.now();
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = function () {
+        clearInterval(iv); stream.getTracks().forEach(function (t) { t.stop(); });
+        var b = new Blob(chunks, { type: rec.mimeType || "audio/webm" }), secs = Math.round((Date.now() - t0) / 1000); rec = null;
+        btn.classList.remove("on"); btn.querySelector(".lbl").textContent = "Record";
+        var s = getSong(true), n = (s.audio || []).length + 1;
+        akAddAudio(s, b, secs, "Take " + n + " · " + new Date().toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+        akW9Touch(s); st.textContent = "Kept take " + n + " (" + fmtTime(secs) + ")"; after && setTimeout(after, 350);
+      };
+      rec.start(); btn.classList.add("on"); btn.querySelector(".lbl").textContent = "Stop";
+      iv = setInterval(function () { st.textContent = "Recording " + fmtTime(Math.round((Date.now() - t0) / 1000)); }, 500);
+    }, function () { toast("The microphone isn't allowed. Check the browser's permission for this site."); });
+  });
+  return h("div", { class: "akw9-recbox" }, btn, st);
+}
+
+/* ---------------------------------------------------------------- the rhyme panel: follows the line you are on */
+function akW9LastWord(ta) {
+  var t = ta.value, p = document.activeElement === ta ? ta.selectionEnd || 0 : t.replace(/\s+$/, "").length;
+  var ls = t.lastIndexOf("\n", p - 1) + 1, lines = t.slice(0, ls).split("\n"); lines.pop(); lines.push(t.slice(ls, p));
+  for (var i = lines.length - 1; i >= 0 && i >= lines.length - 6; i--) {
+    var line = lines[i].replace(/\[[^\]]*\]/g, " "), m = /([A-Za-z’']+)[^A-Za-z’']*$/.exec(line);
+    if (m) return m[1];
+  }
+  return "";
+}
+function akW9Rhymes(ta, changed) {
+  var box = h("div", { class: "akw9-rhy", "aria-live": "polite" }), word = "", kind = "rhyme", timer = 0;
+  function insert(w) {
+    var t = ta.value, p = ta.selectionEnd || 0, pre = p > 0 && !/\s$/.test(t.slice(0, p)) ? " " : "";
+    ta.value = t.slice(0, p) + pre + w + t.slice(p); ta.selectionStart = ta.selectionEnd = p + pre.length + w.length; ta.focus(); changed();
+  }
+  function draw(list, note) {
+    box.textContent = "";
+    var tabs = h("div", { class: "chips", style: "margin:0 0 4px" }, [["rhyme", "Rhymes"], ["near", "Near"], ["syn", "Same meaning"]].map(function (x) { return h("button", { class: "chip" + (kind === x[0] ? " on" : ""), onClick: function () { kind = x[0]; look(true); } }, x[1]); }));
+    box.appendChild(h("div", { class: "akw9-rhyh" }, h("b", null, word ? "“" + word + "”" : "Rhymes"), tabs));
+    if (note) { box.appendChild(h("p", { class: "hint", style: "margin:2px 0" }, note)); return; }
+    var groups = {}; list.slice(0, 48).forEach(function (w) { var n = kind === "syn" ? 0 : akSyl(w); (groups[n] = groups[n] || []).push(w); });
+    Object.keys(groups).sort(function (a, b) { return a - b; }).forEach(function (n) {
+      if (+n) box.appendChild(h("div", { class: "akw-syl muted" }, n + " syllable" + (+n === 1 ? "" : "s")));
+      box.appendChild(h("div", { class: "akw-chips" }, groups[n].map(function (w) { return h("button", { onClick: function () { insert(w); } }, w); })));
+    });
+    if (!list.length) box.appendChild(h("p", { class: "hint", style: "margin:2px 0" }, "Nothing found for that word."));
+  }
+  function look(force) {
+    var w = akW9LastWord(ta); if (!force && w.toLowerCase() === word.toLowerCase()) return; word = w;
+    if (!w) { draw([], "Rhymes for the last word of the line you're on show up here."); return; }
+    akWordsLoad().then(function () { draw(akWordsFor(kind, w)); }, function () { draw([], "The word list needs the internet once (or the installed app)."); });
+  }
+  function later() { clearTimeout(timer); timer = setTimeout(function () { look(false); }, 250); }
+  ["input", "keyup", "click", "focus"].forEach(function (ev) { ta.addEventListener(ev, later); });
+  look(true);
+  return box;
+}
+
+/* ---------------------------------------------------------------- section buttons on the lyric pad */
+var AK_W9_SECS = ["Intro", "Verse", "Pre-chorus", "Chorus", "Bridge", "Solo", "Outro"];
+function akW9Section(ta, name, changed) {
+  var t = ta.value, label = name;
+  if (name === "Verse") { var n = (t.match(/^\[Verse(?: \d+)?\]\s*$/gm) || []).length; label = "Verse " + (n + 1); }
+  var p = ta.selectionStart || 0, ls = t.lastIndexOf("\n", p - 1) + 1, lineNow = t.slice(ls, t.indexOf("\n", p) < 0 ? t.length : t.indexOf("\n", p));
+  var at = lineNow.trim() ? (t.indexOf("\n", p) < 0 ? t.length : t.indexOf("\n", p)) : ls;
+  var before = t.slice(0, at), after = t.slice(at);
+  var ins = (before && !/\n\n$/.test(before) ? (/\n$/.test(before) ? "\n" : "\n\n") : "") + "[" + label + "]\n";
+  ta.value = before + ins + after.replace(/^\n/, ""); ta.selectionStart = ta.selectionEnd = before.length + ins.length; ta.focus(); changed();
+}
+
+/* ---------------------------------------------------------------- the Write tab */
+viewWrite = function () {
+  var c = akW9(), song = akW9Song();
+  var body = h("div", { class: "akw9", "data-blocks": "write9", "data-items": "1" });
+  var wip = lib().songs.filter(function (s) { return akShelfOf(s) === "wip"; }).sort(function (a, b) { return String(b.updated || b.added || "").localeCompare(String(a.updated || a.added || "")); });
+  var orig = lib().songs.filter(function (s) { return akShelfOf(s) === "orig"; });
+  function open(s) { c.cur = s ? s.id : ""; save(); S.akW9Fresh = !s; rerenderKeepScroll(); }
+  function pickFrom(list, anchor, head) {
+    if (!list.length) { toast("Nothing there yet."); return; }
+    menu(anchor, [{ head: head }].concat(list.slice(0, 40).map(function (s) { return { label: (s.id === c.cur ? "✓ " : "") + (s.needsWork ? "⚑ " : "") + (s.title || "Untitled") + (s.updated ? "  · " + agoText(Date.parse(s.updated)) : ""), onClick: function () { open(s); } }; })).concat(list.length > 40 ? [{ label: "The whole list…", onClick: function () { S.shelf = head === "Originals" ? "orig" : "wip"; go("songs"); } }] : []));
+  }
+  /* one short row: everything that isn't writing */
+  body.appendChild(h("div", { class: "row akw9-top", "data-bk": "quick", "data-bt": "Quick actions" },
+    h("button", { class: "sm", onClick: function () { akIdeaDialog(); } }, "💡 Quick idea"),
+    h("button", { class: "sm", onClick: function () { open(null); } }, "+ New song"),
+    h("button", { class: "sm", onClick: function () { akNotepad(); } }, "📝 Notepad"),
+    h("button", { class: "sm", onClick: function () { pickFrom(wip, this, "Works in progress"); } }, "📂 Open (" + wip.length + ") ▾"),
+    h("button", { class: "sm", onClick: function () { pickFrom(orig, this, "Originals"); } }, "★ Originals (" + orig.length + ")")));
+  /* pick up where I left off */
+  if (song && !S.akW9Fresh) body.appendChild(h("div", { class: "akw9-resume", "data-bk": "resume", "data-bt": "Pick up where I left off" },
+    h("span", null, "✍ Picking up “" + (song.title || "Untitled") + "”" + (song.updated ? " · " + agoText(Date.parse(song.updated)) : "")),
+    h("button", { class: "sm", onClick: function () { open(null); } }, "Start a new one")));
+  S.akW9Fresh = false;
+  /* the pad */
+  var title = h("input", { type: "text", class: "akw9-title", value: song && !song.autoTitle ? song.title : "", placeholder: song && song.autoTitle ? song.title + " (from the first line)" : "Title (the first line is used until you name it)", autocapitalize: "words", "aria-label": "Song title" });
+  var ta = h("textarea", { class: "akw9-pad", rows: 14, value: song ? song.lyrics || "" : "", placeholder: "Start writing… Put chords in brackets like [G] if you want. It saves as you type.", "aria-label": "Lyrics", spellcheck: "true" });
+  function cur(make) {
+    var s = akW9Song();
+    if (!s && make) s = akW9NewSong({ title: title.value.trim(), lyrics: ta.value });
+    return s;
+  }
+  function changed() {
+    var s = cur(!!(ta.value.trim() || title.value.trim())); if (!s) return;
+    s.lyrics = ta.value;
+    if (s.autoTitle) { var at = akW9AutoTitle(ta.value); if (at) s.title = at; title.placeholder = (s.title || "New song") + " (from the first line)"; }
+    akW9Touch(s);
+  }
+  ta.addEventListener("input", changed);
+  title.addEventListener("input", function () { var s = cur(true), v = title.value.trim(); s.autoTitle = !v; s.title = v || akW9AutoTitle(ta.value) || "New song"; akW9Touch(s); });
+  var secs = h("div", { class: "akw9-secs", role: "group", "aria-label": "Add a section label" }, AK_W9_SECS.map(function (n) { return h("button", { class: "chip", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { akW9Section(ta, n, changed); } }, "+ " + n); }));
+  var rhy = c.rhymes ? akW9Rhymes(ta, changed) : null;
+  var memoN = song && (song.audio || []).length;
+  var head = h("div", { class: "akw9-head" }, title, akW9Record(function (make) { return cur(make); }, function () { rerenderKeepScroll(); }));
+  var padRow = h("div", { class: "akw9-padrow" + (rhy ? " with-rhy" : "") }, h("div", { class: "akw9-padcol" }, secs, ta), rhy);
+  /* tools: one row under the pad, the rest in ⋯ */
+  function need(fn) { return function () { var s = cur(true); fn(s, this); }; }
+  function web(kind) { return need(function (s) { var q = (s.title && !s.autoTitle ? s.title : akW9AutoTitle(ta.value)) + " " + (s.artist || "") + " " + kind; window.open("https://www.google.com/search?q=" + encodeURIComponent(q.trim()), "_blank", "noopener"); }); }
+  var tools = h("div", { class: "row akw9-tools" },
+    h("button", { class: "sm", onClick: function () { c.rhymes = !c.rhymes; save(); rerenderKeepScroll(); } }, c.rhymes ? "📖 Hide rhymes" : "📖 Rhymes"),
+    h("button", { class: "sm", onClick: function () { akSyllableDialog(ta.value); } }, "Syllables"),
+    h("button", { class: "sm", onClick: need(function (s) { s.lyrics = ta.value; snap("place chords"); openPlacer(s, { onChange: function () { ta.value = s.lyrics; akW9Touch(s); }, onClose: function () { save(); rerenderKeepScroll(); } }); }) }, "🎯 Place chords"),
+    h("button", { class: "sm", onClick: need(function (s) { s.lyrics = ta.value; save(); S.playMode = "rhythm"; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, function () { go("write"); }); }) }, "🥁 Rhythm view"),
+    h("button", { class: "sm", onClick: web("lyrics") }, "Find lyrics ↗"),
+    akClaudeOk() ? h("button", { class: "sm", onClick: need(function (s) { s.lyrics = ta.value; findChordsFor(s, function () { save(); rerenderKeepScroll(); }); }) }, "✨ Find chords") : h("button", { class: "sm", onClick: web("chords") }, "Find chords ↗"),
+    h("button", { class: "sm", "aria-label": "More writing tools", onClick: function () { var me = this; menu(me, [{ head: "Writing tools" },
+      { label: "✎ Open in the song editor", onClick: need(function (s) { go("song", { songId: s.id }); }) },
+      { label: "✍ Write screen (chart, scratch pad)", onClick: need(function (s) { S.playMode = "write"; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, function () { go("write"); }); }) },
+      { label: "▶ Play it", onClick: need(function (s) { S.playMode = "perform"; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, function () { go("write"); }); }) },
+      { label: "🎙 Recordings" + (memoN ? " (" + memoN + ")" : ""), onClick: need(function (s) { modal("Recordings of “" + (s.title || "the song") + "”", akMemoCard(s, function () {}), [{ label: "Done", primary: true }]); }) },
+      { label: "🕘 Version history", onClick: need(function (s) { akVerDialog(s); }) },
+      { label: "Song shape (sections to start with)…", onClick: function () { akNewSongShape(); } },
+      { label: "📖 Look up a word…", onClick: function () { akWordPanel(ta, changed); } },
+      { label: "🔎 Name a chord", onClick: function () { openChordTools("name"); } },
+      { label: "📚 Chord library", onClick: function () { openChordTools("library"); } },
+      { label: "🔁 Chord swaps", onClick: function () { openChordTools("swap"); } },
+      { label: "🎼 Scales", onClick: function () { openChordTools("scales"); } },
+      { label: "★ Move it to Originals", disabled: !song, onClick: need(function (s) { snap("to originals"); s.shelf = "orig"; save(); toast("Moved to Originals."); rerenderKeepScroll(); }) },
+      { sep: true },
+      { label: (c.awake ? "✓ " : "") + "Keep the screen awake while writing", onClick: function () { c.awake = !c.awake; save(); akW9Wake(c.awake); } },
+      { label: "Old lyric pad (" + (akWritePad().writePad ? "has text" : "empty") + ")…", onClick: function () { akW9OldPad(); } }]); } }, "⋯"));
+  body.appendChild(h("div", { class: "card akw9-card", "data-bk": "pad", "data-bt": "Lyric pad" }, head, akW9Tempo(song), padRow, tools));
+  /* the chord chart and wheel, under the pad */
+  var pw = h("details", { class: "card", "data-bk": "wheel", "data-bt": "Chord chart and wheel" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "🎡 Chord chart and wheel", h("span", { class: "muted", style: "font-weight:400" }, song ? "  · for “" + (song.title || "this song") + "”" : "  · what to play next")));
+  if (settings().writeWheelOpen !== false) pw.open = true;
+  function fill() { pw.appendChild(akProgWheel({ song: song, state: song ? akPw9SongState(song) : null, onChange: function () { if (song) akW9Touch(song); } })); pw._in = 1; }
+  pw.addEventListener("toggle", function () { settings().writeWheelOpen = pw.open; save(); if (pw.open && !pw._in) fill(); });
+  if (pw.open) fill();
+  body.appendChild(pw);
+  if (S.akW9Mic) setTimeout(function () { var b = document.querySelector(".akw9-rec"); if (b) b.focus(); }, 60);
+  else if (!song) setTimeout(function () { if (S.view === "write" && document.activeElement === document.body) ta.focus(); }, 60);
+  return shell("Write", body, { titleEl: h("div", { class: "ttl" }, h("h1", null, "Write"), libButton()) });
+};
+AK_VIEWS.write = viewWrite;
+/* the lyric pad from before (one shared text, not a song): still reachable */
+function akW9OldPad() {
+  var L = akWritePad(), ta = h("textarea", { rows: 10, value: L.writePad, "aria-label": "Old lyric pad" });
+  ta.addEventListener("input", function () { L.writePad = ta.value; save(); });
+  modal("Old lyric pad", h("div", null, ta, h("p", { class: "hint" }, "Writing now goes straight into a song. This is the pad from before; make it a song to keep working on it.")),
+    [{ label: "Close" }, { label: "Make it a song", primary: true, onClick: function () { if (!ta.value.trim()) return; var s = akW9NewSong({ lyrics: ta.value.trim() }); s.title = akW9AutoTitle(s.lyrics) || "New song"; L.writePad = ""; save(); go("write"); } }]);
+}
+/* new songs from + New song's shapes open on the Write tab too */
+akNewSongShape = (function (orig) {
+  return function () {
+    orig.apply(this, arguments);
+    var m = document.querySelectorAll(".modal"), last = m[m.length - 1]; if (!last) return;
+    Array.prototype.forEach.call(last.querySelectorAll("button"), function (b) {
+      if (b.textContent !== "Start writing") return;
+      b.addEventListener("click", function () { setTimeout(function () { if (S.view === "song" && S.songId) { var s = findSong(S.songId); if (s && akShelfOf(s) === "wip") { akW9().cur = s.id; s.updated = akW9Now(); save(); go("write"); } } }, 0); });
+    });
+  };
+})(akNewSongShape);
+
+/* ---------------------------------------------------------------- "Write now" from the home screen */
+(function () {
+  if (!/[?&]write=now/.test(location.search)) return;
+  try { history.replaceState(null, "", location.pathname); } catch (e) {}
+  setTimeout(function () { try { akW9().cur = ""; save(); S.akW9Mic = true; S.akW9Fresh = true; go("write"); } catch (e) {} }, 0);
+})();
+
+/* ================================================================ the chord wheel: chart, lengths, strums, repeat, borrowed chords */
+/* borrowed chords (modal interchange) and secondary dominants: [semitones above the key, kind, numeral, where it comes from] */
+var AKPW9_BORROW_MAJ = [[5, "m", "iv", "minor"], [10, "", "♭VII", "mixo"], [8, "", "♭VI", "minor"], [3, "", "♭III", "minor"], [7, "m", "v", "minor"],
+  [2, "dim", "ii°", "minor"], [1, "", "♭II", "phryg"], [2, "", "II", "lyd"], [0, "m", "i", "minor"]];
+var AKPW9_BORROW_MIN = [[5, "", "IV", "dorian"], [7, "", "V", "harm"], [11, "dim", "vii°", "harm"], [0, "", "I", "major"], [2, "m", "ii", "dorian"], [1, "", "♭II", "phryg"]];
+var AKPW9_SECDOM_MAJ = [[2, "7", "V/V", "the V chord"], [9, "7", "V/ii", "the ii chord"], [4, "7", "V/vi", "the vi chord"], [0, "7", "V/IV", "the IV chord"], [11, "7", "V/iii", "the iii chord"]];
+var AKPW9_SECDOM_MIN = [[0, "7", "V/iv", "the iv chord"], [10, "7", "V/III", "the III chord"], [3, "7", "V/VI", "the VI chord"], [2, "7", "V/V", "the V chord"]];
+function akPw9From(key, src) {
+  var r = NAMES.sharp[key.pc];
+  return { minor: "borrowed from " + r + " minor", mixo: "borrowed from " + r + " Mixolydian", phryg: "the Neapolitan, from " + r + " Phrygian", lyd: "borrowed from " + r + " Lydian",
+    dorian: "borrowed from " + r + " Dorian", harm: "from " + r + " harmonic minor", major: "the Picardy third, from " + r + " major" }[src] || "borrowed";
+}
+function akPw9Extras(key) {
+  var b = (key.minor ? AKPW9_BORROW_MIN : AKPW9_BORROW_MAJ).map(function (d) { return { c: { pc: (key.pc + d[0]) % 12, q: d[1] }, r: d[2], kind: "borrowed", why: akPw9From(key, d[3]) }; });
+  var s = (key.minor ? AKPW9_SECDOM_MIN : AKPW9_SECDOM_MAJ).map(function (d) { return { c: { pc: (key.pc + d[0]) % 12, q: d[1] }, r: d[2], kind: "secondary", why: "leads strongly to " + d[3] }; });
+  return b.concat(s);
+}
+/* well-known progressions, as loops of numerals */
+var AKPW9_PATS_MAJ = [[["I", "V", "vi", "IV"], "the pop progression (I–V–vi–IV)"], [["I", "vi", "IV", "V"], "the 50s progression (I–vi–IV–V)"], [["vi", "IV", "I", "V"], "the sad pop loop (vi–IV–I–V)"],
+  [["ii", "V", "I"], "the ii–V–I (jazz and Motown)"], [["I", "IV", "V", "IV"], "three-chord rock and country (I–IV–V)"], [["IV", "V", "iii", "vi"], "the royal road (IV–V–iii–vi)"],
+  [["I", "♭VII", "IV", "I"], "the rock ♭VII (I–♭VII–IV)"], [["I", "IV", "iv", "I"], "the borrowed minor iv (I–IV–iv–I)"], [["I", "iii", "IV", "V"], "I–iii–IV–V"], [["I", "V", "IV", "V"], "I–V–IV–V"]];
+var AKPW9_PATS_MIN = [[["i", "VI", "III", "VII"], "the minor pop loop (i–VI–III–VII)"], [["i", "VII", "VI", "V"], "the Andalusian cadence (i–VII–VI–V)"], [["i", "iv", "v", "i"], "i–iv–v"],
+  [["i", "iv", "VII", "III"], "i–iv–VII–III"], [["ii°", "V", "i"], "the minor ii–V–i"], [["i", "VI", "VII", "i"], "i–VI–VII"], [["i", "iv", "V", "i"], "i–iv–V (harmonic minor)"]];
+/* what the chords so far suggest next: { numeral: { w, why } } */
+function akPw9Analyze(key, hist) {
+  var rom = hist.map(function (c) { return akPwRoman(c, key); }), out = {};
+  function give(r, w, why) { if (!out[r] || out[r].w < w) out[r] = { w: w, why: why }; }
+  (key.minor ? AKPW9_PATS_MIN : AKPW9_PATS_MAJ).forEach(function (pt) {
+    var p = pt[0], L = p.length;
+    for (var o = 0; o < L; o++) {
+      var k = 0; while (k < Math.min(rom.length, L) && rom[rom.length - 1 - k] === p[(o - k + 4 * L) % L]) k++;
+      /* the last k chords match the loop ending at position o */
+      if (!k || (k === 1 && o !== 0 && L > 3)) continue;
+      var nx = p[(o + 1) % L], whole = k >= L;
+      give(nx, 2 + 3 * k, (whole ? "starts " : "continues ") + pt[1]);
+    }
+  });
+  if (rom.length >= 4) {
+    var home = key.minor ? "i" : "I", away = rom.slice(-4).indexOf(home) < 0;
+    if (away) give(home, 7, "you've been away from home for a while: coming back to " + home + " feels like an ending");
+  }
+  return out;
+}
+/* suggestions after chord number idx (or the last one), using the chords before it */
+function akPw9Suggest(key, hist) {
+  var prev = hist.length ? hist[hist.length - 1] : null, base = akPwSuggest(key, prev), an = akPw9Analyze(key, hist), seen = {};
+  base.forEach(function (x) { seen[x.r] = 1; });
+  akPw9Extras(key).forEach(function (x) { if (an[x.r] && !seen[x.r]) { base.push({ c: x.c, w: 0.5, r: x.r, t: akPwTension(x.c, key, prev), why0: x.why }); seen[x.r] = 1; } });
+  var recent = hist.slice(-4).map(function (c) { return c.pc + "|" + c.q; });
+  base.forEach(function (x) {
+    var a = an[x.r]; if (a) { x.w += a.w; x.why = a.why; }
+    var used = recent.filter(function (k) { return k === x.c.pc + "|" + x.c.q; }).length; if (used >= 2) x.w *= 0.7;
+  });
+  base.sort(function (a, b) { return b.w - a.w; });
+  return base;
+}
+
+/* the state: the song's own (song.wheel) or the shared one; lengths and strums run beside the chords */
+function akPw9Norm(st) {
+  if (!st.key) st.key = "C"; if (!Array.isArray(st.prog)) st.prog = []; if (!st.bpm) st.bpm = 80; if (!st.ts) st.ts = 4;
+  if (!Array.isArray(st.dur)) st.dur = []; if (!Array.isArray(st.strum)) st.strum = [];
+  while (st.dur.length < st.prog.length) st.dur.push(st.ts); st.dur.length = st.prog.length;
+  while (st.strum.length < st.prog.length) st.strum.push(""); st.strum.length = st.prog.length;
+  if (typeof st.cur !== "number" || st.cur >= st.prog.length) st.cur = -1;
+  return st;
+}
+function akPw9SongState(song) {
+  if (!song.wheel || typeof song.wheel !== "object") { var k = akSongKey(song); song.wheel = { key: k ? NAMES.sharp[k.pc] + (k.minor ? "m" : "") : "C", prog: [], bpm: Number(song.tempo) || 80, ts: akSongBeats(song) || 4 }; }
+  return akPw9Norm(song.wheel);
+}
+/* the bars: chords laid out by their lengths. [{ items: [{ i, beats, cont }] }] */
+function akPw9Bars(st) {
+  var bars = [], pos = 0, ts = st.ts || 4;
+  st.prog.forEach(function (c, i) {
+    var left = Number(st.dur[i]) || ts, first = true;
+    while (left > 0) {
+      var bi = Math.floor(pos / ts), room = ts - (pos % ts), take = Math.min(room, left);
+      while (bars.length <= bi) bars.push({ items: [] });
+      bars[bi].items.push({ i: i, beats: take, cont: !first });
+      pos += take; left -= take; first = false;
+    }
+  });
+  return bars;
+}
+/* the chord a bar number starts with, as an index into prog (for the Repeat tool) */
+function akPw9BarStart(st, bar) { var bars = akPw9Bars(st), b = bars[bar]; if (!b) return st.prog.length; for (var j = 0; j < b.items.length; j++) if (!b.items[j].cont) return b.items[j].i; return b.items.length ? b.items[0].i + 1 : st.prog.length; }
+function akPw9Play(st, from) {
+  var t = 0, spb = 60 / (st.bpm || 80), ts = st.ts || 4, pos = 0; from = from || 0;
+  st.prog.forEach(function (raw, i) {
+    var c = akPwParse(raw), d = Number(st.dur[i]) || ts;
+    if (i < from) { pos += d; return; }
+    if (c && st.strum[i]) {
+      var toks = akStrumFit(akStrumToks(st.strum[i]), ts * 2), mid = akPwMidis(c).slice(1);
+      for (var k = 0; k < d * 2; k++) { var slot = Math.round((pos % ts) * 2 + k) % toks.length; try { akRStrum(mid, toks[slot], t + k * spb / 2); } catch (e) {} }
+    } else if (c) akPwPlay(c, t);
+    t += d * spb; pos += d;
+  });
+  return t;
+}
+function akPw9StrumName(p) { return p ? akStrumName(p) : "No strum (one chord)"; }
+function akPw9StrumMenu(anchor, st, i, done) {
+  var ts = st.ts || 4, fit = AK_STRUM_PRESETS.filter(function (x) { return x[0] === ts || (ts === 4 && x[0] === 2); });
+  menu(anchor, [{ head: "Strum for " + st.prog[i] }, { label: (!st.strum[i] ? "✓ " : "") + "None: play the chord once", onClick: function () { st.strum[i] = ""; done(); } }]
+    .concat(fit.map(function (x) { return { label: (st.strum[i] === x[2] ? "✓ " : "") + x[1] + "   " + x[2].replace(/D/g, "↓").replace(/U/g, "↑").replace(/M/g, "✕").replace(/-/g, "·"), onClick: function () { st.strum[i] = x[2]; done(); } }; }))
+    .concat([{ sep: true }, { label: "Use this strum for every chord", disabled: !st.strum[i], onClick: function () { for (var j = 0; j < st.strum.length; j++) st.strum[j] = st.strum[i]; done(); } }]));
+}
+/* the Repeat tool: copy the last chords or bars, so many times, to the end or after a bar */
+function akPw9Repeat(st, done) {
+  var bars = akPw9Bars(st), nB = bars.length, nC = st.prog.length;
+  if (!nC) { toast("Add some chords first."); return; }
+  var unit = h("select", { "aria-label": "Repeat bars or chords" }, h("option", { value: "bars" }, "bars"), h("option", { value: "chords" }, "chords"));
+  var count = h("select", { "aria-label": "How many" }), times = h("select", { "aria-label": "How many times" }), where = h("select", { "aria-label": "Where" });
+  function fillCount() { count.textContent = ""; var max = unit.value === "bars" ? nB : nC; for (var i = 1; i <= max; i++) count.appendChild(h("option", { value: String(i), selected: i === Math.min(max, 4) }, String(i))); }
+  unit.addEventListener("change", fillCount); fillCount();
+  [1, 2, 3, 4, 6, 8].forEach(function (n) { times.appendChild(h("option", { value: String(n) }, n === 1 ? "once" : n + " times")); });
+  where.appendChild(h("option", { value: "end" }, "at the end"));
+  if (st.cur >= 0) where.appendChild(h("option", { value: "cur" }, "after the chord I picked (" + st.prog[st.cur] + ")"));
+  for (var b = 1; b < nB; b++) where.appendChild(h("option", { value: "b" + b }, "after bar " + b));
+  modal("🔁 Repeat", h("div", null,
+    h("div", { class: "row", style: "align-items:center;flex-wrap:wrap" }, h("span", null, "Repeat the last"), count, unit, times),
+    h("label", { class: "fld" }, "Put the copies", where),
+    h("p", { class: "hint" }, "Copies keep each chord's length and strum. Undo with ⌫ or by removing chords.")),
+    [{ label: "Cancel" }, { label: "Repeat", primary: true, onClick: function () {
+      var n = Number(count.value), from = unit.value === "bars" ? akPw9BarStart(st, nB - n) : nC - n;
+      var seg = { p: st.prog.slice(from), d: st.dur.slice(from), s: st.strum.slice(from) }, x = Number(times.value);
+      var at = where.value === "end" ? nC : where.value === "cur" ? st.cur + 1 : akPw9BarStart(st, Number(where.value.slice(1)));
+      var P = [], D = [], Z = []; for (var k = 0; k < x; k++) { P = P.concat(seg.p); D = D.concat(seg.d); Z = Z.concat(seg.s); }
+      Array.prototype.splice.apply(st.prog, [at, 0].concat(P)); Array.prototype.splice.apply(st.dur, [at, 0].concat(D)); Array.prototype.splice.apply(st.strum, [at, 0].concat(Z));
+      st.cur = -1; done(); toast("Repeated " + P.length + " chord" + (P.length === 1 ? "" : "s") + ".");
+    } }]);
+}
+/* the chart put into a song: the chord line at the end of the lyrics, and bars with the lengths in its measure chart */
+function akPw9ToMeasure(song, st) {
+  var beats = akMBeats(song), wasAuto = !song.measure || !song.measure.sections || song.measure.auto;
+  var m = wasAuto ? akMGuess(song) : akMGet(song), sub = m.sub || 2, n = beats * sub;
+  if (wasAuto && m.sections.length) m.sections.pop(); /* the guess already read the chord line we just added: replace it with real lengths */
+  var sec = { id: uid(), name: "Progression", open: true, bars: [] }, pos = 0, perBar = beats;
+  st.prog.forEach(function (c, i) {
+    var d = Number(st.dur[i]) || perBar, bi = Math.floor(pos / perBar);
+    while (sec.bars.length <= Math.floor((pos + d - 0.001) / perBar)) sec.bars.push(akMNewBar(n));
+    var slot = Math.min(n - 1, Math.round((pos % perBar) * sub)); sec.bars[bi].s[slot] = c;
+    if (st.strum[i] && !sec.bars[bi].st) sec.bars[bi].st = st.strum[i];
+    pos += d;
+  });
+  m.sections.push(sec); akMKeep(song, m);
+}
+function akPw9Send(song, st) {
+  var line = st.prog.map(function (c) { return "[" + c + "]"; }).join(" ");
+  function put(s) {
+    snap("add progression"); s.lyrics = String(s.lyrics || "").replace(/\s+$/, "") + (s.lyrics ? "\n\n" : "") + "[Progression]\n" + line + "\n"; if (!s.key) s.key = st.key;
+    try { akPw9ToMeasure(s, st); } catch (e) {} s.updated = akW9Now(); save();
+    toast("Added to “" + (s.title || "the song") + "” (the words and the measure chart).", { label: "Open", fn: function () { go("song", { songId: s.id }); } });
+    if (S.view === "write") rerenderKeepScroll();
+  }
+  if (song) { put(song); return; }
+  histSongPicker("Add the chart to which song?", function (ids) { var s = findSong(ids[0]); if (s) put(s); });
+}
+
+/* o.song: start from (and send to) this song; o.state: keep the chart in this object (the Write tab uses song.wheel) */
+akProgWheel = function (o) {
+  o = o || {};
+  var st = akPw9Norm(o.state || akPwState()), box = h("div", { class: "akpw akpw9" }), sel = null, selWhy = "";
+  if (o.song && !o.state) { var k0 = akSongKey(o.song); if (k0) st.key = NAMES.sharp[k0.pc] + (k0.minor ? "m" : ""); }
+  function key() { return akParseKey(st.key) || { pc: 0, minor: false }; }
+  function prog() { return st.prog.map(akPwParse); }
+  function changed() { save(); o.onChange && o.onChange(); draw(); }
+  function add(c) {
+    var at = st.cur >= 0 ? st.cur + 1 : st.prog.length, raw = akPwRaw(c, key());
+    st.prog.splice(at, 0, raw); st.dur.splice(at, 0, st.cur >= 0 ? st.dur[st.cur] : (st.dur.length ? st.dur[st.dur.length - 1] : st.ts)); st.strum.splice(at, 0, st.cur >= 0 ? st.strum[st.cur] : (st.strum.length ? st.strum[st.strum.length - 1] : ""));
+    if (st.cur >= 0) st.cur = at; akPwPlay(c); sel = null; selWhy = ""; changed();
+  }
+  function del(i) { st.prog.splice(i, 1); st.dur.splice(i, 1); st.strum.splice(i, 1); if (st.cur >= st.prog.length) st.cur = st.prog.length - 1; if (st.cur === i) st.cur = i - 1; }
+  function move(i, j) { [st.prog, st.dur, st.strum].forEach(function (a) { a.splice(j, 0, a.splice(i, 1)[0]); }); if (st.cur === i) st.cur = j; }
+  function draw() {
+    box.textContent = "";
+    var k = key(), p = prog(), cur = st.cur, hist = (cur >= 0 ? p.slice(0, cur + 1) : p).filter(Boolean), prev = hist.length ? hist[hist.length - 1] : null;
+    /* key, tempo, play */
+    var keySel = h("select", { "aria-label": "Key", onChange: function () { st.key = this.value; changed(); } });
+    ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"].forEach(function (r) { [r, r + "m"].forEach(function (v) { keySel.appendChild(h("option", { value: v, selected: st.key === v }, v.replace(/m$/, " minor").replace(/^([^ ]+)$/, "$1 major"))); }); });
+    var tsSel = h("select", { "aria-label": "Beats in a bar", onChange: function () { st.ts = Number(this.value); changed(); } }, [2, 3, 4, 6].map(function (n) { return h("option", { value: String(n), selected: st.ts === n }, n + " beats a bar"); }));
+    var bpm = h("input", { type: "number", min: "30", max: "260", value: String(st.bpm), "aria-label": "Tempo, beats a minute", style: "width:5.5em", onChange: function () { st.bpm = Math.max(30, Math.min(260, Number(this.value) || 80)); save(); } });
+    box.appendChild(h("div", { class: "row akpw-top" }, h("label", { class: "fld", style: "margin:0" }, "Key", keySel), h("label", { class: "fld", style: "margin:0" }, "Bars", tsSel), h("label", { class: "fld", style: "margin:0" }, "♩ =", bpm),
+      h("button", { disabled: !p.length, onClick: function () { akPw9Play(st); } }, "▶ Play"),
+      h("button", { disabled: !p.length, "aria-label": "Remove the last chord", onClick: function () { del(st.cur >= 0 ? st.cur : st.prog.length - 1); changed(); } }, "⌫"),
+      h("button", { disabled: !p.length, onClick: function () { confirmBox("Clear the chart?", "Clear", function () { st.prog = []; st.dur = []; st.strum = []; st.cur = -1; changed(); }); } }, "Clear")));
+    /* the chart window */
+    var bars = akPw9Bars(st), chart = h("div", { class: "akpw9-chart" + (st.min ? " min" : "") });
+    chart.appendChild(h("div", { class: "akpw9-ch" }, h("b", null, "Chart"), h("span", { class: "muted" }, p.length ? "  " + bars.length + " bar" + (bars.length === 1 ? "" : "s") + " · " + p.length + " chord" + (p.length === 1 ? "" : "s") : ""),
+      h("span", { class: "grow" }),
+      h("button", { class: "sm", disabled: !p.length, onClick: function () { akPw9Repeat(st, changed); } }, "🔁 Repeat…"),
+      h("button", { class: "sm", "aria-label": st.min ? "Open the chart" : "Tuck the chart away", "aria-expanded": st.min ? "false" : "true", onClick: function () { st.min = !st.min; save(); draw(); } }, st.min ? "▢ Open" : "▁ Tuck away")));
+    if (!st.min) {
+      var grid = h("div", { class: "akpw9-bars" });
+      if (!p.length) grid.appendChild(h("p", { class: "muted", style: "margin:4px" }, "Tap a chord on the wheel and press + Add: it goes into a bar here. The ★ at the top of the wheel is the most likely next chord."));
+      bars.forEach(function (b, bi) {
+        var bar = h("div", { class: "akpw9-bar" }, h("i", { class: "akpw9-bn" }, String(bi + 1)));
+        b.items.forEach(function (it) {
+          var c = p[it.i], t = c ? akPwTension(c, k, it.i ? p[it.i - 1] : null) : 0, on = it.i === cur;
+          bar.appendChild(h("button", { class: "akpw9-cell" + (on ? " on" : "") + (it.cont ? " cont" : ""), style: "flex:" + it.beats + " 1 0;border-color:" + akPwColor(t), "aria-label": st.prog[it.i] + ", " + it.beats + " beats" + (on ? ", current chord" : ""),
+            onClick: function () { st.cur = st.cur === it.i ? -1 : it.i; if (c && st.cur >= 0) akPwPlay(c); save(); draw(); } },
+            it.cont ? "—" : h("b", null, c ? akPwName(c, k) : st.prog[it.i]), it.cont ? null : h("small", null, (c ? akPwRoman(c, k) : "") + (st.strum[it.i] ? " ♪" : ""))));
+        });
+        grid.appendChild(bar);
+      });
+      chart.appendChild(grid);
+      /* the picked chord: length, strum, move */
+      if (cur >= 0) {
+        var i = cur, ed = h("div", { class: "akpw9-ed" });
+        ed.appendChild(h("div", { class: "akpw9-edh" }, h("b", null, st.prog[i]), h("span", { class: "muted" }, "  is the current chord: new chords go after it, and the wheel suggests what follows it")));
+        ed.appendChild(h("div", { class: "row", style: "margin:4px 0;align-items:center;flex-wrap:wrap" }, h("span", { class: "muted" }, "Length:"),
+          [1, 2, 3, 4, 6, 8].map(function (n) { return h("button", { class: "chip" + (Number(st.dur[i]) === n ? " on" : ""), onClick: function () { st.dur[i] = n; changed(); } }, n + (n === 1 ? " beat" : " beats")); })));
+        ed.appendChild(h("div", { class: "row", style: "margin:4px 0;flex-wrap:wrap" },
+          h("button", { class: "sm", onClick: function () { akPw9StrumMenu(this, st, i, changed); } }, "Strum: " + akPw9StrumName(st.strum[i]) + " ▾"),
+          h("button", { class: "sm", disabled: i === 0, onClick: function () { move(i, i - 1); changed(); } }, "◀ Move"),
+          h("button", { class: "sm", disabled: i === st.prog.length - 1, onClick: function () { move(i, i + 1); changed(); } }, "Move ▶"),
+          h("button", { class: "sm", onClick: function () { akPw9Play(st, i); } }, "▶ Play from here"),
+          h("button", { class: "sm", onClick: function () { st.prog.splice(i + 1, 0, st.prog[i]); st.dur.splice(i + 1, 0, st.dur[i]); st.strum.splice(i + 1, 0, st.strum[i]); changed(); } }, "Duplicate"),
+          h("button", { class: "sm danger", onClick: function () { del(i); changed(); } }, "Remove"),
+          h("button", { class: "sm", onClick: function () { st.cur = -1; save(); draw(); } }, "Done")));
+        chart.appendChild(ed);
+      }
+    }
+    box.appendChild(chart);
+    /* the wheel */
+    var sug = akPw9Suggest(k, hist).slice(0, 12), n = sug.length, W = 340, R = 150, r0 = 62, cx = W / 2, cy = W / 2;
+    var maxW = sug.reduce(function (a, x) { return Math.max(a, x.w); }, 1);
+    var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + W, class: "akpw-wheel", role: "group", "aria-label": "Next chord wheel: best at the top, going round clockwise" });
+    sug.forEach(function (x, i) {
+      var a0 = -Math.PI / 2 + (i - 0.5) * 2 * Math.PI / n, a1 = a0 + 2 * Math.PI / n, rr = r0 + (R - r0) * (0.55 + 0.45 * Math.sqrt(x.w / maxW));
+      function pt(a, rad) { return (cx + rad * Math.cos(a)).toFixed(1) + " " + (cy + rad * Math.sin(a)).toFixed(1); }
+      var d = "M " + pt(a0, r0) + " L " + pt(a0, rr) + " A " + rr + " " + rr + " 0 0 1 " + pt(a1, rr) + " L " + pt(a1, r0) + " A " + r0 + " " + r0 + " 0 0 0 " + pt(a0, r0) + " Z";
+      var on = sel && sel.pc === x.c.pc && sel.q === x.c.q;
+      var g = svgEl("g", { class: "akpw-seg" + (on ? " on" : "") + (x.why0 ? " borrowed" : ""), tabindex: "0", role: "button", "aria-label": akPwName(x.c, k) + ", " + x.r + ", " + akPwWord(x.t, x.c, k, prev) + (i === 0 ? ", best next chord" : "") });
+      g.appendChild(svgEl("path", { d: d, fill: akPwColor(x.t), "fill-opacity": on ? "1" : (0.5 + 0.5 * x.w / maxW).toFixed(2), stroke: "var(--bg, #000)", "stroke-width": "2", "stroke-dasharray": x.why0 ? "5 3" : "" }));
+      var am = (a0 + a1) / 2, tr = (r0 + rr) / 2 + 4;
+      var t1 = svgEl("text", { x: cx + tr * Math.cos(am), y: cy + tr * Math.sin(am) - 2, "text-anchor": "middle", class: "akpw-tn" }); t1.textContent = (i === 0 ? "★" : "") + akPwName(x.c, k); if (t1.textContent.length > 4) t1.setAttribute("style", "font-size:" + (t1.textContent.length > 5 ? 12 : 14) + "px");
+      var t2 = svgEl("text", { x: cx + tr * Math.cos(am), y: cy + tr * Math.sin(am) + 14, "text-anchor": "middle", class: "akpw-tr" }); t2.textContent = x.r;
+      g.appendChild(t1); g.appendChild(t2);
+      function pick() { sel = x.c; selWhy = x.why || x.why0 || ""; akPwPlay(x.c); draw(); }
+      g.addEventListener("click", pick); g.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+      svg.appendChild(g);
+    });
+    var hub = svgEl("g", { class: "akpw-hub", role: "button", tabindex: "0", "aria-label": prev ? "Play " + akPwName(prev, k) : "Key of " + st.key });
+    hub.appendChild(svgEl("circle", { cx: cx, cy: cy, r: r0 - 6, fill: "var(--panel, #222)", stroke: "var(--accent)", "stroke-width": "2" }));
+    var ht = svgEl("text", { x: cx, y: cy - 2, "text-anchor": "middle", class: "akpw-hn" }); ht.textContent = prev ? akPwName(prev, k) : st.key;
+    var hs = svgEl("text", { x: cx, y: cy + 16, "text-anchor": "middle", class: "akpw-tr" }); hs.textContent = prev ? (cur >= 0 ? "current · " : "now · ") + akPwRoman(prev, k) : "key";
+    hub.appendChild(ht); hub.appendChild(hs); hub.addEventListener("click", function () { if (prev) akPwPlay(prev); });
+    svg.appendChild(hub);
+    var top = sug[0], tip = top && top.why ? h("p", { class: "hint akpw9-why" }, "★ " + akPwName(top.c, k) + ": " + top.why + ".") : null;
+    var wheelWrap = h("div", { class: "akpw-wrap" }, svg, tip);
+    /* the chosen root's other kinds */
+    var side = h("div", { class: "akpw-side" });
+    if (sel) {
+      var t0 = akPwTension(sel, k, prev);
+      side.appendChild(h("div", { class: "akpw-selh" }, h("b", null, akPwName(sel, k)), h("span", { class: "muted" }, "  " + akPwRoman(sel, k) + " · " + akPwWord(t0, sel, k, prev))));
+      if (selWhy) side.appendChild(h("div", { class: "muted", style: "font-size:.88rem" }, selWhy.charAt(0).toUpperCase() + selWhy.slice(1)));
+      side.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("button", { class: "primary", onClick: function () { add(sel); } }, "+ Add " + akPwName(sel, k) + (cur >= 0 ? " after " + st.prog[cur] : "")), h("button", { onClick: function () { akPwPlay(sel); } }, "▶")));
+      side.appendChild(h("div", { class: "muted", style: "margin:6px 0 2px" }, "Other kinds of " + akPwName({ pc: sel.pc, q: "" }, k) + ":"));
+      var kinds = h("div", { class: "akpw-kinds" });
+      AKPW_KINDS.forEach(function (q) {
+        var c = { pc: sel.pc, q: q }, t = akPwTension(c, k, prev);
+        kinds.appendChild(h("button", { class: "akpw-kind" + (q === sel.q ? " on" : ""), style: "border-color:" + akPwColor(t) + ";box-shadow:inset 4px 0 0 " + akPwColor(t), title: (AK2_Q[q] || {}).n + " · " + akPwWord(t, c, k, prev), onClick: function () { sel = c; akPwPlay(c); draw(); }, onDblclick: function () { add(c); } },
+          akPwName(c, k), h("small", null, akPwWord(t, c, k, prev))));
+      });
+      side.appendChild(kinds);
+      try { side.appendChild(akDiagramsRow(akPwRaw(sel, k), 2)); } catch (e) {}
+    } else side.appendChild(h("p", { class: "hint" }, "Tap a chord on the wheel to hear it and see its other kinds (minor, 7, sus, add9, diminished…). Bigger slices are more common choices. Tap a chord in the chart to make it the current chord: the wheel then shows what goes well after it."));
+    box.appendChild(h("div", { class: "akpw-main" }, wheelWrap, side));
+    /* borrowed colors and secondary dominants */
+    var ex = akPw9Extras(k), exb = h("div", { class: "akpw9-extra" });
+    [["borrowed", "Borrowed colors", "Chords from a parallel mode (same root, different scale). They add a twist: bittersweet, bold or dreamy."], ["secondary", "Secondary dominants", "A dominant 7th that points at another chord in the key, like a little detour home."]].forEach(function (grp) {
+      var row = h("div", { class: "akpw9-exrow" });
+      ex.filter(function (x) { return x.kind === grp[0]; }).forEach(function (x) {
+        var t = akPwTension(x.c, k, prev), on = sel && sel.pc === x.c.pc && sel.q === x.c.q;
+        row.appendChild(h("button", { class: "akpw-kind" + (on ? " on" : ""), style: "border-color:" + akPwColor(t) + ";box-shadow:inset 4px 0 0 " + akPwColor(t), title: x.why, onClick: function () { sel = x.c; selWhy = x.r + ": " + x.why; akPwPlay(x.c); draw(); } },
+          h("span", null, akPwName(x.c, k), " ", h("small", null, x.r)), h("small", null, grp[0] === "borrowed" ? x.why.replace(/^borrowed /, "") : x.why)));
+      });
+      exb.appendChild(h("details", { class: "akpw9-exd", open: !!(settings().pw9Open || {})[grp[0]], onToggle: function () { var o2 = settings().pw9Open = settings().pw9Open || {}; o2[grp[0]] = this.open; save(); } },
+        h("summary", null, h("b", null, grp[1]), h("span", { class: "muted" }, "  " + grp[2])), row));
+    });
+    box.appendChild(exb);
+    /* legend */
+    box.appendChild(h("div", { class: "akpw-legend", "aria-hidden": "true" }, [["Home", 0.02], ["Smooth", 0.2], ["Lift", 0.35], ["Pull", 0.5], ["Tension", 0.68], ["Dissonant", 0.9]].map(function (x) { return h("span", null, h("i", { style: "background:" + akPwColor(x[1]) }), x[0]); })));
+    /* send it */
+    box.appendChild(h("div", { class: "row" },
+      h("button", { disabled: !p.length, onClick: function () { var txt = st.prog.join(" "); try { navigator.clipboard.writeText(txt).then(function () { toast("Copied: " + txt); }, function () { askText("Copy this", txt, "Done", function () {}); }); } catch (e) { askText("Copy this", txt, "Done", function () {}); } } }, "Copy"),
+      h("button", { disabled: !p.length, class: o.song ? "primary" : "", onClick: function () { akPw9Send(o.song, st); } }, o.song ? "Put it in the song" : "Add to a song…"),
+      o.song ? null : h("button", { disabled: !p.length, onClick: function () { snap("new song"); var s = newSong({ title: "New idea in " + st.key, shelf: "wip", key: st.key, lyrics: "" }); s.updated = akW9Now(); lib().songs.push(s); s.wheel = clone(st); akPw9Send(s, st); akW9().cur = s.id; save(); toast("Started a song in Works in progress.", { label: "Write", fn: function () { go("write"); } }); } }, "Start a song with it")));
+  }
+  draw();
+  return box;
+};
+akPwToSong = function (song) { akPw9Send(song, akPw9Norm(akPwState())); };
+
+/* ================================================================ rhythm view: words (and chords) on the beat */
+function akR9Words(b) { return String(b.w || "").split(/\s+/).filter(Boolean); }
+function akR9Wa(b) {
+  var w = akR9Words(b), n = b.s.length;
+  if (Array.isArray(b.wa) && b.wa.length === w.length) return b.wa.map(function (k) { return Math.max(0, Math.min(n - 1, k | 0)); });
+  return w.map(function (x, i) { return Math.min(n - 1, Math.floor(i * n / Math.max(1, w.length))); });
+}
+function akR9Layout(host) {
+  Array.prototype.forEach.call(host.querySelectorAll(".akr9-w"), function (row) {
+    var W = row.clientWidth; if (!W) return;
+    var n = Number(row.getAttribute("data-n")) || 8, x = 0, line = 0, lh = 0, wrapped = false;
+    Array.prototype.forEach.call(row.children, function (sp) {
+      var want = Number(sp.getAttribute("data-k")) / n * W, w = sp.offsetWidth; lh = Math.max(lh, sp.offsetHeight);
+      var at = wrapped ? x : Math.max(want, x);
+      if (at + w > W + 2 && at > 0) { line++; at = 0; wrapped = true; }
+      sp.style.left = at + "px"; sp.style.top = (line * lh) + "px"; x = at + w + 4;
+    });
+    row.style.height = ((line + 1) * (lh || 18)) + "px";
+  });
+}
+(function () {
+  var rd = akRDraw;
+  akRDraw = function (song, host, m) {
+    rd.apply(this, arguments);
+    var edit = !!S.akR9Edit;
+    host.classList.toggle("akr9-edit", edit);
+    Array.prototype.forEach.call(host.querySelectorAll(".akr-bar"), function (bar) {
+      var si = +bar.getAttribute("data-si"), bi = +bar.getAttribute("data-bi"), b = m.sections[si] && m.sections[si].bars[bi]; if (!b) return;
+      var old = bar.querySelector(".akr-w"); if (!old) return;
+      var words = akR9Words(b), wa = akR9Wa(b), row = h("div", { class: "akr-w akr9-w" + (words.length ? "" : " empty"), "data-n": String(b.s.length) });
+      words.forEach(function (w, i) { row.appendChild(h("span", { class: "akr9-wd", "data-wi": String(i), "data-k": String(wa[i]) }, w)); });
+      if (!words.length) row.appendChild(h("span", { class: "akr9-wd none", "data-k": "0" }, " "));
+      bar.replaceChild(row, old);
+    });
+    akR9Layout(host);
+    requestAnimationFrame(function () { akR9Layout(host); });
+    if (!host._r9) { host._r9 = 1; akR9Drag(song, host, m); window.addEventListener("resize", function () { if (host.isConnected) akR9Layout(host); }); }
+  };
+})();
+/* moving a word: the words after it are pushed along, the ones before it pulled back, so the lyric order never changes */
+function akR9MoveWord(m, from, wi, to, k) {
+  var all = []; m.sections.forEach(function (sc, si) { sc.bars.forEach(function (b, bi) { all.push([si, bi]); }); });
+  function idx(p) { for (var i = 0; i < all.length; i++) if (all[i][0] === p[0] && all[i][1] === p[1]) return i; return -1; }
+  var a = idx(from), t = idx(to); if (a < 0 || t < 0) return false;
+  if (t > a + 1) { t = a + 1; k = 0; } if (t < a - 1) { t = a - 1; k = 1e9; }
+  var b = m.sections[all[a][0]].bars[all[a][1]], W = akR9Words(b), wa = akR9Wa(b), j;
+  if (t === a) {
+    wa[wi] = k; for (j = wi + 1; j < W.length; j++) wa[j] = Math.max(wa[j], k); for (j = 0; j < wi; j++) wa[j] = Math.min(wa[j], k);
+    b.wa = wa; return true;
+  }
+  var tb = m.sections[all[t][0]].bars[all[t][1]], TW = akR9Words(tb), twa = akR9Wa(tb); k = Math.max(0, Math.min(tb.s.length - 1, k));
+  if (t === a + 1) {
+    var mv = W.slice(wi); tb.w = mv.concat(TW).join(" "); tb.wa = mv.map(function () { return k; }).concat(twa.map(function (x) { return Math.max(x, k); }));
+    b.w = W.slice(0, wi).join(" "); b.wa = wa.slice(0, wi);
+  } else {
+    var mb = W.slice(0, wi + 1); tb.w = TW.concat(mb).join(" "); tb.wa = twa.map(function (x) { return Math.min(x, k); }).concat(mb.map(function () { return k; }));
+    b.w = W.slice(wi + 1).join(" "); b.wa = wa.slice(wi + 1);
+  }
+  return true;
+}
+function akR9MoveChord(m, from, k0, to, k) {
+  var b = m.sections[from[0]].bars[from[1]], tb = m.sections[to[0]] && m.sections[to[0]].bars[to[1]]; if (!b || !tb) return false;
+  k = Math.max(0, Math.min(tb.s.length - 1, k)); if (b === tb && k === k0) return false;
+  var c = b.s[k0], there = tb.s[k]; tb.s[k] = c; b.s[k0] = b === tb ? there || "" : there || ""; return true;
+}
+function akR9Drag(song, host, m0) {
+  var d = null, eat = false;
+  function m() { return akMGet(song); }
+  function target(x, y) {
+    var el = document.elementFromPoint(x, y), bar = el && el.closest && el.closest(".akr-bar"); if (!bar || !host.contains(bar)) return null;
+    var row = bar.querySelector(".akr-ch"), r = row.getBoundingClientRect(), n = row.children.length || 8;
+    return { bar: bar, si: +bar.getAttribute("data-si"), bi: +bar.getAttribute("data-bi"), k: Math.max(0, Math.min(n - 1, Math.floor((x - r.left) / r.width * n))), row: row };
+  }
+  function mark(t) {
+    Array.prototype.forEach.call(host.querySelectorAll(".akr9-tgt"), function (x) { x.classList.remove("akr9-tgt"); });
+    if (t && t.row.children[t.k]) t.row.children[t.k].classList.add("akr9-tgt");
+  }
+  host.addEventListener("pointerdown", function (e) {
+    if (!S.akR9Edit) return;
+    var wd = e.target.closest && e.target.closest(".akr9-wd:not(.none)"), ch = !wd && e.target.closest && e.target.closest(".akr-c.ch");
+    if (!wd && !ch) return;
+    var bar = (wd || ch).closest(".akr-bar"); if (!bar) return;
+    d = { el: wd || ch, kind: wd ? "w" : "c", si: +bar.getAttribute("data-si"), bi: +bar.getAttribute("data-bi"), x: e.clientX, y: e.clientY, on: false };
+    d.i = wd ? +wd.getAttribute("data-wi") : Array.prototype.indexOf.call(ch.parentNode.children, ch);
+    e.preventDefault();
+    try { host.setPointerCapture(e.pointerId); } catch (er) {}
+  });
+  host.addEventListener("pointermove", function (e) {
+    if (!d) return;
+    if (!d.on && Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 6) return;
+    if (!d.on) { d.on = true; d.ghost = h("div", { class: "akr9-ghost" }, d.el.textContent); document.body.appendChild(d.ghost); d.el.classList.add("akr9-lift"); }
+    d.ghost.style.left = e.clientX + "px"; d.ghost.style.top = e.clientY + "px";
+    mark(target(e.clientX, e.clientY));
+  });
+  function end(e, cancel) {
+    if (!d) return; var dd = d; d = null; mark(null);
+    if (dd.ghost) dd.ghost.remove(); dd.el.classList.remove("akr9-lift");
+    if (!dd.on) return;
+    eat = true; setTimeout(function () { eat = false; }, 50);
+    if (cancel) return;
+    var t = target(e.clientX, e.clientY); if (!t) return;
+    var mm = m(), ok = dd.kind === "w" ? akR9MoveWord(mm, [dd.si, dd.bi], dd.i, [t.si, t.bi], t.k) : akR9MoveChord(mm, [dd.si, dd.bi], dd.i, [t.si, t.bi], t.k);
+    if (ok) { akMKeep(song, mm, dd.kind === "w" ? "move word" : "move chord"); if (AKR.on) akRStop(); akRDraw(song, host, mm); }
+  }
+  host.addEventListener("pointerup", function (e) { end(e, false); });
+  host.addEventListener("pointercancel", function (e) { end(e, true); });
+  host.addEventListener("click", function (e) { if (eat) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
+/* the ✋ Timing button in the rhythm view's bar */
+(function () {
+  var ma = akModeApply;
+  akModeApply = function (song, root, panes) {
+    var r = ma.apply(this, arguments);
+    if ((S.playMode || "perform") !== "rhythm") return r;
+    var tools = root.querySelector(".akr .akm-tools"), host = root.querySelector(".akr"); if (!tools || !host) return r;
+    var b = h("button", { class: "akr9-tbtn" + (S.akR9Edit ? " on" : ""), "aria-pressed": S.akR9Edit ? "true" : "false", title: "Drag words and chords to the beat they belong on", onClick: function () {
+      S.akR9Edit = !S.akR9Edit; b.classList.toggle("on", S.akR9Edit); b.setAttribute("aria-pressed", S.akR9Edit ? "true" : "false"); host.classList.toggle("akr9-edit", S.akR9Edit); note.style.display = S.akR9Edit ? "" : "none";
+      if (S.akR9Edit) toast("Drag a word or a chord to the beat it belongs on. Tap ✋ Timing again when you're done.");
+    } }, "✋ Timing");
+    tools.insertBefore(b, tools.children[1] || null);
+    var note = h("div", { class: "akr9-note", style: S.akR9Edit ? "" : "display:none" }, "Timing: drag a word or chord onto its beat. Words keep their order; dropping one in the next bar takes the words after it along.");
+    tools.parentNode.insertBefore(note, tools.nextSibling);
+    return r;
+  };
+})();
+
+/* ================================================================ the show page: set lists first, details folded away, arrangeable */
+function akGig9When(g) {
+  var d = g.date ? new Date(g.date + "T12:00:00") : null;
+  return [d && !isNaN(d) ? d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) : "No date yet", g.start ? tmHM(g.start) + (g.end ? "–" + tmHM(g.end) : "") : "", g.venue && g.venue !== g.name ? g.venue : ""].filter(Boolean).join(" · ");
+}
+function akGig9Like(g) {
+  snap("new show like this");
+  var c = akNewGig(Object.assign(clone(g), { id: uid(), date: akTodayKey(), tips: [], costs: [], pay: g.pay, paid: false, used: [], photos: (g.photos || []).slice(), added: new Date().toISOString() }));
+  akGigs().push(c); save(); S.akGig9Open = c.id; go("gig", { gigId: c.id }); toast("New show with the same place, times and set lists. Check the date.");
+}
+viewGig = function () {
+  var g = akGig(S.gigId); if (!g) { settings().showsTab = "gigs"; return viewGigs(); }
+  var body = h("div", { class: "akgig9", "data-blocks": "gig", "data-items": "1" });
+  function draw() {
+    var sc = $("mainScroll"), keep = sc ? sc.scrollTop : 0;
+    body.textContent = "";
+    var lists = (g.setlists || []).map(findShow).filter(Boolean), m = akGigMoney(g);
+    /* the details, folded into one line */
+    var det = h("details", { class: "card akgig-card akgig9-info", "data-bk": "details", "data-bt": "Show details" }, h("summary", null, h("span", { class: "akgig9-when" }, "📅 " + akGig9When(g)), h("span", { class: "muted" }, " ✎ Details")));
+    if (S.akGig9Open === g.id || !g.date) det.open = true;
+    det.addEventListener("toggle", function () { S.akGig9Open = det.open ? g.id : ""; });
+    det.appendChild(h("label", { class: "fld" }, "Name", h("input", { type: "text", value: g.name, placeholder: g.venue || "Show name", autocapitalize: "words", onInput: function () { g.name = this.value; save(); } })));
+    det.appendChild(h("div", { class: "two" },
+      h("label", { class: "fld" }, "Date", h("input", { type: "date", value: g.date, onChange: function () { g.date = this.value; save(); draw(); } })),
+      h("div", { class: "two" },
+        h("label", { class: "fld" }, "Start", h("input", { type: "time", value: g.start, onChange: function () { g.start = this.value; save(); } })),
+        h("label", { class: "fld" }, "End", h("input", { type: "time", value: g.end, onChange: function () { g.end = this.value; save(); } })))));
+    det.appendChild(akVenueField(g, draw));
+    var v = akVenueFor(g), addr = akGigAddr(g), mapA = h("a", { class: "btnlink", target: "_blank", rel: "noopener noreferrer", href: akMapsUrl(g.venue, addr) || "#" }, "📍 Open in Maps ↗");
+    if (!addr && !g.venue) mapA.style.display = "none";
+    det.appendChild(h("label", { class: "fld" }, "Address", h("div", { class: "row", style: "margin:0;flex-wrap:nowrap" },
+      h("input", { type: "text", value: g.address || "", placeholder: (v && v.address) || "Street, town", autocapitalize: "words", onInput: function () { g.address = this.value; save(); mapA.href = akMapsUrl(g.venue, akGigAddr(g)); mapA.style.display = akGigAddr(g) || g.venue ? "" : "none"; } }), mapA)));
+    det.appendChild(h("label", { class: "fld" }, "Notes for this show (who booked you, staff names, anything to remember)", h("textarea", { rows: 3, value: g.notes || "", onInput: function () { g.notes = this.value; save(); } })));
+    if (v) det.appendChild(h("label", { class: "fld" }, "People at " + v.name + " (kept with the venue for every show there)", h("textarea", { rows: 2, value: v.staff || "", placeholder: "Bartenders, managers, sound person…", onInput: function () { v.staff = this.value; save(); } })));
+    det.appendChild(h("div", { class: "fld" }, "Color", colorPicker(g.color, function (c) { g.color = c; save(); })));
+    det.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akGig9Like(g); } }, "＋ New show like this one")));
+    body.appendChild(det);
+    /* set lists first, with Play */
+    var sl = h("div", { class: "card akgig-card akgig9-sets", "data-bk": "setlists", "data-bt": "Set lists" });
+    if (!lists.length) {
+      var def = akGigDefaultSet(), pick = h("select", { "aria-label": "Set list for this show" }, [h("option", { value: "" }, "Pick a set list…")].concat(lib().shows.map(function (sh) { return h("option", { value: sh.id }, sh.name || "Set list"); })));
+      if (def) pick.value = def.id;
+      function use(play) { var sh = findShow(pick.value); if (!sh) { toast("Pick a set list first."); return; } snap("add set list"); g.setlists = [sh.id]; settings().gigDefaultSet = sh.id; save(); if (play) akGigPlay(g, sh); else draw(); }
+      sl.appendChild(h("h3", null, "Set list"));
+      sl.appendChild(h("div", { class: "row akgig9-pick" }, pick, h("button", { class: "primary", onClick: function () { use(true); } }, "▶ Play"), h("button", { onClick: function () { use(false); } }, "Use it")));
+    } else {
+      sl.appendChild(h("h3", null, lists.length === 1 ? "Set list" : "Set lists"));
+      lists.forEach(function (sh, i) {
+        var uses = (g.used || []).filter(function (u) { return u.sl === sh.id; });
+        sl.appendChild(h("div", { class: "item akgig9-sl" },
+          h("button", { class: "primary akgig9-play", "aria-label": "Play " + (sh.name || "the set list"), onClick: function () { akGigPlay(g, sh); } }, "▶ Play"),
+          h("button", { class: "main-btn", onClick: function () { go("show", { showId: sh.id }); } }, h("div", { class: "t" }, sh.name || "Untitled"), h("div", { class: "s" }, showCounts(sh) + (uses.length ? " · played " + uses.map(function (u) { return tmClock(u.at); }).join(", ") : ""))),
+          h("button", { class: "icon", "aria-label": "Swap " + sh.name + " for another set list", title: "Swap for another set list", onClick: function () { akPickSetlist(function (nw) { snap("swap set list"); g.setlists[g.setlists.indexOf(sh.id)] = nw.id; settings().gigDefaultSet = nw.id; save(); draw(); }, g.setlists); } }, "⇄"),
+          h("button", { class: "icon", "aria-label": "Take " + sh.name + " off this show", onClick: function () { snap("set list off show"); g.setlists.splice(g.setlists.indexOf(sh.id), 1); save(); draw(); toastUndo("Taken off this show (the set list is kept)."); } }, "✕")));
+      });
+    }
+    sl.appendChild(h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () { akPickSetlist(function (sh) { snap("add set list"); g.setlists = g.setlists || []; if (g.setlists.indexOf(sh.id) < 0) g.setlists.push(sh.id); save(); draw(); }, g.setlists); } }, "+ Add a set list"),
+      h("button", { class: "sm", onClick: function () { snap("new set list"); var sh = newShow(akGigTitle(g) + " set"); lib().shows.unshift(sh); g.setlists = g.setlists || []; g.setlists.push(sh.id); save(); go("show", { showId: sh.id }); } }, "+ New set list"),
+      typeof akSetHelper === "function" ? h("button", { class: "sm", onClick: function () { akSetHelper({ gig: g }); } }, "✦ Set list helper") : null,
+      typeof akPracBtn === "function" && lists.length ? akPracBtn("chip") : null));
+    body.appendChild(sl);
+    /* money, photos, what was played */
+    body.appendChild(h("div", { class: "row akgig9-money", "data-bk": "money", "data-bt": "Pay and tips" }, h("button", { onClick: function () { akGigMoneyDialog(g, draw); } }, "💵 Pay and tips" + (m.earned ? " · " + akMoney(m.earned) : ""))));
+    body.appendChild(akGigPhotos(g, draw));
+    body.appendChild(akGigLogCard(g, draw));
+    layRun(body);
+    if (sc) sc.scrollTop = keep;
+  }
+  draw();
+  var more = h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+    { label: "＋ New show like this one", onClick: function () { akGig9Like(g); } },
+    { label: "Duplicate (no date)", onClick: function () { snap("duplicate show"); var c = akNewGig(Object.assign(clone(g), { id: uid(), date: "", tips: [], costs: [], pay: g.pay, paid: false, used: [], photos: (g.photos || []).slice() })); akGigs().push(c); save(); go("gig", { gigId: c.id }); } },
+    { label: "Customize and arrange this page", onClick: function () { layStart(); } },
+    { label: "Venue card", disabled: !akVenueFor(g), onClick: function () { akVenueCard(akVenueFor(g), { done: render }); } },
+    { label: "Edit what was played…", onClick: function () { akLogEdit({ gig: g, redraw: render }); } },
+    { label: "Delete this show…", danger: true, onClick: function () { confirmBox("Delete “" + akGigTitle(g) + "”? Its set lists and the play history are kept.", "Delete", function () { snap("delete show"); lib().gigs = akGigs().filter(function (x) { return x !== g; }); (lib().log || []).forEach(function (e) { if (e.g === g.id) { delete e.g; delete e.gn; } }); save(); go("shows"); toastUndo("Show deleted."); }); } }]); } }, "⋯");
+  return shell(akGigTitle(g), body, { back: function () { saveNow(); if (!navBack()) go("shows"); }, noBanner: true, actions: more });
+};
+(function () { try { var mp = typeof AK_VIEWS === "object" ? AK_VIEWS : null; if (mp && mp.gig) mp.gig = viewGig; } catch (e) {} })();
+/* the photos card and the log card get names in Arrange mode */
+(function () {
+  var ph = akGigPhotos, lg = akGigLogCard;
+  akGigPhotos = function () { var el = ph.apply(this, arguments); if (el && el.setAttribute) { el.setAttribute("data-bk", "photos"); el.setAttribute("data-bt", "Photos"); } return el; };
+  akGigLogCard = function () { var el = lg.apply(this, arguments); if (el && el.setAttribute) { if (!el.getAttribute("data-bk")) el.setAttribute("data-bk", "log"); el.setAttribute("data-bt", "What was played"); } return el; };
+})();
+
+/* ================================================================ requests: which songs the audience can pick from */
+var AK_REQ9_DEF = { mode: "playing", lists: [] };
+function akReq9() { var L = akLive(), r = L.reqFrom = L.reqFrom || {}; Object.keys(AK_REQ9_DEF).forEach(function (k) { if (r[k] === undefined) r[k] = clone(AK_REQ9_DEF[k]); }); return r; }
+/* the set list being played right now: the playing screen's, else a running show night */
+function akReq9Playing() {
+  var it = S.play && S.play.list && S.play.list[S.play.idx], id = it && it.showId;
+  if (!id && typeof akRunLive === "function" && akRunLive()) id = RUN.showId;
+  return id ? findShow(id) : null;
+}
+function akReq9Ids() {
+  var r = akReq9(), shows = [];
+  if (r.mode === "all") return null;
+  if (r.mode === "lists") shows = (r.lists || []).map(findShow).filter(Boolean);
+  else { var p = akReq9Playing(); if (p) shows = [p]; }
+  if (!shows.length) return null;
+  var ids = {}; shows.forEach(function (sh) { showItems(sh).forEach(function (x) { ids[x.songId] = 1; }); });
+  return ids;
+}
+function akReq9Genre(s) {
+  var t = (s.tags || []).join(" ").toLowerCase() + " " + String(s.genre || "").toLowerCase();
+  var G = [["christmas|holiday", "Holiday"], ["country|bluegrass|americana", "Country"], ["blues", "Blues"], ["jazz|swing|standard", "Jazz and standards"], ["reggae|ska|island", "Reggae and island"],
+    ["soul|motown|r&b|funk|disco", "Soul and R&B"], ["folk|acoustic", "Folk"], ["punk|grunge|metal|hard rock|alt", "Rock"], ["rock", "Rock"], ["hip hop|rap", "Hip hop"], ["latin|spanish", "Latin"], ["original", "Originals"], ["pop", "Pop"]];
+  for (var i = 0; i < G.length; i++) if (new RegExp("\\b(" + G[i][0] + ")").test(t)) return G[i][1];
+  if (s.genre) return String(s.genre);
+  return "";
+}
+(function () {
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = prof.apply(this, arguments), ids = akReq9Ids(), byId = {};
+    lib().songs.forEach(function (s) { byId[s.id] = s; });
+    p.songs = (p.songs || []).filter(function (x) { return !ids || ids[x.i]; }).map(function (x) { var s = byId[x.i], g = s ? akReq9Genre(s) : ""; if (g) x.g = g; return x; });
+    var pl = akReq9Playing(); p.from = ids ? (akReq9().mode === "lists" ? "lists" : "playing") : "all";
+    return p;
+  };
+  /* send the new list when the set list being played changes */
+  var sp = startPlay, last = "";
+  startPlay = function () {
+    var r = sp.apply(this, arguments);
+    try { var pl = akReq9Playing(), k = pl ? pl.id : ""; if (k !== last && akReq9().mode === "playing" && AKL.conn) { last = k; akLivePublish().catch(function () {}); } } catch (e) {}
+    return r;
+  };
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    ls.apply(this, arguments);
+    var r = akReq9(), box = h("div", { class: "card", style: "margin-top:10px" });
+    function pub() { save(); try { if (AKL.conn) akLivePublish(); } catch (e) {} }
+    function paint() {
+      box.textContent = "";
+      box.appendChild(h("h3", { style: "margin:0 0 6px" }, "Songs people can request"));
+      [["playing", "The set list I'm playing (when nothing is playing: all my songs)"], ["lists", "Set lists I pick"], ["all", "All my songs"]].forEach(function (x) {
+        box.appendChild(h("label", { class: "chk" }, h("input", { type: "radio", name: "akreq9", checked: r.mode === x[0], onChange: function () { r.mode = x[0]; pub(); paint(); } }), x[1]));
+      });
+      if (r.mode === "lists") {
+        var chosen = (r.lists || []).map(findShow).filter(Boolean);
+        chosen.forEach(function (sh) { box.appendChild(h("div", { class: "item" }, h("div", { class: "main-btn" }, h("div", { class: "t" }, sh.name || "Set list"), h("div", { class: "s" }, showCounts(sh))), h("button", { class: "icon", "aria-label": "Take " + sh.name + " off", onClick: function () { r.lists = r.lists.filter(function (id) { return id !== sh.id; }); pub(); paint(); } }, "✕"))); });
+        box.appendChild(h("button", { class: "sm", onClick: function () { akPickSetlist(function (sh) { r.lists = (r.lists || []).concat([sh.id]); pub(); paint(); }, r.lists); } }, "+ Add a set list"));
+        if (!chosen.length) box.appendChild(h("p", { class: "hint" }, "Until you add one, people see all your songs."));
+      }
+      var pl = akReq9Playing();
+      box.appendChild(h("p", { class: "hint" }, r.mode === "playing" ? (pl ? "Playing now: " + (pl.name || "a set list") + "." : "Nothing is playing right now, so the page shows all your songs.") + " The page changes by itself when you start a set list." : "Songs that are turned off (not active) never show."));
+    }
+    paint(); out.appendChild(box);
+  };
+})();
+
+/* ================================================================ settings */
+function akSettingsExtra15(c) {
+  c.again("songs-and-shows");
+  c.section("Writing", "The Write tab");
+  var w = akW9();
+  c.check("Keep the screen awake while I'm on the Write tab", function () { return w.awake; }, function (v) { w.awake = v; });
+  c.check("Show rhymes next to the lyric pad (they follow the line I'm on)", function () { return w.rhymes; }, function (v) { w.rhymes = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "On a phone or tablet, add the app to your home screen and press and hold its icon: “Write now” opens a new song with the Record button ready."));
+  if (typeof akSettingsExtra16 === "function") akSettingsExtra16(c);
+}
+
+akCss("ak9-c", [
+  ".akw9-top{flex-wrap:wrap;gap:6px;margin-bottom:6px}.akw9-top .sm{padding:6px 10px}",
+  ".akw9-resume{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 12px;margin:0 0 8px;border:1px solid var(--line);border-radius:12px;background:var(--accent-bg,transparent);font-size:.95rem}",
+  ".akw9-card{padding-top:10px}.akw9-head{display:flex;gap:10px;align-items:center}.akw9-title{flex:1 1 auto;font-size:1.15rem;font-weight:700;min-width:0}",
+  ".akw9-recbox{display:flex;flex-direction:column;align-items:center;gap:2px;flex:0 0 auto}.akw9-recst{font-size:.75rem;min-height:1em;white-space:nowrap}",
+  ".akw9-rec{display:flex;align-items:center;gap:8px;min-height:52px;padding:6px 18px;border-radius:999px;font-weight:800;font-size:1.05rem;border:2px solid #d33}",
+  ".akw9-rec .dot{width:18px;height:18px;border-radius:50%;background:#e33;box-shadow:0 0 0 3px rgba(230,50,50,.25)}",
+  ".akw9-rec.on{background:#c22;color:#fff}.akw9-rec.on .dot{border-radius:3px;background:#fff;animation:akw9p 1s infinite}",
+  ".akw9-rec.ready{animation:akw9r 1.4s ease-in-out infinite}@keyframes akw9r{50%{box-shadow:0 0 0 8px rgba(230,50,50,.35)}}@keyframes akw9p{50%{opacity:.4}}",
+  ".akw9-tempo{display:flex;align-items:center;gap:6px;margin:6px 0;flex-wrap:wrap}.akw9-bpm{min-width:4.2em;text-align:center;font-variant-numeric:tabular-nums}.akw9-click.on{background:var(--accent);color:var(--bg)}",
+  ".akw9-padrow{display:grid;grid-template-columns:1fr;gap:10px}.akw9-padrow.with-rhy{grid-template-columns:minmax(0,1fr) minmax(170px,32%)}",
+  "@media (max-width:640px){.akw9-padrow.with-rhy{grid-template-columns:1fr}.akw9-rhy{max-height:30vh}}",
+  ".akw9-secs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 6px}.akw9-secs .chip{padding:4px 9px;font-size:.85rem;min-height:34px}",
+  "@media (max-width:640px){.akw9-secs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}.akw9-secs .chip{flex:0 0 auto}}",
+  ".akw9-rhy .chip{padding:2px 10px;min-height:30px;font-size:.85rem}",
+  ".akw9-pad{width:100%;min-height:46vh;font-size:calc(var(--lyric-size,20px) * .9);line-height:1.5;font-family:var(--lyric-font,inherit);resize:vertical}",
+  ".akw9-rhy{border:1px solid var(--line);border-radius:12px;padding:8px;overflow:auto;max-height:52vh;font-size:.92rem}.akw9-rhyh{display:flex;flex-direction:column;gap:4px;margin-bottom:4px}",
+  ".akw9-rhy .akw-chips{display:flex;flex-wrap:wrap;gap:4px}.akw9-rhy .akw-chips button{padding:3px 8px;min-height:32px}",
+  ".akw9-tools{flex-wrap:wrap;gap:6px;margin-top:8px}",
+  ".akpw9-chart{border:1px solid var(--line);border-radius:12px;padding:6px 8px;margin:8px 0}.akpw9-ch{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.akpw9-ch .grow{flex:1 1 auto}",
+  ".akpw9-bars{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:0;margin-top:6px;border-left:3px solid var(--fg)}",
+  ".akpw9-bar{position:relative;display:flex;gap:3px;padding:14px 4px 4px;border-right:2px solid var(--fg);border-bottom:1px solid var(--line);min-height:58px}",
+  ".akpw9-bn{position:absolute;top:1px;left:4px;font-size:.7rem;font-style:normal;opacity:.55}",
+  ".akpw9-cell{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;padding:2px;border:2px solid;border-radius:8px;line-height:1.1}.akpw9-cell b{font-size:1.05rem}.akpw9-cell small{opacity:.75;font-size:.72rem}",
+  ".akpw9-cell.cont{opacity:.55;border-style:dashed}.akpw9-cell.on{background:var(--accent-bg,rgba(120,120,255,.2));outline:2px solid var(--accent);outline-offset:1px}",
+  ".akpw9-ed{margin-top:6px;padding:6px;border-top:1px dashed var(--line)}.akpw9-why{margin:4px 0 0;text-align:center}",
+  ".akpw9-extra{margin:8px 0}.akpw9-exd{border:1px solid var(--line);border-radius:12px;padding:4px 8px;margin:6px 0}.akpw9-exd summary{cursor:pointer;padding:4px 0}",
+  ".akpw9-exrow{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin:6px 0}.akpw9-exrow .akpw-kind small{display:block}",
+  ".akpw-seg.borrowed path{stroke-width:2}",
+  ".akr9-w{position:relative;min-height:1.3em;overflow:visible}.akr9-wd{position:absolute;left:0;top:0;white-space:nowrap}.akr9-wd.none{position:static}",
+  ".akr9-edit .akr9-wd:not(.none),.akr9-edit .akr-c.ch{touch-action:none;cursor:grab;border-radius:6px;outline:1px dashed var(--accent);outline-offset:1px}",
+  ".akr9-edit .akr-scroll{user-select:none;-webkit-user-select:none}.akr9-lift{opacity:.35}.akr9-tgt{background:var(--accent);border-radius:4px;min-height:1em}",
+  ".akr9-ghost{position:fixed;z-index:9999;pointer-events:none;transform:translate(-50%,-130%);padding:4px 10px;border-radius:10px;background:var(--accent);color:var(--bg);font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.4)}",
+  ".akr9-tbtn.on{background:var(--accent);color:var(--bg)}.akr9-note{font-size:.85rem;color:var(--muted);padding:2px 10px 4px}",
+  ".akgig9-info summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;font-size:.95rem}.akgig9-info summary::-webkit-details-marker{display:none}",
+  ".akgig9-info{padding:8px 12px}.akgig9-info[open] summary{margin-bottom:8px}.akgig9-when{font-weight:700}",
+  ".akgig9-pick{flex-wrap:nowrap;align-items:center}.akgig9-pick select{flex:1 1 auto;min-width:0}",
+  ".akgig9-sl{align-items:center}.akgig9-play{flex:0 0 auto;min-height:48px;padding:6px 16px;font-size:1.05rem}.akgig9-money{margin:0 0 10px}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 8, phase D: lessons =================
+   - Lessons, chapter "Borrowed chords": modal interchange (the parallel minor and the other parallel modes), the minor iv,
+     ♭VI and ♭VII, secondary dominants, secondary ii–V and the tritone sub, and how to use them in your own songs.
+   - Lessons, chapter "Jazz soloing": seventh chords, ii–V–I, guide tones, arpeggios, chord scales (and why), minor ii–V–i,
+     bebop approach notes and the bebop scale, motifs, swing feel, the jazz blues, rhythm changes, how to practise.
+     Every lesson shows a short tip for the instrument being learned (guitar, ukulele or piano).
+   - Learn > 🔁 Loop player (any style: pop, rock, blues, country and folk, funk, jazz, borrowed chords; asked for by Aedryan): a progression loops with chords (the guitar sound from phase B, or piano), a walking bass and a
+     click on 2 and 4, at any tempo, slowed down (50 / 75 %) or speeding up a little each time round. It shows the bars, the
+     chord playing now and the next one, which scale and arpeggio to play over it and WHY, the guide tones and where they go,
+     and approach notes into the next chord, on the neck or the keyboard. Each loop can move to a new key.
+   - Theory is the standard chord-scale approach taught in jazz schools; places where players differ are marked "Taste".
+   - settings().jazz9 { prog, key, bpm, pct, ramp, loops, comp, bass, click, swing, focus, tension, move, pos }. */
+
+/* ---------------------------------------------------------------- 1. spelling notes properly in any key */
+var AKJZ_L = "CDEFGAB", AKJZ_NAT = [0, 2, 4, 5, 7, 9, 11];
+function akJzAcc(letter, pc) { var d = akMod(pc - AKJZ_NAT[letter]); if (d > 6) d -= 12; return d; }
+/* a note from its letter (0-6 = C-B) and pitch class: "F♯", "B♭" */
+function akJzSpell(letter, pc) { var d = akJzAcc(letter, pc); return AKJZ_L[letter] + (d === 0 ? "" : d === 1 ? "♯" : d === -1 ? "♭" : d === 2 ? "𝄪" : d === -2 ? "𝄫" : ""); }
+/* the same as the app writes chords ("F#", "Bb"); a double sharp or flat falls back to the plain name */
+function akJzAscii(letter, pc) { var d = akJzAcc(letter, pc); if (d > 1 || d < -1) return NAMES.flat[akMod(pc)]; return AKJZ_L[letter] + (d === 1 ? "#" : d === -1 ? "b" : ""); }
+/* keys you can pick: major-key progressions use flats where musicians do, minor-key ones the usual minor spellings */
+var AKJZ_KEYS_MAJ = [[0, 0], [1, 1], [1, 2], [2, 3], [2, 4], [3, 5], [4, 6], [4, 7], [5, 8], [5, 9], [6, 10], [6, 11]];
+var AKJZ_KEYS_MIN = [[0, 0], [0, 1], [1, 2], [2, 3], [2, 4], [3, 5], [3, 6], [4, 7], [4, 8], [5, 9], [6, 10], [6, 11]];
+function akJzKey(pc, minor) { var k = (minor ? AKJZ_KEYS_MIN : AKJZ_KEYS_MAJ)[akMod(pc)]; return { letter: k[0], pc: k[1] }; }
+
+/* ---------------------------------------------------------------- 2. scales: [name, intervals, letter steps] */
+var AKJZ_SC = {
+  ionian: ["Ionian (the major scale)", [0, 2, 4, 5, 7, 9, 11]],
+  dorian: ["Dorian", [0, 2, 3, 5, 7, 9, 10]],
+  phryg: ["Phrygian", [0, 1, 3, 5, 7, 8, 10]],
+  lydian: ["Lydian", [0, 2, 4, 6, 7, 9, 11]],
+  mixo: ["Mixolydian", [0, 2, 4, 5, 7, 9, 10]],
+  aeol: ["Aeolian (natural minor)", [0, 2, 3, 5, 7, 8, 10]],
+  locr: ["Locrian", [0, 1, 3, 5, 6, 8, 10]],
+  locn2: ["Locrian ♮2", [0, 2, 3, 5, 6, 8, 10]],
+  phrdom: ["Phrygian dominant", [0, 1, 4, 5, 7, 8, 10]],
+  melmin: ["Melodic minor", [0, 2, 3, 5, 7, 9, 11]],
+  lyddom: ["Lydian dominant", [0, 2, 4, 6, 7, 9, 10]],
+  alt: ["Altered", [0, 1, 3, 4, 6, 8, 10], [0, 1, 1, 2, 3, 5, 6]],
+  whdim: ["Whole-half diminished", [0, 2, 3, 5, 6, 8, 9, 11], [0, 1, 2, 3, 4, 5, 5, 6]],
+  hwdim: ["Half-whole diminished", [0, 1, 3, 4, 6, 7, 9, 10], [0, 1, 1, 2, 3, 4, 5, 6]],
+  bebop: ["Bebop dominant", [0, 2, 4, 5, 7, 9, 10, 11], [0, 1, 2, 3, 4, 5, 6, 6]],
+  blues: ["Blues scale", [0, 3, 5, 6, 7, 10], [0, 2, 3, 3, 4, 6]],
+  majpent: ["Major pentatonic", [0, 2, 4, 7, 9], [0, 1, 2, 4, 5]],
+  minpent: ["Minor pentatonic", [0, 3, 5, 7, 10], [0, 2, 3, 4, 6]]
+};
+function akJzSteps(sc) { return sc[2] || sc[1].map(function (x, i) { return i; }); }
+function akJzScaleNotes(id, letter, pc) { var sc = AKJZ_SC[id]; if (!sc) return []; var st = akJzSteps(sc); return sc[1].map(function (iv, i) { return akJzSpell((letter + st[i]) % 7, pc + iv); }); }
+
+/* ---------------------------------------------------------------- 3. why each scale fits ({semitones/letter steps} = a spelled note above the chord's root) */
+var AKJZ_WHY = {
+  ii: "ii chord: the key's own notes from {0/0} make {0/0} Dorian, so you can think “the key” and aim for the chord tones. The 6th ({9/5}) is the 3rd of the V chord coming next.",
+  V: "V7: the key's notes from {0/0} make {0/0} Mixolydian. Its 3rd ({4/2}) and 7th ({10/6}) are a tritone apart: that tension is what wants to resolve home.",
+  Valt: "V7 with more tension: {0/0} altered (the 7th mode of the melodic minor a half step up) has the ♭9 ({1/1}), ♯9 ({3/1}), ♯11 ({6/3}) and ♭13 ({8/5}). Resolve it into a chord tone of the I chord. Taste: modern and dark; Mixolydian is the plainer sound.",
+  I: "I: home, the key's notes ({0/0} major). The 4th ({5/3}) rubs a half step above the 3rd, so pass through it rather than holding it. Taste: {0/0} Lydian, with {6/3} instead, is a brighter choice.",
+  iiø: "iiø7 (half-diminished) in a minor key: {0/0} Locrian, the minor key's notes from {0/0}. Taste: Locrian ♮2 (with {2/1} instead of {1/1}) sounds smoother and is just as common.",
+  Vb9: "V7♭9 in a minor key: {0/0} Phrygian dominant, the 5th mode of the key's harmonic minor. The ♭9 ({1/1}) and ♭13 ({8/5}) are notes of the key; the 3rd ({4/2}) is the leading tone, a half step under home.",
+  Valtm: "V7 with more tension: {0/0} altered. In a minor key it keeps the ♭9 ({1/1}) and ♭13 ({8/5}) and adds the ♯9 ({3/1}) and ♯11 ({6/3}). Taste: darker and more modern than Phrygian dominant.",
+  im6: "i minor 6: {0/0} melodic minor (minor 3rd, natural 6th and 7th) matches the chord exactly. Taste: {0/0} Dorian works too; the ♭6 would clash with the chord's 6th ({9/5}).",
+  bI: "I7 in a blues: {0/0} Mixolydian follows the chord, and the {0/0} blues scale works over the whole form. Taste: the blues scale sounds earthy, Mixolydian sounds like you're following the changes. Mix them: a ♭3 ({3/2}) bent or slid up into the 3rd ({4/2}) is the classic blues move.",
+  bIV: "IV7: {0/0} Mixolydian. Its 7th ({10/6}) is a half step under the I chord's 3rd: from I7 to IV7 that one note changes, and playing it is how a solo makes the change heard.",
+  bdim: "♯iv°7: a passing chord that lifts the bass from the IV chord back toward the I. Whole-half diminished from {0/0}, or just its four chord tones ({0/0} {3/2} {6/4} {9/6}), all a minor 3rd apart.",
+  VofMin: "V7 of the next chord: it points to a minor chord. {0/0} Phrygian dominant, from the harmonic minor of the chord it leads to. Its 3rd ({4/2}) is a half step under that chord's root, so lean on it.",
+  VofV: "II7 (the V7 of V): {0/0} Mixolydian. Its 3rd ({4/2}) is not in the key: it pulls up a half step toward the root of the V chord.",
+  iiTo: "ii of the next chord: with the V7 after it, it makes a ii–V into a new chord. {0/0} Dorian; aim for its 3rd ({3/2}) and 7th ({10/6}).",
+  VtoIV: "V7 of the IV chord: {0/0} Mixolydian. Its 3rd ({4/2}) drops a half step to become the next chord's 7th.",
+  I7toIV: "The I chord made into a dominant, so it leads to the IV chord. {0/0} Mixolydian: its ♭7 ({10/6}) is the note that says “we're heading to the IV”.",
+  iii: "iii: the key's notes from {0/0} make {0/0} Phrygian. It often stands in for the I chord. Pass through the ♭2 ({1/1}); don't hold it.",
+  vi: "vi: the key's notes from {0/0} make {0/0} Aeolian (natural minor). Pass through the ♭6 ({8/5}); the chord tones are the strong notes.",
+  IV: "IV: the key's notes from {0/0} make {0/0} Lydian. Its ♯4 ({6/3}) is the key's 7th, so it's safe and bright.",
+  pdim: "♯iv°7 or ♯i°7: a passing chord, the bass climbs a half step into the next chord. Whole-half diminished from {0/0}, or just its four chord tones ({0/0} {3/2} {6/4} {9/6}).",
+  dom: "Dominant 7 chords around the cycle of 4ths, each one the V of the next. {0/0} Mixolydian. Aim for the 3rd ({4/2}): each new 3rd is the clearest sign the chord has changed.",
+  Itri: "I: home, {0/0} major. Its 3rd ({4/2}) is the note the borrowed chords will darken.",
+  IVtri: "IV: {0/0} Lydian (the key's notes). Its 3rd ({4/2}) is about to drop a half step.",
+  ivb: "iv, borrowed from the parallel minor: {0/0} Dorian, which is the parallel minor's notes. Its ♭3 ({3/2}) is the home key's ♭6: the note that gives the minor iv its longing sound.",
+  bVI: "♭VI, borrowed from the parallel minor: {0/0} Lydian, which is the minor key's notes from {0/0}. Taste: {0/0} major pentatonic is the simple, singable choice.",
+  bVII: "♭VII, borrowed from the parallel minor (or from Mixolydian): {0/0} Mixolydian, the minor key's notes from {0/0}. Its root is a whole step under home.",
+  bIII: "♭III, borrowed from the parallel minor: {0/0} Lydian (the minor key's notes from {0/0}). Its root is the minor 3rd of the home key, which is why it sounds so dark next to the I.",
+  popI: "I: home. {0/0} major pentatonic ({0/0} {2/1} {4/2} {7/4} {9/5}) is the safe, singable choice over this chord and most of the song; the full major scale adds the 4th ({5/3}) and 7th ({11/6}).",
+  popV: "V: the key's notes from {0/0} make {0/0} Mixolydian. Its 3rd ({4/2}) is the key's 7th, a half step under home: it pulls back to the I chord.",
+  popvi: "vi: the key's notes from {0/0} make {0/0} Aeolian (natural minor). Taste: {0/0} minor pentatonic is the same five notes as the key's major pentatonic, so you can stay in one shape.",
+  popIV: "IV: the key's notes from {0/0} make {0/0} Lydian. Taste: many players just stay on the key's major pentatonic over every chord here, and aim for each chord's 3rd ({4/2}).",
+  rockI: "I with a ♭VII chord in the song: {0/0} Mixolydian. Its ♭7 ({10/6}) is the root of the ♭VII chord. Taste: {0/0} minor pentatonic or blues scale for a grittier, bluesier sound.",
+  rockIV: "IV in a Mixolydian song: the song's notes from {0/0} make {0/0} major (Ionian). Aim for its 3rd ({4/2}).",
+  rockbVII: "♭VII: the song's notes (the home key's Mixolydian) from {0/0} make {0/0} Lydian. Its root is a whole step under home.",
+  bV: "V7 in a blues: {0/0} Mixolydian. Its 3rd ({4/2}) is a half step under the IV chord's root, and a half step under the home key's 4th. Taste: the home key's blues scale works over all 12 bars.",
+  cI: "I in country: {0/0} major pentatonic, the classic country sound. Slide or bend from the ♭3 ({3/2}) into the 3rd ({4/2}) for the twang.",
+  cIV: "IV: switch to {0/0} major pentatonic (the IV chord's own) to follow the change, or stay on the home key's. Its 3rd ({4/2}) is the note to land on.",
+  cV: "V: {0/0} major pentatonic or {0/0} Mixolydian. Its 3rd ({4/2}) leads back up to home.",
+  mi: "i: home in a minor key, {0/0} Aeolian (natural minor). Taste: {0/0} minor pentatonic is the simple, safe choice over most of the song.",
+  mbVII: "♭VII in a minor key: the key's notes from {0/0} make {0/0} Mixolydian.",
+  mbVI: "♭VI in a minor key: the key's notes from {0/0} make {0/0} Lydian. Its 3rd ({4/2}) is the minor key's root.",
+  mbIII: "♭III in a minor key: it's the relative major, so the key's notes from {0/0} make {0/0} major (Ionian).",
+  mV: "V major in a minor key: {0/0} Phrygian dominant (from the key's harmonic minor). Its 3rd ({4/2}) is the leading tone, a half step under home: hit it and resolve up.",
+  funki: "i in a Dorian vamp: {0/0} Dorian. Its 6th ({9/5}) is the 3rd of the IV7 chord, the note that makes funk and soul vamps sound bright. Taste: {0/0} minor pentatonic is the simpler, bluesier choice.",
+  funkIV: "IV7 in a Dorian vamp: the same notes as before ({0/0} Mixolydian is the home key's Dorian). Aim for its 3rd ({4/2}).",
+  tri: "♭II7, the tritone sub: it shares its 3rd and 7th with the V7 it replaces ({4/2} and {10/6}), and its root slides down a half step to home. {0/0} Lydian dominant is the standard scale."
+};
+function akJzFill(s, letter, pc) { return String(s || "").replace(/\{(\d+)\/(\d)\}/g, function (m, a, b) { return akJzSpell((letter + Number(b)) % 7, pc + Number(a)); }); }
+
+/* ---------------------------------------------------------------- 4. the progressions: chords as [semitones, letter steps, quality, beats, scale, why, scale with more tension, why] */
+function akJzC(semi, step, q, beats, sc, why, alt, whyAlt) { return { semi: semi, step: step, q: q, beats: beats, sc: sc, why: why, alt: alt || null, whyAlt: whyAlt || null }; }
+var AKJZ_PROGS = [
+  { id: "maj251", sty: "Jazz", swing: true, lv: 1, t: "Major ii–V–I", key: 0, about: "The most common progression in jazz. Two bars of ii–V, two bars of I.", ch: [
+    akJzC(2, 1, "m7", 4, "dorian", "ii"), akJzC(7, 4, "7", 4, "mixo", "V", "alt", "Valt"), akJzC(0, 0, "maj7", 8, "ionian", "I")] },
+  { id: "min251", sty: "Jazz", swing: true, lv: 2, t: "Minor ii–V–i", key: 0, minor: true, about: "The minor-key version: a half-diminished ii, a V7♭9 and a minor i.", ch: [
+    akJzC(2, 1, "m7b5", 4, "locr", "iiø"), akJzC(7, 4, "7b9", 4, "phrdom", "Vb9", "alt", "Valtm"), akJzC(0, 0, "m6", 8, "melmin", "im6")] },
+  { id: "short251", sty: "Jazz", swing: true, lv: 2, t: "Fast ii–V–I (2 beats each)", key: 0, about: "The same ii–V packed into one bar, as in most standards. The guide tones matter even more here.", ch: [
+    akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt"), akJzC(0, 0, "maj7", 4, "ionian", "I")] },
+  { id: "turn", sty: "Jazz", swing: true, lv: 1, t: "I–vi–ii–V turnaround", key: 0, about: "Two bars that loop back to the top. It ends many tunes and sets up the next chorus.", ch: [
+    akJzC(0, 0, "maj7", 2, "ionian", "I"), akJzC(9, 5, "m7", 2, "aeol", "vi"), akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt")] },
+  { id: "turn6", sty: "Jazz", swing: true, lv: 2, t: "I–VI7–ii–V (secondary dominant)", key: 0, about: "The turnaround with the vi made into a dominant: it now points hard at the ii.", ch: [
+    akJzC(0, 0, "maj7", 2, "ionian", "I"), akJzC(9, 5, "7b9", 2, "phrdom", "VofMin"), akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt")] },
+  { id: "jblues", sty: "Jazz", swing: true, lv: 2, t: "Jazz blues (12 bars)", key: 5, about: "A 12-bar blues with jazz changes: the ii–V into the IV, the passing ♯iv°7, the VI7 into the ii, and a turnaround at the end.", ch: [
+    akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(5, 3, "7", 4, "mixo", "bIV"), akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(7, 4, "m7", 2, "dorian", "iiTo"), akJzC(0, 0, "7", 2, "mixo", "I7toIV"),
+    akJzC(5, 3, "7", 4, "mixo", "bIV"), akJzC(6, 3, "dim7", 4, "whdim", "bdim"), akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(9, 5, "7b9", 4, "phrdom", "VofMin"),
+    akJzC(2, 1, "m7", 4, "dorian", "ii"), akJzC(7, 4, "7", 4, "mixo", "V", "alt", "Valt"), akJzC(0, 0, "7", 2, "mixo", "bI"), akJzC(9, 5, "7b9", 2, "phrdom", "VofMin"),
+    akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt")] },
+  { id: "rhythmA", sty: "Jazz", swing: true, lv: 3, t: "Rhythm changes, A section", key: 10, about: "Eight bars, two chords a bar: the A section of the form named after Gershwin's “I Got Rhythm”, the second most played form in jazz after the blues.", ch: [
+    akJzC(0, 0, "maj7", 2, "ionian", "I"), akJzC(9, 5, "7b9", 2, "phrdom", "VofMin"), akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt"),
+    akJzC(4, 2, "m7", 2, "phryg", "iii"), akJzC(9, 5, "7b9", 2, "phrdom", "VofMin"), akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt"),
+    akJzC(7, 4, "m7", 2, "dorian", "iiTo"), akJzC(0, 0, "7", 2, "mixo", "I7toIV"), akJzC(5, 3, "maj7", 2, "lydian", "IV"), akJzC(6, 3, "dim7", 2, "whdim", "pdim"),
+    akJzC(4, 2, "m7", 2, "phryg", "iii"), akJzC(9, 5, "7b9", 2, "phrdom", "VofMin"), akJzC(2, 1, "m7", 2, "dorian", "ii"), akJzC(7, 4, "7", 2, "mixo", "V", "alt", "Valt")] },
+  { id: "rhythmB", sty: "Jazz", swing: true, lv: 3, t: "Rhythm changes, bridge", key: 10, about: "Four dominant 7 chords, two bars each, around the cycle of 4ths (III7, VI7, II7, V7) back to the top.", ch: [
+    akJzC(4, 2, "7", 8, "mixo", "dom"), akJzC(9, 5, "7", 8, "mixo", "dom"), akJzC(2, 1, "7", 8, "mixo", "dom"), akJzC(7, 4, "7", 8, "mixo", "dom", "alt", "Valt")] },
+  { id: "secdom", sty: "Jazz", swing: true, lv: 2, t: "Secondary dominants", key: 0, about: "I – V7 of vi – vi – V7 of V – ii – V – I. Each borrowed dominant points to the chord after it.", ch: [
+    akJzC(0, 0, "maj7", 4, "ionian", "I"), akJzC(4, 2, "7b9", 4, "phrdom", "VofMin"), akJzC(9, 5, "m7", 4, "aeol", "vi"), akJzC(2, 1, "7", 4, "mixo", "VofV"),
+    akJzC(2, 1, "m7", 4, "dorian", "ii"), akJzC(7, 4, "7", 4, "mixo", "V", "alt", "Valt"), akJzC(0, 0, "maj7", 8, "ionian", "I")] },
+  { id: "tritone", sty: "Jazz", swing: true, lv: 3, t: "ii–♭II7–I (tritone sub)", key: 0, about: "The V7 swapped for the dominant a tritone away. Same guide tones, a bass line that slides down by half steps.", ch: [
+    akJzC(2, 1, "m7", 4, "dorian", "ii"), akJzC(1, 1, "7", 4, "lyddom", "tri"), akJzC(0, 0, "maj7", 8, "ionian", "I")] },
+  { id: "minoriv", sty: "Borrowed chords", lv: 1, t: "Borrowed: I – IV – iv – I", key: 0, about: "The minor iv borrowed from the parallel minor. Listen to the IV chord's 3rd drop a half step.", ch: [
+    akJzC(0, 0, "", 4, "ionian", "Itri"), akJzC(5, 3, "", 4, "lydian", "IVtri"), akJzC(5, 3, "m", 4, "dorian", "ivb"), akJzC(0, 0, "", 4, "ionian", "Itri")] },
+  { id: "epic", sty: "Borrowed chords", lv: 1, t: "Borrowed: I – ♭VI – ♭VII – I", key: 0, about: "Two chords borrowed from the parallel minor that climb back home: a big, heroic ending.", ch: [
+    akJzC(0, 0, "", 4, "ionian", "Itri"), akJzC(8, 5, "", 4, "lydian", "bVI"), akJzC(10, 6, "", 4, "mixo", "bVII"), akJzC(0, 0, "", 4, "ionian", "Itri")] },
+  { id: "bIII", sty: "Borrowed chords", lv: 2, t: "Borrowed: I – ♭III – IV – iv", key: 0, about: "Three colors in a row: ♭III and iv from the parallel minor around the plain IV.", ch: [
+    akJzC(0, 0, "maj7", 4, "ionian", "Itri"), akJzC(3, 2, "maj7", 4, "lydian", "bIII"), akJzC(5, 3, "maj7", 4, "lydian", "IV"), akJzC(5, 3, "m7", 4, "dorian", "ivb")] }
+];
+/* the other styles */
+AKJZ_PROGS.unshift(
+  { id: "pop", sty: "Pop", lv: 1, t: "I–V–vi–IV (the pop progression)", key: 0, about: "Heard in hundreds of hits. The key's major pentatonic works over all four chords; following each chord's 3rd makes the line sing.", ch: [
+    akJzC(0, 0, "", 4, "majpent", "popI"), akJzC(7, 4, "", 4, "mixo", "popV"), akJzC(9, 5, "m", 4, "aeol", "popvi"), akJzC(5, 3, "", 4, "lydian", "popIV")] },
+  { id: "fifties", sty: "Pop", lv: 1, t: "I–vi–IV–V (50s doo-wop)", key: 0, about: "The 1950s ballad progression, still everywhere. Same notes as the pop progression in a different order.", ch: [
+    akJzC(0, 0, "", 4, "majpent", "popI"), akJzC(9, 5, "m", 4, "aeol", "popvi"), akJzC(5, 3, "", 4, "lydian", "popIV"), akJzC(7, 4, "", 4, "mixo", "popV")] },
+  { id: "ballad", sty: "Pop", lv: 1, t: "vi–IV–I–V (ballad, minor feel)", key: 7, about: "The pop progression started from the vi: it sounds more minor and emotional.", ch: [
+    akJzC(9, 5, "m", 4, "aeol", "popvi"), akJzC(5, 3, "", 4, "lydian", "popIV"), akJzC(0, 0, "", 4, "majpent", "popI"), akJzC(7, 4, "", 4, "mixo", "popV")] },
+  { id: "minpop", sty: "Pop", lv: 1, t: "i–♭VI–♭III–♭VII (minor pop)", key: 9, minor: true, about: "A minor-key loop used in pop, rock and film music. The key's minor pentatonic works over all of it.", ch: [
+    akJzC(0, 0, "m", 4, "aeol", "mi"), akJzC(8, 5, "", 4, "lydian", "mbVI"), akJzC(3, 2, "", 4, "ionian", "mbIII"), akJzC(10, 6, "", 4, "mixo", "mbVII")] },
+  { id: "rockmix", sty: "Rock", lv: 1, t: "I–♭VII–IV–I (Mixolydian rock)", key: 4, about: "Classic rock's favorite loop. The ♭VII makes it Mixolydian; the minor pentatonic or blues scale gives it grit.", ch: [
+    akJzC(0, 0, "", 4, "mixo", "rockI"), akJzC(10, 6, "", 4, "lydian", "rockbVII"), akJzC(5, 3, "", 4, "ionian", "rockIV"), akJzC(0, 0, "", 4, "mixo", "rockI")] },
+  { id: "andalus", sty: "Rock", lv: 2, t: "i–♭VII–♭VI–V (Andalusian, flamenco and rock)", key: 9, minor: true, about: "A bass line that steps down from home to the V. Flamenco, surf rock and many rock ballads use it. The V chord is major: watch its 3rd.", ch: [
+    akJzC(0, 0, "m", 4, "aeol", "mi"), akJzC(10, 6, "", 4, "mixo", "mbVII"), akJzC(8, 5, "", 4, "lydian", "mbVI"), akJzC(7, 4, "", 4, "phrdom", "mV")] },
+  { id: "blues12", sty: "Blues", lv: 1, t: "12-bar blues", key: 9, about: "The 12-bar blues: I for four bars, IV for two, I for two, then V, IV, I, V. The home key's blues scale works over everything; following the chords' 3rds is the next step.", ch: [
+    akJzC(0, 0, "7", 16, "mixo", "bI"), akJzC(5, 3, "7", 8, "mixo", "bIV"), akJzC(0, 0, "7", 8, "mixo", "bI"), akJzC(7, 4, "7", 4, "mixo", "bV"), akJzC(5, 3, "7", 4, "mixo", "bIV"), akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(7, 4, "7", 4, "mixo", "bV")] },
+  { id: "blues12q", sty: "Blues", lv: 2, t: "12-bar blues, quick change", key: 9, about: "The same blues with the IV chord in bar 2: it changes sooner, so the solo has to follow sooner.", ch: [
+    akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(5, 3, "7", 4, "mixo", "bIV"), akJzC(0, 0, "7", 8, "mixo", "bI"), akJzC(5, 3, "7", 8, "mixo", "bIV"), akJzC(0, 0, "7", 8, "mixo", "bI"), akJzC(7, 4, "7", 4, "mixo", "bV"), akJzC(5, 3, "7", 4, "mixo", "bIV"), akJzC(0, 0, "7", 4, "mixo", "bI"), akJzC(7, 4, "7", 4, "mixo", "bV")] },
+  { id: "country", sty: "Country and folk", lv: 1, t: "I–IV–I–V (country, folk)", key: 7, about: "Three chords and the truth. Major pentatonic is the country sound; follow each chord's 3rd.", ch: [
+    akJzC(0, 0, "", 4, "majpent", "cI"), akJzC(5, 3, "", 4, "majpent", "cIV"), akJzC(0, 0, "", 4, "majpent", "cI"), akJzC(7, 4, "", 4, "majpent", "cV")] },
+  { id: "folk", sty: "Country and folk", lv: 1, t: "I–V–IV–I (folk, singer-songwriter)", key: 2, about: "Open, ringing and simple: perfect for working on melody and space.", ch: [
+    akJzC(0, 0, "", 4, "majpent", "popI"), akJzC(7, 4, "", 4, "mixo", "popV"), akJzC(5, 3, "", 4, "lydian", "popIV"), akJzC(0, 0, "", 4, "majpent", "popI")] },
+  { id: "funk", sty: "Funk and soul", lv: 2, t: "i7–IV7 (Dorian vamp)", key: 2, about: "Two chords, two bars each: the sound of funk, soul and modal jam bands. Everything is one scale, Dorian.", ch: [
+    akJzC(0, 0, "m7", 8, "dorian", "funki"), akJzC(5, 3, "7", 8, "mixo", "funkIV")] }
+);
+var AKJZ_STYLES = ["Pop", "Rock", "Blues", "Country and folk", "Funk and soul", "Jazz", "Borrowed chords"];
+function akJzProg(id) { return AKJZ_PROGS.filter(function (p) { return p.id === id; })[0] || AKJZ_PROGS[0]; }
+
+/* ---------------------------------------------------------------- 5. a chord in a key: names, tones, guide tones */
+var AKJZ_QSHOW = { "m7b5": "m7♭5", "7b9": "7♭9", "dim7": "°7", "m6": "m6", "maj7": "maj7", "m7": "m7", "7": "7", "m": "m", "": "" };
+/* the letter step of each chord tone above the root */
+function akJzToneStep(iv, q) { return iv === 0 ? 0 : iv === 1 || iv === 2 ? 1 : iv === 3 || iv === 4 ? 2 : iv === 5 ? 3 : iv === 6 ? (/b5|dim/.test(q) ? 4 : 3) : iv === 7 ? 4 : iv === 8 ? (/aug|#5/.test(q) ? 4 : 5) : iv === 9 ? (q === "dim7" ? 6 : 5) : 6; }
+function akJzChord(c, key, tension) {
+  var letter = (key.letter + c.step) % 7, pc = akMod(key.pc + c.semi), sc = tension && c.alt ? c.alt : c.sc, why = tension && c.alt ? c.whyAlt : c.why;
+  var q = AK2_Q[c.q] || AK2_Q[""], core = q.t.map(function (x) { return x[0]; }).filter(function (iv) { return iv !== 1 && iv !== 2; }).sort(function (a, b) { return a - b; });
+  var ext = q.t.map(function (x) { return x[0]; }).filter(function (iv) { return iv === 1 || iv === 2; });
+  var third = core.filter(function (iv) { return iv === 3 || iv === 4; })[0], sev = core.filter(function (iv) { return iv === 10 || iv === 11 || iv === 9; }).pop();
+  return {
+    c: c, letter: letter, pc: pc, q: c.q, beats: c.beats,
+    name: akJzAscii(letter, pc) + c.q, show: akJzSpell(letter, pc) + (AKJZ_QSHOW[c.q] != null ? AKJZ_QSHOW[c.q] : c.q),
+    tones: core, ext: ext, third: third, sev: sev, sc: sc, why: akJzFill(AKJZ_WHY[why] || "", letter, pc),
+    spell: function (iv) { return akJzSpell((letter + akJzToneStep(iv, c.q)) % 7, pc + iv); }
+  };
+}
+function akJzChords(p, key, tension) { return p.ch.map(function (c) { return akJzChord(c, key, tension); }); }
+/* the degree name of a note over a chord, as jazz players say it (♭9, ♯11, 13…) */
+function akJzDeg(iv, ch) {
+  var has = function (x) { return ch.tones.indexOf(x) >= 0; };
+  return ["1", "♭9", "9", has(3) ? "♭3" : "♯9", "3", has(4) ? "11" : "4", has(6) ? "♭5" : "♯11", "5", has(8) ? "♯5" : "♭13", has(9) ? (ch.q === "dim7" ? "°7" : "6") : "13", "♭7", "7"][akMod(iv)];
+}
+/* guide tones: where the 3rd and 7th of this chord go in the next one (the nearest 3rd or 7th) */
+function akJzGuide(a, b) {
+  var out = [];
+  [["3rd", a.third], ["7th", a.sev]].forEach(function (g) {
+    if (g[1] == null) return; var from = akMod(a.pc + g[1]), best = null;
+    [["3rd", b.third], ["7th", b.sev]].forEach(function (t) { if (t[1] == null) return; var to = akMod(b.pc + t[1]), d = akMod(to - from); if (d > 6) d -= 12; if (!best || Math.abs(d) < Math.abs(best.d)) best = { d: d, to: t[0], name: b.spell(t[1]) }; });
+    if (!best) return;
+    var how = best.d === 0 ? "stays" : (best.d < 0 ? "down " : "up ") + (Math.abs(best.d) === 1 ? "a half step" : Math.abs(best.d) === 2 ? "a whole step" : Math.abs(best.d) + " half steps");
+    out.push({ role: g[0], from: a.spell(g[1]), to: best.name, toRole: best.to, how: how, d: best.d });
+  });
+  return out;
+}
+/* approach notes into the next chord's 3rd: a half step below, and an enclosure (the scale note above, the half step below, then the target) */
+function akJzApproach(b) {
+  if (b.third == null) return null;
+  var t = akMod(b.pc + b.third), tl = (b.letter + 2) % 7, sc = AKJZ_SC[b.sc], above = null;
+  if (sc) { var st = akJzSteps(sc), idx = sc[1].indexOf(b.third); if (idx >= 0) { var j = (idx + 1) % sc[1].length; above = akJzSpell((b.letter + st[j]) % 7, b.pc + sc[1][j]); } }
+  return { target: akJzSpell(tl, t), below: akJzSpell((tl + 6) % 7, t - 1), above: above };
+}
+
+/* ---------------------------------------------------------------- 6. settings */
+var AKJZ_DEF = { prog: "pop", key: null, bpm: 100, pct: 75, ramp: false, loops: 0, comp: "four", bass: true, click: true, swing: false, focus: "arp", tension: false, move: "none", pos: "auto" };
+function akJz() { var s = settings(), c = s.jazz9 = s.jazz9 || {}; Object.keys(AKJZ_DEF).forEach(function (k) { if (c[k] === undefined) c[k] = AKJZ_DEF[k]; }); return c; }
+/* picking a progression also picks its usual feel: swung comping for jazz, a straight strum for the rest (both can be changed) */
+function akJzPick(id) { var c = akJz(), p = akJzProg(id); c.prog = p.id; c.key = null; c.swing = !!p.swing; c.comp = p.swing ? "charleston" : "four"; }
+function akJzKeyOf(p, c) { return akJzKey(c.key != null ? c.key : p.key, p.minor); }
+var AKJZ_FOCUS = [
+  ["root", "Roots", "Play only the root of each chord, on beat 1. It sounds plain, and that's the point: you learn where the changes are."],
+  ["arp", "Arpeggios", "Play the chord tones (1, 3, 5, and the 7th when there is one) up and down in steady 8th notes. Start each chord on the note nearest to where you are, not always on the root."],
+  ["guide", "Guide tones", "Play only the 3rd and the 7th, moving to the nearest guide tone of the next chord. These two notes spell the harmony; this line is the skeleton of good solos."],
+  ["scale", "Scale", "Use the whole scale, but land on a chord tone (the colored dots) on beats 1 and 3. Other notes are passing notes."],
+  ["approach", "Approach notes", "Aim at the next chord's 3rd and reach it on its beat 1 from a half step below, or with an enclosure: the scale note above, the half step below, then the target."],
+  ["motif", "Motifs", "Make up a 3 to 5 note idea. Play it over the first chord, then move it to fit each next chord (change only the notes that clash). Leave space between ideas."]
+];
+
+/* ---------------------------------------------------------------- 7. sound: chords, walking bass, click */
+function akJzClick(t, accent) {
+  var ac = akAudio(); if (!ac) return;
+  var o = ac.createOscillator(), g = ac.createGain(), f = ac.createBiquadFilter();
+  o.type = "square"; o.frequency.value = accent ? 2200 : 1700; f.type = "highpass"; f.frequency.value = 1200;
+  o.connect(f); f.connect(g); g.connect(ac.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(accent ? 0.09 : 0.06, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+  o.start(t); o.stop(t + 0.07);
+}
+function akJzPlayChord(ch, when, vol) {
+  try {
+    if (akPiano()) {
+      var pv = null; try { pv = akPianoVoicings(ch.name).list[0]; } catch (e) {}
+      var ms = pv ? pv.notes : ch.tones.map(function (iv) { return 60 + akMod(ch.pc + iv - 0); });
+      ms.forEach(function (m) { akTone(m, 0.9, when, "keys", (vol || 1) * 0.1); });
+    } else akHearChord(ch.name, { when: when, dir: "down", vol: (vol || 1) * 0.55 });
+  } catch (e) {}
+}
+/* the bass note for each beat of a chord: root, then chord tones, and a half step into the next root on the last beat */
+function akJzBassLine(ch, next) {
+  var r = 36 + akMod(ch.pc - 4) + 4; if (r > 47) r -= 12;
+  var n = ch.beats, out = [r];
+  var nr = 36 + akMod(next.pc - 4) + 4; if (nr > 47) nr -= 12; if (Math.abs(nr - r) > 6) nr += nr > r ? -12 : 12;
+  var up = [ch.third != null ? ch.third : 4, 7, ch.tones.indexOf(6) >= 0 ? 6 : ch.tones.indexOf(8) >= 0 ? 8 : 7];
+  for (var i = 1; i < n; i++) {
+    if (i === n - 1) out.push(nr + (nr >= out[out.length - 1] ? -1 : 1));
+    else out.push(r + (up[(i - 1) % up.length] || 7) + (i > 3 ? 0 : 0));
+  }
+  return out;
+}
+/* the loop engine. o = { prog, key, tension, bpm, loops, comp, bass, click, swing, ramp, target, move, countIn, onChord(i, ch, loop, when), onLoop(loop), onEnd() }
+   returns { stop() } */
+function akJzRun(o) {
+  var ac = akAudio(); if (!ac) return { stop: function () {} };
+  var p = o.prog, key = o.key, chords = akJzChords(p, key, o.tension), bpm = o.bpm, i = 0, loop = 0, timers = [], dead = false;
+  var t = ac.currentTime + 0.12, spb = function () { return 60 / bpm; };
+  if (o.countIn) { for (var k = 0; k < 4; k++) akJzClick(t + k * spb(), k === 0); t += 4 * spb(); }
+  function later(at, fn) { var ms = Math.max(0, (at - ac.currentTime) * 1000); timers.push(setTimeout(function () { if (!dead) fn(); }, ms)); }
+  function scheduleChord(at) {
+    var ch = chords[i], next = chords[(i + 1) % chords.length], b = spb(), sw = o.swing ? 2 / 3 : 0.5, li = i, ll = loop;
+    if (o.comp === "charleston") { akJzPlayChord(ch, at - ac.currentTime, 1); if (ch.beats >= 2) akJzPlayChord(ch, at + (1 + sw) * b - ac.currentTime, 0.7); if (ch.beats >= 4) { akJzPlayChord(ch, at + 2 * b - ac.currentTime, 0.8); akJzPlayChord(ch, at + (3 + sw) * b - ac.currentTime, 0.65); } }
+    else if (o.comp === "four") { for (var q = 0; q < ch.beats; q++) akJzPlayChord(ch, at + q * b - ac.currentTime, q % 2 ? 0.5 : 0.6); }
+    else if (o.comp === "hold") akJzPlayChord(ch, at - ac.currentTime, 1);
+    if (o.bass) akJzBassLine(ch, next).forEach(function (m, q) { akTone(m, b * 0.9, at + q * b - ac.currentTime, "keys", 0.2); });
+    if (o.click) for (var q2 = 0; q2 < ch.beats; q2++) { var beatNo = Math.round((at - t0 + q2 * b) / b); if (beatNo % 2 === 1) akJzClick(at + q2 * b, false); }
+    later(at, function () { o.onChord && o.onChord(li, ch, ll); });
+    return ch.beats * b;
+  }
+  var t0 = t;
+  var iv = setInterval(function () {
+    if (dead) return;
+    while (t < ac.currentTime + 0.25) {
+      t += scheduleChord(t); i++;
+      if (i >= chords.length) {
+        i = 0; loop++;
+        if (o.loops && loop >= o.loops) { var end = t; later(end, function () { stop(); o.onEnd && o.onEnd(); }); clearInterval(iv); return; }
+        if (o.ramp && o.target && bpm < o.target) bpm = Math.min(o.target, bpm + 4);
+        if (o.move && o.move !== "none") { var step = { fourth: 5, wholedown: -2, halfdown: -1 }[o.move] || 0; key = akJzKey(key.pc + step, p.minor); chords = akJzChords(p, key, o.tension); }
+        (function (k2, b2, l2) { later(t, function () { o.onLoop && o.onLoop(l2, k2, b2); }); })(key, bpm, loop);
+        t0 = t;
+      }
+    }
+  }, 40);
+  function stop() { dead = true; clearInterval(iv); timers.forEach(clearTimeout); timers = []; }
+  return { stop: stop, chords: function () { return chords; } };
+}
+function akJzStop() { if (AKJZ.run) { try { AKJZ.run.stop(); } catch (e) {} AKJZ.run = null; } if (AKJZ.t0) { var secs = Math.round((Date.now() - AKJZ.t0) / 1000); AKJZ.t0 = 0; if (secs >= 20) { try { akPracticeLog().push({ sid: "", at: Date.now(), secs: secs, kind: "jazz" }); save(); } catch (e) {} } } }
+var AKJZ = { run: null, t0: 0 };
+
+/* ---------------------------------------------------------------- 8. pictures: the scale over a chord, on the neck or the keyboard */
+function akJzFocusRole(iv, ch, focus, approach) {
+  var r = iv === 0 ? "root" : iv === ch.third || iv === ch.sev ? "target" : ch.tones.indexOf(iv) >= 0 ? "tone" : "plain";
+  if (focus === "root") return iv === 0 ? "root" : null;
+  if (focus === "arp") return r === "plain" ? null : r;
+  if (focus === "guide") return r === "target" ? "target" : null;
+  return r;
+}
+function akJzPic(ch, focus, o) {
+  o = o || {};
+  var sc = AKJZ_SC[ch.sc], ivs = sc ? sc[1] : ch.tones, set = {};
+  ivs.forEach(function (iv) { set[akMod(ch.pc + iv)] = iv; });
+  if (focus === "root" || focus === "arp" || focus === "guide") { set = {}; ch.tones.forEach(function (iv) { set[akMod(ch.pc + iv)] = iv; }); }
+  if (akPiano()) {
+    var marks = {}, lo = 48, hi = 72;
+    for (var m = lo; m <= hi; m++) { var iv = set[akMod(m)]; if (iv == null) continue; var role = akJzFocusRole(iv, ch, focus); if (!role) continue; marks[m] = { cls: role === "plain" ? "akjz-sc" : role === "tone" ? "on" : role, label: akJzDeg(iv, ch) }; }
+    return akKeyboard(lo, hi, marks, { label: ch.show + " " + (sc ? sc[0] : ""), onTap: function (x) { akTone(x, 0.6, 0, "keys"); } });
+  }
+  var notes = akShapeNotes(settings().instrument), c = akJz(), from;
+  if (c.pos !== "auto" && c.pos != null) from = Number(c.pos);
+  else { var kr = o.keyPc != null ? o.keyPc : ch.pc, f = akMod(kr - notes[0]); if (notes.length === 4) f = akMod(kr - notes[1]); if (f < 2) f += 12; from = Math.max(0, f - 2); if (from > 10) from -= 12; if (from < 0) from = 0; }
+  var to = from + 5, cells = [];
+  notes.forEach(function (n, s) { for (var fr = from; fr <= to; fr++) { var iv2 = set[akMod(n + fr)]; if (iv2 == null) continue; var role2 = akJzFocusRole(iv2, ch, focus); if (role2) cells.push([s, fr, role2, akJzDeg(iv2, ch)]); } });
+  return akFb2(notes, cells, { from: Math.max(0, from - (from ? 1 : 0)), frets: to, label: ch.show + " " + (sc ? sc[0] : ""), onTap: function (s, fr) { try { akGtrNote(notes[s] + fr, { vol: 0.7, str: s }); } catch (e) { akTone(notes[s] + fr, 0.6, 0, "pluck"); } } });
+}
+
+/* ---------------------------------------------------------------- 9. Learn > Jazz loops */
+function akJzView(pane) {
+  var c = akJz(), lv = akLevelN(), p = akJzProg(c.prog), key = akJzKeyOf(p, c);
+  pane.textContent = "";
+  var cur = { i: -1, key: key, bpm: Math.round(c.bpm * c.pct / 100) };
+  function chords() { return akJzChords(p, cur.key, c.tension); }
+  function stopAll() { akJzStop(); playBtn.textContent = "▶ Start the loop"; playBtn.classList.add("primary"); status.textContent = ""; paintBars(-1); }
+  pane.akStop = stopAll;
+  pane.appendChild(h("p", { class: "hint", style: "margin:0 0 6px" }, "Pick a progression in any style, slow it down, and play over it. The app shows which notes fit each chord, and why."));
+  /* progression and key */
+  var progSel = h("select", { "aria-label": "Progression", onChange: function () { stopAll(); akJzPick(this.value); save(); akJzView(pane); } },
+    AKJZ_STYLES.map(function (sty) { var ps = AKJZ_PROGS.filter(function (x) { return x.sty === sty && (x.lv <= Math.max(lv, 2) || x.id === c.prog); }); return ps.length ? h("optgroup", { label: sty }, ps.map(function (x) { return h("option", { value: x.id, selected: x.id === c.prog ? "" : null }, x.t); })) : null; }));
+  var keySel = h("select", { "aria-label": "Key", onChange: function () { stopAll(); c.key = +this.value; save(); akJzView(pane); } },
+    (p.minor ? AKJZ_KEYS_MIN : AKJZ_KEYS_MAJ).map(function (k, pc) { return h("option", { value: pc, selected: pc === key.pc ? "" : null }, akJzSpell(k[0], k[1]) + (p.minor ? " minor" : "")); }));
+  pane.appendChild(h("div", { class: "row akjz-top" }, h("label", { class: "fld grow" }, "Progression", progSel), h("label", { class: "fld" }, "Key", keySel)));
+  pane.appendChild(h("p", { class: "muted", style: "margin:2px 0 8px" }, p.about));
+  /* tempo */
+  var bpmOut = h("b", null, String(c.bpm)), playsAt = h("span", { class: "muted" });
+  function paintTempo() { bpmOut.textContent = String(c.bpm); playsAt.textContent = c.pct < 100 ? " · plays at " + Math.round(c.bpm * c.pct / 100) + (c.ramp ? ", speeding up to " + c.bpm : "") : ""; }
+  var bpmIn = h("input", { type: "range", min: 40, max: 260, step: 2, value: c.bpm, "aria-label": "Tempo", onInput: function () { c.bpm = +this.value; paintTempo(); }, onChange: function () { save(); } });
+  pane.appendChild(h("div", { class: "akjz-tempo" }, h("div", null, "Tempo ", bpmOut, " bpm", playsAt), bpmIn,
+    h("div", { class: "chips" }, [[50, "Half speed"], [75, "75 %"], [100, "Full speed"]].map(function (x) { return h("button", { class: "chip" + (c.pct === x[0] ? " on" : ""), onClick: function () { c.pct = x[0]; save(); akJzView(pane); } }, x[1]); }),
+      h("label", { class: "chip akjz-ck" }, h("input", { type: "checkbox", checked: c.ramp ? "" : null, onChange: function () { c.ramp = this.checked; save(); paintTempo(); } }), " Speed up each time round"))));
+  paintTempo();
+  /* the bars */
+  var barsBox = h("div", { class: "akjz-bars", role: "list" });
+  function paintBars(on) {
+    barsBox.textContent = ""; var list = chords(), beat = 0, bar = null, k = 0;
+    list.forEach(function (ch, i) {
+      var left = ch.beats;
+      while (left > 0) {
+        if (beat % 4 === 0) { bar = h("div", { class: "akjz-bar", role: "listitem" }); barsBox.appendChild(bar); }
+        var take = Math.min(left, 4 - beat % 4), first = left === ch.beats;
+        bar.appendChild(h("button", { class: "akjz-ch" + (i === on ? " on" : "") + (first ? "" : " cont"), style: "flex:" + take, "data-i": String(i), onClick: function () { showChord(i); } }, first ? ch.show : "%"));
+        left -= take; beat += take; k++;
+      }
+    });
+  }
+  pane.appendChild(barsBox);
+  /* play controls */
+  var status = h("div", { class: "akjz-status muted", role: "status", "aria-live": "polite" });
+  var playBtn = h("button", { class: "primary akjz-play", onClick: function () {
+    if (AKJZ.run) { stopAll(); return; }
+    var target = c.bpm, start = Math.round(c.bpm * c.pct / 100);
+    cur.bpm = start;
+    AKJZ.t0 = Date.now();
+    AKJZ.run = akJzRun({ prog: p, key: cur.key, tension: c.tension, bpm: start, target: target, ramp: c.ramp, loops: c.loops, comp: c.comp, bass: c.bass, click: c.click, swing: c.swing, move: c.move, countIn: true,
+      onChord: function (i) { if (!pane.isConnected) { akJzStop(); return; } cur.i = i; paintBars(i); showChord(i); },
+      onLoop: function (n, k2, b2) { if (!pane.isConnected) { akJzStop(); return; } cur.key = k2; cur.bpm = b2; status.textContent = "Time round " + (n + 1) + " · " + b2 + " bpm" + (c.move !== "none" ? " · key of " + akJzSpell(k2.letter, k2.pc) + (p.minor ? " minor" : "") : ""); },
+      onEnd: function () { stopAll(); status.textContent = "Done."; } });
+    playBtn.textContent = "■ Stop"; playBtn.classList.remove("primary"); status.textContent = "Count-in… then time round 1 · " + start + " bpm";
+  } }, "▶ Start the loop");
+  pane.appendChild(h("div", { class: "row akjz-ctl" }, playBtn,
+    h("label", { class: "fld" }, "Times round", h("select", { onChange: function () { c.loops = +this.value; save(); } }, [[0, "Keep going"], [2, "2"], [4, "4"], [8, "8"], [12, "12"]].map(function (x) { return h("option", { value: x[0], selected: c.loops === x[0] ? "" : null }, x[1]); }))),
+    h("label", { class: "fld" }, "Each time round", h("select", { onChange: function () { stopAll(); c.move = this.value; save(); } }, [["none", "Same key"], ["fourth", "Up a 4th"], ["wholedown", "Down a whole step"], ["halfdown", "Down a half step"]].map(function (x) { return h("option", { value: x[0], selected: c.move === x[0] ? "" : null }, x[1]); }))),
+    status));
+  /* what to practise */
+  var fBox = h("div", { class: "chips akjz-focus" }, AKJZ_FOCUS.map(function (f) { return h("button", { class: "chip" + (c.focus === f[0] ? " on" : ""), "aria-pressed": c.focus === f[0] ? "true" : "false", onClick: function () { c.focus = f[0]; save(); fBox.querySelectorAll(".chip").forEach(function (b) { var on = b.textContent === f[1]; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }); fTip.textContent = f[2]; showChord(cur.i < 0 ? 0 : cur.i); } }, f[1]); }));
+  var fTip = h("p", { class: "hint akjz-ftip", style: "margin:4px 0 8px" }, (AKJZ_FOCUS.filter(function (f) { return f[0] === c.focus; })[0] || AKJZ_FOCUS[1])[2]);
+  pane.appendChild(h("h3", { class: "cph" }, "What to practise"));
+  pane.appendChild(fBox); pane.appendChild(fTip);
+  /* the chord now */
+  var now = h("div", { class: "card akjz-now" });
+  pane.appendChild(now);
+  function showChord(i) {
+    var list = chords(); if (i < 0 || i >= list.length) i = 0;
+    var ch = list[i], nx = list[(i + 1) % list.length], sc = AKJZ_SC[ch.sc];
+    now.textContent = "";
+    now.appendChild(h("div", { class: "akjz-head" }, h("span", { class: "akjz-big" }, ch.show), h("span", { class: "muted" }, " next: " + nx.show)));
+    now.appendChild(h("div", { class: "akjz-line" }, h("b", null, "Scale: "), akJzSpell(ch.letter, ch.pc) + " " + (sc ? sc[0] : "") + "  ", h("span", { class: "akjz-notes" }, akJzScaleNotes(ch.sc, ch.letter, ch.pc).join(" "))));
+    now.appendChild(h("div", { class: "akjz-line" }, h("b", null, "Arpeggio: "), h("span", { class: "akjz-notes" }, ch.tones.map(function (iv) { return ch.spell(iv) + " (" + akJzDeg(iv, ch) + ")"; }).join("  "))));
+    var g = akJzGuide(ch, nx);
+    if (g.length) now.appendChild(h("div", { class: "akjz-line" }, h("b", null, "Guide tones: "), g.map(function (x) { return x.from + " (" + x.role + ") → " + x.to + " (" + x.toRole + " of " + nx.show + ", " + x.how + ")"; }).join(";  ")));
+    var ap = akJzApproach(nx);
+    if (ap && (c.focus === "approach" || c.focus === "scale" || lv >= 2)) now.appendChild(h("div", { class: "akjz-line" }, h("b", null, "Into " + nx.show + ": "), "aim for " + ap.target + " (its 3rd). From below: " + ap.below + " → " + ap.target + (ap.above ? ". Enclosure: " + ap.above + " → " + ap.below + " → " + ap.target : "") + "."));
+    now.appendChild(h("p", { class: "akjz-why" }, h("b", null, "Why: "), ch.why));
+    try { now.appendChild(h("div", { class: "akjz-pic" }, akJzPic(ch, c.focus, { keyPc: cur.key.pc }))); } catch (e) {}
+    now.appendChild(h("div", { class: "akjz-legend muted" }, h("span", { class: "akjz-dot root" }), " root  ", h("span", { class: "akjz-dot target" }), " 3rd and 7th (guide tones)  ", h("span", { class: "akjz-dot tone" }), " other chord tones  ", h("span", { class: "akjz-dot plain" }), " scale notes · tap a note to hear it"));
+    var bs = barsBox.querySelectorAll(".akjz-ch"); bs.forEach(function (b) { b.classList.toggle("sel", +b.getAttribute("data-i") === i && !AKJZ.run); });
+  }
+  /* options */
+  var opts = h("details", { class: "akjz-opts" }, h("summary", null, "Sound and options"),
+    h("div", { class: "row" },
+      h("label", { class: "fld" }, "Chords", h("select", { onChange: function () { c.comp = this.value; save(); } }, [["charleston", "Swing comping (1 and the & of 2)"], ["four", "Four to the bar"], ["hold", "Once per chord"], ["off", "No chords"]].map(function (x) { return h("option", { value: x[0], selected: c.comp === x[0] ? "" : null }, x[1]); }))),
+      lv >= 2 ? h("label", { class: "fld" }, "Neck position", akPiano() ? null : h("select", { onChange: function () { c.pos = this.value === "auto" ? "auto" : +this.value; save(); showChord(cur.i < 0 ? 0 : cur.i); } }, [["auto", "Near the key's root"], [0, "Open"], [3, "Fret 3"], [5, "Fret 5"], [7, "Fret 7"], [9, "Fret 9"], [12, "Fret 12"]].map(function (x) { return h("option", { value: x[0], selected: String(c.pos) === String(x[0]) ? "" : null }, x[1]); }))) : null),
+    h("div", { class: "chips" },
+      [["bass", "Walking bass"], ["click", "Click on 2 and 4"], ["swing", "Swing the 8ths"]].map(function (x) { return h("label", { class: "chip akjz-ck" }, h("input", { type: "checkbox", checked: c[x[0]] ? "" : null, onChange: function () { c[x[0]] = this.checked; save(); } }), " " + x[1]); }),
+      p.ch.some(function (x) { return x.alt; }) && lv >= 2 ? h("label", { class: "chip akjz-ck" }, h("input", { type: "checkbox", checked: c.tension ? "" : null, onChange: function () { stopAll(); c.tension = this.checked; save(); akJzView(pane); } }), " More tension on the V7 (altered)") : null),
+    h("p", { class: "hint" }, "Changes to the sound apply the next time you press Start."));
+  pane.appendChild(opts);
+  pane.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { stopAll(); S.akLesson = "jz_practice"; S.learnTab = "lessons"; render(); } }, "📖 How to practise with loops"), h("button", { onClick: function () { stopAll(); S.akLesson = "jz_scales"; S.learnTab = "lessons"; render(); } }, "📖 Which scale and why")));
+  paintBars(-1); showChord(0);
+}
+
+/* ---------------------------------------------------------------- 10. the lessons */
+/* a lesson picture: the instrument tip, an optional chord-over-scale picture, ▶ Hear it, and a button to practise it in Jazz loops */
+function akJzVis(o) {
+  return function () {
+    var box = h("div", { class: "akjz-vis" }), inst = akLearnInst();
+    var tip = o.tips && (o.tips[inst] || o.tips.all); if (tip) box.appendChild(h("p", { class: "akjz-tip" }, h("b", null, (inst === "piano" ? "🎹 On piano: " : inst === "ukulele" ? "On ukulele: " : "🎸 On guitar: ")), tip));
+    var p = o.prog ? akJzProg(o.prog) : null, key = p ? akJzKey(o.key != null ? o.key : p.key, p.minor) : null;
+    if (p && o.pic != null) { try { var ch = akJzChords(p, key, o.tension)[o.pic]; box.appendChild(h("div", { class: "akjz-line" }, h("b", null, ch.show + ": "), akJzSpell(ch.letter, ch.pc) + " " + (AKJZ_SC[ch.sc] || [""])[0] + " · ", h("span", { class: "akjz-notes" }, akJzScaleNotes(ch.sc, ch.letter, ch.pc).join(" ")))); box.appendChild(akJzPic(ch, o.focus || "scale", { keyPc: key.pc })); } catch (e) {} }
+    if (p) {
+      var names = akJzChords(p, key, o.tension).map(function (x) { return x.show; }).join(" · ");
+      var run = null, hear = h("button", { onClick: function () {
+        if (run) { run.stop(); run = null; hear.textContent = "▶ Hear it"; return; }
+        akJzStop();
+        run = akJzRun({ prog: p, key: key, tension: o.tension, bpm: 100, loops: 1, comp: "hold", bass: true, click: false, swing: true, onEnd: function () { run = null; hear.textContent = "▶ Hear it"; } });
+        hear.textContent = "■ Stop";
+      } }, "▶ Hear it");
+      box.appendChild(h("div", { class: "row" }, hear, h("button", { class: "primary", onClick: function () { if (run) run.stop(); akJzPick(p.id); var c = akJz(); if (o.focus) c.focus = o.focus; save(); S.learnTab = "jazz"; S.akLesson = null; render(); } }, "🔁 Practise it in the loop player"), h("span", { class: "muted" }, names)));
+    }
+    return box;
+  };
+}
+/* [id, level, chapter, title, [paragraphs], picture, instruments] like AK_LESSONS6 */
+var AK_LESSONS9 = [
+  /* ---- borrowed chords */
+  ["bc_what", 2, "Borrowed chords", "Modal interchange: borrowing from the parallel minor", [
+    "A major key and its parallel minor share the same home note: C major and C minor. Modal interchange means taking a chord from the parallel key (or another parallel mode) and using it in your song for a moment. The song stays in C major; the borrowed chord is a splash of a different color.",
+    "C minor's chords are Cm, Ddim, E♭, Fm, Gm, A♭ and B♭. The ones borrowed most into C major are iv (Fm), ♭VI (A♭), ♭VII (B♭) and ♭III (E♭). They all bring in notes the major key doesn't have (A♭, E♭, B♭), which is why they sound darker, warmer or more dramatic.",
+    "Don't confuse this with the relative minor (A minor for C major), which has the same notes as C major. Parallel = same root, different notes. Relative = same notes, different root.",
+    "In numbers mode these chords show with a ♭ (♭VI, ♭VII), and the Write tab's chord wheel lists them as “borrowed” colors."],
+    akJzVis({ prog: "epic", tips: { guitar: "A♭ and B♭ are barre chords in C. Capo or key changes make it easier: in G, the borrowed chords are E♭, F and Cm.", ukulele: "In C, A♭ is 5343 and B♭ is 3211: both easy shapes on the uke.", piano: "Play C, then A♭ and B♭ triads with the right hand while the left plays roots. Notice how few notes move." } })],
+  ["bc_iv", 2, "Borrowed chords", "The minor iv: the sound of longing", [
+    "Play C, F, Fm, C. The F chord's 3rd (A) drops a half step to A♭ for the Fm, then falls to G, a note of the C chord. That slow chromatic line A → A♭ → G is the whole effect: bittersweet, nostalgic, a little sad.",
+    "The minor iv is common at the end of a chorus or before the last return home, and in ballads of every era. You can also use it as iv6 (Fm6) or iv7 (Fm7): the extra notes are D and E♭.",
+    "Soloing: over Fm, play the notes of the parallel minor (C natural minor = F Dorian from F). The note to lean on is A♭: the one note that changed."],
+    akJzVis({ prog: "minoriv", pic: 2, tips: { guitar: "Play F as a barre at fret 1, then lift the middle finger for Fm: the change is one finger, one fret.", ukulele: "F is 2010 and Fm is 1013. Hear the 3rd go down on the E string.", piano: "Keep F and C in the right hand and move only A to A♭, then let A♭ fall to G for the C chord." } })],
+  ["bc_67", 2, "Borrowed chords", "♭VI and ♭VII: the big, bright borrowings", [
+    "♭VII to I (B♭ to C) is a strong, open ending without the leading tone. It comes from the parallel minor and from Mixolydian, and it's everywhere in rock and pop.",
+    "♭VI – ♭VII – I (A♭ – B♭ – C) climbs back home by whole steps: a triumphant, heroic sound used at the ends of anthems and film scores.",
+    "Soloing: over A♭, A♭ Lydian (the notes of C minor); over B♭, B♭ Mixolydian (the notes of C minor again). In other words, for both chords you can play C minor's notes, then switch back to C major for the C chord. Taste: a simpler choice is each chord's major pentatonic."],
+    akJzVis({ prog: "epic", pic: 1, tips: { guitar: "In E (a guitar-friendly key) this is E – C – D – E, all open chords.", ukulele: "In G it's G – E♭ – F – G: E♭ is 3331, F is 2010.", piano: "Notice the top note can stay on the same pitch while the chords move under it: C, then E♭ (in A♭), then D (in B♭)." } })],
+  ["bc_modes", 3, "Borrowed chords", "Borrowing from the other modes", [
+    "The parallel minor (Aeolian) is the usual source, but every mode on the same root lends chords. In C: Mixolydian (C D E F G A B♭) gives B♭ (♭VII) and Gm (minor v). Dorian (C D E♭ F G A B♭) gives F major with a minor home, and E♭ (♭III). Lydian (C D E F♯ G A B) gives D major (II): a dreamy, floating sound. Phrygian (C D♭ E♭ F G A♭ B♭) gives D♭ (♭II), dark and dramatic.",
+    "A good rule: the borrowed chord should contain the note that makes that mode different (B♭ for Mixolydian, F♯ for Lydian, D♭ for Phrygian). That's the color you're borrowing.",
+    "Taste: how much borrowing a song can take is a matter of style. One borrowed chord can sound fresh; three in a row starts to sound like a new key."],
+    akJzVis({ prog: "bIII", pic: 1, tips: { guitar: "Try the Lydian II: in G, play G then A (major) then C then G. The A major chord's C♯ is the Lydian note.", ukulele: "In C, play C then D (2220) then F then C: that's the Lydian II.", piano: "Play a C major triad, then a D major triad with the same fingering: the F♯ is the one new note." } })],
+  ["bc_secdom", 2, "Borrowed chords", "Secondary dominants, step by step", [
+    "Any major or minor chord in a key can have its own V7 put in front of it. In C: A7 → Dm (V of ii), B7 → Em (V of iii), C7 → F (V of IV), D7 → G (V of V), E7 → Am (V of vi).",
+    "The trick is the 3rd of each secondary dominant: it's a half step under the root of the chord it points to (C♯ → D, D♯ → E, E → F, F♯ → G, G♯ → A). That leading tone is what makes it pull.",
+    "Soloing: change just that one note. Over E7 in C, play the C major scale but with G♯ instead of G (that's A harmonic minor from E: E Phrygian dominant). Over D7, play C major with F♯ instead of F (D Mixolydian)."],
+    akJzVis({ prog: "secdom", pic: 1, focus: "guide", tips: { guitar: "E7 and A7 are easy open chords: try C – E7 – Am – D7 – G7 – C in open position.", ukulele: "E7 is 1202, A7 is 0100, D7 is 2223: all friendly shapes.", piano: "Hold the right hand still and move only the note that changes (G → G♯ for E7) to hear the pull." } })],
+  ["bc_tri", 3, "Borrowed chords", "Secondary ii–V and the tritone sub", [
+    "You can put a whole ii–V in front of any chord, not only a V: in C, Em7♭5 – A7 → Dm, or Am7 – D7 → G. Jazz tunes do this constantly; it's how standards move through keys.",
+    "The tritone substitution replaces a V7 with the dominant 7 a tritone (three whole steps) away: D♭7 for G7. They share the same guide tones (G7 has B and F, D♭7 has F and C♭ = B), so the tension is the same, but the bass slides down by half steps: D – D♭ – C.",
+    "Soloing: over the tritone sub, D♭ Lydian dominant (D♭ E♭ F G A♭ B♭ C♭) is the standard scale: it's the same notes as G altered. Taste: the tritone sub sounds sophisticated; overused it can sound slick."],
+    akJzVis({ prog: "tritone", pic: 1, focus: "guide", tips: { guitar: "Play G7 as 3x343x, then D♭7 as x4342x: the two middle notes (B/C♭ and F) don't move.", ukulele: "G7 is 0212, D♭7 is 1112: listen to the notes that stay.", piano: "Left hand B and F (or F and B) held, right hand changes the root from G to D♭ under them." } })],
+  ["bc_use", 1, "Borrowed chords", "Using borrowed chords in your own songs", [
+    "Three easy places to try them: swap the IV for a iv on the last time through a chorus; end a section with ♭VI – ♭VII – I instead of IV – V – I; put a V of V (II7) just before a V chord.",
+    "Keep the melody in mind: if the melody sings the note the borrowed chord changes (for the minor iv, the 6th of the key), the clash is the point. If it sounds wrong rather than colorful, try the borrowed chord one beat later.",
+    "On the Write tab, tap a chord in the wheel's chart to make it current: the borrowed colors appear under the wheel for that key."],
+    akJzVis({ prog: "minoriv", tips: { all: "Take a song you already play, find its IV chord near the end, and play it as minor for one bar. Then decide if you like it: it's taste." } })],
+
+  /* ---- jazz soloing */
+  ["jz_sevenths", 1, "Jazz soloing", "Jazz harmony starts with seventh chords", [
+    "In jazz the basic chord has four notes: a triad plus a 7th. The five kinds you need first: maj7 (1 3 5 7), m7 (1 ♭3 5 ♭7), dominant 7 (1 3 5 ♭7), half-diminished m7♭5 (1 ♭3 ♭5 ♭7) and diminished 7 (1 ♭3 ♭5 𝄫7).",
+    "Stack 3rds on each note of C major and you get the key's seventh chords: Cmaj7, Dm7, Em7, Fmaj7, G7, Am7, Bm7♭5. Only one dominant 7 (G7) lives in the key, which is why it sounds like it has somewhere to go.",
+    "Extensions (9, 11, 13) are the next notes up the stack. They add color, but the 3rd and 7th still say what kind of chord it is."],
+    akJzVis({ prog: "maj251", pic: 0, focus: "arp", tips: { guitar: "Learn each seventh chord as a 4-note shape with the root on the 6th string and on the 5th string. Ten shapes cover most jazz tunes.", ukulele: "Four strings is exactly a seventh chord: Cmaj7 0002, Dm7 2213, G7 0212.", piano: "Left hand root, right hand 3rd and 7th (a “shell”), then add the 5th or a 9th on top." } })],
+  ["jz_251", 1, "Jazz soloing", "The ii–V–I", [
+    "Dm7 – G7 – Cmaj7: the ii chord sets up the V, the V pulls to the I. The roots move by 4ths (D up to G, G up to C), the strongest root motion in tonal music.",
+    "Most jazz standards are chains of ii–V–Is in different keys. Learn to hear it, play it and solo over it in all 12 keys, and you can find your way through most of the repertoire.",
+    "Start simple: over the whole ii–V–I you can use the notes of C major. Then learn to bring out each chord on its own; the next lessons show how."],
+    akJzVis({ prog: "maj251", tips: { guitar: "Dm7 x5756x, G7 3x343x, Cmaj7 x3545x: three shapes within a few frets.", ukulele: "Dm7 2213, G7 0212, Cmaj7 0002: almost no movement.", piano: "Left hand: Dm7 as F–C, G7 as F–B, Cmaj7 as E–B. Only one note moves each time." } })],
+  ["jz_guide", 1, "Jazz soloing", "Guide tones: the 3rd and the 7th", [
+    "The 3rd and 7th of a chord tell you whether it's major, minor or dominant. They are called guide tones, and in a ii–V–I they move by the smallest steps.",
+    "Dm7 – G7 – Cmaj7: the 7th of Dm7 (C) moves down a half step to the 3rd of G7 (B), which stays as the 7th of Cmaj7. The 3rd of Dm7 (F) stays as the 7th of G7, then moves down a half step to the 3rd of Cmaj7 (E).",
+    "Practise playing only guide tones, one per beat or one per chord, moving to the nearest one each time. It sounds like a melody already, and when you add other notes later, the solo will still describe the chords."],
+    akJzVis({ prog: "maj251", pic: 1, focus: "guide", tips: { guitar: "On the 3rd and 4th strings (or 2nd and 3rd) the guide tones of a ii–V–I sit within two frets.", ukulele: "The C and E strings carry the guide tones nicely in the key of C: F/C, F/B, E/B.", piano: "Play the guide tones as left-hand shells and solo with the right: this is how pianists comp." } })],
+  ["jz_arps", 1, "Jazz soloing", "Arpeggios: chord tones first", [
+    "An arpeggio is a chord played one note at a time. Before scales, learn the arpeggio of each chord: 1 3 5 7 up and down, then from the 3rd, from the 5th, from the 7th.",
+    "When the chord changes, go to the nearest note of the new arpeggio rather than jumping to its root. That small step is what makes lines flow from chord to chord.",
+    "Rhythm rule of thumb: chord tones on the beats (1, 2, 3, 4), other notes on the &s. It's not a law, but it makes lines sound clear right away."],
+    akJzVis({ prog: "maj251", pic: 0, focus: "arp", tips: { guitar: "Play each arpeggio within one position (four or five frets) so you don't have to look for the next chord.", ukulele: "On uke, arpeggios fit across all four strings in one position: try Dm7 from the 2nd fret.", piano: "Play the arpeggio with the right hand over the left-hand shells, two octaves, with the same fingering in every key you can." } })],
+  ["jz_scales", 2, "Jazz soloing", "Which scale over which chord, and why", [
+    "The standard chord-scale approach: for a chord that belongs to the key, play the key's notes starting from the chord's root. In C, Dm7 → D Dorian, G7 → G Mixolydian, Cmaj7 → C Ionian, Am7 → A Aeolian, Bm7♭5 → B Locrian. Same notes, different chord tones to aim for.",
+    "For chords outside the key, keep the key's notes and change only what the chord changes: E7 in C has G♯, so E Phrygian dominant; D7 has F♯, so D Mixolydian. For a minor key's V7♭9, Phrygian dominant (from the harmonic minor). For a half-diminished ii, Locrian.",
+    "Avoid notes: the 4th over a maj7 or dominant 7 chord sits a half step above the 3rd and clashes if you hold it. Pass through it. Over maj7, many players use Lydian (♯4) instead. That's a matter of taste, as is the altered scale on a V7 (more tension, more modern).",
+    "Think of scales as the space around the chord tones, not as something to run up and down. The loop player shows the scale, marks the chord tones in color and explains each choice."],
+    akJzVis({ prog: "maj251", pic: 1, focus: "scale", tips: { guitar: "Keep one position and change only the notes that differ: from D Dorian to G Mixolydian to C major, nothing changes; to E Phrygian dominant, one note.", ukulele: "Uke positions are compact: find all three ii–V–I scales between frets 2 and 5.", piano: "Play each scale starting from its chord's root with the chord in the left hand, so your ear links the scale to the chord." } })],
+  ["jz_minor", 2, "Jazz soloing", "The minor ii–V–i", [
+    "In a minor key the ii–V–i is Dm7♭5 – G7♭9 – Cm6 (or Cm7, or Cm(maj7)). The ii is half-diminished, the V is a dominant with a ♭9 from the key's harmonic minor.",
+    "Scales: D Locrian (or Locrian ♮2) over Dm7♭5, G Phrygian dominant over G7♭9, C melodic minor (or Dorian) over Cm6. Phrygian dominant's B is the leading tone into C; its A♭ and E♭ are the ♭9 and ♭13.",
+    "A strong melodic move: the ♭9 of the V (A♭) resolving down to the 5th of the i (G)."],
+    akJzVis({ prog: "min251", pic: 1, focus: "scale", tips: { guitar: "Dm7♭5 x5656x, G7♭9 3x343 4 or x x 3 4 3 4, Cm6 x3121x: learn them as a group.", ukulele: "Dm7♭5 is 1213, G7 0212, Cm6 2333.", piano: "Left hand shells: Dm7♭5 as F–C, G7♭9 as F–B (add A♭ on top), Cm6 as E♭–A." } })],
+  ["jz_bebop", 3, "Jazz soloing", "Bebop language: approach notes and enclosures", [
+    "Bebop lines aim at chord tones and reach them from nearby. A chromatic approach is a half step below the target, landing on the beat. An enclosure surrounds the target: the scale note above, the half step below, then the target.",
+    "The best targets are guide tones of the next chord (especially its 3rd) on beat 1 of its bar. Over Dm7 – G7, aim for B (the 3rd of G7): play C → A♯ → B, with B on the beat.",
+    "The bebop dominant scale adds a passing major 7th to Mixolydian (G A B C D E F F♯). With eight notes, if you start on a chord tone on the beat and play 8th notes, the chord tones keep landing on the beats.",
+    "Taste: these are the sounds of 1940s and 50s bebop. They work in many styles, but used everywhere they can sound like exercises; mix them with plain chord tones and space."],
+    akJzVis({ prog: "maj251", pic: 1, focus: "approach", tips: { guitar: "Enclosures fit under the hand: the note above, the fret below, the target. Practise them on each string.", ukulele: "Try the enclosure C → A♯ → B on the A string (frets 3, 1, 2).", piano: "Play the enclosure with fingers 3, 1, 2 so the target lands on a strong finger." } })],
+  ["jz_motif", 2, "Jazz soloing", "Developing a solo: motifs and space", [
+    "A good solo tells a story: a small idea, developed. Start with a motif of 3 to 5 notes. Repeat it. Then change one thing at a time: move it to fit the next chord (sequence), change its rhythm, play it backwards or upside down, make it longer or shorter.",
+    "Call and response: play a phrase, leave space, answer it. Rests are part of the line; they give the listener (and you) time to hear what happened.",
+    "Shape the whole solo: start low and sparse, build up in range and rhythm, peak, then come down. Sing your ideas first; if you can sing it, it will sound like music.",
+    "Taste: how busy or sparse to play is your voice as a soloist. Try both on purpose."],
+    akJzVis({ prog: "turn", focus: "motif", tips: { guitar: "Keep your motif in one position and just move the notes that clash with each new chord.", ukulele: "Make a 3-note motif on the top two strings and move it with the chords.", piano: "Play the motif in the right hand while the left keeps the shells. Move only the notes that clash." } })],
+  ["jz_swing", 1, "Jazz soloing", "Swing feel", [
+    "In swing, 8th notes are played long-short, roughly like the first and last note of a triplet. The & of each beat is late and often accented. At fast tempos the 8ths get straighter.",
+    "The drummer's hi-hat (and the loop player's click) is on beats 2 and 4. Feeling the 2 and 4 instead of 1 and 3 is half of swing.",
+    "Taste: how much to swing changes with the tempo, the era and the player. Listen to records and copy the feel, not just the notes."],
+    akJzVis({ prog: "turn", tips: { guitar: "Swing the pick: down on the beat, up on the late &. Ghost (barely play) some notes.", ukulele: "Strum swung 8ths on one chord with the click on 2 and 4 until it feels like walking.", piano: "Left hand on 2 and 4 (like the hi-hat), right hand swung 8ths: let the &s be a little lighter." } })],
+  ["jz_blues", 2, "Jazz soloing", "The jazz blues", [
+    "A jazz blues in F: | F7 | B♭7 | F7 | Cm7 F7 | B♭7 | B°7 | F7 | D7 | Gm7 | C7 | F7 D7 | Gm7 C7 |. It's the 12-bar blues with ii–Vs and passing chords added.",
+    "Two ways to solo, and good players use both: the F blues scale over everything (earthy and bluesy), or following the changes with arpeggios and guide tones. The note that marks the change from F7 to B♭7 is A going to A♭.",
+    "Bars 4, 8 and 9–12 are ii–Vs or V of ii: practise the guide tones there first, then fill in."],
+    akJzVis({ prog: "jblues", key: 5, focus: "guide", tips: { guitar: "Learn F7, B♭7 and C7 with the root on the 6th and 5th strings near fret 6–8 so the whole blues fits in one area.", ukulele: "F7 2313, B♭7 1211, C7 0001: plus Gm7 0211 and D7 2223.", piano: "Left hand shells: F7 as E♭–A, B♭7 as D–A♭. The A going to A♭ is right there under your thumb." } })],
+  ["jz_rhythm", 3, "Jazz soloing", "Rhythm changes", [
+    "Rhythm changes is a 32-bar AABA form (named after “I Got Rhythm”), usually in B♭. The A section is fast I–vi–ii–V turnarounds, a trip to the IV chord in bar 5–6, and more turnarounds.",
+    "The bridge is four dominant 7 chords, two bars each: D7, G7, C7, F7 (III7, VI7, II7, V7), each the V of the next. Over the bridge, target the 3rds: F♯, B, E, A.",
+    "Many players simplify the A sections to B♭ major (or B♭ blues) and play the changes on the bridge. Taste: start that way, then add the turnarounds."],
+    akJzVis({ prog: "rhythmA", focus: "guide", tips: { guitar: "Use 3-note shells (root, 3rd, 7th) on the low strings: the changes are too fast for full shapes at first.", ukulele: "Practise the bridge first: D7 2223, G7 0212, C7 0001, F7 2313.", piano: "Left-hand shells, right hand only guide tones at first; then add one note between each." } })],
+  ["jz_practice", 1, "Soloing", "How to practise with the loop player", [
+    "Pick one progression and one key. Slow it down (half speed is fine) and go round many times. Change the “What to practise” step once a step feels easy: Roots, then Arpeggios, then Guide tones, then Scale, then Approach notes, then Motifs.",
+    "Use “Speed up each time round” to creep up to your target tempo. Then try “Each time round: up a 4th” to take the same ideas through all 12 keys.",
+    "Say the chord names out loud while you play. Record yourself (the Write tab's Record button) and listen back: are the chord changes audible in your line?",
+    "Ten focused minutes a day beats an hour once a week. Your practice time is saved in the Practice log."],
+    akJzVis({ prog: "maj251", tips: { guitar: "Pick one position for the whole session. Moving around the neck comes later.", ukulele: "Uke's short neck is great for this: stay between frets 0 and 5.", piano: "Play the left-hand shells yourself and turn the app's chords off (Sound and options) when you're ready." } })]
+];
+(function () {
+  var add = AK_LESSONS9.map(function (r) { return { id: r[0], lv: r[1], ch: r[2], t: r[3], body: r[4], vis: r[5], inst: r[6] || null }; });
+  ["Borrowed chords", "Jazz soloing"].forEach(function (ch) { if (AK_LES_CHAPTERS.indexOf(ch) < 0) AK_LES_CHAPTERS.push(ch); });
+  /* the older "Borrowed chords" and "Secondary dominants" lessons move into the new chapter */
+  AK_LESSONS_ALL.forEach(function (L) { if (L.id === "borrowed" || L.id === "secdom") L.ch = "Borrowed chords"; if (L.id === "progressions") L.vis = akJzVis({ prog: "pop" }); });
+  var all = AK_LESSONS_ALL.concat(add), out = [];
+  AK_LES_CHAPTERS.forEach(function (ch) { all.forEach(function (L) { if (L.ch === ch) out.push(L); }); });
+  all.forEach(function (L) { if (out.indexOf(L) < 0) out.push(L); });
+  AK_LESSONS_ALL.length = 0; out.forEach(function (L) { AK_LESSONS_ALL.push(L); });
+})();
+
+/* ---------------------------------------------------------------- 11. the Learn page tab, practice plan step, feature list */
+(function () {
+  var at = AK_LEARN_TABS_ALL.map(function (t) { return t[0]; }).indexOf("licks");
+  AK_LEARN_TABS_ALL.splice(at >= 0 ? at + 1 : AK_LEARN_TABS_ALL.length, 0, ["jazz", "🔁 Loop player"]);
+  var vl = viewLearn;
+  viewLearn = function () {
+    if (S.learnTab !== "jazz") akJzStop();
+    var el = vl.apply(this, arguments);
+    if (S.learnTab === "jazz") { var pane = el.querySelector(".aklearn-pane"); if (pane) akJzView(pane); }
+    return el;
+  };
+  var r0 = render;
+  render = function () { if (AKJZ.run && (S.view !== "learn" || S.learnTab !== "jazz")) akJzStop(); return r0.apply(this, arguments); };
+})();
+try { AK_LEARN_ROWS[0][1].push("🔁 Loop player"); } catch (e) {}
+if (typeof AK_PLAN_STEPS === "object") AK_PLAN_STEPS.jazz = ["Jazz loop", "One progression in the loop player at half speed: arpeggios first, then guide tones. Speed up a little each time round.", 8, 0, "jazz"];
+try { AK_FEATURES.push(["jazzloops", "Practice", "Loop player", "Loop chord progressions in any style (pop, rock, blues, country, funk, jazz, borrowed chords) at any speed, with the scale, arpeggio and guide tones for each chord and why.", "Learn, Loop player", "l", function () { go("learn", { learnTab: "jazz" }); }, null, "list"]); } catch (e) {}
+
+akCss("ak9-d", [
+  ".akjz-bars{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}",
+  ".akjz-bar{display:flex;flex:1 1 22%;min-width:120px;border-left:2px solid var(--line,#8886);padding-left:3px;gap:3px}",
+  ".akjz-ch{min-height:42px;padding:4px 6px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+  ".akjz-ch.cont{opacity:.55;font-weight:400}.akjz-ch.on{background:var(--accent);color:var(--on-accent,#000)}.akjz-ch.sel{outline:2px solid var(--accent)}",
+  ".akjz-play{min-width:150px;font-size:1.05em}.akjz-ctl{align-items:flex-end;flex-wrap:wrap}.akjz-status{flex:1 1 100%}",
+  ".akjz-tempo input[type=range]{width:100%}.akjz-ck input{margin:0 4px 0 0}",
+  ".akjz-head{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}.akjz-big{font-size:1.9em;font-weight:800}",
+  ".akjz-line{margin:3px 0}.akjz-notes{font-weight:600;letter-spacing:.02em}.akjz-why{margin:6px 0}",
+  ".akjz-pic{overflow-x:auto;margin-top:6px}.akjz-pic svg,.akjz-vis svg{max-width:100%;height:auto}",
+  ".akjz-legend{font-size:.85em;margin-top:4px}.akjz-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;border:2px solid #E5B800}",
+  ".akjz-dot.root{background:var(--accent);border-color:var(--accent)}.akjz-dot.target{background:#E5B800}.akjz-dot.tone{background:transparent}.akjz-dot.plain{background:#8888;border-color:#8888}",
+  ".akkb .akk.akjz-sc rect{fill:#b9c3d4}.akkb .akk.b.akjz-sc rect{fill:#5a6378}",
+  ".akjz-tip{margin:4px 0 8px}.akjz-opts{margin:8px 0}.akjz-opts summary{cursor:pointer;font-weight:600}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {

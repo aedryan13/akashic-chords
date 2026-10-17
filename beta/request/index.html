@@ -24,6 +24,13 @@
   input, textarea, select { font: inherit; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
   textarea { min-height: 90px; }
   label { display: block; margin: 10px 0 4px; font-weight: 600; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+  .seg button { padding: 10px 6px; font-size: 1rem; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--on); border-color: var(--accent); font-weight: 700; }
+  .filters select { width: auto; }
+  .filters { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+  .filters select { flex: 1 1 140px; min-height: 44px; font-size: 1rem; }
+  .letter { font-weight: 800; opacity: .7; margin: 12px 4px 2px; font-size: 1.05rem; }
   .song { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; justify-content: flex-start; margin: 6px 0; padding: 10px 14px; min-height: 52px; }
   .song .t { font-weight: 700; } .song .a { color: var(--muted); font-size: .9rem; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 10px 0; }
@@ -46,7 +53,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 (function () {
   "use strict";
   var P = new URLSearchParams(location.search), LOCAL = P.get("m") === "local", app = document.getElementById("app");
-  var me = { uid: "", db: null, pid: P.get("p") || "" }, prof = null, mine = {}, view = "songs", draft = null, unsub = null;
+  var me = { uid: "", db: null, pid: P.get("p") || "" }, prof = null, mine = {}, view = "songs", draft = null, unsub = null, flt = { by: "both", sort: "", g: "", q: "" };
   var PAY = { venmo: "Venmo", cashapp: "Cash App", square: "Card", paypal: "PayPal", other: "Tip" };
   function h(tag, attrs) {
     var el = document.createElement(tag); attrs = attrs || {};
@@ -125,9 +132,28 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     if (view === "songs") {
       var R2 = R.mode === "free" ? "Requests are free. Tips are always appreciated." : R.mode === "required" ? (R.firstFree && usedCount() === 0 ? "Your first request is free! After that, a tip of $" + (R.price || 5) + " comes with each request." : "A tip of $" + (R.price || 5) + " comes with each request.") : "Tips are optional. $" + (R.price || 5) + " is suggested.";
       add(app, h("p", { class: "muted center" }, R2));
-      var q = h("input", { type: "search", placeholder: "Search " + (prof.songs || []).length + " songs", "aria-label": "Search songs" }), list = h("div");
-      function fill() { list.textContent = ""; var t = norm(q.value), n = 0; (prof.songs || []).forEach(function (s) { if (t && norm(s.t + " " + s.a).indexOf(t) < 0) return; if (n++ > 300) return; add(list, h("button", { class: "song", onClick: function () { draft = { kind: "play", title: s.t, artist: s.a, songId: s.i }; draw(); } }, h("div", null, h("div", { class: "t" }, s.t), s.a ? h("div", { class: "a" }, s.a) : null))); }); if (!n) add(list, h("p", { class: "muted" }, "Not on the list? " + (R.learn ? "Ask " + (prof.name || "them") + " to learn it under Learn or message." : ""))); }
-      q.addEventListener("input", fill); add(app, q); add(app, list); fill();
+      var all = prof.songs || [], q = h("input", { type: "search", value: flt.q, placeholder: "Search " + all.length + " songs", "aria-label": "Search songs" }), list = h("div");
+      var genres = {}; all.forEach(function (s) { if (s.g) genres[s.g] = (genres[s.g] || 0) + 1; });
+      var gl = Object.keys(genres).sort();
+      var byRow = h("div", { class: "seg", role: "group", "aria-label": "Search by" }, [["both", "Song or artist"], ["t", "Song"], ["a", "Artist"]].map(function (x) { return h("button", { "aria-pressed": flt.by === x[0] ? "true" : "false", onClick: function () { flt.by = x[0]; Array.prototype.forEach.call(byRow.children, function (b2, i) { b2.setAttribute("aria-pressed", ["both", "t", "a"][i] === flt.by ? "true" : "false"); }); q.placeholder = flt.by === "a" ? "Type an artist" : flt.by === "t" ? "Type a song title" : "Search " + all.length + " songs"; fill(); } }, x[1]); }));
+      var sortSel = h("select", { "aria-label": "Sort", onChange: function () { flt.sort = this.value; fill(); } }, h("option", { value: "" }, "Their order"), h("option", { value: "t" }, "A–Z by song"), h("option", { value: "a" }, "A–Z by artist"));
+      sortSel.value = flt.sort;
+      var gSel = gl.length > 1 ? h("select", { "aria-label": "Genre", onChange: function () { flt.g = this.value; fill(); } }, [h("option", { value: "" }, "All kinds of music")].concat(gl.map(function (g) { return h("option", { value: g }, g + " (" + genres[g] + ")"); }))) : null;
+      if (gSel) { if (gl.indexOf(flt.g) < 0) flt.g = ""; gSel.value = flt.g; } else flt.g = "";
+      function key(s, k) { return norm(k === "a" ? (s.a || "~") + " " + s.t : s.t).replace(/^the /, ""); }
+      function fill() {
+        list.textContent = ""; flt.q = q.value; var t = norm(q.value), n = 0, rows = all.slice();
+        if (flt.sort) rows.sort(function (x, y) { return key(x, flt.sort).localeCompare(key(y, flt.sort)); });
+        var lastL = "";
+        rows.forEach(function (s) {
+          if (flt.g && s.g !== flt.g) return;
+          if (t && norm(flt.by === "t" ? s.t : flt.by === "a" ? s.a : s.t + " " + s.a).indexOf(t) < 0) return; if (n++ > 400) return;
+          if (flt.sort && !t) { var L = key(s, flt.sort).charAt(0).toUpperCase(); if (/[^A-Z]/.test(L)) L = "#"; if (L !== lastL) { lastL = L; add(list, h("div", { class: "letter" }, L)); } }
+          add(list, h("button", { class: "song", onClick: function () { draft = { kind: "play", title: s.t, artist: s.a, songId: s.i }; draw(); } }, h("div", null, h("div", { class: "t" }, s.t), s.a ? h("div", { class: "a" }, s.a) : null)));
+        });
+        if (!n) add(list, h("p", { class: "muted" }, "Not on the list? " + (R.learn ? "Ask " + (prof.name || "them") + " to learn it under Learn or message." : "")));
+      }
+      q.addEventListener("input", fill); add(app, byRow); add(app, q); add(app, h("div", { class: "filters" }, sortSel, gSel)); add(app, list); fill();
     } else if (view === "more") {
       if (R.learn) add(app, h("div", { class: "card" }, h("strong", null, "Ask " + (prof.name || "the performer") + " to learn a song"), h("p", { class: "muted" }, "They'll answer here: no, maybe, or working on it."), h("button", { class: "primary", onClick: function () { draft = { kind: "learn", title: "", artist: "" }; draw(); } }, "Ask to learn a song")));
       if (R.msg) add(app, h("div", { class: "card" }, h("strong", null, "Send a message"), h("p", { class: "muted" }, "A shout-out, a birthday, a thank-you. They'll read it between songs."), h("button", { class: "primary", onClick: function () { draft = { kind: "message", title: "Message" }; draw(); } }, "Write a message")));
