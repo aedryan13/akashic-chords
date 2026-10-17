@@ -3072,13 +3072,13 @@ function openPlacer(song, o) {
     foot.textContent = "";
     var pal = palette(), sug = pal.length < 4 ? plKeyChords(song).filter(function (c, i, a) { return pal.indexOf(c) < 0 && a.indexOf(c) === i; }) : [];
     var row = h("div", { class: "prow" });
-    pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { tapChip(c); } }, c)); });
+    pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { tapChip(c); } }, styleChord(c, styleOf()))); });
     row.appendChild(h("button", { class: "chip pchipbtn" + (erase ? " on" : ""), "aria-pressed": erase ? "true" : "false", onClick: tapErase }, "⌫ Erase"));
     row.appendChild(h("button", { class: "chip", onClick: addChordDialog }, "+ Chord"));
-    if (typeof akShapePicker === "function") row.appendChild(h("button", { class: "chip", "aria-label": "Make a chord by tapping frets", onClick: function () { akShapePicker(function (c) {
+    if (typeof akShapePicker === "function") row.appendChild(h("button", { class: "chip", "aria-label": "Build a chord by picking its shape", onClick: function () { akShapePicker(function (c) {
       if (sel) { var t = sel; sel = null; place(t, c); }
-      else { song.palette = song.palette || []; if (palette().indexOf(c) < 0) song.palette.push(c); if (o.onChange) o.onChange(); armed = mode === "chord" ? c : armed; draw(); toast("Added " + c + " to the list."); }
-    }); } }, "✋ Shape"));
+      else { song.palette = song.palette || []; if (palette().indexOf(c) < 0) song.palette.push(c); if (o.onChange) o.onChange(); armed = mode === "chord" ? c : armed; draw(); toast("Added " + styleChord(c, styleOf()) + " to the list."); }
+    }); } }, "🎸 Build a chord"));
     row.appendChild(h("button", { class: "chip", onClick: startSection }, "§ Section"));
     foot.appendChild(row);
     undoBtn.disabled = !hist.length;
@@ -3099,23 +3099,24 @@ function openPlacer(song, o) {
     var preview = h("strong", null, "Pick a note"), rootsBox = h("div", { class: "prow" }), qualBox = h("div", { class: "prow" });
     function name() { return custom.value.trim() || (root >= 0 ? NAMES[acc][root] + plQualSuffix(qual, st) : ""); }
     function redo() {
-      preview.textContent = name() || "Pick a note";
+      preview.textContent = name() ? styleChord(name(), st) : "Pick a note";
       rootsBox.textContent = ""; qualBox.textContent = "";
       for (var i = 0; i < 12; i++) (function (i) { rootsBox.appendChild(h("button", { class: "chip" + (root === i ? " on" : ""), "aria-pressed": root === i ? "true" : "false", onClick: function () { root = i; custom.value = ""; redo(); } }, NAMES[acc][i])); })(i);
-      PL_QUALS.forEach(function (q) { qualBox.appendChild(h("button", { class: "chip" + (qual === q[0] ? " on" : ""), "aria-pressed": qual === q[0] ? "true" : "false", onClick: function () { qual = q[0]; custom.value = ""; redo(); } }, q[1])); });
+      /* each kind shows as it will be written on the page (with the note picked, or C), with its plain name under it */
+      PL_QUALS.forEach(function (q) { qualBox.appendChild(h("button", { class: "chip plq" + (qual === q[0] ? " on" : ""), "aria-pressed": qual === q[0] ? "true" : "false", title: q[1], onClick: function () { qual = q[0]; custom.value = ""; redo(); } }, h("span", { class: "plq-c" }, styleChord(NAMES[acc][root >= 0 ? root : 0] + plQualSuffix(q[0], st), st)), h("span", { class: "plq-n" }, q[1]))); });
     }
-    custom.addEventListener("input", function () { preview.textContent = name() || "Pick a note"; });
+    custom.addEventListener("input", function () { preview.textContent = name() ? styleChord(name(), st) : "Pick a note"; });
     drawAcc(); redo();
     var added = h("div", { class: "prow", style: "margin-top:10px" });
-    function showAdded() { added.textContent = ""; (song.palette || []).forEach(function (c) { added.appendChild(h("span", { class: "chip on", style: "pointer-events:none" }, c)); }); }
+    function showAdded() { added.textContent = ""; (song.palette || []).forEach(function (c) { added.appendChild(h("span", { class: "chip on plq-c", style: "pointer-events:none" }, styleChord(c, st))); }); }
     showAdded();
-    modal("Add chords to the list", h("div", null, h("p", { style: "margin:0 0 8px" }, "Chord: ", preview), accBox, rootsBox, h("p", { class: "hint", style: "margin:12px 0 6px" }, "Type"), qualBox, h("div", { class: "fld" }, custom), h("p", { class: "hint", style: "margin:12px 0 0" }, "Tap Add for each chord. This stays open until you tap Done."), added),
+    modal("Add chords to the list", h("div", null, h("p", { style: "margin:0 0 8px" }, "Chord: ", preview), accBox, rootsBox, h("p", { class: "hint", style: "margin:12px 0 6px" }, "Type"), qualBox, h("div", { class: "fld" }, custom), typeof akShapePicker === "function" ? h("div", { class: "row", style: "margin:8px 0 0" }, h("button", { onClick: function () { akShapePicker(function (c) { song.palette = song.palette || []; if (palette().indexOf(c) < 0) { song.palette.push(c); if (o.onChange) o.onChange(); toast("Added " + styleChord(c, st) + "."); } showAdded(); draw(); }, { add: true }); } }, "🎸 Build a chord / shape…")) : null, h("p", { class: "hint", style: "margin:12px 0 0" }, "Tap Add for each chord. This stays open until you tap Done."), added),
       [{ label: "Done" }, { label: "Add", primary: true, onClick: function () {
         var c = name(); if (!c) { toast("Pick a note first."); return false; }
         if (!isChordLike(c)) { toast("That doesn't look like a chord."); return false; }
         song.palette = song.palette || [];
         if (palette().indexOf(c) >= 0) toast(c + " is already in the list.");
-        else { song.palette.push(c); if (o.onChange) o.onChange(); toast("Added " + c + "."); }
+        else { song.palette.push(c); if (o.onChange) o.onChange(); toast("Added " + styleChord(c, st) + "."); }
         root = -1; qual = ""; custom.value = ""; redo(); showAdded(); draw();
         return false;
       } }]);
@@ -22003,6 +22004,630 @@ akCss("ak8-play", [
   /* solo */
   ".aksolo{cursor:pointer}.aksolo-sc{color:var(--chord);font-weight:600}",
   ".aksp-card{margin:8px 0;padding:8px}.aksp .akfbwrap{overflow-x:auto}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 7, phase 3a: chords =================
+   - "Build a chord / shape": a guitar (or ukulele) neck that looks like one. Tap frets, tap above the nut for open / not played,
+     hear each note as you press it and strum it (button or swipe across the strings), in the tuning set in Settings
+     (E standard, or D standard and the like), then name it and add it
+   - the add-chord windows write chords the way the song page does (your minor and maj7 spelling, the chord font)
+   - more kinds of chords to pick: minor-major 7 (Cm(maj7)), 9ths, 11ths and 13ths, 7sus4, half-diminished, diminished 7 */
+
+/* ---------------------------------------------------------------- more chord kinds in "Add chords to the list" */
+PL_QUALS.push(["mmaj7", "minor-major 7"], ["7sus4", "7 sus 4"], ["m9", "minor 9"], ["maj9", "major 9"], ["11", "11th"], ["m11", "minor 11"], ["13", "13th"], ["m13", "minor 13"], ["maj13", "major 13"], ["m7b5", "half-diminished"], ["dim7", "diminished 7"]);
+(function () {
+  var q0 = plQualSuffix, canon = { mmaj7: "m(maj7)" };
+  /* the new kinds are kept in their usual spelling; the page (and these windows) show them in the player's own style */
+  plQualSuffix = function (id, st) { if (["mmaj7", "7sus4", "m9", "maj9", "11", "m11", "13", "m13", "maj13", "m7b5", "dim7"].indexOf(id) >= 0) return canon[id] || id; return q0(id, st); };
+})();
+
+/* ---------------------------------------------------------------- a plucked-string sound (Karplus-Strong) */
+var AK_PLUCK = {};
+function akPluck(midi, when, vol) {
+  var ac = typeof akAudio === "function" ? akAudio() : null; if (!ac) return;
+  try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  var sr = ac.sampleRate, key = midi + ":" + sr, buf = AK_PLUCK[key];
+  if (!buf) {
+    var hz = 440 * Math.pow(2, (midi - 69) / 12), dur = 2.2, n = Math.floor(sr * dur), N = Math.max(2, Math.round(sr / hz));
+    buf = ac.createBuffer(1, n, sr); var out = buf.getChannelData(0), ring = new Float32Array(N), last = 0;
+    for (var i = 0; i < N; i++) { var r = Math.random() * 2 - 1; last = last * 0.55 + r * 0.45; ring[i] = last; } /* a slightly soft pick */
+    var decay = 0.9965 - Math.max(0, (midi - 52)) * 0.00018, idx = 0;
+    for (var j = 0; j < n; j++) { var a = ring[idx], b = ring[(idx + 1) % N]; out[j] = a; ring[idx] = decay * 0.5 * (a + b); idx = (idx + 1) % N; }
+    for (var k = 0; k < 64 && k < n; k++) out[k] *= k / 64;
+    AK_PLUCK[key] = buf;
+  }
+  var src = ac.createBufferSource(), g = ac.createGain(), f = ac.createBiquadFilter();
+  src.buffer = buf; f.type = "lowpass"; f.frequency.value = 5200; g.gain.value = vol == null ? 0.55 : vol;
+  src.connect(f); f.connect(g); g.connect(ac.destination);
+  src.start(ac.currentTime + (when || 0));
+}
+
+/* ---------------------------------------------------------------- the neck */
+function akNeckCfg() { var s = settings(); if (!s.neck || typeof s.neck !== "object") s.neck = { sound: true }; return s.neck; }
+/* frets: per string, -1 = not played, 0 = open, n = fret; o = { base, onTap(s, f), onTop(s), onStrum(s) } */
+function akNeckSvg(ns, frets, o) {
+  var base = o.base || 1, shown = 5, W = 320, padX = 34, top = 64, fh = 72, H = top + fh * shown + 96, sx = (W - padX * 2) / (ns - 1);
+  var svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, class: "akneck", role: "img", "aria-label": "Guitar neck" });
+  var defs = svgEl("defs");
+  defs.innerHTML = '<linearGradient id="aknWood" x1="0" x2="1"><stop offset="0" stop-color="#2a170d"/><stop offset=".5" stop-color="#4a2c1a"/><stop offset="1" stop-color="#2a170d"/></linearGradient>' +
+    '<linearGradient id="aknFret" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4f4f4"/><stop offset=".5" stop-color="#b9b9b9"/><stop offset="1" stop-color="#7d7d7d"/></linearGradient>' +
+    '<linearGradient id="aknWound" x1="0" x2="1"><stop offset="0" stop-color="#8a6a3a"/><stop offset=".5" stop-color="#e2c48a"/><stop offset="1" stop-color="#8a6a3a"/></linearGradient>' +
+    '<linearGradient id="aknPlain" x1="0" x2="1"><stop offset="0" stop-color="#9a9a9a"/><stop offset=".5" stop-color="#ffffff"/><stop offset="1" stop-color="#9a9a9a"/></linearGradient>' +
+    '<radialGradient id="aknPearl"><stop offset="0" stop-color="#ffffff"/><stop offset=".7" stop-color="#e9e3d6"/><stop offset="1" stop-color="#bdb5a6"/></radialGradient>' +
+    '<linearGradient id="aknBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b2416"/><stop offset="1" stop-color="#1c0f08"/></linearGradient>';
+  svg.appendChild(defs);
+  var X = function (s) { return padX + s * sx; }, nutY = top, fy = function (f) { return nutY + (f - base + 1) * fh; };
+  /* fretboard wood with a little grain */
+  svg.appendChild(svgEl("rect", { x: padX - 18, y: nutY, width: (ns - 1) * sx + 36, height: fh * shown, rx: 3, fill: "url(#aknWood)" }));
+  for (var gi = 0; gi < 7; gi++) svg.appendChild(svgEl("line", { x1: padX - 14 + gi * ((ns - 1) * sx + 28) / 6, y1: nutY, x2: padX - 10 + gi * ((ns - 1) * sx + 20) / 6, y2: nutY + fh * shown, stroke: "#000", "stroke-opacity": ".18", "stroke-width": 1 }));
+  /* body below the neck (where you strum) */
+  svg.appendChild(svgEl("rect", { x: 6, y: nutY + fh * shown, width: W - 12, height: 92, rx: 18, fill: "url(#aknBody)" }));
+  svg.appendChild(svgEl("ellipse", { cx: W / 2, cy: nutY + fh * shown + 74, rx: (ns - 1) * sx / 2 + 6, ry: 40, fill: "#0b0603", stroke: "#c9a56b", "stroke-width": 3 }));
+  var lbl = svgEl("text", { x: W / 2, y: nutY + fh * shown + 30, "text-anchor": "middle", class: "akn-strumtxt" }); lbl.textContent = "swipe across the strings to strum"; svg.appendChild(lbl);
+  /* inlays */
+  [3, 5, 7, 9, 12, 15, 17, 19, 21].forEach(function (f) {
+    if (f < base || f > base + shown - 1) return; var cy = fy(f) - fh / 2;
+    if (f === 12) { svg.appendChild(svgEl("circle", { cx: W / 2 - sx * 1.1, cy: cy, r: 8, fill: "url(#aknPearl)" })); svg.appendChild(svgEl("circle", { cx: W / 2 + sx * 1.1, cy: cy, r: 8, fill: "url(#aknPearl)" })); }
+    else svg.appendChild(svgEl("circle", { cx: W / 2, cy: cy, r: 8, fill: "url(#aknPearl)" }));
+  });
+  /* nut or a fret number */
+  if (base === 1) svg.appendChild(svgEl("rect", { x: padX - 18, y: nutY - 9, width: (ns - 1) * sx + 36, height: 11, rx: 2, fill: "#efe6cf", stroke: "#b8ab8b" }));
+  else { var bt = svgEl("text", { x: padX - 22, y: nutY + fh / 2 + 6, "text-anchor": "end", class: "akn-fretno" }); bt.textContent = base + "fr"; svg.appendChild(bt); }
+  for (var f = base; f < base + shown; f++) svg.appendChild(svgEl("rect", { x: padX - 18, y: fy(f) - 2.5, width: (ns - 1) * sx + 36, height: 5, rx: 2, fill: "url(#aknFret)" }));
+  /* strings, thick and wound at the low end */
+  for (var s = 0; s < ns; s++) {
+    var wound = ns === 6 ? s < 3 : ns === 4 ? false : s < Math.floor(ns / 2), w = ns === 6 ? 3.4 - s * 0.45 : 2.2 - s * 0.2;
+    svg.appendChild(svgEl("rect", { x: X(s) - w / 2, y: nutY - 30, width: w, height: fh * shown + 30 + 62, fill: wound ? "url(#aknWound)" : "url(#aknPlain)" }));
+  }
+  /* open / not played markers above the nut, and the tap areas */
+  for (var s2 = 0; s2 < ns; s2++) (function (s) {
+    var fv = frets[s], mk = svgEl("text", { x: X(s), y: nutY - 30, "text-anchor": "middle", class: "akn-top" + (fv === 0 ? " open" : fv < 0 ? " mute" : "") }); mk.textContent = fv === 0 ? "○" : fv < 0 ? "×" : "";
+    svg.appendChild(mk);
+    var hitTop = svgEl("rect", { x: X(s) - sx / 2, y: 0, width: sx, height: nutY - 4, class: "akn-hit", role: "button", "aria-label": "String " + (s + 1) + " open or not played" });
+    hitTop.addEventListener("click", function () { o.onTop(s); }); svg.appendChild(hitTop);
+    for (var f2 = base; f2 < base + shown; f2++) (function (f) {
+      var r = svgEl("rect", { x: X(s) - sx / 2, y: fy(f) - fh, width: sx, height: fh, class: "akn-hit", role: "button", "aria-label": "String " + (s + 1) + ", fret " + f });
+      r.addEventListener("click", function () { o.onTap(s, f); }); svg.appendChild(r);
+    })(f2);
+  })(s2);
+  /* finger dots */
+  for (var s3 = 0; s3 < ns; s3++) {
+    var fv2 = frets[s3]; if (!(fv2 >= base && fv2 < base + shown)) continue;
+    svg.appendChild(svgEl("circle", { cx: X(s3), cy: fy(fv2) - fh / 2, r: 15, class: "akn-dot" }));
+    if (o.names) { var tx = svgEl("text", { x: X(s3), y: fy(fv2) - fh / 2 + 5, "text-anchor": "middle", class: "akn-dotn" }); tx.textContent = o.names[s3] || ""; svg.appendChild(tx); }
+  }
+  /* strum zone: crossing a string plays it */
+  var zone = svgEl("rect", { x: 6, y: nutY + fh * shown, width: W - 12, height: 92, fill: "transparent", class: "akn-strum" });
+  var lastX = null;
+  function xOf(e) { var r = svg.getBoundingClientRect(); return (e.clientX - r.left) * W / r.width; }
+  zone.addEventListener("pointerdown", function (e) { lastX = xOf(e); try { zone.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); });
+  zone.addEventListener("pointermove", function (e) {
+    if (lastX == null) return; var x = xOf(e);
+    for (var s = 0; s < ns; s++) { var sxp = X(s); if ((lastX < sxp && x >= sxp) || (lastX > sxp && x <= sxp)) o.onStrum(s); }
+    lastX = x;
+  });
+  zone.addEventListener("pointerup", function () { lastX = null; }); zone.addEventListener("pointercancel", function () { lastX = null; });
+  svg.appendChild(zone);
+  return svg;
+}
+/* the old grid picker stays for the piano */
+var akShapePickerGrid = akShapePicker;
+akShapePicker = function (onPick, opt) {
+  if (typeof akPiano === "function" && akPiano()) return akShapePickerGrid(onPick);
+  opt = opt || {};
+  var ins = settings().instrument, shapes = akShapeNotes(ins), sounding = akTuning(ins).notes, ns = shapes.length, frets = new Array(ns).fill(-1), st = { base: 1 }, choice = null, host = h("div", { class: "akn" }), cfg = akNeckCfg();
+  function play(s, when) { if (cfg.sound === false || frets[s] < 0) return; akPluck(sounding[s] + frets[s], when || 0); }
+  function strum(up) { var order = []; for (var i = 0; i < ns; i++) order.push(up ? ns - 1 - i : i); var t = 0; order.forEach(function (s) { if (frets[s] >= 0) { play(s, t); t += 0.028; } }); }
+  function draw() {
+    host.textContent = "";
+    var midis = frets.map(function (f, i) { return f >= 0 ? shapes[i] + f : null; }).filter(function (m) { return m != null; });
+    var res = akIdentify(midis, false), stl = styleOf();
+    var names = frets.map(function (f, i) { return f >= 0 ? akNoteName(shapes[i] + f, false) : ""; });
+    var neck = akNeckSvg(ns, frets, { base: st.base, names: names,
+      onTap: function (s, f) { frets[s] = frets[s] === f ? -1 : f; play(s); choice = null; draw(); },
+      onTop: function (s) { frets[s] = frets[s] === 0 ? -1 : 0; play(s); choice = null; draw(); },
+      onStrum: function (s) { play(s); } });
+    var left = h("div", { class: "akn-left" }, h("div", { class: "row akn-nav" },
+      h("button", { class: "icon sm", "aria-label": "Lower on the neck", disabled: st.base <= 1, onClick: function () { st.base = Math.max(1, st.base - 1); draw(); } }, "▲"),
+      h("span", { class: "muted" }, st.base === 1 ? "Open position" : "From fret " + st.base),
+      h("button", { class: "icon sm", "aria-label": "Higher on the neck", disabled: st.base >= 15, onClick: function () { st.base = Math.min(15, st.base + 1); draw(); } }, "▼")), neck);
+    var right = h("div", { class: "akn-right" });
+    right.appendChild(h("div", { class: "row", style: "margin:0 0 6px" },
+      h("button", { class: "primary", disabled: !midis.length, onClick: function () { strum(false); } }, "Strum ↓"), h("button", { disabled: !midis.length, onClick: function () { strum(true); } }, "Strum ↑"),
+      h("button", { onClick: function () { frets = new Array(ns).fill(-1); choice = null; draw(); } }, "Clear")));
+    right.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: cfg.sound !== false, onChange: function () { cfg.sound = this.checked; save(); } }), "Sound (" + akTuning(ins).name + ")"));
+    if (midis.length >= 2 && !res.length) right.appendChild(h("p", { class: "hint" }, "Not a chord I know yet. Try adding or removing a note, or type a name below."));
+    if (!midis.length) right.appendChild(h("p", { class: "hint" }, "Tap the frets you hold. Tap above the nut for open (○) or not played (×). " + (cfg.sound !== false ? "Each note sounds as you press it; strum with the buttons or swipe across the strings on the body." : "")));
+    res.slice(0, 6).forEach(function (r) { right.appendChild(h("button", { class: "chip akn-name" + (choice === r.name ? " on" : ""), onClick: function () { choice = r.name; draw(); } }, h("b", { class: "plq-c" }, styleChord(r.name, stl)), "  ·  " + r.long)); });
+    if (!choice && res.length) choice = res[0].name;
+    var own = h("input", { type: "text", placeholder: "Or type a name for it", value: choice && !res.some(function (r) { return r.name === choice; }) ? choice : "", "aria-label": "Chord name", onInput: function () { choice = this.value.trim(); } });
+    right.appendChild(own);
+    if (choice) right.appendChild(h("p", { class: "akn-pick" }, "Adds ", h("b", { class: "plq-c" }, styleChord(choice, stl))));
+    host.appendChild(h("div", { class: "akn-wrap" }, left, right));
+  }
+  draw();
+  modal("Build a chord", host, [{ label: "Cancel" }, { label: opt.add ? "Add to the list" : "Use this chord", primary: true, onClick: function () {
+    if (!choice) { toast("Tap the frets, then pick the chord's name."); return false; }
+    if (!isChordLike(choice)) { var l = settings().customChords = settings().customChords || []; if (l.indexOf(choice) < 0) { l.push(choice); syncCustomChords(); } }
+    var key = fingerKeyFor(choice), rec = fingeringStore(ins)[key] || (fingeringStore(ins)[key] = {}); rec.custom = rec.custom || [];
+    if (!rec.custom.some(function (c) { return c.frets.join(",") === frets.join(","); })) rec.custom.unshift({ id: uid(), frets: frets.slice(), fingers: null });
+    rec.pick = "c" + rec.custom[0].id; save();
+    onPick(choice);
+  } }], { wide: true });
+};
+
+akCss("ak8-chords", [
+  ".plq{display:inline-flex;flex-direction:column;align-items:center;line-height:1.1;padding:4px 10px;min-height:44px}",
+  ".plq-c{font-family:var(--chord-font,inherit);font-weight:700;color:var(--chord)}.chip.on .plq-c{color:inherit}",
+  ".plq-n{font-size:.68rem;opacity:.75;font-weight:500}",
+  ".pchipbtn{font-family:var(--chord-font,inherit)}",
+  ".akn-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}",
+  ".akn-left{flex:1 1 260px;max-width:360px;margin:0 auto}.akn-right{flex:1 1 220px;min-width:0}",
+  ".akneck{width:100%;height:auto;max-height:52vh;display:block;touch-action:none;user-select:none;-webkit-user-select:none}",
+  ".akn-hit{fill:transparent;cursor:pointer}.akn-hit:hover{fill:rgba(255,255,255,.06)}",
+  ".akn-dot{fill:var(--accent);stroke:#fff;stroke-width:2;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))}",
+  ".akn-dotn{fill:var(--on-accent,#000);font-size:12px;font-weight:800;pointer-events:none}",
+  ".akn-top{font-size:20px;font-weight:800;fill:var(--fg)}.akn-top.mute{fill:#e5484d}.akn-top.open{fill:#30a46c}",
+  ".akn-fretno{fill:var(--muted);font-size:14px;font-weight:700}",
+  ".akn-strumtxt{fill:#c9a56b;font-size:11px;letter-spacing:.04em;pointer-events:none}",
+  ".akn-strum{cursor:ew-resize;touch-action:none}",
+  ".akn-nav{justify-content:space-between;align-items:center;margin:0 0 4px}",
+  ".akn-name{display:block;width:100%;text-align:left;margin:4px 0}",
+  ".akn-pick{margin:8px 0 0;font-size:1.1rem}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 7, phase 3b: the rhythm chart =================
+   A fourth screen mode on the playing screen (Mode ▸ Rhythm), next to Perform, Practice and Write. Like an old jazz chart:
+   chords on top, a slash for every beat in each bar ( / / / / ), the strum pattern under the slashes (↓ ↑ ✕), the words underneath,
+   everything lined up in bars. It reads the same bars as the measure chart (Practice / Write), so chords placed there show here.
+   A strum pattern is picked for the song from its time signature, tempo and style tags (or choose one of the common ones), and
+   ▶ Hear it plays the chords with that strum on a guitar sound, with the bar and beat lit up as it goes.
+   The ? button explains how the measure chart and the rhythm chart work. */
+
+AKMODES.push(["rhythm", "Rhythm"]);
+akModeMenu = function (anchor) {
+  var say = { perform: ": just the song", practice: ": measures with a moving beat", write: ": edit the chart, sections, scratch pad", rhythm: ": chords, beat slashes, strums and words" };
+  menu(anchor, [{ head: "Screen mode" }].concat(AKMODES.map(function (x) { return { label: ((S.playMode || "perform") === x[0] ? "✓ " : "") + x[1] + (say[x[0]] || ""), onClick: function () { akSetMode(x[0]); } }; })));
+};
+
+/* ---------------------------------------------------------------- picking a strum */
+function akRhythmAuto(song) {
+  var beats = akMBeats(song), tags = ((song.tags || []).join(" ") + " " + (song.genre || "")).toLowerCase(), style = typeof akSongStyle === "function" ? akSongStyle(song) : "", bpm = Number(song.tempo) || 0;
+  function p(name) { return AK_STRUM_PRESETS.filter(function (x) { return x[1] === name; })[0]; }
+  if (beats === 3) return p("Waltz"); if (beats === 6) return p("6/8 sway"); if (beats === 2) return p("Two-step");
+  if (/reggae|ska/.test(tags)) return p("Offbeat (ska, reggae)");
+  if (/island|hawai|tropical|jimmy buffett/.test(tags)) return p("Island");
+  if (style === "rock" || style === "metal" || /punk|grunge/.test(tags)) return p("Rock, accents on 2 and 4");
+  if (style === "funk" || /r&b|soul|motown/.test(tags)) return p("Chuck (muted 2 and 4)");
+  if (bpm && bpm < 76) return p("Ballad");
+  if (bpm >= 150) return p("Straight eighths");
+  if (style === "country") return p("Push (syncopated)");
+  return p("Folk / pop");
+}
+/* the pattern in use: the song's own choice, or the automatic pick */
+function akRhythmPat(song) { var own = song.rhythmStrum; if (own) return { p: own, name: akStrumName(own), auto: false }; var a = akRhythmAuto(song); return { p: a[2], name: a[1], auto: true }; }
+
+/* ---------------------------------------------------------------- the sound: chords strummed on a guitar */
+function akRVoicing(song, c) {
+  var ins = settings().instrument === "ukulele" ? "ukulele" : "guitar", o = chartOpts(song), shape = transposeChord(c, o.n || 0, o.acc);
+  var v = null; try { v = allVoicings(ins, shape).list[0]; } catch (e) {}
+  if (!v || !v.frets) { var pc = parseChordName(shape); if (!pc) return []; var r = 48 + pc.pc, iv = pc.q.indexOf("m") === 0 && pc.q.indexOf("maj") !== 0 ? [0, 7, 12, 15, 19] : [0, 7, 12, 16, 19]; return iv.map(function (i) { return r + i; }); }
+  var notes = akTuning(ins).notes, capo = Number(song.capo) || 0;
+  return v.frets.map(function (f, i) { return f >= 0 ? notes[i] + f + capo : null; }).filter(function (m) { return m != null; });
+}
+function akRChuck(when, vol) {
+  var ac = akAudio(); if (!ac) return;
+  var n = Math.floor(ac.sampleRate * 0.06), b = ac.createBuffer(1, n, ac.sampleRate), d = b.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3);
+  var s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(); s.buffer = b; f.type = "bandpass"; f.frequency.value = 1800; f.Q.value = 0.8; g.gain.value = vol || 0.5;
+  s.connect(f); f.connect(g); g.connect(ac.destination); s.start(ac.currentTime + when);
+}
+function akRClick(when, accent) {
+  var ac = akAudio(); if (!ac) return;
+  var t = ac.currentTime + when, o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = accent ? 1600 : 1050;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+  o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.08);
+}
+function akRStrum(midis, tok, when) {
+  var g = akStrumGlyph(tok), acc = g.acc, c = g.c;
+  if (c === "M") { akRChuck(when, acc ? 0.75 : 0.5); return; }
+  if (c !== "D" && c !== "U") return;
+  var list = c === "D" ? midis : midis.slice().reverse(), vol = (c === "D" ? 0.42 : 0.3) * (acc ? 1.35 : 1);
+  list.forEach(function (m, i) { akPluck(m, when + i * (c === "D" ? 0.013 : 0.009), vol / Math.sqrt(list.length) * 1.6); });
+}
+
+/* ---------------------------------------------------------------- the player */
+var AKR = { on: false, timer: 0, raf: 0, ev: null, i: 0, t0: 0, host: null, song: null, rate: 1 };
+function akRStop() { AKR.on = false; clearTimeout(AKR.timer); cancelAnimationFrame(AKR.raf); if (AKR.host) Array.prototype.forEach.call(AKR.host.querySelectorAll(".now"), function (x) { x.classList.remove("now"); }); akRPaint(); }
+function akRPaint() { Array.prototype.forEach.call(document.querySelectorAll(".akr-play"), function (b) { b.textContent = AKR.on ? "■ Stop" : "▶ Hear it"; b.classList.toggle("on", AKR.on); }); }
+function akRStart(song, m, host) {
+  var ac = akAudio(); if (!ac) { toast("This browser can't play sound."); return; }
+  try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  if (typeof AKP !== "undefined" && AKP.on) akPStop();
+  var tl = akMTimeline(song, m, AKR.loop != null ? AKR.loop : null), cfg = akMCfg(); if (!tl.ev.length) { toast("This song has no bars yet."); return; }
+  var pat = akRhythmPat(song), last = "", sub = m.sub || 2;
+  /* the chord sounding at each slot, and the stroke on it */
+  var flat = {}; m.sections.forEach(function (sc, si) { sc.bars.forEach(function (b, bi) { flat[si + ":" + bi] = { sc: sc, b: b }; }); });
+  var evs = tl.ev.map(function (e) {
+    var fb = flat[e.si + ":" + e.bi], b = fb.b, c = b.s[e.k]; if (c) last = c;
+    var toks = (b.st || fb.sc.strum || m.strum) ? akStrumFor(m, fb.sc, b) : akStrumFit(akStrumToks(pat.p), b.s.length);
+    return { si: e.si, bi: e.bi, k: e.k, t: e.t, d: e.d, beat: e.beat, chord: last, tok: (toks && toks[e.k]) || "-" };
+  });
+  AKR.rate = (cfg.mRate || 100) / 100; AKR.on = true; AKR.ev = evs; AKR.i = 0; AKR.host = host; AKR.song = song; akRPaint();
+  var beatSec = 60 / tl.bpm / AKR.rate, lead = cfg.mCount ? tl.beats * beatSec : 0, start = ac.currentTime + 0.12;
+  if (cfg.mCount) for (var k = 0; k < tl.beats; k++) akRClick(0.12 + k * beatSec, k === 0);
+  AKR.t0 = start + lead; var voic = {};
+  function vfor(c) { if (!c) return []; if (!voic[c]) voic[c] = akRVoicing(song, c); return voic[c]; }
+  (function sched() {
+    if (!AKR.on) return;
+    var now = ac.currentTime, ahead = now + 0.35;
+    while (AKR.i < evs.length && AKR.t0 + evs[AKR.i].t / AKR.rate < ahead) {
+      var e = evs[AKR.i], when = Math.max(0, AKR.t0 + e.t / AKR.rate - now);
+      if (e.chord) akRStrum(vfor(e.chord), e.tok, when);
+      if (cfg.mClick && e.beat >= 0) akRClick(when, e.beat === 0);
+      AKR.i++;
+    }
+    if (AKR.i >= evs.length && now > AKR.t0 + (evs[evs.length - 1].t + evs[evs.length - 1].d) / AKR.rate + 0.3) { if (AKR.loop != null) { akRStop(); akRStart(song, m, host); } else akRStop(); return; }
+    AKR.timer = setTimeout(sched, 90);
+  })();
+  var lastIdx = -1;
+  (function anim() {
+    if (!AKR.on) return;
+    var t = (ac.currentTime - AKR.t0) * AKR.rate, j = lastIdx < 0 ? 0 : lastIdx;
+    if (t >= 0) {
+      while (j < evs.length - 1 && evs[j + 1].t <= t) j++;
+      if (j !== lastIdx) { lastIdx = j; akRMark(host, evs[j]); }
+    }
+    AKR.raf = requestAnimationFrame(anim);
+  })();
+}
+function akRMark(host, e) {
+  Array.prototype.forEach.call(host.querySelectorAll(".akr-bar.now,.akr-slot.now,.akr-beat.now"), function (x) { x.classList.remove("now"); });
+  var bar = host.querySelector('.akr-bar[data-si="' + e.si + '"][data-bi="' + e.bi + '"]'); if (!bar) return;
+  bar.classList.add("now");
+  var sl = bar.querySelectorAll(".akr-st .akr-slot")[e.k]; if (sl) sl.classList.add("now");
+  var bt = bar.querySelectorAll(".akr-sl .akr-beat")[Math.floor(e.k / (bar._sub || 2))]; if (bt) bt.classList.add("now");
+  var sc = host.querySelector(".akr-scroll"); if (!sc) return;
+  var r = bar.getBoundingClientRect(), sr = sc.getBoundingClientRect();
+  if (r.top < sr.top + sr.height * 0.1 || r.bottom > sr.top + sr.height * 0.65) sc.scrollTo({ top: sc.scrollTop + r.top - sr.top - sr.height * 0.25, behavior: "smooth" });
+}
+
+/* ---------------------------------------------------------------- drawing the chart */
+function akRDraw(song, host, m) {
+  var o = chartOpts(song), per = akMPerRow(host), sub = m.sub || 2, beats = akMBeats(song), pat = akRhythmPat(song);
+  var sc = host.querySelector(".akr-scroll"), keep = sc ? sc.scrollTop : 0; if (sc) sc.remove();
+  sc = h("div", { class: "akr-scroll" }); host.appendChild(sc);
+  var cfg = akMCfg(); sc.style.setProperty("--akm-chord", cfg.mChord / 100); sc.style.setProperty("--akm-words", cfg.mWords / 100);
+  if (!m.sections.length) { sc.appendChild(h("p", { class: "hint", style: "padding:12px" }, "This song has no chords yet, so there are no bars to show. Add chords to the song (or build bars in Mode ▸ Write).")); return; }
+  sc.appendChild(h("div", { class: "akr-key" }, h("span", null, (song.timeSig || beats + "/4") + (Number(song.tempo) ? " · ♩ = " + song.tempo : "")), h("span", null, "Strum: " + pat.name + (pat.auto ? " (picked for this song)" : ""))));
+  m.sections.forEach(function (secn, si) {
+    var sty = o.secColor ? o.secColor(secn.name) : null;
+    var head = h("div", { class: "akr-head" }, secn.name || "");
+    if (sty && sty.color) head.style.color = sty.color;
+    var grid = h("div", { class: "akr-grid", style: "grid-template-columns:repeat(" + per + ",minmax(0,1fr))" });
+    secn.bars.forEach(function (b, bi) {
+      var n = b.s.length, toks = (b.st || secn.strum || m.strum) ? akStrumFor(m, secn, b) : akStrumFit(akStrumToks(pat.p), n);
+      var prevChord = bi > 0 ? secn.bars[bi - 1].s.filter(Boolean).slice(-1)[0] : "";
+      var bar = h("div", { class: "akr-bar" + (b.m.rs ? " rs" : "") + (b.m.re ? " re" : ""), "data-si": si, "data-bi": bi }); bar._sub = sub;
+      /* chords on top, at the slot they start on */
+      var chRow = h("div", { class: "akr-ch", style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
+      var any = false;
+      b.s.forEach(function (c, k) { var el = h("span", { class: "akr-c" }, c ? chordTr(c, o).shown : ""); if (c) { any = true; el.setAttribute("data-shape", chordTr(c, o).shape); el.classList.add("ch"); el.setAttribute("role", "button"); } chRow.appendChild(el); });
+      if (!any && prevChord) chRow.firstChild.textContent = "%";
+      /* a slash for every beat */
+      var slRow = h("div", { class: "akr-sl", style: "grid-template-columns:repeat(" + beats + ",minmax(0,1fr))" });
+      for (var bt = 0; bt < beats; bt++) { var acc = toks && toks.slice(bt * sub, bt * sub + sub).some(function (t) { return /> ?$/.test(t); }); slRow.appendChild(h("span", { class: "akr-beat" + (acc ? " acc" : "") }, "/")); }
+      /* the strum under the slashes */
+      var stRow = h("div", { class: "akr-st", style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
+      (toks || []).forEach(function (t) { var g = akStrumGlyph(t); stRow.appendChild(h("span", { class: "akr-slot" + (g.acc ? " acc" : "") + (g.c === "-" ? " rest" : "") }, g.g)); });
+      var marks = [b.m.rs ? "𝄆" : "", b.m.ferm ? "𝄐" : "", b.m.rit ? "rit." : "", b.m.re ? "𝄇" + (Number(b.m.x) > 2 ? " ×" + b.m.x : "") : ""].filter(Boolean).join(" ");
+      bar.appendChild(chRow); bar.appendChild(slRow); bar.appendChild(stRow);
+      bar.appendChild(h("div", { class: "akr-w" + (b.w ? "" : " empty") }, b.w || " "));
+      if (marks) bar.appendChild(h("div", { class: "akr-mark" }, marks));
+      grid.appendChild(bar);
+    });
+    sc.appendChild(h("div", { class: "akr-sec", "data-si": si }, head, grid));
+  });
+  sc.appendChild(h("div", { style: "height:40vh" }));
+  sc.scrollTop = keep;
+}
+/* the screen mode */
+(function () {
+  var ma = akModeApply;
+  akModeApply = function (song, root, panes) {
+    if ((S.playMode || "perform") !== "rhythm") { if (AKR.on && (S.playMode || "perform") !== "rhythm") akRStop(); return ma.apply(this, arguments); }
+    if (AKR.on && AKR.song !== song) akRStop();
+    panes.style.display = "none"; root.classList.add("akm-on");
+    var m = akMGet(song), cfg = akMCfg(), host = h("div", { class: "panes akm akr" }), bar = h("div", { class: "akm-bar0" });
+    bar.appendChild(h("div", { class: "akm-modes", role: "tablist" }, AKMODES.map(function (x) { return h("button", { role: "tab", "aria-selected": x[0] === "rhythm" ? "true" : "false", "aria-pressed": x[0] === "rhythm" ? "true" : "false", onClick: function () { if (x[0] !== "rhythm") akRStop(); akSetMode(x[0]); } }, x[1]); })));
+    var tools = h("div", { class: "akm-tools" }), bpm = Number(song.tempo) > 0 ? Number(song.tempo) : 90, rateOut = h("output", { class: "akm-rate" });
+    function paintRate() { rateOut.textContent = Math.round(bpm * cfg.mRate / 100) + " bpm" + (cfg.mRate !== 100 ? " (" + cfg.mRate + "%)" : ""); }
+    function rate(d) { cfg.mRate = Math.max(40, Math.min(150, cfg.mRate + d)); AKR.rate = cfg.mRate / 100; paintRate(); save(); if (AKR.on) { akRStop(); akRStart(song, m, host); } }
+    paintRate();
+    tools.appendChild(h("button", { class: "primary akr-play", onClick: function () { if (AKR.on) akRStop(); else akRStart(song, m, host); } }, AKR.on ? "■ Stop" : "▶ Hear it"));
+    tools.appendChild(h("button", { "aria-label": "Slower", onClick: function () { rate(-5); } }, "−")); tools.appendChild(rateOut); tools.appendChild(h("button", { "aria-label": "Faster", onClick: function () { rate(5); } }, "+"));
+    var beats = akMBeats(song), pat = akRhythmPat(song), fit = AK_STRUM_PRESETS.filter(function (x) { return x[0] === beats || (beats === 4 && x[0] === 2); });
+    var sel = h("select", { "aria-label": "Strum pattern", onChange: function () {
+      var v = this.value;
+      if (v === "?type") { askText("Strum pattern, one mark per slot: D down, U up, M muted, - rest, > after a stroke to accent it", song.rhythmStrum || pat.p, "Use it", function (t) { t = akStrumToks(t).join(" "); if (!t) return; snap("strum"); song.rhythmStrum = t; save(); keepAutoRender(); }); return; }
+      snap("strum"); if (v) song.rhythmStrum = v; else delete song.rhythmStrum; save(); if (AKR.on) akRStop(); keepAutoRender();
+    } }, [h("option", { value: "" }, "Auto: " + akRhythmAuto(song)[1])].concat(fit.map(function (x) { return h("option", { value: x[2] }, x[1] + "   " + x[2].replace(/D/g, "↓").replace(/U/g, "↑").replace(/M/g, "✕").replace(/-/g, "·")); }), [h("option", { value: "?type" }, "Type my own…")]));
+    sel.value = song.rhythmStrum && fit.some(function (x) { return x[2] === song.rhythmStrum; }) ? song.rhythmStrum : "";
+    if (song.rhythmStrum && !fit.some(function (x) { return x[2] === song.rhythmStrum; })) { sel.insertBefore(h("option", { value: song.rhythmStrum }, "Mine: " + song.rhythmStrum), sel.options[1]); sel.value = song.rhythmStrum; }
+    tools.appendChild(sel);
+    var loopSel = h("select", { "aria-label": "Play the whole song or loop one section", onChange: function () { AKR.loop = this.value === "" ? null : Number(this.value); if (AKR.on) { akRStop(); akRStart(song, m, host); } } }, [h("option", { value: "" }, "Whole song")].concat(m.sections.map(function (s2, i) { return h("option", { value: String(i) }, "Loop: " + (s2.name || "Section " + (i + 1))); })));
+    if (AKR.loop != null && AKR.loop >= m.sections.length) AKR.loop = null; loopSel.value = AKR.loop == null ? "" : String(AKR.loop);
+    tools.appendChild(loopSel);
+    tools.appendChild(h("button", { "aria-label": "Options", onClick: function () { menu(this, [{ head: "Hearing it" },
+      { label: (cfg.mCount ? "✓ " : "") + "Count in one bar first", onClick: function () { cfg.mCount = !cfg.mCount; save(); } },
+      { label: (cfg.mClick ? "✓ " : "") + "Click on the beat too", onClick: function () { cfg.mClick = !cfg.mClick; save(); } },
+      { sep: true }, { label: "Chart settings (time, bars per row, sizes)…", onClick: function () { akMSettings(song, { m: m, redraw: function () { keepAutoRender(); } }); } }]); } }, "⋯"));
+    tools.appendChild(h("button", { "aria-label": "How the measure and rhythm charts work", onClick: function () { akChartHelp(); } }, "?"));
+    bar.appendChild(tools); host.appendChild(bar);
+    panes.parentNode.insertBefore(host, panes.nextSibling);
+    akRDraw(song, host, m);
+    host.addEventListener("click", function (e) { var ch = e.target.closest && e.target.closest(".akr-c.ch"); if (ch) openChordPop(root, ch); });
+    if (AKR.on) AKR.host = host;
+  };
+})();
+/* the "?" in Practice, Write and Rhythm */
+function akChartHelp() {
+  modal("Measure and rhythm charts", h("div", { class: "akr-help" },
+    h("p", null, h("b", null, "Mode"), " on the playing screen switches how a song is shown: ", h("b", null, "Perform"), " (the words and chords as written), ", h("b", null, "Practice"), " and ", h("b", null, "Write"), " (the measure chart), and ", h("b", null, "Rhythm"), " (the rhythm chart)."),
+    h("h3", null, "The measure chart (Practice and Write)"),
+    h("ul", null,
+      h("li", null, "The song is cut into bars (measures). Each box is one bar, grouped by section (Verse, Chorus…)."),
+      h("li", null, "Every bar has a small cell for each half beat: 4/4 has 8 cells (1 & 2 & 3 & 4 &). A chord sits in the cell where it starts and lasts until the next one."),
+      h("li", null, "The words sung in that bar are under it."),
+      h("li", null, "The first time, the bars are guessed from your chords: a new bar at every chord. Fix it in Write: tap a cell to add, change or move a chord; ⋯ on a bar adds, copies or deletes bars and adds repeats, holds and slow-downs."),
+      h("li", null, "▶ Play in Practice lights up each beat in time (count-in, click and flash in ⋯), slower or faster with − and +, the whole song or one section on a loop. A strum row (↓ ↑) can be added under the bars.")),
+    h("h3", null, "The rhythm chart (Rhythm)"),
+    h("ul", null,
+      h("li", null, "The same bars, written like an old jazz chart: the chord on top, a slash ( / ) for every beat, the strum pattern under the slashes, the words at the bottom."),
+      h("li", null, "% means: same chord as the bar before."),
+      h("li", null, "A strum pattern is picked for the song from its time signature, tempo and style tags. Pick another common one (or type your own) in the strum list; it's saved with the song."),
+      h("li", null, "▶ Hear it plays the chords with that strum on a guitar sound, in your tuning and capo, and lights up the bar and stroke. Bold slashes and strokes are the accents."),
+      h("li", null, "Changing the bars in Write changes both charts."))),
+    [{ label: "Close", primary: true }], { wide: true });
+}
+(function () {
+  var ma = akModeApply;
+  akModeApply = function (song, root, panes) {
+    var r = ma.apply(this, arguments), mode = S.playMode || "perform";
+    if (mode === "practice" || mode === "write") { var t = root.querySelector(".akm-tools"); if (t && !t.querySelector(".akr-helpbtn")) t.appendChild(h("button", { class: "akr-helpbtn", "aria-label": "How the measure and rhythm charts work", onClick: function () { akChartHelp(); } }, "?")); }
+    return r;
+  };
+})();
+
+akCss("ak8-rhythm", [
+  ".akr-scroll{flex:1 1 auto;overflow:auto;padding:6px 10px;--akm-chord:1;--akm-words:1}",
+  ".akr-key{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:var(--muted);font-size:.85rem;margin:2px 2px 6px}",
+  ".akr-head{font-weight:800;margin:10px 2px 4px;color:var(--sec,var(--accent));font-family:var(--head-font,inherit)}",
+  ".akr-grid{display:grid;gap:0;border-left:3px solid var(--fg)}",
+  ".akr-bar{position:relative;padding:4px 6px 6px;border-right:2px solid var(--fg);border-bottom:1px solid var(--line);min-width:0}",
+  ".akr-bar.rs{border-left:5px double var(--fg)}.akr-bar.re{border-right:5px double var(--fg)}",
+  ".akr-bar.now{background:color-mix(in srgb,var(--accent) 14%,transparent)}",
+  ".akr-ch{display:grid;min-height:1.5em;font-family:var(--chord-font,inherit);font-weight:700;color:var(--chord);font-size:calc(var(--lyric-size,28px) * .78 * var(--akm-chord))}",
+  ".akr-c{white-space:nowrap;overflow:visible;cursor:pointer}",
+  ".akr-sl{display:grid;font-size:calc(var(--lyric-size,28px) * 1.05);line-height:1;font-weight:300;color:var(--fg);text-align:center;font-family:Georgia,'Times New Roman',serif;font-style:italic}",
+  ".akr-beat.acc{font-weight:900}.akr-beat.now{color:var(--accent);transform:scale(1.15)}",
+  ".akr-st{display:grid;text-align:center;font-size:.8rem;color:var(--muted);line-height:1.3}",
+  ".akr-slot.acc{color:var(--fg);font-weight:800}.akr-slot.rest{opacity:.45}.akr-slot.now{color:var(--accent);font-weight:900}",
+  ".akr-w{font-size:calc(var(--lyric-size,28px) * .55 * var(--akm-words));line-height:1.25;margin-top:2px;min-height:1.2em;overflow-wrap:anywhere}",
+  ".akr-w.empty{opacity:.3}",
+  ".akr-mark{position:absolute;top:2px;right:6px;font-size:.8rem;color:var(--muted)}",
+  ".akr-help ul{padding-left:1.2em}.akr-help li{margin:4px 0}.akr-help h3{margin:12px 0 4px}",
+  ".akm-tools select{max-width:46vw}"
+].join("\n"));
+
+/* ================= Akashic Chords batch 7, phase 3c: a tidier Settings =================
+   1. Each screen gets its own ⚙ (top right on Songs, Shows, Learn and Write; Buttons ▾ on the playing screen) that opens just the
+      options for that screen. Those sections leave the Settings page, which keeps the options for the whole app (look, effects,
+      instrument and chord names, requests, data) plus links to each screen's options. "Also show them all here" brings them back.
+   2. A search box at the top of Settings finds anything: a setting (by its section or any switch, slider or button in it), a
+      feature, a song, a set list, a show, or a screen. */
+
+var AK_SCR_OPTS = {
+  play: { name: "Playing screen", bks: ["playing-screen/*", "effects/playing-screen-bars-and-buttons", "songs-and-shows/cues", "songs-and-shows/solos", "songs-and-shows/tuning-changes", "songs-and-shows/countdown-to-the-next-break"] },
+  songs: { name: "Songs", bks: ["songs-and-shows/show-and-song-lists", "songs-and-shows/played-songs", "songs-and-shows/keep-songs-fresh", "songs-and-shows/song-info-and-tags", "songs-and-shows/logging-plays-and-practice-mode", "songs-and-shows/requested-songs-and-the-popular-tag"] },
+  shows: { name: "Shows", bks: ["songs-and-shows/show-and-song-lists", "playing-screen/ending-a-show-and-encores", "playing-screen/reminders", "playing-screen/break-music", "songs-and-shows/countdown-to-the-next-break", "playing-screen/timers", "data-and-extras/calendar"] },
+  learn: { name: "Learn", bks: ["songs-and-shows/learning", "songs-and-shows/instrument-and-tuning", "songs-and-shows/chord-names-and-shapes"] },
+  write: { name: "Write", bks: ["songs-and-shows/write-tab", "songs-and-shows/works-in-progress-and-originals", "songs-and-shows/chord-names-and-shapes"] }
+};
+/* shown on their screens and still in Settings, since they change the whole app */
+var AK_SCR_KEEP = ["songs-and-shows/instrument-and-tuning", "songs-and-shows/chord-names-and-shapes"];
+
+/* every sub-section of a Settings page element, as {id: "group/key", d: details} */
+function akSetSubs(root) {
+  return Array.prototype.map.call(root.querySelectorAll("details.subsec"), function (d) {
+    var p = d.parentElement && d.parentElement.getAttribute("data-blocks") || "";
+    return { id: p.replace(/^settings\//, "") + "/" + d.getAttribute("data-bk"), d: d };
+  });
+}
+function akScrMatch(id, spec) { return spec.slice(-2) === "/*" ? id.indexOf(spec.slice(0, -1)) === 0 : id === spec; }
+/* which screen a section moved to ("" if it stays in Settings) */
+function akScrOf(id) {
+  if (AK_SCR_KEEP.indexOf(id) >= 0) return "";
+  var ks = Object.keys(AK_SCR_OPTS);
+  for (var i = 0; i < ks.length; i++) if (AK_SCR_OPTS[ks[i]].bks.some(function (sp) { return akScrMatch(id, sp); })) return ks[i];
+  return "";
+}
+function akScrOfBk(bk) { var g = ["playing-screen", "songs-and-shows", "data-and-extras", "effects"]; for (var i = 0; i < g.length; i++) { var s = akScrOf(g[i] + "/" + bk); if (s) return s; } return ""; }
+function akSettingsFull() { S.akCustBuild = true; try { return viewSettings(); } finally { S.akCustBuild = false; } }
+function akPulse(el) { if (!el) return; var d = el.closest("details"); while (d) { d.open = true; d = d.parentElement && d.parentElement.closest("details"); } if (el.tagName === "DETAILS") el.open = true; setTimeout(function () { el.scrollIntoView({ block: "center" }); }, 60); el.classList.add("akpulse"); setTimeout(function () { el.classList.remove("akpulse"); }, 2600); }
+
+/* ---------------------------------------------------------------- the per-screen panel */
+function akScreenCustomize(scr, focusBk, focusText) {
+  var sp = AK_SCR_OPTS[scr]; if (!sp) { go("settings"); return; }
+  var host = h("div", { class: "ak8-cust" });
+  function fill() {
+    host.textContent = "";
+    var full = akSettingsFull(), seen = {};
+    var subs = akSetSubs(full).filter(function (x) { if (seen[x.d.getAttribute("data-bk") + x.d.textContent.length]) return false; var m = sp.bks.some(function (s) { return akScrMatch(x.id, s); }); if (m) seen[x.d.getAttribute("data-bk") + x.d.textContent.length] = 1; return m; });
+    subs.sort(function (a, b) { return (a.id.indexOf("effects/") === 0) - (b.id.indexOf("effects/") === 0); });
+    subs.forEach(function (x) { x.d.open = subs.length === 1; host.appendChild(x.d); });
+    host.appendChild(h("p", { class: "hint", style: "margin:12px 2px 0" }, "Look, themes, effects, backups and the other options for the whole app are in Settings. ",
+      h("button", { class: "linkbtn", onClick: function () { closeModals(); go("settings"); } }, "Open Settings")));
+  }
+  fill();
+  S.akCust = { scr: scr, host: host, fill: fill };
+  modal("⚙ " + sp.name + " options", host, [{ label: "Done", primary: true }], { wide: true });
+  if (focusBk) setTimeout(function () {
+    var el = host.querySelector('[data-bk="' + focusBk + '"]'); if (!el) return;
+    if (focusText) { var c = Array.prototype.filter.call(el.querySelectorAll("label,button,.row,summary"), function (n) { return n.textContent.toLowerCase().indexOf(focusText) >= 0; })[0]; if (c) { el.open = true; akPulse(c); return; } }
+    akPulse(el);
+  }, 80);
+}
+function closeModals() { Array.prototype.forEach.call(document.querySelectorAll(".modal"), function (m) { if (m.parentNode) m.parentNode.removeChild(m); }); }
+/* a setting that redraws "the Settings page" redraws the open panel instead, and the screen under it */
+(function () {
+  var g0 = go;
+  go = function (view, params) {
+    if (view === "settings" && S.akCust && document.contains(S.akCust.host)) { var sc = S.akCust.host.closest(".sheet") || S.akCust.host.parentElement, top = sc ? sc.scrollTop : 0; S.akCust.fill(); if (sc) sc.scrollTop = top; if (S.view === "settings") return g0.apply(this, arguments); if (S.view === "play") keepAutoRender(); else render(); return; }
+    return g0.apply(this, arguments);
+  };
+})();
+/* a feature that points into a section that moved opens that screen's panel */
+(function () {
+  var fg = akFeatGo;
+  akFeatGo = function (f) {
+    var m = f && f.go === "settings" && f.sel && /data-bk="([^"]+)"/.exec(f.sel), scr = m && !settings().allInSettings ? akScrOfBk(m[1]) : "";
+    if (scr) { akScreenCustomize(scr, m[1]); return; }
+    return fg.apply(this, arguments);
+  };
+})();
+/* the ⚙ on each screen */
+var AK_SCR_VIEW = { songs: "songs", shows: "shows", show: "shows", gig: "shows", learn: "learn", write: "write" };
+(function () {
+  var ar = akAfterRender;
+  akAfterRender = function () {
+    var r = ar.apply(this, arguments);
+    try {
+      var scr = AK_SCR_VIEW[S.view], bar = scr && document.querySelector("#app .topbar");
+      var more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (x) { return x.textContent.trim() === "⋯"; })[0];
+      /* on a phone the top bar is full: the options go at the top of its ⋯ menu instead */
+      if (bar && more && window.innerWidth < 600 && !bar._akCust) {
+        bar._akCust = 1;
+        bar.addEventListener("click", function (e) {
+          if (!e.target.closest || e.target.closest("button") !== more) return;
+          var m0 = menu; menu = function (a, list) { menu = m0; return m0(a, [{ label: "⚙ " + AK_SCR_OPTS[scr].name + " options…", onClick: function () { akScreenCustomize(scr); } }, { sep: true }].concat(list || [])); };
+          setTimeout(function () { menu = m0; }, 0);
+        }, true);
+      } else if (bar && !bar.querySelector(".ak8-custbtn")) {
+        var b = h("button", { class: "icon ak8-custbtn", "aria-label": AK_SCR_OPTS[scr].name + " options", title: AK_SCR_OPTS[scr].name + " options", onClick: function () { akScreenCustomize(scr); } }, "⚙");
+        var lay = bar.querySelector(".laybtn,[aria-label='Arrange this page']"); if (lay && lay.parentNode === bar) bar.insertBefore(b, lay); else bar.appendChild(b);
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+/* and in Buttons ▾ on the playing screen */
+(function () {
+  var sm = akSetsMenu;
+  akSetsMenu = function (btn) {
+    var m0 = menu; menu = function (a, list) { menu = m0; return m0(a, [{ label: "⚙ Playing screen options…", onClick: function () { akScreenCustomize("play"); } }, { sep: true }].concat(list || [])); };
+    try { return sm.apply(this, arguments); } finally { menu = m0; }
+  };
+})();
+
+/* ---------------------------------------------------------------- Settings: move the per-screen sections out, add the search */
+(function () {
+  var vs = viewSettings;
+  viewSettings = function () {
+    var el = vs.apply(this, arguments);
+    if (S.akCustBuild) return el;
+    S.akSetIdx = null;
+    try {
+      var all = !!settings().allInSettings, moved = {};
+      if (!all) akSetSubs(el).forEach(function (x) { var scr = akScrOf(x.id); if (!scr) return; var g = x.d.parentElement; moved[x.id.split("/")[0]] = g; x.d.parentNode.removeChild(x.d); });
+      Object.keys(moved).forEach(function (gk) {
+        var body = moved[gk], card = body.closest("details.setsec");
+        if (!body.querySelector("details.subsec") && card) { card.parentNode.removeChild(card); return; }
+        var scrs = Object.keys(AK_SCR_OPTS).filter(function (k) { return AK_SCR_OPTS[k].bks.some(function (sp) { return sp.split("/")[0] === gk; }); });
+        body.insertBefore(h("p", { class: "hint ak8-moved" }, "More of these are on their own screens: ", scrs.map(function (k, i) { return h("span", null, i ? ", " : "", h("button", { class: "linkbtn", onClick: function () { akScreenCustomize(k); } }, AK_SCR_OPTS[k].name)); }), "."), body.firstChild);
+      });
+      var top = el.querySelector('[data-blocks="settings"]');
+      if (top) {
+        var card = h("div", { class: "card ak8-scrcard", "data-bk": "screen-options" },
+          h("div", { class: "row", style: "margin:0;align-items:center" }, h("b", { class: "grow" }, "Options for each screen"),
+            h("label", { class: "chk", style: "margin:0" }, h("input", { type: "checkbox", checked: all, onChange: function () { settings().allInSettings = this.checked; save(); go("settings"); } }), "Also show them here")),
+          h("div", { class: "row ak8-scrbtns" }, Object.keys(AK_SCR_OPTS).map(function (k) { return h("button", { class: "sm", onClick: function () { akScreenCustomize(k); } }, "⚙ " + AK_SCR_OPTS[k].name); })),
+          h("p", { class: "hint", style: "margin:4px 0 0" }, "Each screen also has its own ⚙ (top right, or in its ⋯ menu on a phone; on the playing screen it's in Buttons ▾)."));
+        top.parentNode.insertBefore(card, top);
+        top.parentNode.insertBefore(akSetSearchEl(), card);
+      }
+    } catch (e) { if (window.console) console.warn(e); }
+    return el;
+  };
+})();
+
+/* the search index: built from the full Settings page the first time you type, then kept for this visit */
+function akSetIndex() {
+  if (S.akSetIdx) return S.akSetIdx;
+  var full = akSettingsFull(), out = [];
+  akSetSubs(full).forEach(function (x) {
+    var st = x.d.querySelector("summary .st"), grp = x.d.parentElement.closest("details.setsec"), gt = grp && grp.querySelector("summary .st");
+    var bits = Array.prototype.map.call(x.d.querySelectorAll(".secbody label, .secbody button, .secbody h3, .secbody h4, .secbody .lbl, .secbody option"), function (n) { return n.textContent.replace(/\s+/g, " ").trim(); }).filter(function (t) { return t && t.length < 90; });
+    out.push({ id: x.id, bk: x.d.getAttribute("data-bk"), title: st ? st.textContent : x.d.getAttribute("data-bk"), group: gt ? gt.textContent : "", bits: bits });
+  });
+  return (S.akSetIdx = out);
+}
+function akSetSearchEl() {
+  var res = h("div", { class: "ak8-sres" });
+  var inp = h("input", { type: "search", class: "ak8-sq", placeholder: "Search settings, features, songs, shows…", "aria-label": "Search everything", value: S.akSetQ || "", onInput: function () { S.akSetQ = this.value; draw(); } });
+  function hit(t, q) { return (t || "").toLowerCase().indexOf(q) >= 0; }
+  function row(kind, label, sub, fn) { return h("button", { class: "item ak8-shit", onClick: fn }, h("span", { class: "ak8-sk" }, kind), h("span", { class: "grow" }, h("b", null, label), sub ? h("span", { class: "muted" }, "  " + sub) : null)); }
+  function draw() {
+    res.textContent = "";
+    var q = (S.akSetQ || "").trim().toLowerCase(); if (q.length < 2) return;
+    var n = 0, MAX = 6;
+    function head(t, list) { if (!list.length) return; res.appendChild(h("div", { class: "ak8-shead" }, t)); list.slice(0, MAX).forEach(function (x) { res.appendChild(x); n++; }); if (list.length > MAX) res.appendChild(h("div", { class: "hint", style: "margin:0 4px 4px" }, "and " + (list.length - MAX) + " more; type a bit more to narrow it")); }
+    /* settings */
+    var setRows = [];
+    akSetIndex().forEach(function (x) {
+      var bit = hit(x.title, q) || hit(x.group, q) ? "" : x.bits.filter(function (b) { return hit(b, q); })[0];
+      if (bit === undefined) return;
+      var scr = settings().allInSettings ? "" : akScrOf(x.id);
+      setRows.push(row("⚙", bit || x.title, (bit ? x.title + " · " : "") + (scr ? AK_SCR_OPTS[scr].name + " options" : x.group), function () {
+        if (scr) { akScreenCustomize(scr, x.bk, bit ? q : ""); return; }
+        var el = document.querySelector('[data-blocks="settings/' + x.id.split("/")[0] + '"] > [data-bk="' + x.bk + '"]'); if (!el) return;
+        if (bit) { var c = Array.prototype.filter.call(el.querySelectorAll("label,button,.row"), function (nn) { return hit(nn.textContent, q); })[0]; if (c) { akPulse(c); return; } }
+        akPulse(el);
+      }));
+    });
+    head("Settings", setRows);
+    /* features */
+    var feats = typeof akFeatAll === "function" ? akFeatAll().filter(function (f) { return hit(f.name, q) || hit(f.desc, q); }) : [];
+    head("Features", feats.map(function (f) { return row("✦", f.name, f.where || f.cat, function () { akFeatGo(f); }); }));
+    /* screens */
+    var scrs = [["songs", "Songs"], ["shows", "Shows"], ["learn", "Learn"], ["write", "Write"], ["import", "Import"], ["banter", "Banter"], ["discover", "Discover"], ["stats", "Stats"], ["history", "History"], ["guide", "Guide"]].filter(function (x) { return hit(x[1], q) && (x[0] !== "learn" || typeof viewLearn === "function") && (x[0] !== "write" || (typeof AK_VIEWS === "object" && AK_VIEWS.write)); });
+    head("Screens", scrs.map(function (x) { return row("▣", x[1], "screen", function () { go(x[0]); }); }));
+    /* songs, set lists, shows */
+    var songs = lib().songs.filter(function (s) { return hit(s.title, q) || hit(s.artist, q); });
+    head("Songs", songs.map(function (s) { return row("♫", s.title, s.artist || "", function () { go("song", { songId: s.id }); }); }));
+    var sets = (lib().shows || []).filter(function (s) { return hit(s.name, q); });
+    head("Set lists", sets.map(function (s) { return row("☰", s.name, (s.items || []).length + " songs", function () { go("show", { showId: s.id }); }); }));
+    var gigs = (lib().gigs || []).filter(function (g) { return hit(g.name, q) || hit(g.venue, q) || hit(g.date, q); });
+    head("Shows", gigs.map(function (g) { return row("📅", g.name || g.venue || "Show", g.date || "", function () { go("gig", { gigId: g.id }); }); }));
+    if (!n) res.appendChild(h("p", { class: "hint", style: "margin:6px 4px" }, "Nothing found for “" + S.akSetQ.trim() + "”."));
+  }
+  var box = h("div", { class: "ak8-search", "data-bk": "search-settings" }, inp, res);
+  setTimeout(draw, 0);
+  return box;
+}
+
+akCss("ak8-settings2", [
+  ".ak8-search{position:sticky;top:0;z-index:5;background:var(--bg);padding:2px 0 8px;margin-bottom:6px}",
+  ".ak8-sq{width:100%;font-size:1.05rem;padding:10px 12px;border-radius:12px}",
+  ".ak8-sres{max-height:60vh;overflow:auto;margin-top:4px}.ak8-sres:empty{display:none}",
+  ".ak8-shead{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 4px 2px;font-weight:700}",
+  ".ak8-shit{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;margin:2px 0;min-height:44px}",
+  ".ak8-sk{width:1.4em;text-align:center;opacity:.8}",
+  ".ak8-scrbtns{flex-wrap:wrap;gap:6px;margin:8px 0 0}",
+  ".ak8-moved{margin:2px 2px 8px}",
+  ".linkbtn{background:none;border:0;padding:0;min-height:0;color:var(--accent);text-decoration:underline;font:inherit;cursor:pointer}",
+  ".ak8-custbtn{font-size:1.15rem}",
+  ".ak8-cust details.subsec{margin:6px 0}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
