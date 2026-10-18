@@ -11091,7 +11091,7 @@ function ciClick(accent) {
     if (ciCtx.state === "suspended") ciCtx.resume();
     var o = ciCtx.createOscillator(), g = ciCtx.createGain(), t = ciCtx.currentTime;
     o.frequency.value = accent ? 1500 : 1000; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-    o.connect(g); g.connect(ciCtx.destination); o.start(t); o.stop(t + 0.09);
+    o.connect(g); g.connect(ciCtx.destination); o.start(t); o.stop(t + 0.09); akCtxNap(ciCtx);
   } catch (e) {}
 }
 function ciFlash(n) {
@@ -13291,7 +13291,8 @@ function akMetPump() {
   }
 }
 function akMetClick(accent, t) {
-  try { var c = AKM.ctx, o = c.createOscillator(), g = c.createGain(); o.frequency.value = accent ? 1600 : 1050; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.45, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.08); } catch (e) {}
+  akCtxWake(AKM.ctx);
+  try { var c = AKM.ctx, o = c.createOscillator(), g = c.createGain(); o.frequency.value = accent ? 1600 : 1050; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.45, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.08); akCtxNap(c); } catch (e) {}
 }
 function akMetFlash(n) {
   if (!AKM.on) return; var c = akToolsCfg(), el = document.getElementById("akbeat");
@@ -13595,7 +13596,7 @@ var AKP = { on: false, raf: 0, ev: null, idx: -1, start: 0, rate: 1, ctx: null, 
 function akPStop() { AKP.on = false; cancelAnimationFrame(AKP.raf); clearTimeout(AKP.timer); AKP.idx = -1; akPMark(null); akPPaint(); var cd = document.getElementById("akcount"); if (cd) cd.remove(); }
 function akPPaint() { Array.prototype.forEach.call(document.querySelectorAll(".akmplay"), function (b) { b.textContent = AKP.on ? "■ Stop" : "▶ Play"; b.classList.toggle("on", AKP.on); }); }
 function akPAudio() { if (!AKP.ctx) { try { AKP.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (AKP.ctx && AKP.ctx.state === "suspended") AKP.ctx.resume(); return AKP.ctx; }
-function akPClick(accent) { var c = AKP.ctx; if (!c) return; try { var t = c.currentTime + 0.005, o = c.createOscillator(), g = c.createGain(); o.frequency.value = accent ? 1600 : 1050; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.08); } catch (e) {} }
+function akPClick(accent) { var c = AKP.ctx; if (!c) return; akCtxWake(c); try { var t = c.currentTime + 0.005, o = c.createOscillator(), g = c.createGain(); o.frequency.value = accent ? 1600 : 1050; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06); o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.08); akCtxNap(c); } catch (e) {} }
 function akPFlash(n, beatSec) {
   var c = akToolsCfg(), el = document.getElementById("akbeat");
   if (!el) { el = h("div", { id: "akbeat", "aria-hidden": "true" }); document.body.appendChild(el); }
@@ -15054,8 +15055,8 @@ function bmEnsure() {
   var a = BM.audio = document.createElement("audio"); a.preload = "auto"; a.setAttribute("playsinline", "");
   a.addEventListener("ended", function () { bmNext(true); });
   a.addEventListener("timeupdate", bmPaintTime);
-  a.addEventListener("play", function () { BM.playing = true; if (!BM.priming) bmPaint(); });
-  a.addEventListener("pause", function () { BM.playing = false; bmPaint(); });
+  a.addEventListener("play", function () { akCtxWake(BM.ctx); BM.playing = true; if (!BM.priming) bmPaint(); });
+  a.addEventListener("pause", function () { akCtxNap(BM.ctx, 1500); BM.playing = false; bmPaint(); });
   try {
     var AC = window.AudioContext || window.webkitAudioContext;
     if (AC) { BM.ctx = new AC(); var src = BM.ctx.createMediaElementSource(a); BM.gain = BM.ctx.createGain(); BM.gain.gain.value = 0; src.connect(BM.gain); BM.gain.connect(BM.ctx.destination); }
@@ -17809,16 +17810,28 @@ akCss("ak4-write", [
 
 /* ---------------------------------------------------------------- 1. sound */
 var akAC = null;
-/* "smooth" (settings().hear.smooth, on unless turned off) asks the device for a bigger sound buffer: a few hundredths of a second
-   slower to start, but no crackle when the phone is busy. Off = the quickest response. */
-function akAudioSmooth() { try { var c = settings().hear; return !c || c.smooth !== false; } catch (e) { return true; } }
+/* the sound buffer (settings().hear.buf): "quick" (smallest, may crackle on a busy device), "smooth" (about 0.02 s, the browser's
+   "playback" size) or "extra" (about 0.15 s, the default from 11.0.1: a slower tablet keeps up even while its screen is busy).
+   Older settings had only smooth on/off: off = quick, on = extra. A bigger buffer only delays when a sound starts. */
+function akAudioBuf() { try { var c = settings().hear || {}; if (c.buf === "quick" || c.buf === "smooth" || c.buf === "extra") return c.buf; return c.smooth === false ? "quick" : "extra"; } catch (e) { return "extra"; } }
+function akAudioSmooth() { return akAudioBuf() !== "quick"; }
+var AK_AUDIO_HINT = { quick: "interactive", smooth: "playback", extra: 0.15 };
 function akAudio() {
   if (!akAC) {
     var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
-    try { akAC = new AC({ latencyHint: akAudioSmooth() ? "playback" : "interactive" }); } catch (e) { try { akAC = new AC(); } catch (e2) { return null; } }
+    var hints = [AK_AUDIO_HINT[akAudioBuf()], "playback"];
+    for (var i = 0; i < hints.length && !akAC; i++) { try { akAC = new AC({ latencyHint: hints[i] }); } catch (e) {} }
+    if (!akAC) { try { akAC = new AC(); } catch (e2) { return null; } }
   }
   if (akAC.state === "suspended") akAC.resume(); return akAC;
 }
+/* the other little sound players (count-in, metronome, practice clicks, break music) have their own; a quiet one is put to sleep
+   after a while so only one keeps the device's sound thread busy. Call after each use; akCtxWake when it must play again. */
+function akCtxNap(ctx, ms) {
+  if (!ctx || !ctx.suspend) return; clearTimeout(ctx._akNap);
+  ctx._akNap = setTimeout(function () { try { if (ctx.state === "running") ctx.suspend(); } catch (e) {} }, ms || 4000);
+}
+function akCtxWake(ctx) { if (!ctx) return; clearTimeout(ctx._akNap); try { if (ctx.state === "suspended") ctx.resume(); } catch (e) {} }
 /* start again with the new buffer size (the next sound makes a fresh one) */
 function akAudioReset() { var a = akAC; akAC = null; if (a) { try { a.close(); } catch (e) {} } }
 function akHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
@@ -22892,8 +22905,9 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "11.0";
+var AK_VERSION = "11.0.1";
 var AK_WHATS_NEW = [
+  "Chord sound crackle fix: the guitar sound is now far lighter for the device to play (a strum is one sound, the body and room are worked out ahead), and Smooth sound has a new Extra smooth setting, now the default (Settings > Songs and shows > Chord sound). Under it you can see the sound buffer your device gave.",
   "Requests on/off right on the playing screen: a Requests button (Button bar, side buttons or the Info bar corner). Off, the QR page says you're not taking requests right now.",
   "Save zoom: pinch the words or the chord chart (smaller works too), then tap 💾 Save zoom, for this song or as the default for every song.",
   "Your theme picture can show behind the playing screen, with a dark layer slider: 0% shows the theme like on other pages, 100% hides it (Settings > Playing screen > Zoom and the theme behind the song).",
@@ -23534,9 +23548,11 @@ akCss("ak9-a", [
      the writing wheel (akPwPlay) on guitar and ukulele
    - tap to hear: chord pictures anywhere, the chord pop-up, chord panel tiles, Place chords chips (hear each chord as you place it).
      On the playing screen, tapping a chord in the lyrics stays silent unless "also while playing" is on.
-   - settings().hear { type, pos, oct, dir, speed, ring, vol, tap, live, place, smooth } (Settings > Songs and shows > Chord sound)
-   - crackle fix (10.1): one light shared output (akSndOut: compressor, echo-line room, soft limit), sounds scheduled AK_LEAD ahead,
-     stopping a string fades a separate damper (akVoiceOff), strings worked out before a strum starts, smooth = bigger sound buffer */
+   - settings().hear { type, pos, oct, dir, speed, ring, vol, tap, live, place, smooth, buf } (Settings > Songs and shows > Chord sound)
+   - crackle fix (10.1): one light shared output (akSndOut, soft limit), sounds scheduled AK_LEAD ahead,
+     stopping a string fades a separate damper (akVoiceOff), strings worked out before a strum starts, smooth = bigger sound buffer
+   - tablet crackle fix (11.0.1): body, room and level worked into each string (akGtrBake), a strum is one sound (akGtrStrum),
+     the sound buffer can be Extra smooth (hear.buf, ak4_learn akAudio), the other sound players sleep when quiet (akCtxNap) */
 
 var AK_HEAR_DEF = { type: "steel", pos: "mine", oct: 0, dir: "down", speed: "normal", ring: "normal", vol: 80, tap: true, live: false, place: true, smooth: true };
 (function () {
@@ -23555,42 +23571,64 @@ var AK_GTR = {
 var AKG = { cache: {}, bus: null, ac: null, voices: {}, last: { k: "", t: 0 } };
 function akGtrType() { var ins = settings().instrument; if (ins === "ukulele") return "uke"; var t = akHearCfg().type; return AK_GTR[t] ? t : "steel"; }
 function akGtrSpec(type) { if (type === "uke") { var u = clone(AK_GTR.nylon); u.t60 = [2.2, 1.3]; u.bright = 0.42; u.body = [[220, 4, 1.3], [440, 2, 1.2]]; u.lp = 5200; u.hp = 120; return u; } return AK_GTR[type] || AK_GTR.steel; }
-/* the shared output (built-in guitar and your recorded sound): a gentle compressor, a small room, and a soft safety limit so
-   stacked strings can never go past full scale and crackle. The room is three short echo lines instead of a convolver: the same
-   feel for a fraction of the work, so the device's sound thread keeps up even on a busy phone. */
+/* the shared output (built-in guitar and your recorded sound): one gain and a soft safety limit so stacked strings can never go
+   past full scale. Tablet fix (11.0.1): the body, the room and the level are worked out into each string's sound once (akGtrBake),
+   and a strum plays as ONE sound, so the device's sound thread has almost nothing left to do while chords ring. Before, the
+   compressor, the room's echo lines, six tone filters and a sound per string ran all the time, and a slower tablet fell behind
+   (short clicks while chords rang). */
+var AK_SND_LVL = 0.45;
 function akSndOut(ac) {
   if (AKG.out && AKG.out.ac === ac) return AKG.out;
-  var inp = ac.createGain(), comp = ac.createDynamicsCompressor(), master = ac.createGain(), safe = ac.createWaveShaper();
-  try { comp.threshold.value = -16; comp.knee.value = 10; comp.ratio.value = 3; comp.attack.value = 0.006; comp.release.value = 0.25; } catch (e) {}
-  master.gain.value = 0.45;
+  var inp = ac.createGain(), safe = ac.createWaveShaper();
+  inp.gain.value = AK_SND_LVL;
   /* soft limit: straight up to 0.6, then curving into 0.98 at most */
   var n = 2048, cv = new Float32Array(n);
   for (var i = 0; i < n; i++) { var x = (i / (n - 1)) * 4 - 2, ax = Math.abs(x); cv[i] = (x < 0 ? -1 : 1) * (ax <= 0.6 ? ax : 0.6 + 0.38 * Math.tanh((ax - 0.6) / 0.38)); }
   safe.curve = cv; try { safe.oversample = "none"; } catch (e) {}
-  inp.connect(comp); comp.connect(master); master.connect(safe); safe.connect(ac.destination);
-  var room = ac.createGain(); /* each sound sends some of itself here (akSndRoom) */
-  [[0.023, 0.42, 3200], [0.031, 0.38, 2800], [0.041, 0.34, 2400]].forEach(function (r) {
-    var dl = ac.createDelay(0.1), fb = ac.createGain(), tone = ac.createBiquadFilter(), wet = ac.createGain();
-    dl.delayTime.value = r[0]; fb.gain.value = r[1]; tone.type = "lowpass"; tone.frequency.value = r[2]; wet.gain.value = 0.33;
-    room.connect(dl); dl.connect(tone); tone.connect(fb); fb.connect(dl); tone.connect(wet); wet.connect(master);
-  });
-  AKG.out = { ac: ac, inp: inp, room: room };
+  inp.connect(safe); safe.connect(ac.destination);
+  AKG.out = { ac: ac, inp: inp };
   return AKG.out;
 }
-/* send a node into the room, amt = how much (0..1) */
-function akSndRoom(ac, node, amt) { var g = ac.createGain(); g.gain.value = amt * 1.6; node.connect(g); g.connect(akSndOut(ac).room); }
-/* one input per guitar type: its body filters and tone, into the shared output */
+/* one input per guitar type, straight into the shared output (its body and tone are in the strings themselves now) */
 function akGtrBus(type) {
   var ac = akAudio(); if (!ac) return null;
-  if (AKG.ac !== ac) { AKG.ac = ac; AKG.bus = {}; AKG.cache = {}; AKG.voices = {}; }
-  if (AKG.bus[type]) return AKG.bus[type];
-  var sp = akGtrSpec(type), out = akSndOut(ac), inp = ac.createGain(), node = inp;
-  var hp = ac.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = sp.hp; node.connect(hp); node = hp;
-  sp.body.forEach(function (b) { var f = ac.createBiquadFilter(); f.type = "peaking"; f.frequency.value = b[0]; f.gain.value = b[1]; f.Q.value = b[2]; node.connect(f); node = f; });
-  var lp = ac.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = sp.lp; lp.Q.value = 0.5; node.connect(lp); node = lp;
-  node.connect(out.inp); akSndRoom(ac, node, sp.room);
-  AKG.bus[type] = { inp: inp };
+  if (AKG.ac !== ac) { AKG.ac = ac; AKG.bus = {}; AKG.voices = {}; if (AKG.sr !== ac.sampleRate) { AKG.cache = {}; AKG.sr = ac.sampleRate; } }
+  if (!AKG.bus[type]) AKG.bus[type] = { inp: akSndOut(ac).inp };
   return AKG.bus[type];
+}
+/* a two-pole filter run over the samples in place, the same maths as the browser's BiquadFilter
+   (lowpass/highpass q in dB like the browser's, peaking q plain, db = boost) */
+function akBiq(x, n, sr, type, f, q, db) {
+  var w = 2 * Math.PI * Math.min(f, sr * 0.49) / sr, cs = Math.cos(w), sn = Math.sin(w), b0, b1, b2, a0, a1, a2;
+  if (type === "peaking") { var A = Math.pow(10, db / 40), al = sn / (2 * q); b0 = 1 + al * A; b1 = -2 * cs; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cs; a2 = 1 - al / A; }
+  else { var al2 = sn / (2 * Math.pow(10, q / 20)); a0 = 1 + al2; a1 = -2 * cs; a2 = 1 - al2; if (type === "lowpass") { b0 = (1 - cs) / 2; b1 = 1 - cs; b2 = b0; } else { b0 = (1 + cs) / 2; b1 = -(1 + cs); b2 = b0; } }
+  b0 /= a0; b1 /= a0; b2 /= a0; a1 /= a0; a2 /= a0;
+  var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (var i = 0; i < n; i++) { var v = x[i], y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v; y2 = y1; y1 = y; x[i] = y; }
+}
+/* the guitar's body and tone, then the small room (three short echo lines, as the old shared output had), into a dry string.
+   dry: the string's samples (n of them); out: a longer buffer for the room's tail. The old compressor turned the strings down by
+   about AK_SND_DRY on the way; that is now a fixed part of the level. */
+var AK_SND_DRY = 1.1;
+function akGtrBake(sp, dry, n, out, sr) {
+  akBiq(dry, n, sr, "highpass", sp.hp, 1);
+  sp.body.forEach(function (b) { akBiq(dry, n, sr, "peaking", b[0], b[2], b[1]); });
+  akBiq(dry, n, sr, "lowpass", sp.lp, 0.5);
+  /* each echo line: what goes in comes out D samples later, darkened (a lowpass), is sent round again (fb) and heard (0.33) */
+  var m = out.length, amt = sp.room * 1.6, L = [[0.023, 0.42, 3200], [0.031, 0.38, 2800], [0.041, 0.34, 2400]].map(function (r) {
+    var w = 2 * Math.PI * r[2] / sr, cs = Math.cos(w), al = Math.sin(w) / (2 * Math.pow(10, 1 / 20)), a0 = 1 + al, D = Math.round(r[0] * sr);
+    return { D: D, ring: new Float32Array(D), fb: r[1], b0: (1 - cs) / 2 / a0, b1: (1 - cs) / a0, a1: -2 * cs / a0, a2: (1 - al) / a0 };
+  });
+  for (var li = 0; li < 3; li++) {
+    var q = L[li], ring = q.ring, D = q.D, fb = q.fb, b0 = q.b0, b1 = q.b1, a1 = q.a1, a2 = q.a2, x1 = 0, x2 = 0, y1 = 0, y2 = 0, p = 0;
+    for (var j = 0; j < m; j++) {
+      var v = ring[p], y = b0 * v + b1 * x1 + b0 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v; y2 = y1; y1 = y;
+      ring[p] = (j < n ? dry[j] * amt : 0) + fb * y; p++; if (p === D) p = 0;
+      out[j] += 0.33 * y;
+    }
+  }
+  for (var k = 0; k < n; k++) out[k] += dry[k] * AK_SND_DRY;
+  var f = Math.min(m, Math.floor(sr * 0.03)); for (var e = 0; e < f; e++) out[m - 1 - e] *= e / f;
 }
 /* the string itself, worked out once per note and guitar and kept */
 function akGtrBuf(type, midi, ringK) {
@@ -23599,7 +23637,7 @@ function akGtrBuf(type, midi, ringK) {
   var sp = akGtrSpec(type), hz = 440 * Math.pow(2, (midi - 69) / 12);
   var x = Math.max(0, Math.min(1, (midi - 40) / 36)), t60 = (sp.t60[0] * (1 - x) + sp.t60[1] * x) * ringK;
   if (midi > 76) t60 *= Math.pow(0.97, midi - 76);
-  var dur = Math.min(8, t60 * 1.05 + 0.1), n = Math.floor(sr * dur), buf = ac.createBuffer(1, n, sr), out = buf.getChannelData(0);
+  var dur = Math.min(8, t60 * 1.05 + 0.1), n = Math.floor(sr * dur), out = new Float32Array(n);
   /* delay = N samples + half a sample from the loop filter + a fraction from an all-pass, so every note is in tune */
   var D = sr / hz - 0.5, N = Math.max(2, Math.floor(D - 0.1)), frac = D - N, C = (1 - frac) / (1 + frac);
   var g = Math.pow(0.001, 1 / (hz * t60)), line = new Float32Array(N), pk = Math.max(1, Math.round(sp.pick * N));
@@ -23620,6 +23658,7 @@ function akGtrBuf(type, midi, ringK) {
   var sn = Math.floor(sr * 0.004); for (var k = 0; k < sn && k < n; k++) out[k] += sp.snap * (Math.random() * 2 - 1) * (1 - k / sn);
   for (var a = 0; a < 48 && a < n; a++) out[a] *= a / 48;
   var fade = Math.floor(sr * 0.08); for (var e = 0; e < fade; e++) out[n - 1 - e] *= e / fade;
+  var buf = ac.createBuffer(1, n + Math.floor(sr * 0.25), sr); akGtrBake(sp, out, n, buf.getChannelData(0), sr);
   AKG.cache[key] = buf;
   return buf;
 }
@@ -23655,8 +23694,6 @@ function akGtrNote(midi, o) {
   var end0 = v.src.onended; v.src.onended = function () { end0(); if (AKG.voices[sid] === v) delete AKG.voices[sid]; };
   if (o.len) { try { v.g.gain.setValueAtTime(vol, t + o.len); v.g.gain.linearRampToValueAtTime(0, t + o.len + 0.15); v.src.stop(t + o.len + 0.2); } catch (e) {} }
 }
-/* work out a chord's strings before it plays (the first time a note is heard it takes a moment) */
-function akGtrWarm(notes) { var ac = akAudio(); if (!ac) return; var type = akGtrType(); if (!akGtrBus(type)) return; var ringK = AK_RING[akHearCfg().ring] || 1; notes.forEach(function (x) { akGtrBuf(type, Math.round(x.m), ringK); }); }
 /* stop everything ringing (used before a new run of chords) */
 function akGtrHush() { var ac = AKG.ac; if (!ac) return; Object.keys(AKG.voices).forEach(function (k) { akVoiceOff(AKG.voices[k], 0, ac); }); AKG.voices = {}; }
 
@@ -23713,9 +23750,63 @@ var AK_HEAR_SPEED = { slow: 0.045, normal: 0.024, fast: 0.012 };
 function akHearStrum(notes, o) {
   o = o || {}; var cfg = akHearCfg(), dir = o.dir || cfg.dir, gap = dir === "arp" ? 0.16 : (AK_HEAR_SPEED[cfg.speed] || 0.024), list = dir === "up" ? notes.slice().reverse() : notes, t = o.when || 0;
   var each = (o.vol == null ? 0.75 : o.vol) / Math.sqrt(Math.max(1, list.length)) * 1.5;
-  akGtrWarm(list);
-  list.forEach(function (x, i) { akGtrNote(x.m, { when: t + i * gap * (0.85 + Math.random() * 0.3), vol: each * (dir === "up" ? 0.85 : 1) * (i === 0 && dir !== "up" ? 1.1 : 1), str: x.s }); });
+  var parts = list.map(function (x, i) { return { m: x.m, at: t + i * gap * (0.85 + Math.random() * 0.3), vol: each * (dir === "up" ? 0.85 : 1) * (i === 0 && dir !== "up" ? 1.1 : 1), str: x.s }; });
+  /* your recorded notes play one by one; the built-in guitar plays the whole strum as one sound */
+  if (typeof akSmpReady === "function" && akSmpReady()) { parts.forEach(function (p) { akGtrNote(p.m, { when: p.at, vol: p.vol, str: p.str }); }); return; }
+  akGtrStrum(parts);
 }
+/* parts = [{ m, at (seconds from now), vol }]: the strings are added up into one sound here, so a strum costs the device's sound
+   thread one voice instead of six. A new strum stops what was ringing, like the strumming hand does. */
+function akGtrStrum(parts) {
+  var ac = akAudio(); if (!ac || !parts.length) return;
+  try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+  var type = akGtrType(), bus = akGtrBus(type); if (!bus) return;
+  var cfg = akHearCfg(), ringK = AK_RING[cfg.ring] || 1, sr = ac.sampleRate, t0 = Math.min.apply(null, parts.map(function (p) { return p.at; }));
+  var bufs = parts.map(function (p) { return akGtrBuf(type, Math.round(p.m), ringK); }), len = 0;
+  parts.forEach(function (p, i) { p.off = Math.round((p.at - t0) * sr); len = Math.max(len, p.off + bufs[i].length); });
+  var mix = ac.createBuffer(1, len, sr), d = mix.getChannelData(0);
+  parts.forEach(function (p, i) {
+    var s = bufs[i].getChannelData(0), n = s.length, off = p.off, v = p.vol * (0.9 + Math.random() * 0.2) * (cfg.vol / 100) * 0.9;
+    for (var j = 0; j < n; j++) d[off + j] += v * s[j];
+  });
+  var t = akSndAt(ac, t0); /* the strum is worked out first, so the time is fresh */
+  Object.keys(AKG.voices).forEach(function (k) { akVoiceOff(AKG.voices[k], t, ac); });
+  var sid = type + "strum", v = AKG.voices[sid] = akVoiceStart(ac, mix, 1, 1, t, bus.inp);
+  var end0 = v.src.onended; v.src.onended = function () { end0(); if (AKG.voices[sid] === v) delete AKG.voices[sid]; };
+}
+/* get the playing song's chords ready in quiet moments, so the first tap on one is quick (a string with its body and room takes
+   a moment to work out on a tablet; after that it is kept) */
+var AKW = { q: [], on: false, sid: "", wait: null };
+function akGtrPrep(song) {
+  var c = akHearCfg(); if (!c.tap || akPiano()) return;
+  var names = [], ms = {}, capo = Number(song.capo) || 0;
+  try { names = akSongChords(song).filter(function (x, i, a) { return a.indexOf(x) === i; }).slice(0, 24); } catch (e) { return; }
+  names.forEach(function (n) { try { akHearNotes(n, { capo: capo }).forEach(function (x) { ms[Math.round(x.m)] = 1; }); } catch (e) {} });
+  AKW.q = Object.keys(ms).map(Number);
+  akGtrPrepRun();
+}
+function akGtrPrepRun() {
+  if (AKW.on || !AKW.q.length) return;
+  if (!akAC) { /* sound can only start after a tap: get ready on the next one */
+    if (!AKW.wait) {
+      AKW.wait = function () { document.removeEventListener("pointerdown", AKW.wait, true); document.removeEventListener("keydown", AKW.wait, true); AKW.wait = null; akAudio(); setTimeout(akGtrPrepRun, 400); };
+      document.addEventListener("pointerdown", AKW.wait, true); document.addEventListener("keydown", AKW.wait, true);
+    }
+    return;
+  }
+  AKW.on = true;
+  var later = window.requestIdleCallback ? function (f) { requestIdleCallback(f, { timeout: 1500 }); } : function (f) { setTimeout(f, 60); };
+  var step = function () {
+    var m = AKW.q.shift(); if (m == null) { AKW.on = false; return; }
+    try { var type = akGtrType(); if (akGtrBus(type)) akGtrBuf(type, m, AK_RING[akHearCfg().ring] || 1); } catch (e) {}
+    later(step);
+  };
+  later(step);
+}
+(function () {
+  var ph0 = akPlayHooks;
+  akPlayHooks = function (song, item) { ph0(song, item); try { if (song && AKW.sid !== song.id) { AKW.sid = song.id; akGtrPrep(song); } } catch (e) {} };
+})();
 /* the song whose capo counts: the one playing, or the one passed in */
 function akHearCapo(o) { var song = o && o.song || (S.play && typeof curSong === "function" ? curSong() : null); return song ? Number(song.capo) || 0 : 0; }
 /* play a chord by its shape name (what you finger). o = { v, song, capo, when, dir, force } */
@@ -23793,7 +23884,14 @@ function akHearPlace(c, song) { var cfg = akHearCfg(); if (!cfg.tap || !cfg.plac
 })();
 
 /* ---------------------------------------------------------------- settings */
-function akHearDemo() { akGtrHush(); ["G", "C", "D", "Em"].forEach(function (c, i) { akHearChord(c, { when: i * 1.1, capo: 0 }); }); }
+function akHearDemo() { akGtrHush(); ["G", "C", "D", "Em"].forEach(function (c, i) { akHearChord(c, { when: i * 1.1, capo: 0 }); }); setTimeout(akHearDevPaint, 400); }
+/* what the device gave the sound: its rate and buffer (shown under Smooth sound, so a crackle report can say what was in use) */
+function akHearDevPaint() {
+  var el = document.querySelector(".akh-dev"); if (!el) return;
+  var ac = akAC; if (!ac) { el.textContent = "Tap ▶ Try it to see this device's sound buffer."; return; }
+  var ms = function (x) { return x > 0 ? Math.round(x * 1000) + " ms" : "?"; };
+  el.textContent = "This device: " + ac.sampleRate + " Hz, sound buffer " + ms(ac.baseLatency) + (ac.outputLatency > 0 ? ", speaker delay " + ms(ac.outputLatency) : "") + ".";
+}
 function akSettingsExtra14(c) {
   c.again("songs-and-shows");
   c.section("Chord sound", "How chords sound when you tap them, strum them or hear a rhythm");
@@ -23808,7 +23906,10 @@ function akSettingsExtra14(c) {
   c.select("Strum speed", function () { return hc.speed; }, function (v) { hc.speed = v; }, [["slow", "Slow"], ["normal", "Normal"], ["fast", "Fast"]]);
   c.select("How long notes ring", function () { return hc.ring; }, function (v) { hc.ring = v; }, [["short", "Short"], ["normal", "Normal"], ["long", "Long"]]);
   c.range("Volume", function () { return hc.vol; }, function (v) { hc.vol = v; }, 10, 100, 5, function (v) { return v + "%"; });
-  c.check("Smooth sound (no crackle when the phone is busy; starts a split second later)", function () { return hc.smooth !== false; }, function (v) { hc.smooth = v; akAudioReset(); });
+  c.select("Smooth sound (a bigger sound buffer: no crackle on a busy phone or tablet, chords start a moment later)", akAudioBuf, function (v) { hc.buf = v; hc.smooth = v !== "quick"; akAudioReset(); akHearDevPaint(); },
+    [["extra", "Extra smooth (best for tablets)"], ["smooth", "Smooth"], ["quick", "Quickest (may crackle)"]]);
+  c.out.appendChild(h("p", { class: "hint akh-dev" }));
+  akHearDevPaint();
   c.out.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: akHearDemo }, "▶ Try it (G C D Em)")));
   c.out.appendChild(h("p", { class: "hint" }, "Chords play in your tuning (" + (akPiano() ? "piano" : INSTR[akHearIns()].name + ", " + t.name) + ") with the song's capo, so you hear what your " + (akHearIns() === "ukulele" ? "ukulele" : "guitar") + " would. The ukulele always uses a nylon-string sound." + (akPiano() ? " On the piano, chords play as piano chords." : "")));
   if (typeof akSettingsExtra15 === "function") akSettingsExtra15(c);
@@ -25460,12 +25561,13 @@ function akSmpReady() {
   if (!L || L.ac !== ac) akSmpLoad(id);
   return null;
 }
-/* your sound goes into the same output as the built-in guitar (gentle compressor, small room, safety limit; ak9_b akSndOut) */
+/* your sound goes into the same output as the built-in guitar (one level and a safety limit; ak9_b akSndOut). It already has
+   your room in it, so it gets no extra room. */
 function akSmpBus() {
   var ac = akAudio(); if (!ac) return null;
   if (AKS.ac === ac && AKS.bus) return AKS.bus;
   AKS.ac = ac; AKS.voices = {};
-  var inp = ac.createGain(); inp.gain.value = 0.65; inp.connect(akSndOut(ac).inp); akSndRoom(ac, inp, 0.08);
+  var inp = ac.createGain(); inp.gain.value = 0.65 * AK_SND_DRY; inp.connect(akSndOut(ac).inp);
   AKS.bus = { inp: inp };
   return AKS.bus;
 }
