@@ -3646,6 +3646,7 @@ function viewShow() {
     items.push({ label: "Move to bottom of this set", disabled: i === st.songIds.length - 1, onClick: function () { snap("move song"); st.songIds.push(st.songIds.splice(i, 1)[0]); save(); draw(); } });
     st.locks = st.locks || {};
     items.push({ label: st.locks[id] ? "Unlock position" : "Lock position (sorting skips it)", onClick: function () { if (st.locks[id]) delete st.locks[id]; else st.locks[id] = true; save(); draw(); } });
+    if (typeof akSetRecToggle === "function") items.push({ label: st.rec && st.rec[id] ? "● Don't record this song" : "● Record this song (when recording only marked songs)", onClick: function () { akSetRecToggle(st, id); draw(); } });
     items.push({ sep: true });
     items.push({ label: "Remove from this set (stays in library)", danger: true, onClick: function () { snap("remove song from set"); st.songIds.splice(i, 1); save(); draw(); toastUndo("Removed from the set."); } });
     menu(anchor, items);
@@ -3811,7 +3812,7 @@ function viewShow() {
               h("div", { class: "pick" + (onK ? " on" : ""), "aria-hidden": "true" }, onK ? "✓" : ""),
               h("div", { class: "num" }, String(i + 1)),
               h("button", { class: "main-btn", onClick: function () { if (S.selSongs[kk]) delete S.selSongs[kk]; else S.selSongs[kk] = 1; draw(); } },
-                h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : ""))));
+                h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (st.rec && st.rec[id] ? "● " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : ""))));
             return;
           }
           akAnnRows(sh, st, id, draw).forEach(function (r) { blk.appendChild(r); });
@@ -3820,7 +3821,7 @@ function viewShow() {
             h("div", { class: "num" }, String(i + 1)),
             h("button", { class: "tick" + (sh.played[id] ? " on" : ""), "aria-pressed": sh.played[id] ? "true" : "false", "aria-label": "Played", onClick: function () { if (sh.played[id]) { delete sh.played[id]; uncountPlay(id, sh.id); } else countPlay(id, sh.id, { setName: st.name, setNo: sh.sets.indexOf(st) + 1, manual: 1 }); save(); draw(); } }, sh.played[id] ? "✓" : ""),
             h("button", { class: "main-btn" + (sh.played[id] ? " done" : ""), onClick: function () { saveNow(); var idx = 0, c = 0; sh.sets.forEach(function (x, xi) { x.songIds.forEach(function (sid, k) { if (findSong(sid)) { if (xi === si && k === i) idx = c; c++; } }); }); playShow(sh, idx, function () { go("show", { showId: sh.id }); }); } },
-              h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : "")),
+              h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (st.rec && st.rec[id] ? "● " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : "")),
             s && typeof akTapPlays === "function" && akTapPlays() ? h("button", { class: "icon akedit", "aria-label": "Edit " + s.title, title: "Edit", onClick: function () { saveNow(); go("song", { songId: id }); } }, "✎") : null,
             h("button", { class: "icon", "aria-label": "Song options", onClick: function () { songMenu(this, st, si, i); } }, "⋯")));
         });
@@ -22822,9 +22823,16 @@ akCss("ak8-banter", [
 
 var AK_VERSION = "10.0";
 var AK_WHATS_NEW = [
-  "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one. It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
-  "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end",
-  "The QR pop-up and the printed sign show the short address in words for people who'd rather type it",
+  (typeof akPersonal !== "function" || akPersonal() ? "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one." : "A short web address for your request page, like yoursite/r/yourname, instead of the long one.") + " It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
+  "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end. The QR pop-up and printed sign show the address in words too",
+  "Record my show: auto-scroll can start an audio or video recording of each song, only the songs you mark in a set list (● Record this song), or the whole night. A countdown (30 seconds to start) before scrolling, a level meter with a clipping warning, a camera preview, and a beep to line up a second recording (Settings > Songs and shows > Record my show)",
+  "Recordings are saved every few seconds, so a crash or a dead battery keeps almost everything, and they're kept in My recordings (Shows ⋯) to save, share, or add to the song",
+  "Artist info: your stage name, bios in five lengths with copy buttons and letter counts, a photo gallery, links, booking and a tech rider. Your photo and tagline can show on the request page",
+  "Signs, posters and calendars: request QR sign, tips, follow me, set list board, show poster, month and season calendars from your Shows, and a press kit. Save as PDF or picture, as layers for Figma or Inkscape, as separate see-through pictures for Canva, and your shows as a CSV for Canva Bulk Create",
+  "Separate layouts for phone and for tablet / computer: each keeps its own layout style, arranged blocks, playing-screen buttons and bars, picked by screen size (Settings > Look > Layout style)",
+  "On a wide screen, tapping a song shows it next to the song list; tap it again to play. On a phone, less-used controls fold under More",
+  "Sync between my devices: one tap merges the phone and the tablet through your GitHub backup (or a sync file, no account needed), keeping the changes made on both. Play counts add up, and the newer edit wins when a song was changed on both",
+  "Send audio and photos: song audio, pictures, show photos and artist photos in one file that goes back into the same songs on the other device",
   "Fixed: the website link on your request page had a typo (now AEDRYANGANTT.com)"
 ];
 
@@ -26410,6 +26418,1754 @@ akCss("ak11-a", [
   ".ak11-line{white-space:pre-wrap;word-break:break-all;font-size:.8rem;padding:8px;border:1px solid var(--line);border-radius:8px;max-height:180px;overflow:auto}",
   ".ak11-qrurl{margin:8px 0 0;font-size:1.05rem;word-break:break-all}.ak11-chg{margin:8px 0}.ak11-chg summary{cursor:pointer}"
 ].join("\n"));
+
+/* ================= Akashic Chords: batch 10, phase B (Record my show, on this device) =================
+   settings().rec = { mode, video, facing, mic, q, vq, lead, leadAlways, tail, beep }:
+   - mode "off" | "song" (every song, one file each) | "marked" (only set list songs marked ● Record) | "show" (one file for the whole
+     night, with a list of where each song starts).
+   - Pressing auto-scroll is the signal: recording starts, then a lead-in countdown (lead seconds, default 30; only from the top of a
+     song) before scrolling begins. Press auto-scroll again during the countdown to start now. leadAlways: the countdown even when not recording.
+   - Per song: stops tail seconds after the scrolling reaches the end, or when you move to another song or leave the playing screen.
+     The whole show stops at End show or with ■ Stop.
+   - q "voice" | "music" (compressed, about 100 / 300 MB for 3 hours) | "lossless" (WAV, audio only, about 2 GB for 3 hours).
+     vq "low" | "med" | "high" when video is on (camera facing "environment" | "user").
+   - Saved as it records: pieces every 4 seconds go to IndexedDB "akashic-rec" (stores recs, chunks), so a crash or a dead battery
+     keeps everything up to the last few seconds (akRecRecover marks those as "interrupted" on the next start).
+   - Level meter and a clipping warning (REC pill on top of every screen, and the Recorder window with the camera preview).
+   - beep: a short beep at the start of each recording, a sync mark for lining up a second recording later.
+   - Set list entries: st.rec[songId] = true (show editor ⋯ > ● Record this song). */
+
+var AKREC = { stream: null, sKey: "", mr: null, proc: null, rec: null, seq: 0, t0: 0, lead: null, tailT: 0, meter: null, clipUntil: 0, clips: 0, peak: 0, keepT: 0, panelEl: null, wake: null };
+var AK_REC_Q = { voice: 96000, music: 192000 }, AK_REC_VQ = { low: [640, 360, 1000000], med: [1280, 720, 2500000], high: [1920, 1080, 5000000] };
+
+function akRecCfg() {
+  var s = settings(), d = { mode: "off", video: false, facing: "environment", mic: "", q: "music", vq: "med", lead: 30, leadAlways: false, tail: 15, beep: true };
+  if (!s.rec || typeof s.rec !== "object") s.rec = {};
+  Object.keys(d).forEach(function (k) { if (s.rec[k] === undefined) s.rec[k] = d[k]; });
+  return s.rec;
+}
+function akRecOk() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.indexedDB); }
+function akRecLossless() { var c = akRecCfg(); return c.q === "lossless" && !c.video; }
+
+/* ---------------------------------------------------------------- storage: IndexedDB akashic-rec */
+var akRecDbP = null;
+function akRecDb() {
+  if (!akRecDbP) akRecDbP = new Promise(function (res, rej) {
+    var r = indexedDB.open("akashic-rec", 1);
+    r.onupgradeneeded = function () { var db = r.result; db.createObjectStore("recs", { keyPath: "id" }); db.createObjectStore("chunks"); };
+    r.onsuccess = function () { res(r.result); }; r.onerror = function () { akRecDbP = null; rej(r.error); };
+  });
+  return akRecDbP;
+}
+function akRecTx(store, mode, fn) {
+  return akRecDb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction(store, mode), out; out = fn(tx.objectStore(store)); tx.oncomplete = function () { res(out && "result" in out ? out.result : out); }; tx.onerror = function () { rej(tx.error); }; tx.onabort = function () { rej(tx.error); }; }); });
+}
+function akRecPutMeta(r) { return akRecTx("recs", "readwrite", function (st) { st.put(r); }); }
+function akRecList() { return akRecTx("recs", "readonly", function (st) { return st.getAll(); }).then(function (a) { return (a || []).sort(function (x, y) { return y.at - x.at; }); }); }
+function akRecChunkKey(id, n) { return id + "|" + ("00000" + n).slice(-6); }
+function akRecPutChunk(id, n, blob) { return akRecTx("chunks", "readwrite", function (st) { st.put(blob, akRecChunkKey(id, n)); }); }
+function akRecChunks(id) { return akRecTx("chunks", "readonly", function (st) { return st.getAll(IDBKeyRange.bound(id + "|", id + "|~")); }); }
+function akRecDelete(id) {
+  return akRecTx("chunks", "readwrite", function (st) { st.delete(IDBKeyRange.bound(id + "|", id + "|~")); }).then(function () { return akRecTx("recs", "readwrite", function (st) { st.delete(id); }); });
+}
+/* the whole recording as one file */
+function akRecBlob(r) {
+  return akRecChunks(r.id).then(function (parts) {
+    if (r.kind !== "wav") return new Blob(parts, { type: r.mime });
+    var bytes = parts.reduce(function (a, b) { return a + b.size; }, 0);
+    return new Blob([akWavHeader(bytes, r.sr, r.ch)].concat(parts), { type: "audio/wav" });
+  });
+}
+function akWavHeader(bytes, sr, ch) {
+  var b = new ArrayBuffer(44), v = new DataView(b);
+  function s(o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); }
+  s(0, "RIFF"); v.setUint32(4, Math.min(0xFFFFFFFF, 36 + bytes), true); s(8, "WAVE"); s(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sr, true); v.setUint32(28, sr * ch * 2, true); v.setUint16(32, ch * 2, true); v.setUint16(34, 16, true);
+  s(36, "data"); v.setUint32(40, Math.min(0xFFFFFFFF, bytes), true);
+  return b;
+}
+function akRecExt(r) { return r.kind === "wav" ? "wav" : /mp4/.test(r.mime) ? (r.video ? "mp4" : "m4a") : /ogg/.test(r.mime) ? "ogg" : "webm"; }
+function akRecFileName(r) {
+  var d = new Date(r.at), p = function (n) { return ("0" + n).slice(-2); };
+  return (d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + "." + p(d.getMinutes()) + " " + (r.title || "Recording")).replace(/[\\\/:*?"<>|]+/g, "-").slice(0, 90) + "." + akRecExt(r);
+}
+
+/* ---------------------------------------------------------------- the microphone / camera */
+function akRecMime(video) {
+  var c = video ? ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"] : ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+  if (!window.MediaRecorder) return "";
+  for (var i = 0; i < c.length; i++) try { if (MediaRecorder.isTypeSupported(c[i])) return c[i]; } catch (e) {}
+  return "";
+}
+function akRecStreamKey() { var c = akRecCfg(); return [c.video ? 1 : 0, c.facing, c.mic, c.vq].join("|"); }
+function akRecGetStream() {
+  var c = akRecCfg(), key = akRecStreamKey();
+  if (AKREC.stream && AKREC.sKey === key && AKREC.stream.getTracks().every(function (t) { return t.readyState === "live"; })) return Promise.resolve(AKREC.stream);
+  if (AKREC.rec) return Promise.resolve(AKREC.stream); /* never swap the stream under a running recording */
+  akRecRelease(true);
+  if (!akRecOk()) return Promise.reject(new Error("This browser can't record."));
+  var a = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 2 } };
+  if (c.mic) a.deviceId = { exact: c.mic };
+  var v = false;
+  if (c.video) { var q = AK_REC_VQ[c.vq] || AK_REC_VQ.med; v = { facingMode: { ideal: c.facing }, width: { ideal: q[0] }, height: { ideal: q[1] }, frameRate: { ideal: 30 } }; }
+  return navigator.mediaDevices.getUserMedia({ audio: a, video: v }).catch(function (e) {
+    if (c.mic && e && e.name === "OverconstrainedError") { delete a.deviceId; return navigator.mediaDevices.getUserMedia({ audio: a, video: v }); }
+    throw e;
+  }).then(function (st) { AKREC.stream = st; AKREC.sKey = key; akRecMeterStart(st); akRecPanelFill(); return st; });
+}
+/* let go of the microphone (unless recording) */
+function akRecRelease(force) {
+  if (AKREC.rec && !force) return;
+  akRecMeterStop();
+  if (AKREC.stream) AKREC.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+  AKREC.stream = null; AKREC.sKey = "";
+  var v = AKREC.panelEl && AKREC.panelEl.querySelector("video"); if (v) v.srcObject = null;
+}
+
+/* ---------------------------------------------------------------- level meter and clipping */
+function akRecMeterStart(st) {
+  akRecMeterStop();
+  try {
+    var ac = akAudio(); if (!ac || !st.getAudioTracks().length) return;
+    var src = ac.createMediaStreamSource(st), an = ac.createAnalyser(); an.fftSize = 2048; src.connect(an);
+    var buf = new Float32Array(an.fftSize), m = { src: src, an: an, raf: 0, last: 0 };
+    AKREC.meter = m;
+    var loop = function (t) {
+      if (AKREC.meter !== m) return;
+      m.raf = requestAnimationFrame(loop);
+      if (t - m.last < 60) return; m.last = t;
+      an.getFloatTimeDomainData(buf);
+      var pk = 0, sum = 0; for (var i = 0; i < buf.length; i++) { var x = Math.abs(buf[i]); if (x > pk) pk = x; sum += buf[i] * buf[i]; }
+      akRecLevel(pk, Math.sqrt(sum / buf.length));
+    };
+    m.raf = requestAnimationFrame(loop);
+  } catch (e) {}
+}
+function akRecMeterStop() { var m = AKREC.meter; if (!m) return; cancelAnimationFrame(m.raf); try { m.src.disconnect(); } catch (e) {} AKREC.meter = null; }
+/* pk, rms 0..1; also called by tests */
+function akRecLevel(pk, rms) {
+  var now = Date.now();
+  AKREC.peak = Math.max(pk, AKREC.peak * 0.9);
+  if (pk >= 0.985) { if (now > AKREC.clipUntil) AKREC.clips++; AKREC.clipUntil = now + 1500; }
+  var db = rms > 0 ? 20 * Math.log(rms) / Math.LN10 : -90, pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100)), clip = now < AKREC.clipUntil;
+  Array.prototype.forEach.call(document.querySelectorAll(".ak11-meter"), function (el) {
+    var bar = el.firstChild; if (bar) bar.style.width = pct.toFixed(0) + "%";
+    el.classList.toggle("hot", pct > 85); el.classList.toggle("clip", clip);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".ak11-clipmsg"), function (el) { el.textContent = clip ? "Too loud! Turn the input down." : AKREC.clips ? "Peaked " + AKREC.clips + (AKREC.clips === 1 ? " time" : " times") : ""; el.classList.toggle("on", clip); });
+}
+function akRecMeterEl() { return h("div", { class: "ak11-meter", role: "meter", "aria-label": "Input level" }, h("span")); }
+
+/* ---------------------------------------------------------------- recording */
+function akRecWant(it) {
+  var c = akRecCfg(); if (!it || c.mode === "off") return false;
+  if (c.mode === "marked") { var sh = it.showId ? findShow(it.showId) : null, st = sh && sh.sets[(it.setNo || 1) - 1]; return !!(st && st.rec && st.rec[it.songId]); }
+  return true;
+}
+function akRecStorageOk(secs, cb) {
+  var c = akRecCfg(), bps = akRecLossless() ? 48000 * 2 * 2 : (c.video ? (AK_REC_VQ[c.vq] || AK_REC_VQ.med)[2] : 0) / 8 + (AK_REC_Q[c.q] || AK_REC_Q.music) / 8;
+  var need = bps * secs;
+  if (!navigator.storage || !navigator.storage.estimate) { cb(true); return; }
+  try { if (navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  navigator.storage.estimate().then(function (e) {
+    var free = (e.quota || 0) - (e.usage || 0);
+    if (!e.quota || free > need) { cb(true); return; }
+    var mins = Math.floor(free / bps / 60);
+    confirmBox("There's room for about " + mins + " minutes of recording on this device. Record anyway?", "Record", function () { cb(true); }, function () { cb(false); });
+  }, function () { cb(true); });
+}
+/* start a recording. o = { kind: "song" | "show" | "manual", it } */
+function akRecStart(o) {
+  o = o || {};
+  if (AKREC.rec) return Promise.resolve(AKREC.rec);
+  var c = akRecCfg(), it = o.it || (S.play ? curItem() : null), song = it ? findSong(it.songId) : null, gig = typeof akRunGig === "function" ? akRunGig() : null;
+  var secs = o.kind === "show" ? 3 * 3600 : song ? durOf(song) * 1.5 + c.lead + c.tail : 600;
+  var go = function () {
+    return akRecGetStream().then(function (st) {
+      var id = "rec" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), lossless = akRecLossless();
+      var r = { id: id, at: Date.now(), kind: lossless ? "wav" : "media", video: !!c.video && st.getVideoTracks().length > 0, mime: "", bytes: 0, n: 0, secs: 0, done: false,
+        what: o.kind === "show" ? "show" : "song", songId: o.kind === "show" ? "" : (song ? song.id : ""), title: o.kind === "show" ? (gig ? akGigTitle(gig) : "Whole show") + " (whole show)" : song ? song.title : "Recording",
+        gigId: gig ? gig.id : "", gig: gig ? akGigTitle(gig) : "", set: it ? it.setName || "" : "", marks: [], q: c.q };
+      AKREC.rec = r; AKREC.seq = 0; AKREC.t0 = performance.now(); AKREC.clips = 0;
+      if (lossless) akRecStartWav(st, r); else akRecStartMedia(st, r);
+      if (r.what === "show" && song) akRecMark(song);
+      akRecPutMeta(r).catch(function () {});
+      akRecWakeOn();
+      if (c.beep) akRecBeep();
+      akRecPaint(); akRecPanelFill();
+      return r;
+    });
+  };
+  return new Promise(function (res, rej) { akRecStorageOk(secs, function (ok) { if (!ok) { rej(new Error("no room")); return; } go().then(res, function (e) { akRecFail(e); rej(e); }); }); });
+}
+function akRecFail(e) {
+  var n = e && e.name;
+  toast(n === "NotAllowedError" ? "The app isn't allowed to use the " + (akRecCfg().video ? "camera and microphone" : "microphone") + ". Allow it in the browser's site settings." : n === "NotFoundError" ? "No microphone or camera found." : "Couldn't start recording" + (e && e.message ? ": " + e.message : "."));
+}
+function akRecStartMedia(st, r) {
+  var c = akRecCfg(), mime = akRecMime(r.video), opt = { audioBitsPerSecond: AK_REC_Q[c.q] || AK_REC_Q.music };
+  if (mime) opt.mimeType = mime;
+  if (r.video) opt.videoBitsPerSecond = (AK_REC_VQ[c.vq] || AK_REC_VQ.med)[2];
+  var tracks = r.video ? st.getTracks() : st.getAudioTracks();
+  var mr = new MediaRecorder(new MediaStream(tracks), opt);
+  r.mime = mr.mimeType || mime || (r.video ? "video/webm" : "audio/webm");
+  mr.ondataavailable = function (e) { if (e.data && e.data.size) akRecSave(r, e.data); };
+  mr.onerror = function () { toast("The recording stopped with an error. What was recorded so far is kept."); akRecStop(); };
+  mr.start(4000);
+  AKREC.mr = mr;
+}
+function akRecStartWav(st, r) {
+  var ac = akAudio(), src = ac.createMediaStreamSource(st), ch = Math.min(2, Math.max(1, (st.getAudioTracks()[0].getSettings() || {}).channelCount || 2));
+  var proc = ac.createScriptProcessor(4096, ch, ch), parts = [], len = 0, sink = ac.createGain(); sink.gain.value = 0;
+  r.sr = ac.sampleRate; r.ch = ch; r.mime = "audio/wav";
+  proc.onaudioprocess = function (e) {
+    var n = e.inputBuffer.length, out = new Int16Array(n * ch);
+    for (var k = 0; k < ch; k++) { var d = e.inputBuffer.getChannelData(k); for (var i = 0; i < n; i++) { var x = Math.max(-1, Math.min(1, d[i])); out[i * ch + k] = x < 0 ? x * 0x8000 : x * 0x7FFF; } }
+    parts.push(out); len += n;
+    if (len >= r.sr * 4) { akRecSave(r, new Blob(parts)); parts = []; len = 0; }
+  };
+  src.connect(proc); proc.connect(sink); sink.connect(ac.destination);
+  AKREC.proc = { proc: proc, src: src, sink: sink, flush: function () { if (parts.length) akRecSave(r, new Blob(parts)); parts = []; len = 0; } };
+}
+function akRecSave(r, blob) {
+  var n = r.n++; r.bytes += blob.size;
+  r.secs = Math.round((performance.now() - (AKREC.rec === r ? AKREC.t0 : 0)) / 1000) || r.secs;
+  akRecPutChunk(r.id, n, blob).then(function () { if (n % 5 === 0 || r.done) akRecPutMeta(r).catch(function () {}); }, function () { toast("Couldn't save the recording (storage full?)."); });
+}
+/* stop; cb(r) once the last piece is saved */
+function akRecStop(cb) {
+  var r = AKREC.rec; clearTimeout(AKREC.tailT); AKREC.tailT = 0;
+  if (!r) { if (cb) cb(null); return; }
+  AKREC.rec = null;
+  var fin = function () {
+    r.done = true; r.secs = Math.round((performance.now() - AKREC.t0) / 1000); r.end = Date.now();
+    akRecPutMeta(r).then(function () { if (cb) cb(r); }, function () { if (cb) cb(r); });
+    akRecWakeOff(); akRecPaint(); akRecPanelFill();
+    toast("Recording saved: " + r.title + " (" + fmtTime(r.secs) + ")", { label: "Recordings", fn: function () { go("recs"); } });
+    if (S.view !== "play" && !akRecFloatOpen()) AKREC.keepT = setTimeout(function () { akRecRelease(); }, 2000);
+  };
+  if (AKREC.mr) { var mr = AKREC.mr; AKREC.mr = null; mr.onstop = function () { setTimeout(fin, 50); }; try { mr.stop(); } catch (e) { fin(); } }
+  else if (AKREC.proc) { var p = AKREC.proc; AKREC.proc = null; try { p.src.disconnect(); p.proc.disconnect(); p.sink.disconnect(); } catch (e) {} p.flush(); fin(); }
+  else fin();
+}
+/* the whole-show file: where each song starts */
+function akRecMark(song) {
+  var r = AKREC.rec; if (!r || r.what !== "show" || !song) return;
+  var t = Math.round((performance.now() - AKREC.t0) / 1000), last = r.marks[r.marks.length - 1];
+  if (last && last.songId === song.id && t - last.t < 120) return;
+  r.marks.push({ t: t, songId: song.id, title: song.title });
+  akRecPutMeta(r).catch(function () {});
+}
+function akRecBeep() {
+  try {
+    var ac = akAudio(), t = ac.currentTime + 0.05, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 1000; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.15);
+  } catch (e) {}
+}
+function akRecWakeOn() { try { if (navigator.wakeLock && !AKREC.wake) navigator.wakeLock.request("screen").then(function (w) { AKREC.wake = w; w.addEventListener("release", function () { if (AKREC.wake === w) AKREC.wake = null; }); }, function () {}); } catch (e) {} }
+function akRecWakeOff() { try { if (AKREC.wake) AKREC.wake.release(); } catch (e) {} AKREC.wake = null; }
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden && AKREC.rec) { AKREC.hiddenAt = Date.now(); return; }
+  if (!document.hidden && AKREC.rec) { akRecWakeOn(); if (AKREC.hiddenAt && Date.now() - AKREC.hiddenAt > 3000) toast("The app was in the background: the recording may have a gap there (phones pause the microphone).", null); AKREC.hiddenAt = 0; }
+});
+
+/* ---------------------------------------------------------------- the lead-in countdown */
+function akRecLeadIn(secs, then, startedRec) {
+  akRecLeadEnd();
+  var left = secs, el = h("div", { class: "ak11-lead", role: "timer", "aria-live": "polite" }), num = h("div", { class: "ak11-lead-n" }, String(left));
+  var L = { el: el, t: 0, then: then, startedRec: startedRec };
+  el.appendChild(h("div", { class: "ak11-lead-box" },
+    h("div", { class: "ak11-lead-h" }, AKREC.rec ? "● Recording. Scrolling starts in" : "Scrolling starts in"), num, akRecMeterEl(), h("div", { class: "ak11-clipmsg" }),
+    h("div", { class: "row center" }, h("button", { class: "primary", onClick: function () { akRecLeadGo(); } }, "Start now ▶"), h("button", { onClick: function () { akRecLeadCancel(); } }, "Cancel"))));
+  document.body.appendChild(el);
+  AKREC.lead = L;
+  L.t = setInterval(function () { left--; num.textContent = String(Math.max(0, left)); if (left <= 0) akRecLeadGo(); }, 1000);
+}
+function akRecLeadEnd() { var L = AKREC.lead; if (!L) return null; clearInterval(L.t); if (L.el.parentNode) L.el.parentNode.removeChild(L.el); AKREC.lead = null; return L; }
+function akRecLeadGo() { var L = akRecLeadEnd(); if (L && S.view === "play" && S.play) L.then(); }
+function akRecLeadCancel() {
+  var L = akRecLeadEnd();
+  if (L && L.startedRec && AKREC.rec && AKREC.rec.id === L.startedRec) { var r = AKREC.rec; akRecStop(function () { akRecDelete(r.id); }); toast("Cancelled; that recording was thrown away."); }
+}
+
+/* ---------------------------------------------------------------- hooked into playing */
+(function () {
+  var sa = startAuto;
+  startAuto = function () {
+    if (AKREC.lead) { akRecLeadGo(); return; }
+    var self = this, args = arguments, real = function () { return sa.apply(self, args); };
+    if (!S.play || S.layout) return real();
+    var c = akRecCfg(), it = curItem(), song = curSong(), sc = scroller(), top = !sc || sc.scrollTop < 5;
+    var want = akRecWant(it) && akRecOk();
+    var leadS = (want || c.leadAlways) && top && c.lead > 0 ? c.lead : 0;
+    if (want) {
+      if (AKREC.rec && AKREC.rec.what === "song" && AKREC.rec.songId !== it.songId) akRecStop();
+      if (AKREC.rec && AKREC.rec.what === "show") akRecMark(song);
+      if (!AKREC.rec) {
+        var p = akRecStart({ kind: c.mode === "show" ? "show" : "song", it: it });
+        if (leadS) { p.then(function (r) { if (AKREC.lead) AKREC.lead.startedRec = r.id; akRecLeadHead(); }, function () {}); akRecLeadIn(leadS, real, ""); return; }
+        p.then(function () {}, function () {});
+        return real();
+      }
+      clearTimeout(AKREC.tailT); AKREC.tailT = 0;
+    }
+    if (leadS) { akRecLeadIn(leadS, real, ""); return; }
+    return real();
+  };
+  var se = akOnSongEnd;
+  akOnSongEnd = function () {
+    var out = se.apply(this, arguments);
+    var r = AKREC.rec, c = akRecCfg();
+    if (r && r.what === "song") { clearTimeout(AKREC.tailT); AKREC.tailEnd = Date.now() + c.tail * 1000; AKREC.tailT = setTimeout(function () { if (AKREC.rec === r) akRecStop(); }, c.tail * 1000); akRecPaint(); }
+    return out;
+  };
+  var re = akRunEnd;
+  akRunEnd = function () { var out = re.apply(this, arguments); if (AKREC.rec && AKREC.rec.what === "show") akRecStop(); return out; };
+})();
+function akRecLeadHead() { var L = AKREC.lead; if (!L) return; var hd = L.el.querySelector(".ak11-lead-h"); if (hd) hd.textContent = "● Recording. Scrolling starts in"; }
+/* a per-song recording stops when you move to another song or leave the playing screen (after a short grace) */
+setInterval(function () {
+  var r = AKREC.rec;
+  if (r && r.what === "song" && !AKREC.tailT) {
+    var here = S.view === "play" && S.play && curItem() && curItem().songId === r.songId;
+    if (here) AKREC.awayAt = 0; else if (!AKREC.awayAt) AKREC.awayAt = Date.now(); else if (Date.now() - AKREC.awayAt > 2500) { AKREC.awayAt = 0; akRecStop(); }
+  }
+  if (!r && AKREC.stream && S.view !== "play" && !akRecFloatOpen() && !AKREC.keepT) akRecRelease();
+  if (AKREC.lead && S.view !== "play") akRecLeadEnd();
+  if (r) akRecPaint();
+}, 1000);
+
+/* ---------------------------------------------------------------- the REC pill and the Recorder window */
+function akRecPaint() {
+  var r = AKREC.rec, pill = document.querySelector(".ak11-pill");
+  if (!r) { if (pill) pill.parentNode.removeChild(pill); return; }
+  if (!pill) {
+    pill = h("button", { class: "ak11-pill", "aria-label": "Recording: open the recorder", onClick: function () { akRecFloat(); } }, h("span", { class: "dot" }), h("span", { class: "t" }), akRecMeterEl());
+    document.body.appendChild(pill);
+  }
+  var secs = Math.round((performance.now() - AKREC.t0) / 1000), tail = AKREC.tailT ? Math.max(0, Math.ceil((AKREC.tailEnd - Date.now()) / 1000)) : 0;
+  pill.querySelector(".t").textContent = "REC " + fmtTime(secs) + (tail ? " · stops in " + tail : "") + (r.what === "show" ? " · whole show" : "");
+}
+function akRecFloatOpen() { return typeof AK_FLOATS !== "undefined" && !!AK_FLOATS.rec && AK_FLOATS.rec.el.isConnected; }
+function akRecFloat() {
+  if (akRecFloatOpen()) { akFloatCfg("rec").min = false; akFloatFill("rec"); return; }
+  clearTimeout(AKREC.keepT); AKREC.keepT = 0;
+  akFloat("rec", { title: "Recorder", tabs: [["now", "Recorder"]], w: 340, h: 380, key: function () { return "rec"; }, onClose: function () { if (!AKREC.rec && S.view !== "play") akRecRelease(); },
+    body: function (tab, el) { if (!AKREC.panelEl) AKREC.panelEl = h("div", { class: "ak11-panel" }); el.appendChild(AKREC.panelEl); akRecPanelFill(); } });
+  akRecGetStream().catch(akRecFail);
+}
+function akRecPanelFill() {
+  var P = AKREC.panelEl; if (!P) return;
+  var c = akRecCfg(), r = AKREC.rec, vid = P.querySelector("video");
+  P.textContent = "";
+  if (c.video) {
+    if (!vid) { vid = h("video", { class: "ak11-prev", muted: true, playsinline: true, autoplay: true }); vid.muted = true; vid.setAttribute("playsinline", ""); }
+    if (AKREC.stream && vid.srcObject !== AKREC.stream) { vid.srcObject = AKREC.stream; try { vid.play(); } catch (e) {} }
+    P.appendChild(vid);
+  }
+  P.appendChild(h("div", { class: "ak11-st" }, r ? "● Recording " + (r.what === "show" ? "the whole show" : "“" + r.title + "”") : AKREC.stream ? "Ready. Watch the level while you play." : "Getting the microphone…"));
+  P.appendChild(akRecMeterEl()); P.appendChild(h("div", { class: "ak11-clipmsg" }));
+  P.appendChild(h("div", { class: "row" },
+    r ? h("button", { class: "primary ak11-stop", onClick: function () { akRecStop(); } }, "■ Stop") :
+      h("button", { class: "primary ak11-recbtn", onClick: function () { akRecStart({ kind: c.mode === "show" ? "show" : "manual" }).catch(function () {}); } }, "● Record now"),
+    h("button", { onClick: function () { go("recs"); } }, "My recordings")));
+  P.appendChild(h("label", { class: "fld" }, "When I press auto-scroll", h("select", { onChange: function () { c.mode = this.value; save(); akRecPanelFill(); } },
+    AK_REC_MODES.map(function (o) { return h("option", { value: o[0], selected: c.mode === o[0] }, o[1]); }))));
+  P.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.video, disabled: !!r, onChange: function () { c.video = this.checked; save(); akRecGetStream().catch(akRecFail); akRecPanelFill(); } }), "Video too (camera)"));
+}
+var AK_REC_MODES = [["off", "Don't record"], ["song", "Record every song (one file each)"], ["marked", "Record only songs marked ● Record in the set list"], ["show", "Record the whole show (one file)"]];
+
+/* Button bar / side button: rec */
+TB_ITEMS.push(["rec", "Record my show"]); TB_SHORT.rec = "Record";
+FAB_ITEMS.push(["rec", "Record my show"]); FAB_OFF.rec = 1; FAB_SHORT.rec = "Record";
+AK_IC.rec = "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z";
+function akExtraTb21(id, song, root) {
+  if (id === "rec") return h("button", { "aria-label": "Recorder", onClick: function () { akRecFloat(); } }, akIcon("rec"));
+  if (typeof akExtraTb22 === "function") return akExtraTb22(id, song, root);
+  return null;
+}
+function akExtraFab9(song, root) {
+  var o = { rec: function () { return h("button", { class: "fb", "aria-label": "Recorder", onClick: function () { akRecFloat(); this.blur(); } }, akIcon("rec")); } };
+  if (typeof akExtraFab10 === "function") Object.assign(o, akExtraFab10(song, root));
+  return o;
+}
+
+/* ---------------------------------------------------------------- after a crash: keep what was saved */
+function akRecRecover() {
+  return akRecList().then(function (list) {
+    var bad = list.filter(function (r) { return !r.done && (!AKREC.rec || AKREC.rec.id !== r.id); });
+    return Promise.all(bad.map(function (r) {
+      return akRecChunks(r.id).then(function (parts) {
+        r.done = true; r.interrupted = true; r.n = parts.length; r.bytes = parts.reduce(function (a, b) { return a + b.size; }, 0);
+        if (!r.secs) r.secs = r.n * 4;
+        return parts.length ? akRecPutMeta(r) : akRecDelete(r.id);
+      });
+    })).then(function () { var n = bad.length; if (n) toast(n === 1 ? "A recording was interrupted; what was recorded is kept in My recordings." : n + " interrupted recordings were kept in My recordings.", { label: "Open", fn: function () { go("recs"); } }); return n; });
+  }).catch(function () { return 0; });
+}
+setTimeout(function () { if (window.indexedDB) akRecRecover(); }, 3000);
+
+/* ---------------------------------------------------------------- My recordings */
+var AKRV = { list: null, open: "", url: "" };
+function viewRecs() {
+  var body = h("div", { class: "ak11-recs" }), c = akRecCfg();
+  body.appendChild(h("div", { class: "card" }, h("div", { class: "row", style: "margin:0;align-items:center" },
+    h("span", { class: "grow" }, "Recording: ", h("b", null, (AK_REC_MODES.filter(function (o) { return o[0] === c.mode; })[0] || [0, ""])[1])),
+    h("button", { onClick: function () { akRecFloat(); } }, "Recorder…"), h("button", { onClick: function () { go("settings"); setTimeout(function () { var d = document.querySelector('details[data-bk="record-my-show"]'); if (d) { d.open = true; var p = d.closest("details.setsec"); if (p) p.open = true; d.scrollIntoView({ block: "start" }); } }, 80); } }, "Settings"))));
+  var listEl = h("div"); body.appendChild(listEl);
+  function draw(list) {
+    listEl.textContent = "";
+    if (!list.length) { listEl.appendChild(h("p", { class: "hint" }, "No recordings yet. Turn on recording above, then press auto-scroll on the playing screen.")); return; }
+    var bytes = list.reduce(function (a, r) { return a + (r.bytes || 0); }, 0);
+    listEl.appendChild(h("p", { class: "hint" }, list.length + (list.length === 1 ? " recording, " : " recordings, ") + akRecSize(bytes) + " on this device. Recordings stay on this device and aren't in backups: save the ones you want to keep."));
+    var lastDay = "";
+    list.forEach(function (r) {
+      var day = new Date(r.at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) + (r.gig ? " · " + r.gig : "");
+      if (day !== lastDay) { lastDay = day; listEl.appendChild(h("h3", { class: "ak11-day" }, day)); }
+      var row = h("div", { class: "card ak11-rec" + (AKRV.open === r.id ? " open" : "") });
+      row.appendChild(h("div", { class: "row", style: "margin:0;align-items:center;flex-wrap:nowrap" },
+        h("span", { class: "ak11-kind", "aria-hidden": "true" }, r.video ? "🎥" : "🎙"),
+        h("span", { class: "grow" }, h("b", null, r.title || "Recording"), h("div", { class: "muted" }, new Date(r.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + " · " + fmtTime(r.secs || 0) + " · " + akRecSize(r.bytes || 0) + (r.kind === "wav" ? " · lossless" : "") + (r.interrupted ? " · interrupted" : ""))),
+        h("button", { "aria-label": "Play " + (r.title || "recording"), onClick: function () { AKRV.open = AKRV.open === r.id ? "" : r.id; draw(list); } }, AKRV.open === r.id ? "Close" : "▶"),
+        h("button", { class: "icon", "aria-label": "More for " + (r.title || "recording"), onClick: function () { akRecMenu(this, r, function () { load(); }); } }, "⋯")));
+      if (AKRV.open === r.id) {
+        var slot = h("div", { class: "ak11-player" }, "Loading…"); row.appendChild(slot);
+        akRecBlob(r).then(function (b) {
+          if (AKRV.url) URL.revokeObjectURL(AKRV.url); AKRV.url = URL.createObjectURL(b);
+          slot.textContent = ""; var m = h(r.video ? "video" : "audio", { controls: true, src: AKRV.url, preload: "metadata", playsinline: true }); slot.appendChild(m);
+          if ((r.marks || []).length) slot.appendChild(h("div", { class: "ak11-marks" }, r.marks.map(function (k) { return h("button", { class: "chip", onClick: function () { m.currentTime = k.t; m.play(); } }, fmtTime(k.t) + " " + k.title); })));
+        });
+      }
+      listEl.appendChild(row);
+    });
+  }
+  function load() { akRecList().then(function (l) { AKRV.list = l; draw(l); }, function () { listEl.textContent = "Couldn't open the recordings."; }); }
+  load();
+  return shell("My recordings", body);
+}
+AK_VIEWS.recs = viewRecs; AK_VIEW_TAB.recs = "shows";
+function akRecSize(b) { return b > 1e9 ? (b / 1e9).toFixed(1) + " GB" : b > 1e6 ? Math.round(b / 1e6) + " MB" : Math.max(0, Math.round(b / 1e3)) + " KB"; }
+function akRecMarksText(r) { return (r.title || "Recording") + "\n" + new Date(r.at).toLocaleString() + "\n\n" + (r.marks || []).map(function (k) { return fmtTime(k.t) + "  " + k.title; }).join("\n") + "\n"; }
+function akRecDownload(blob, name) { var a = h("a", { href: URL.createObjectURL(blob), download: name }); document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000); }
+function akRecMenu(btn, r, done) {
+  var items = [
+    { label: "⬇ Save to this device", onClick: function () { akRecBlob(r).then(function (b) { akRecDownload(b, akRecFileName(r)); }); } },
+    { label: "↗ Share… (Photos, Files, AirDrop, Drive)", onClick: function () {
+      akRecBlob(r).then(function (b) {
+        var f = new File([b], akRecFileName(r), { type: b.type });
+        if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f], title: r.title }).catch(function () {});
+        else { toast("This browser can't share files; saving it instead."); akRecDownload(b, f.name); }
+      });
+    } }
+  ];
+  if ((r.marks || []).length) items.push({ label: "📝 Save the song list with times", onClick: function () { akRecDownload(new Blob([akRecMarksText(r)], { type: "text/plain" }), akRecFileName(r).replace(/\.\w+$/, "") + " songs.txt"); } });
+  var song = r.songId ? findSong(r.songId) : null;
+  if (song && !r.video && (r.bytes || 0) < 60e6) items.push({ label: "🎵 Add to the song's recordings", onClick: function () { akRecBlob(r).then(function (b) { akAddAudio(song, b, r.secs, "Live " + new Date(r.at).toLocaleDateString() + (r.gig ? " · " + r.gig : "")); toast("Added to “" + song.title + "”."); }); } });
+  items.push({ label: "✎ Rename", onClick: function () { askText("Name", r.title || "", function (t) { if (t == null) return; r.title = t.trim() || r.title; akRecPutMeta(r).then(done); }); } });
+  items.push({ sep: true });
+  items.push({ label: "Delete…", danger: true, onClick: function () { confirmBox("Delete “" + (r.title || "this recording") + "” from this device? This can't be undone.", "Delete", function () { akRecDelete(r.id).then(done); }); } });
+  menu(btn, items);
+}
+
+/* ---------------------------------------------------------------- set list: ● Record this song */
+function akSetRecToggle(st, songId) { st.rec = st.rec || {}; if (st.rec[songId]) delete st.rec[songId]; else st.rec[songId] = true; save(); }
+
+/* ---------------------------------------------------------------- settings: Songs and shows > Record my show */
+function akSettingsExtra16(c) {
+  c.again("songs-and-shows");
+  c.section("Record my show", "Audio or video of each song or the whole night, started by auto-scroll");
+  var r = akRecCfg();
+  if (!akRecOk()) c.out.appendChild(h("p", { class: "hint" }, "This browser can't record. Try Chrome on Android or a computer, or Safari on an iPhone or iPad."));
+  c.select("When I press auto-scroll", function () { return r.mode; }, function (v) { r.mode = v; }, AK_REC_MODES);
+  c.select("Wait before scrolling starts (the recording starts right away)", function () { return r.lead; }, function (v) { r.lead = v; }, [[0, "Don't wait"], [5, "5 seconds"], [10, "10 seconds"], [15, "15 seconds"], [20, "20 seconds"], [30, "30 seconds"], [45, "45 seconds"], [60, "1 minute"]]);
+  c.check("Count down before scrolling even when I'm not recording", function () { return r.leadAlways; }, function (v) { r.leadAlways = v; });
+  c.select("Keep recording after a song's scrolling ends", function () { return r.tail; }, function (v) { r.tail = v; }, [[0, "Stop right away"], [5, "5 seconds"], [15, "15 seconds"], [30, "30 seconds"], [60, "1 minute"], [120, "2 minutes"]]);
+  c.check("Video too (camera and microphone)", function () { return r.video; }, function (v) { r.video = v; });
+  c.select("Camera", function () { return r.facing; }, function (v) { r.facing = v; }, [["environment", "Back camera"], ["user", "Front camera (selfie)"]]);
+  c.select("Video quality", function () { return r.vq; }, function (v) { r.vq = v; }, [["low", "Low (about 1.3 GB for 3 hours)"], ["med", "Medium, 720p (about 3.4 GB for 3 hours)"], ["high", "High, 1080p (about 7 GB for 3 hours)"]]);
+  c.select("Sound quality", function () { return r.q; }, function (v) { r.q = v; }, [["voice", "Smaller files (about 130 MB for 3 hours)"], ["music", "Music (about 260 MB for 3 hours)"], ["lossless", "Lossless WAV, audio only (about 2 GB for 3 hours)"]]);
+  var micSel = h("select", { "aria-label": "Microphone", onChange: function () { c.mark(); r.mic = this.value; c.refresh(); } }, h("option", { value: "" }, "The device's own microphone (or what's plugged in)"));
+  function fillMics() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then(function (ds) {
+      ds.filter(function (d) { return d.kind === "audioinput" && d.deviceId && d.deviceId !== "default"; }).forEach(function (d, i) {
+        if (!micSel.querySelector('option[value="' + d.deviceId.replace(/"/g, "") + '"]')) micSel.appendChild(h("option", { value: d.deviceId }, d.label || "Microphone " + (i + 1)));
+      });
+      micSel.value = r.mic || "";
+    }).catch(function () {});
+  }
+  fillMics();
+  c.out.appendChild(h("label", { class: "fld" }, "Microphone or audio interface", micSel));
+  c.out.appendChild(h("div", { class: "row" },
+    h("button", { onClick: function () { navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); fillMics(); toast("Found " + (micSel.options.length - 1) + " microphones."); }, akRecFail); } }, "Find my microphones"),
+    h("button", { onClick: function () { akRecFloat(); } }, "Try it (level meter" + (r.video ? " and camera" : "") + ")"),
+    h("button", { onClick: function () { go("recs"); } }, "My recordings")));
+  c.check("A short beep when a recording starts (lines up a second recording later)", function () { return r.beep; }, function (v) { r.beep = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "Recordings are saved every few seconds as they go, so a crash or a dead battery keeps almost everything. Keep the phone plugged in and the app on screen: phones pause the microphone when the screen locks or you switch apps."));
+  c.out.appendChild(h("p", { class: "hint" }, "A USB interface like a Focusrite Scarlett 2i2 shows up under Microphone on Android and computers (plug it in, then Find my microphones). On an iPhone or iPad it needs Apple's camera adapter and is used by itself when plugged in."));
+  if (typeof akSettingsExtra17 === "function") akSettingsExtra17(c);
+}
+
+akCss("ak11-b", [
+  ".ak11-meter{position:relative;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg) 15%,transparent);overflow:hidden;min-width:60px}",
+  ".ak11-meter>span{position:absolute;left:0;top:0;bottom:0;width:0;background:#3c3;transition:width .06s linear}.ak11-meter.hot>span{background:#e8b400}.ak11-meter.clip>span{background:#e33}",
+  ".ak11-clipmsg{min-height:1.2em;font-size:.85rem}.ak11-clipmsg.on{color:#e33;font-weight:800}",
+  ".ak11-pill{position:fixed;top:calc(6px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:70;display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:999px;border:1px solid #c22;background:color-mix(in srgb,#c22 22%,var(--bg));color:var(--fg);font-size:.85rem;font-weight:700;font-variant-numeric:tabular-nums;min-height:30px}",
+  ".ak11-pill .dot{width:11px;height:11px;border-radius:50%;background:#e33;animation:ak11b 1s infinite}.ak11-pill .ak11-meter{width:60px;height:7px}",
+  "@keyframes ak11b{50%{opacity:.3}}@media (prefers-reduced-motion:reduce){.ak11-pill .dot{animation:none}}",
+  ".ak11-lead{position:fixed;inset:0;z-index:80;display:grid;place-items:center;background:rgba(0,0,0,.45);pointer-events:none}",
+  ".ak11-lead-box{pointer-events:auto;min-width:min(86vw,320px);padding:16px 20px;border-radius:16px;background:var(--panel,var(--bg));border:1px solid var(--line);text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.4)}",
+  ".ak11-lead-n{font-size:5rem;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}.ak11-lead-h{font-weight:700}.ak11-lead .ak11-meter{margin:8px 0 2px}",
+  ".ak11-panel{display:flex;flex-direction:column;gap:6px}.ak11-prev{width:100%;max-height:40vh;background:#000;border-radius:8px;object-fit:contain}.ak11-st{font-weight:600}",
+  ".ak11-day{margin:14px 4px 4px;font-size:1rem}.ak11-rec{padding:8px 10px;margin:6px 0}.ak11-kind{font-size:1.3rem}.ak11-player{margin-top:8px}.ak11-player audio,.ak11-player video{width:100%;max-height:50vh}",
+  ".ak11-marks{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}.ak11-marks .chip{font-size:.8rem;padding:2px 8px;min-height:28px}",
+  ".ak11-recmark{color:#e33;font-size:.8em;margin-left:4px}"
+].join("\n"));
+
+/* ================= Akashic Chords: batch 10, phase C (Artist info, printable signs, posters and show calendars) =================
+   settings().artist = { stage, tagline, genres, instruments, home, bios: {line, social, short, medium, long}, links: [{label, url}],
+     email, phone, booking, rider, plot, photos: [{id, name, w, h}], main (photo id), onPage }:
+   - Artist info screen (AK_VIEWS.artist): name and tagline, bios in several lengths with character counts and Copy, a photo gallery
+     (IndexedDB "akashic-artist", not in backups), links and contact, tech rider and stage plot, press kit (PDF and a web page file).
+   - Printables (akPosterDialog): request QR sign, tips welcome, follow me, set list board, show poster, month calendar, upcoming shows.
+     Each design is a list of layers (akPosterLayers) drawn on a canvas (PNG / PDF via pdf-lib), written as a layered SVG, or exported
+     as one transparent PNG per layer (all the same size, so they line up when stacked in Canva) + a layout guide + the words as text
+     + shows.csv for Canva Bulk Create, in one .zip (akZip, no compression).
+   - onPage: the request page header gets the photo, tagline and one-line bio (profile.artist). */
+
+var AK_ARTIST_SEED = {
+  stage: "Aedryan Gantt", tagline: "Singer-songwriter and guitarist", genres: "Soul, R&B, funk, rock, folk", instruments: "Vocals, guitar", home: "Grass Valley, California",
+  bios: {
+    line: "Aedryan Gantt is a Grass Valley, California singer-songwriter and guitarist whose rich baritone blends soul, R&B, funk, rock and folk.",
+    social: "Singer-songwriter & guitarist | Soul, R&B, funk, folk | Grass Valley / Nevada City, CA | AEDRYANGANTT.com",
+    short: "Seattle-raised, Sierra-rooted: Aedryan Gantt brings a buttery, gritty baritone and a soul-meets-grunge heart to every song.",
+    medium: "Aedryan Gantt is a singer-songwriter and guitarist based in Grass Valley, California. With a rich, sometimes gritty baritone, he moves easily between soulful originals and heartfelt covers spanning soul, R&B, funk, rock, folk and jazz. He performs regularly at restaurants, wine bars and wineries throughout Grass Valley and Nevada City, and is a 5-star-reviewed choice for weddings, private parties and community events.",
+    long: "Aedryan Gantt is a singer-songwriter and guitarist based in Grass Valley, California, whose music blends rock-inspired soul, funk and R&B with touches of folk, indie and jazz.\n\nHis musical journey began as a child in Seattle, when his father gave him a keyboard at age six and his mother gave him a guitar at seven. It was the city's grunge scene that first lit his passion to pursue music, and that early grit still runs through his sound, now joined with the warmth of soul and R&B. At the center of it all is his voice: a rich baritone, buttery one moment and gritty the next.\n\nIn 2013 Aedryan released \"When Paths Cross,\" the first single from his debut album project, recorded at Sun Sound Studios with Jared May on bass and Mark McCartney on drums, with Aedryan on vocals, guitar and vibraphone. His original songs, such as \"Wildfire,\" sit alongside heartfelt renditions of classic rock, soul, funk and R&B in his live sets.\n\nA fixture of the Grass Valley and Nevada City music scene, Aedryan performs regularly at local restaurants, wine bars and wineries. He has played venues including Nevada City Winery and Elixart, and is a sought-after performer for weddings, private parties and community events. His clients give him consistent 5-star reviews, with one calling him \"the best voice in Nevada City.\""
+  },
+  links: [{ label: "Website", url: "https://AEDRYANGANTT.com" }, { label: "Instagram", url: "https://instagram.com/aedryan_g" }, { label: "Facebook", url: "https://facebook.com/aedryanganttmusic" }, { label: "Bandcamp", url: "https://aedryangantt.bandcamp.com" }],
+  booking: "Restaurants, wine bars, wineries, weddings, private parties and events across Northern California."
+};
+var AK_BIO_KINDS = [["line", "One line", 0], ["social", "Social media (150 letters)", 150], ["short", "Short", 0], ["medium", "Medium (a paragraph)", 0], ["long", "Full length (press kit)", 0]];
+
+function akArtist() {
+  var s = settings();
+  if (!s.artist || typeof s.artist !== "object") {
+    s.artist = akPersonal() ? JSON.parse(JSON.stringify(AK_ARTIST_SEED)) : { stage: "", tagline: "", genres: "", instruments: "", home: "", bios: {}, links: [], booking: "" };
+    s.artist.photos = []; s.artist.main = ""; s.artist.onPage = true;
+  }
+  var a = s.artist; a.bios = a.bios || {}; a.links = a.links || []; a.photos = a.photos || [];
+  ["email", "phone", "booking", "rider", "plot"].forEach(function (k) { if (a[k] === undefined) a[k] = ""; });
+  return a;
+}
+function akArtistName() { var a = akArtist(); return a.stage || (akLive().profile || {}).name || ""; }
+
+/* ---------------------------------------------------------------- photos (IndexedDB akashic-artist, store p) */
+var akArtDbP = null;
+function akArtDb() {
+  if (!akArtDbP) akArtDbP = new Promise(function (res, rej) { var r = indexedDB.open("akashic-artist", 1); r.onupgradeneeded = function () { r.result.createObjectStore("p"); }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { akArtDbP = null; rej(r.error); }; });
+  return akArtDbP;
+}
+function akArtPhotoPut(id, blob) { return akArtDb().then(function (db) { return new Promise(function (res, rej) { var tx = db.transaction("p", "readwrite"); tx.objectStore("p").put(blob, id); tx.oncomplete = res; tx.onerror = function () { rej(tx.error); }; }); }); }
+function akArtPhotoGet(id) { return akArtDb().then(function (db) { return new Promise(function (res) { var q = db.transaction("p").objectStore("p").get(id); q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); }; }); }); }
+function akArtPhotoDel(id) { return akArtDb().then(function (db) { return new Promise(function (res) { var tx = db.transaction("p", "readwrite"); tx.objectStore("p").delete(id); tx.oncomplete = res; tx.onerror = res; }); }); }
+var AKAU = {};
+function akArtPhotoUrl(id) { if (AKAU[id]) return Promise.resolve(AKAU[id]); return akArtPhotoGet(id).then(function (b) { if (!b) return ""; AKAU[id] = URL.createObjectURL(b); return AKAU[id]; }); }
+function akArtAddPhotos(files, done) {
+  var a = akArtist(), list = Array.prototype.slice.call(files || []), n = 0;
+  if (!list.length) return;
+  list.forEach(function (f) {
+    var url = URL.createObjectURL(f), im = new Image();
+    im.onload = function () {
+      var max = 2400, k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas");
+      cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k); cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+      var png = /png/.test(f.type);
+      cv.toBlob(function (b) {
+        var id = "ap" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        akArtPhotoPut(id, b).then(function () { a.photos.push({ id: id, name: f.name || "Photo", w: cv.width, h: cv.height }); if (!a.main) a.main = id; save(); if (++n === list.length && done) done(); }, function () { toast("Couldn't keep that picture (storage full?)."); });
+      }, png ? "image/png" : "image/jpeg", 0.9);
+    };
+    im.onerror = function () { URL.revokeObjectURL(url); toast("Couldn't read " + (f.name || "that picture") + "."); if (++n === list.length && done) done(); };
+    im.src = url;
+  });
+}
+/* a small headshot for the request page (data URL, about 20-40 KB) */
+function akArtThumb(id, px) {
+  return akArtPhotoUrl(id).then(function (u) {
+    if (!u) return "";
+    return new Promise(function (res) { var im = new Image(); im.onload = function () { var s = Math.min(im.naturalWidth, im.naturalHeight), cv = document.createElement("canvas"); cv.width = cv.height = px || 240; cv.getContext("2d").drawImage(im, (im.naturalWidth - s) / 2, (im.naturalHeight - s) / 4, s, s, 0, 0, cv.width, cv.height); res(cv.toDataURL("image/jpeg", 0.82)); }; im.onerror = function () { res(""); }; im.src = u; });
+  });
+}
+
+/* ---------------------------------------------------------------- the Artist info screen */
+function viewArtist() {
+  var a = akArtist(), body = h("div", { class: "ak11-artist" });
+  function fld(label, key, ph, rows) {
+    var inp = rows ? h("textarea", { rows: rows, placeholder: ph || "", "aria-label": label, onInput: function () { a[key] = this.value; save(); } }, a[key] || "") : h("input", { type: "text", value: a[key] || "", placeholder: ph || "", "aria-label": label, onInput: function () { a[key] = this.value; save(); } });
+    return h("label", { class: "fld" }, label, inp);
+  }
+  body.appendChild(h("div", { class: "card", "data-bk": "who" }, h("h3", null, "Who you are"),
+    fld("Stage name", "stage", "Your name as it goes on posters"), fld("Tagline (what you play, in a few words)", "tagline", "Singer-songwriter and guitarist"),
+    fld("Kinds of music", "genres", "Soul, R&B, folk…"), fld("Instruments", "instruments", "Vocals, guitar"), fld("Where you're based", "home", "Town, State")));
+  /* bios */
+  var bioBox = h("div", { class: "card", "data-bk": "bios" }, h("h3", null, "Bio"));
+  AK_BIO_KINDS.forEach(function (k) {
+    var cnt = h("span", { class: "muted ak11-cnt" }), ta = h("textarea", { rows: k[0] === "long" ? 10 : k[0] === "medium" ? 5 : 2, "aria-label": "Bio: " + k[1], onInput: function () { a.bios[k[0]] = this.value; save(); paint(); } }, a.bios[k[0]] || "");
+    function paint() { var n = (ta.value || "").length, w = (ta.value.trim().match(/\S+/g) || []).length; cnt.textContent = n + " letters, " + w + " words" + (k[2] && n > k[2] ? " (over " + k[2] + ")" : ""); cnt.classList.toggle("over", !!(k[2] && n > k[2])); }
+    paint();
+    bioBox.appendChild(h("div", { class: "ak11-bio" }, h("div", { class: "row", style: "margin:8px 0 2px;align-items:center" }, h("b", { class: "grow" }, k[1]), cnt, h("button", { class: "sm", onClick: function () { copyPlain(ta.value, "Copied."); } }, "Copy")), ta));
+  });
+  body.appendChild(bioBox);
+  /* photos */
+  var gal = h("div", { class: "ak11-gal" }), fileIn = h("input", { type: "file", accept: "image/*", multiple: true, style: "display:none", onChange: function () { akArtAddPhotos(this.files, drawGal); this.value = ""; } });
+  function drawGal() {
+    gal.textContent = "";
+    if (!a.photos.length) gal.appendChild(h("p", { class: "hint" }, "Add headshots, live photos, your logo. The ★ one goes on posters and your request page."));
+    a.photos.forEach(function (p) {
+      var img = h("img", { alt: p.name || "Photo" }), b = h("button", { class: "ak11-ph" + (a.main === p.id ? " main" : ""), "aria-label": (a.main === p.id ? "Main photo: " : "Photo: ") + (p.name || ""), onClick: function () {
+        menu(this, [{ label: "★ Use on posters and my request page", onClick: function () { a.main = p.id; save(); drawGal(); akArtistPublishSoon(); } },
+          { label: "⬇ Save", onClick: function () { akArtPhotoGet(p.id).then(function (bl) { if (bl) akRecDownload(bl, p.name || "photo.jpg"); }); } },
+          { sep: true }, { label: "Delete…", danger: true, onClick: function () { confirmBox("Delete this photo from the app?", "Delete", function () { akArtPhotoDel(p.id); a.photos = a.photos.filter(function (x) { return x !== p; }); if (a.main === p.id) a.main = a.photos[0] ? a.photos[0].id : ""; save(); drawGal(); }); } }]);
+      } }, img, a.main === p.id ? h("span", { class: "star" }, "★") : null);
+      akArtPhotoUrl(p.id).then(function (u) { img.src = u; });
+      gal.appendChild(b);
+    });
+  }
+  drawGal();
+  body.appendChild(h("div", { class: "card", "data-bk": "photos" }, h("h3", null, "Photos and graphics"), gal, fileIn,
+    h("div", { class: "row" }, h("button", { onClick: function () { fileIn.click(); } }, "+ Add photos")), h("p", { class: "hint" }, "Photos stay on this device (they're not in backups).")));
+  /* links and contact */
+  var linkBox = h("div");
+  function drawLinks() {
+    linkBox.textContent = "";
+    a.links.forEach(function (l, i) {
+      linkBox.appendChild(h("div", { class: "row ak11-link", style: "margin:4px 0;flex-wrap:nowrap" },
+        h("input", { type: "text", value: l.label || "", placeholder: "Instagram", "aria-label": "Link name", style: "flex:0 0 32%", onInput: function () { l.label = this.value; save(); } }),
+        h("input", { type: "url", value: l.url || "", placeholder: "https://…", "aria-label": "Link address", onInput: function () { l.url = this.value.trim(); save(); } }),
+        h("button", { class: "icon", "aria-label": "Remove link", onClick: function () { a.links.splice(i, 1); save(); drawLinks(); } }, "✕")));
+    });
+  }
+  drawLinks();
+  body.appendChild(h("div", { class: "card", "data-bk": "links" }, h("h3", null, "Links and contact"), linkBox,
+    h("div", { class: "row" }, h("button", { onClick: function () { a.links.push({ label: "", url: "" }); save(); drawLinks(); } }, "+ Add a link")),
+    fld("Booking email", "email", "you@example.com"), fld("Phone (optional)", "phone", ""), fld("What I play for (booking note)", "booking", "Restaurants, weddings, private parties…", 2),
+    h("p", { class: "hint" }, "Tip links (Venmo, Cash App…) come from Settings > Requests and tips, so they match your request page.")));
+  body.appendChild(h("div", { class: "card", "data-bk": "rider" }, h("h3", null, "For venues"),
+    fld("Tech rider (what I bring, what I need)", "rider", "I bring: PA, mic, guitar amp. I need: one outlet within 20 ft, a 6×8 ft space.", 4),
+    fld("Stage plot (where things go, left to right)", "plot", "Speaker L · Me + guitar · Speaker R; outlet behind me", 3)));
+  /* request page */
+  body.appendChild(h("div", { class: "card", "data-bk": "page" }, h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!a.onPage, onChange: function () { a.onPage = this.checked; save(); akArtistPublishSoon(); } }), "Show my photo, tagline and one-line bio at the top of my request page")));
+  /* make things */
+  body.appendChild(h("div", { class: "card", "data-bk": "make" }, h("h3", null, "Make"),
+    h("div", { class: "ak11-make" },
+      h("button", { class: "primary", onClick: function () { akPosterDialog("request"); } }, "🖨 Signs and posters…"),
+      h("button", { onClick: function () { akPosterDialog("month"); } }, "📅 Show calendar…"),
+      h("button", { onClick: function () { akPressKitPdf(); } }, "📄 Press kit (PDF)"),
+      h("button", { onClick: function () { akPressKitHtml(); } }, "🌐 Press kit (web page file)"),
+      h("button", { onClick: function () { akShowsCsv(true); } }, "📊 Shows for Canva (CSV)"))));
+  return shell("Artist info", body);
+}
+AK_VIEWS.artist = viewArtist; AK_VIEW_TAB.artist = "shows";
+/* Shows ⋯ and the phone's More menu: Artist info, signs and posters, recordings */
+function akArtistMenuItems() { return [{ label: "🎤 Artist info", onClick: function () { go("artist"); } }, { label: "🖨 Signs, posters and calendars…", onClick: function () { akPosterDialog("request"); } }, { label: "🎙 My recordings", onClick: function () { go("recs"); } }]; }
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
+    var el = vs.apply(this, arguments);
+    try { var bar = el.querySelector(".topbar"), more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return (b.textContent || "").trim() === "⋯"; })[0]; if (more) akMenuPlus(more, akArtistMenuItems); } catch (e) {}
+    return el;
+  };
+  var tb = tabBarEl;
+  tabBarEl = function () { var bar = tb.apply(this, arguments); try { var m = bar && bar.querySelector(".ak8-more"); if (m) akMenuPlus(m, [{ label: "🎤 Artist info", onClick: function () { go("artist"); } }]); } catch (e) {} return bar; };
+})();
+
+/* the request page shows the artist (photo, tagline, one-line bio) */
+var AKAP = { t: 0, thumb: "", thumbFor: "" };
+function akArtistPublishSoon() { clearTimeout(AKAP.t); AKAP.t = setTimeout(function () { akArtistThumbReady().then(function () { if (AKL.conn) akLivePublish().catch(function () {}); }); }, 600); }
+function akArtistThumbReady() { var a = akArtist(); if (!a.main || !a.onPage) { AKAP.thumb = ""; AKAP.thumbFor = ""; return Promise.resolve(); } if (AKAP.thumbFor === a.main) return Promise.resolve(); return akArtThumb(a.main, 240).then(function (d) { AKAP.thumb = d; AKAP.thumbFor = a.main; }); }
+(function () {
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = prof.apply(this, arguments), a = akArtist();
+    if (a.onPage) p.artist = { tag: a.tagline || "", bio: a.bios.line || a.bios.short || "", photo: AKAP.thumbFor === a.main ? AKAP.thumb : "" };
+    return p;
+  };
+})();
+setTimeout(function () { try { akArtistThumbReady(); } catch (e) {} }, 2500);
+
+/* ---------------------------------------------------------------- posters: layers */
+var AK_POSTER_KINDS = [["request", "Request a song (QR code)"], ["tips", "Tips welcome"], ["follow", "Follow me"], ["setlist", "Set list board"], ["show", "Show poster (one show)"], ["month", "Month calendar of shows"], ["season", "Upcoming shows list"], ["presskit", "Press kit page"]];
+var AK_POSTER_SIZES = [["letter", "Letter 8.5×11 in", 2550, 3300, 8.5, 11], ["tabloid", "Tabloid 11×17 in", 3300, 5100, 11, 17], ["square", "Square post 1080×1080", 1080, 1080], ["story", "Story 1080×1920", 1080, 1920], ["wide", "Wide 1920×1080", 1920, 1080]];
+var AK_POSTER_LOOKS = [["theme", "My theme picture"], ["dark", "Dark"], ["light", "Light (saves ink)"]];
+function akPosterSize(id) { return AK_POSTER_SIZES.filter(function (s) { return s[0] === id; })[0] || AK_POSTER_SIZES[0]; }
+function akPosterFonts() { var cs = getComputedStyle(document.body); return { head: (cs.getPropertyValue("--chord-font") || "").trim() || "Georgia, serif", body: (cs.getPropertyValue("--lyric-font") || "").trim() || "system-ui, sans-serif" }; }
+function akPosterLook(look) {
+  if (look === "light") return { bg: "#ffffff", fg: "#16131F", muted: "#5a5566", accent: "#8A6A1E", panel: "rgba(0,0,0,0.04)", art: "" };
+  var cs = getComputedStyle(document.body), v = function (k, d) { return (cs.getPropertyValue(k) || "").trim() || d; }, art = "";
+  if (look === "theme") try { var t = akCurTheme(), ph = akPhotoFor(t); art = ph ? ph.data || ph : ""; } catch (e) {}
+  return { bg: look === "theme" ? v("--bg", "#0c0a18") : "#0c0a18", fg: "#F4EEDD", muted: "#cfc6e0", accent: look === "theme" ? v("--accent", "#E7C66B") : "#E7C66B", panel: "rgba(8,6,20,0.55)", art: typeof art === "string" ? art : "" };
+}
+function akMonthKey(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2); }
+function akGigsIn(fromKey, toKey, pubOnly) { return akGigs().filter(function (g) { return g.date && g.date >= fromKey && g.date <= toKey && (!pubOnly || g.pub); }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }); }
+function akTime12(t) { if (!t) return ""; var m = /^(\d+):(\d+)/.exec(t); if (!m) return t; var hh = Number(m[1]), ap = hh >= 12 ? "pm" : "am"; hh = hh % 12 || 12; return hh + (m[2] !== "00" ? ":" + m[2] : "") + ap; }
+function akDateLong(key) { var d = new Date(key + "T12:00:00"); return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
+function akDateShort(key) { var d = new Date(key + "T12:00:00"); return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
+function akSiteText() { var a = akArtist(), w = (a.links.filter(function (l) { return /website/i.test(l.label || ""); })[0] || {}).url || (akLive().profile || {}).website || ""; return w.replace(/^https?:\/\//, "").replace(/\/$/, ""); }
+
+/* o = { kind, size, look, gig, month, setlist, url, photo } -> { W, H, layers: [ {id, name, type, ...} ] } */
+function akPosterLayers(o) {
+  var sz = akPosterSize(o.size), W = sz[2], H = sz[3], u = Math.min(W, H) / 100, a = akArtist(), L = akPosterLook(o.look), F = akPosterFonts(), name = akArtistName() || "Live music";
+  var lay = [], landscape = W > H;
+  function bg() { lay.push({ id: "background", name: "Background", type: "bg", color: L.bg, art: L.art, shade: L.art ? L.panel : "" }); }
+  function text(id, nm, s, y, size, o2) { lay.push(Object.assign({ id: id, name: nm, type: "text", text: s, x: W / 2, y: y, size: size, font: F.body, weight: 400, color: L.fg, align: "center", maxW: W * 0.86, lh: 1.2 }, o2 || {})); }
+  function qr(id, nm, url, cx, cy, s) { if (url) lay.push({ id: id, name: nm, type: "qr", url: url, x: cx - s / 2, y: cy - s / 2, s: s }); }
+  function photo(cx, cy, s, round) { if (o.photo && a.main) lay.push({ id: "photo", name: "Photo", type: "img", photoId: a.main, x: cx - s / 2, y: cy - s / 2, w: s, h: s, round: round !== false, ring: L.accent }); }
+  bg();
+  var top = H * 0.06, kick = function (t) { text("kicker", "Small heading", t.toUpperCase(), top + 3 * u, 3.2 * u, { color: L.accent, weight: 600, spacing: 0.4 * u }); };
+  var foot = function () { text("name", "Your name", name, H - (o.kind === "presskit" ? 12 : 10) * u, 6 * u, { font: F.head, weight: 700, spacing: 0.25 * u }); var st = akSiteText(); if (st) text("website", "Website", st.toUpperCase(), H - 5.5 * u, 2.6 * u, { color: L.accent, spacing: 0.3 * u }); };
+  if (o.kind === "request" || o.kind === "tips" || o.kind === "follow") {
+    var heads = { request: "Request a song", tips: "Tips welcome", follow: "Follow me" }, subs = { request: "Scan with your phone camera. No app needed.", tips: "Thank you for supporting live music!", follow: (a.links.filter(function (l) { return l.url && !/website/i.test(l.label); }).map(function (l) { return l.label; }).join(" · ")) || "Find me online" };
+    kick("Live music");
+    text("title", "Big heading", heads[o.kind], top + 11 * u, (landscape ? 9 : 11) * u, { font: F.head, weight: 700, maxW: W * 0.9 });
+    text("subtitle", "Line under the heading", subs[o.kind], top + (landscape ? 22 : 26) * u, 3.4 * u, { color: L.muted });
+    var qs = Math.min(W * 0.56, H * 0.42), cy = H * (landscape ? 0.62 : 0.56);
+    if (o.photo && a.main && !landscape) { photo(W / 2, top + 26 * u + 14 * u, 16 * u); cy = H * 0.6; qs = Math.min(qs, H * 0.34); }
+    if (o.kind === "tips") {
+      var pays = (akLive().profile.pay || []).filter(function (p) { return p.url; }).slice(0, 2);
+      if (!pays.length) text("note", "Note", "Add tip links in Settings > Requests and tips.", cy, 3 * u, { color: L.muted });
+      pays.forEach(function (p, i) { var n = pays.length, s = n === 1 ? qs : Math.min(qs * 0.72, W * 0.4), cx = n === 1 ? W / 2 : W * (i ? 0.73 : 0.27); qr("qr" + (i + 1), "QR: " + (p.label || p.kind), p.url, cx, cy, s); text("qrlabel" + (i + 1), "Label: " + (p.label || p.kind), p.label || p.kind, cy + s / 2 + 4 * u, 3.6 * u, { weight: 700, x: cx, maxW: s * 1.2 }); });
+    } else qr("qr", "QR code", o.kind === "follow" ? (o.url || ((a.links.filter(function (l) { return /website/i.test(l.label); })[0] || a.links[0] || {}).url) || "") : o.url, W / 2, cy, qs);
+    if (o.kind === "request") text("steps", "How to", "Open your phone camera  ·  Tap the link  ·  Pick a song", cy + qs / 2 + 5 * u, 2.8 * u, { color: L.fg });
+    foot();
+  } else if (o.kind === "setlist") {
+    var sh = o.setlist ? findShow(o.setlist) : null, songs = []; if (sh) sh.sets.forEach(function (st, si) { if (sh.sets.length > 1) songs.push({ head: st.name || "Set " + (si + 1) }); st.songIds.forEach(function (id) { var s = findSong(id); if (s) songs.push({ t: s.title }); }); });
+    text("title", "Big heading", sh ? sh.name : "Set list", top + 6 * u, 7 * u, { font: F.head, weight: 700 });
+    var avail = H - top - 22 * u, cols = songs.length > 24 ? 2 : 1, per = Math.ceil(songs.length / cols) || 1, lineH = Math.min(6 * u, avail / per), lines = [];
+    for (var c = 0; c < cols; c++) lines.push(songs.slice(c * per, (c + 1) * per).map(function (x) { return x.head ? "— " + x.head + " —" : x.t; }).join("\n"));
+    lines.forEach(function (t, c) { text("songs" + (c + 1), cols > 1 ? "Songs, column " + (c + 1) : "Songs", t, top + 16 * u, lineH * 0.72, { x: cols > 1 ? W * (c ? 0.74 : 0.26) : W / 2, maxW: W * (cols > 1 ? 0.44 : 0.86), lh: lineH / (lineH * 0.72), valign: "top" }); });
+    foot();
+  } else if (o.kind === "show") {
+    var g = o.gig ? akGig(o.gig) : null;
+    kick("Live music");
+    photo(W / 2, H * 0.30, 30 * u);
+    text("title", "Your name", name, H * (o.photo && a.main ? 0.5 : 0.28), 9 * u, { font: F.head, weight: 700 });
+    if (a.tagline) text("tagline", "Tagline", a.tagline, H * (o.photo && a.main ? 0.5 : 0.28) + 8 * u, 3.4 * u, { color: L.muted });
+    if (g) {
+      text("date", "Date", akDateLong(g.date || akTodayKey()), H * 0.66, 6 * u, { weight: 700, color: L.accent });
+      text("time", "Time", [akTime12(g.start), akTime12(g.end)].filter(Boolean).join(" – "), H * 0.66 + 7.5 * u, 4.4 * u);
+      text("venue", "Place", [g.venue || (akVenueFor(g) || {}).name || g.name, akGigAddr(g)].filter(Boolean).join("\n"), H * 0.66 + 15 * u, 3.6 * u, { lh: 1.3 });
+      if (g.pubNote) text("note", "Note", g.pubNote, H * 0.66 + 26 * u, 3 * u, { color: L.muted });
+    }
+    var st2 = akSiteText(); if (st2) text("website", "Website", st2.toUpperCase(), H - 5.5 * u, 2.6 * u, { color: L.accent, spacing: 0.3 * u });
+  } else if (o.kind === "month") {
+    var mk = o.month || akMonthKey(new Date()), y = Number(mk.slice(0, 4)), m = Number(mk.slice(5, 7)) - 1, first = new Date(y, m, 1), days = new Date(y, m + 1, 0).getDate();
+    var gigs = akGigsIn(mk + "-01", mk + "-31", o.pubOnly);
+    text("title", "Month", first.toLocaleDateString(undefined, { month: "long", year: "numeric" }), top + 4 * u, 7 * u, { font: F.head, weight: 700 });
+    text("kicker", "Under the heading", name + " · live music", top + 11 * u, 3 * u, { color: L.accent, spacing: 0.2 * u });
+    var gx = W * 0.05, gw = W * 0.9, gy = top + 17 * u, gh = H - gy - 17 * u, rows = Math.ceil((first.getDay() + days) / 7), cw = gw / 7, ch = (gh - 4 * u) / rows;
+    lay.push({ id: "grid", name: "Calendar grid", type: "grid", x: gx, y: gy, w: gw, h: gh, rows: rows, head: 4 * u, line: L.muted, color: L.fg, size: 2.4 * u, font: F.body, start: first.getDay(), days: days, fill: L.panel });
+    var by = {}; gigs.forEach(function (g) { (by[g.date] = by[g.date] || []).push(g); });
+    Object.keys(by).forEach(function (k) {
+      var d = Number(k.slice(8, 10)), i = first.getDay() + d - 1, r = Math.floor(i / 7), cc = i % 7;
+      var t = by[k].map(function (g) { return (g.venue || g.name || "Show") + (g.start ? "\n" + akTime12(g.start) : ""); }).join("\n");
+      text("day" + d, "Show on the " + d + "th", t, gy + 4 * u + r * ch + ch * 0.36, Math.min(2.8 * u, cw / 7), { x: gx + cc * cw + cw / 2, maxW: cw * 0.92, color: L.accent, weight: 700, valign: "top", lh: 1.15 });
+    });
+    if (!gigs.length) text("note", "Note", "No shows this month yet.", gy + gh / 2, 3 * u, { color: L.muted });
+    foot();
+  } else if (o.kind === "season") {
+    var from = akTodayKey(), list = akGigsIn(from, "9999", o.pubOnly).slice(0, 24);
+    kick("Live music");
+    text("title", "Big heading", "Upcoming shows", top + 10 * u, 8 * u, { font: F.head, weight: 700 });
+    var lh2 = Math.min(8 * u, (H - top - 36 * u) / Math.max(1, list.length));
+    text("dates", "Dates", list.map(function (g) { return akDateShort(g.date); }).join("\n") || "More dates soon", top + 22 * u, lh2 * 0.6, { x: W * 0.27, maxW: W * 0.36, align: "right", color: L.accent, weight: 700, valign: "top", lh: lh2 / (lh2 * 0.6) });
+    text("places", "Places and times", list.map(function (g) { return (g.venue || g.name || "Show") + (g.start ? "  " + akTime12(g.start) : ""); }).join("\n"), top + 22 * u, lh2 * 0.6, { x: W * 0.31, maxW: W * 0.64, align: "left", valign: "top", lh: lh2 / (lh2 * 0.6) });
+    foot();
+  } else if (o.kind === "presskit") {
+    photo(W * 0.24, H * 0.17, 28 * u, false);
+    var tx = o.photo && a.main ? W * 0.42 : W * 0.08;
+    text("title", "Your name", name, H * 0.1, 7.5 * u, { font: F.head, weight: 700, x: tx, align: "left", maxW: W - tx - W * 0.06 });
+    text("tagline", "Tagline", [a.tagline, a.genres, a.home].filter(Boolean).join(" · "), H * 0.1 + 7 * u, 2.6 * u, { x: tx, align: "left", color: L.accent, maxW: W - tx - W * 0.06 });
+    text("bio", "Bio", a.bios.medium || a.bios.short || "", H * 0.33, 2.3 * u, { x: W * 0.08, align: "left", maxW: W * 0.84, valign: "top", lh: 1.45 });
+    var shows2 = akGigsIn(akTodayKey(), "9999", true).slice(0, 6);
+    var contact = [a.email, a.phone].filter(Boolean).join("  ·  "), linksT = a.links.filter(function (l) { return l.url; }).map(function (l) { return l.label + ": " + l.url.replace(/^https?:\/\//, ""); }).join("\n");
+    text("contact", "Contact", [contact ? "Booking: " + contact : "", a.booking].filter(Boolean).join("\n"), H * 0.62, 2.2 * u, { x: W * 0.08, align: "left", maxW: W * 0.5, valign: "top", lh: 1.4 });
+    if (linksT) text("links", "Links", linksT, H * 0.74, 2.1 * u, { x: W * 0.08, align: "left", maxW: W * 0.55, valign: "top", lh: 1.4 });
+    if (shows2.length) text("shows", "Upcoming shows", "Upcoming: " + shows2.map(function (g) { return akDateShort(g.date) + " " + (g.venue || g.name); }).join(" · "), H * 0.88, 2 * u, { x: W * 0.08, align: "left", maxW: W * 0.84, valign: "top", color: L.muted });
+    qr("qr", "QR code", o.url, W * 0.8, H * 0.7, 22 * u);
+  }
+  return { W: W, H: H, layers: lay, look: L, size: sz };
+}
+
+/* ---------------------------------------------------------------- posters: drawing */
+function akImgLoad(src) { return new Promise(function (res) { if (!src) { res(null); return; } var im = new Image(); im.crossOrigin = "anonymous"; im.onload = function () { res(im); }; im.onerror = function () { res(null); }; im.src = src; }); }
+function akPosterAssets(P) {
+  var jobs = P.layers.map(function (l) {
+    if (l.type === "bg" && l.art) return akImgLoad(l.art).then(function (im) { l._im = im; });
+    if (l.type === "img" && l.photoId) return akArtPhotoUrl(l.photoId).then(akImgLoad).then(function (im) { l._im = im; });
+    return null;
+  }).filter(Boolean);
+  var fonts = [];
+  P.layers.forEach(function (l) { if (l.type === "text") fonts.push(l.weight + " " + Math.round(l.size) + "px " + l.font); });
+  if (document.fonts && document.fonts.load) fonts.forEach(function (f) { jobs.push(document.fonts.load(f).catch(function () {})); });
+  return Promise.all(jobs);
+}
+function akWrap(ctx, text, maxW) {
+  var out = [];
+  String(text || "").split("\n").forEach(function (para) {
+    var words = para.split(/\s+/), line = "";
+    if (!para) { out.push(""); return; }
+    words.forEach(function (w) { var t = line ? line + " " + w : w; if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t; });
+    out.push(line);
+  });
+  return out;
+}
+function akDrawLayer(ctx, l, P) {
+  var W = P.W, H = P.H;
+  if (l.type === "bg") {
+    ctx.fillStyle = l.color; ctx.fillRect(0, 0, W, H);
+    if (l._im) { var im = l._im, k = Math.max(W / im.naturalWidth, H / im.naturalHeight), w = im.naturalWidth * k, hh = im.naturalHeight * k; ctx.drawImage(im, (W - w) / 2, (H - hh) / 2, w, hh); if (l.shade) { ctx.fillStyle = l.shade; ctx.fillRect(0, 0, W, H); } }
+  } else if (l.type === "img" && l._im) {
+    var im2 = l._im, s = Math.min(im2.naturalWidth, im2.naturalHeight);
+    ctx.save();
+    if (l.round) { ctx.beginPath(); ctx.arc(l.x + l.w / 2, l.y + l.h / 2, l.w / 2, 0, Math.PI * 2); ctx.clip(); }
+    ctx.drawImage(im2, (im2.naturalWidth - s) / 2, (im2.naturalHeight - s) / 4, s, s, l.x, l.y, l.w, l.h); ctx.restore();
+    if (l.round && l.ring) { ctx.beginPath(); ctx.arc(l.x + l.w / 2, l.y + l.h / 2, l.w / 2, 0, Math.PI * 2); ctx.lineWidth = Math.max(2, l.w / 60); ctx.strokeStyle = l.ring; ctx.stroke(); }
+  } else if (l.type === "qr") {
+    var q = qrcode(0, "M"); q.addData(l.url); q.make();
+    var n = q.getModuleCount(), pad = l.s * 0.06, cell = (l.s - pad * 2) / n;
+    ctx.fillStyle = "#fff"; akRoundRect(ctx, l.x, l.y, l.s, l.s, l.s * 0.04); ctx.fill();
+    ctx.fillStyle = "#000";
+    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) ctx.fillRect(Math.floor(l.x + pad + c * cell), Math.floor(l.y + pad + r * cell), Math.ceil(cell), Math.ceil(cell));
+  } else if (l.type === "text") {
+    ctx.font = l.weight + " " + l.size + "px " + l.font; ctx.fillStyle = l.color; ctx.textAlign = l.align; ctx.textBaseline = l.valign === "top" ? "top" : "middle";
+    try { ctx.letterSpacing = (l.spacing || 0) + "px"; } catch (e) {}
+    var lines = akWrap(ctx, l.text, l.maxW), lh = l.size * (l.lh || 1.2), y0 = l.valign === "top" ? l.y : l.y - (lines.length - 1) * lh / 2;
+    lines.forEach(function (t, i) { ctx.fillText(t, l.x, y0 + i * lh); });
+    try { ctx.letterSpacing = "0px"; } catch (e) {}
+  } else if (l.type === "grid") {
+    ctx.strokeStyle = l.line; ctx.lineWidth = Math.max(1, l.w / 900); ctx.fillStyle = l.fill; ctx.fillRect(l.x, l.y, l.w, l.h);
+    var cw = l.w / 7, chh = (l.h - l.head) / l.rows, names = ["S", "M", "T", "W", "T", "F", "S"];
+    try { var base = new Date(2023, 0, 1); names = [0, 1, 2, 3, 4, 5, 6].map(function (i) { return new Date(base.getTime() + i * 864e5).toLocaleDateString(undefined, { weekday: "short" }); }); } catch (e) {}
+    ctx.font = "700 " + l.size + "px " + l.font; ctx.fillStyle = l.color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    names.forEach(function (nm, i) { ctx.fillText(nm, l.x + i * cw + cw / 2, l.y + l.head / 2); });
+    for (var i2 = 0; i2 <= l.rows; i2++) { ctx.beginPath(); ctx.moveTo(l.x, l.y + l.head + i2 * chh); ctx.lineTo(l.x + l.w, l.y + l.head + i2 * chh); ctx.stroke(); }
+    for (var j = 0; j <= 7; j++) { ctx.beginPath(); ctx.moveTo(l.x + j * cw, l.y + l.head); ctx.lineTo(l.x + j * cw, l.y + l.h); ctx.stroke(); }
+    ctx.font = "400 " + l.size + "px " + l.font; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    for (var d = 1; d <= l.days; d++) { var k = l.start + d - 1; ctx.fillText(String(d), l.x + (k % 7) * cw + l.size * 0.4, l.y + l.head + Math.floor(k / 7) * chh + l.size * 0.3); }
+  }
+}
+function akRoundRect(ctx, x, y, w, hh, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+/* only: a layer id -> that layer alone on a transparent canvas */
+function akPosterCanvas(P, only, scale) {
+  var k = scale || 1, cv = document.createElement("canvas"); cv.width = Math.round(P.W * k); cv.height = Math.round(P.H * k);
+  var ctx = cv.getContext("2d"); ctx.scale(k, k);
+  P.layers.forEach(function (l) { if (!only || only === l.id) akDrawLayer(ctx, l, P); });
+  return cv;
+}
+function akCanvasBlob(cv, type, q) { return new Promise(function (res) { cv.toBlob(function (b) { res(b); }, type || "image/png", q); }); }
+function akPosterGuide(P) {
+  var cv = akPosterCanvas(P, null, 0.4), ctx = cv.getContext("2d"); ctx.scale(0.4, 0.4);
+  ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.fillRect(0, 0, P.W, P.H);
+  P.layers.forEach(function (l, i) {
+    if (l.type === "bg") return;
+    var b = akLayerBox(l, P); ctx.strokeStyle = "#d0021b"; ctx.lineWidth = P.W / 300; ctx.setLineDash([P.W / 80, P.W / 120]); ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]);
+    ctx.fillStyle = "#d0021b"; ctx.font = "700 " + Math.round(P.W / 45) + "px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "bottom"; ctx.fillText((i) + ". " + l.name, b.x, b.y - 4);
+  });
+  return cv;
+}
+function akLayerBox(l, P) {
+  if (l.type === "qr") return { x: l.x, y: l.y, w: l.s, h: l.s };
+  if (l.type === "img" || l.type === "grid") return { x: l.x, y: l.y, w: l.w, h: l.h };
+  if (l.type === "text") {
+    var cv = document.createElement("canvas").getContext("2d"); cv.font = l.weight + " " + l.size + "px " + l.font;
+    var lines = akWrap(cv, l.text, l.maxW), w = Math.min(l.maxW, Math.max.apply(null, lines.map(function (t) { return cv.measureText(t).width; }).concat([10]))), hh = lines.length * l.size * (l.lh || 1.2);
+    var x = l.align === "center" ? l.x - w / 2 : l.align === "right" ? l.x - w : l.x, y = l.valign === "top" ? l.y : l.y - hh / 2;
+    return { x: x, y: y, w: w, h: hh };
+  }
+  return { x: 0, y: 0, w: P.W, h: P.H };
+}
+/* a layered SVG: one <g> per layer, the words as real text (fonts may be swapped in other programs) */
+function akPosterSvg(P) {
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+  var jobs = P.layers.map(function (l) {
+    if (l.type === "bg") return (l._im ? akImgData(l._im, 1600) : Promise.resolve("")).then(function (d) {
+      return '<g id="background" inkscape:label="Background" inkscape:groupmode="layer"><rect width="' + P.W + '" height="' + P.H + '" fill="' + esc(l.color) + '"/>' + (d ? '<image href="' + d + '" width="' + P.W + '" height="' + P.H + '" preserveAspectRatio="xMidYMid slice"/>' + (l.shade ? '<rect width="' + P.W + '" height="' + P.H + '" fill="' + esc(l.shade) + '"/>' : "") : "") + "</g>";
+    });
+    if (l.type === "img") return (l._im ? akImgData(l._im, 1200) : Promise.resolve("")).then(function (d) {
+      if (!d) return "";
+      var clip = l.round ? '<clipPath id="pc"><circle cx="' + (l.x + l.w / 2) + '" cy="' + (l.y + l.h / 2) + '" r="' + l.w / 2 + '"/></clipPath>' : "";
+      return '<g id="photo" inkscape:label="Photo" inkscape:groupmode="layer">' + clip + '<image href="' + d + '" x="' + l.x + '" y="' + l.y + '" width="' + l.w + '" height="' + l.h + '" preserveAspectRatio="xMidYMid slice"' + (l.round ? ' clip-path="url(#pc)"' : "") + "/></g>";
+    });
+    if (l.type === "qr") { return Promise.resolve('<g id="' + l.id + '" inkscape:label="' + esc(l.name) + '" inkscape:groupmode="layer">' + akQrSvgPath(l) + "</g>"); }
+    if (l.type === "text") {
+      var ctx = document.createElement("canvas").getContext("2d"); ctx.font = l.weight + " " + l.size + "px " + l.font;
+      var lines = akWrap(ctx, l.text, l.maxW), lh = l.size * (l.lh || 1.2), y0 = l.valign === "top" ? l.y + l.size * 0.8 : l.y - (lines.length - 1) * lh / 2 + l.size * 0.35;
+      var anchor = l.align === "center" ? "middle" : l.align === "right" ? "end" : "start";
+      return Promise.resolve('<g id="' + l.id + '" inkscape:label="' + esc(l.name) + '" inkscape:groupmode="layer"><text font-family="' + esc(l.font.replace(/"/g, "'")) + '" font-size="' + l.size.toFixed(1) + '" font-weight="' + l.weight + '" fill="' + esc(l.color) + '" text-anchor="' + anchor + '"' + (l.spacing ? ' letter-spacing="' + l.spacing.toFixed(1) + '"' : "") + ">" +
+        lines.map(function (t, i) { return '<tspan x="' + l.x.toFixed(1) + '" y="' + (y0 + i * lh).toFixed(1) + '">' + esc(t) + "</tspan>"; }).join("") + "</text></g>");
+    }
+    if (l.type === "grid") return akCanvasBlob(akPosterCanvas(P, l.id, 0.5)).then(akBlobData).then(function (d) { return '<g id="grid" inkscape:label="Calendar grid" inkscape:groupmode="layer"><image href="' + d + '" width="' + P.W + '" height="' + P.H + '"/></g>'; });
+    return Promise.resolve("");
+  });
+  return Promise.all(jobs).then(function (parts) {
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="' + P.W + '" height="' + P.H + '" viewBox="0 0 ' + P.W + " " + P.H + '">\n' + parts.join("\n") + "\n</svg>\n";
+  });
+}
+function akQrSvgPath(l) {
+  var q = qrcode(0, "M"); q.addData(l.url); q.make();
+  var n = q.getModuleCount(), pad = l.s * 0.06, cell = (l.s - pad * 2) / n, d = "";
+  for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) if (q.isDark(r, c)) d += "M" + (l.x + pad + c * cell).toFixed(2) + " " + (l.y + pad + r * cell).toFixed(2) + "h" + cell.toFixed(2) + "v" + cell.toFixed(2) + "h-" + cell.toFixed(2) + "z";
+  return '<rect x="' + l.x + '" y="' + l.y + '" width="' + l.s + '" height="' + l.s + '" rx="' + (l.s * 0.04) + '" fill="#fff"/><path d="' + d + '" fill="#000"/>';
+}
+function akImgData(im, max) { var k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas"); cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k); try { cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); return Promise.resolve(cv.toDataURL("image/jpeg", 0.85)); } catch (e) { return Promise.resolve(""); } }
+function akBlobData(b) { return new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = function () { res(""); }; r.readAsDataURL(b); }); }
+function akPosterPdf(P) {
+  return akPdfLib().then(function () {
+    return akCanvasBlob(akPosterCanvas(P), "image/jpeg", 0.92).then(function (b) { return b.arrayBuffer(); }).then(function (buf) {
+      return PDFLib.PDFDocument.create().then(function (doc) {
+        return doc.embedJpg(buf).then(function (img) {
+          var pw = P.size[4] ? P.size[4] * 72 : P.W / 150 * 72, ph = P.size[5] ? P.size[5] * 72 : P.H / 150 * 72, pg = doc.addPage([pw, ph]);
+          pg.drawImage(img, { x: 0, y: 0, width: pw, height: ph });
+          doc.setTitle(akArtistName() || "Poster");
+          return doc.save();
+        });
+      });
+    }).then(function (bytes) { return new Blob([bytes], { type: "application/pdf" }); });
+  });
+}
+
+/* ---------------------------------------------------------------- a zip file (stored, no compression) */
+var AK_CRC = null;
+function akCrc32(u8) {
+  if (!AK_CRC) { AK_CRC = new Uint32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; AK_CRC[n] = c >>> 0; } }
+  var crc = 0xFFFFFFFF; for (var i = 0; i < u8.length; i++) crc = AK_CRC[(crc ^ u8[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+/* files: [{name, data: Blob | string}] -> Promise<Blob> */
+function akZip(files) {
+  var enc = new TextEncoder();
+  return Promise.all(files.map(function (f) { return typeof f.data === "string" ? Promise.resolve(enc.encode(f.data)) : f.data.arrayBuffer().then(function (b) { return new Uint8Array(b); }); })).then(function (datas) {
+    var parts = [], central = [], off = 0, d = new Date(), dt = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF, dd = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF;
+    files.forEach(function (f, i) {
+      var name = enc.encode(f.name), data = datas[i], crc = akCrc32(data);
+      var lh = new DataView(new ArrayBuffer(30));
+      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true); lh.setUint16(10, dt, true); lh.setUint16(12, dd, true);
+      lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, name.length, true); lh.setUint16(28, 0, true);
+      parts.push(lh.buffer, name, data);
+      var ch = new DataView(new ArrayBuffer(46));
+      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(10, 0, true); ch.setUint16(12, dt, true); ch.setUint16(14, dd, true);
+      ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, name.length, true); ch.setUint32(42, off, true);
+      central.push(ch.buffer, name);
+      off += 30 + name.length + data.length;
+    });
+    var csize = central.reduce(function (a, b) { return a + (b.byteLength || b.length); }, 0), end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, csize, true); end.setUint32(16, off, true);
+    return new Blob(parts.concat(central, [end.buffer]), { type: "application/zip" });
+  });
+}
+
+/* ---------------------------------------------------------------- shows as CSV (Canva Bulk Create: one row per show) */
+function akShowsCsvText(list) {
+  function q(s) { s = String(s == null ? "" : s); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+  var rows = [["Date", "Weekday", "Month", "Day", "Start", "End", "Time", "Show", "Venue", "Address", "City", "Note"]];
+  list.forEach(function (g) {
+    var d = new Date(g.date + "T12:00:00"), addr = akGigAddr(g), city = (addr.split(",")[1] || "").trim();
+    rows.push([g.date, d.toLocaleDateString(undefined, { weekday: "long" }), d.toLocaleDateString(undefined, { month: "long" }), d.getDate(), akTime12(g.start), akTime12(g.end), [akTime12(g.start), akTime12(g.end)].filter(Boolean).join(" – "), g.name || "", g.venue || (akVenueFor(g) || {}).name || "", addr, city, g.pubNote || ""]);
+  });
+  return rows.map(function (r) { return r.map(q).join(","); }).join("\r\n") + "\r\n";
+}
+function akShowsCsv(pickRange) {
+  var list = akGigsIn(akTodayKey(), "9999");
+  if (!list.length) { toast("No upcoming shows to export yet."); return; }
+  akRecDownload(new Blob(["﻿" + akShowsCsvText(list)], { type: "text/csv" }), "shows.csv");
+}
+
+/* ---------------------------------------------------------------- the Signs and posters dialog */
+function akPosterUrlFor(kind) {
+  if (kind === "request" || kind === "presskit") { try { var L = akLive(); if (L.on && (L.mode !== "cloud" || AKL.uid)) return akLivePageUrl(); } catch (e) {} if (typeof akShortUrl === "function" && akShortUrl()) return akShortUrl(); }
+  var a = akArtist(); return ((a.links.filter(function (l) { return /website/i.test(l.label || ""); })[0]) || a.links[0] || {}).url || "";
+}
+function akPosterDialog(kind) {
+  var o = { kind: kind || "request", size: "letter", look: "theme", photo: true, pubOnly: false, month: akMonthKey(new Date()), gig: "", setlist: "" };
+  var up = akGigsIn(akTodayKey(), "9999"); if (up[0]) o.gig = up[0].id;
+  var sets = lib().shows || []; if (sets[0]) o.setlist = sets[0].id;
+  var prev = h("div", { class: "ak11-prev" }), opts = h("div", { class: "ak11-popts" }), busy = h("p", { class: "hint", role: "status" });
+  function sel(label, key, list, after) { return h("label", { class: "fld" }, label, h("select", { onChange: function () { o[key] = this.value; if (after) after(); draw(); } }, list.map(function (x) { return h("option", { value: x[0], selected: String(o[key]) === String(x[0]) }, x[1]); }))); }
+  function months() { var out = [], d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); for (var i = 0; i < 14; i++) { out.push([akMonthKey(d), d.toLocaleDateString(undefined, { month: "long", year: "numeric" })]); d.setMonth(d.getMonth() + 1); } return out; }
+  function drawOpts() {
+    opts.textContent = "";
+    opts.appendChild(sel("What", "kind", AK_POSTER_KINDS, drawOpts));
+    opts.appendChild(sel("Size", "size", AK_POSTER_SIZES));
+    opts.appendChild(sel("Look", "look", AK_POSTER_LOOKS));
+    if (o.kind === "show") opts.appendChild(sel("Show", "gig", (up.length ? up : akGigs().slice(-20).reverse()).map(function (g) { return [g.id, akDateShort(g.date || akTodayKey()) + " · " + akGigTitle(g)]; })));
+    if (o.kind === "month") opts.appendChild(sel("Month", "month", months()));
+    if (o.kind === "setlist") opts.appendChild(sel("Set list", "setlist", sets.map(function (s) { return [s.id, s.name]; })));
+    if (o.kind === "month" || o.kind === "season") opts.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: o.pubOnly, onChange: function () { o.pubOnly = this.checked; draw(); } }), "Only shows marked public"));
+    if (akArtist().main) opts.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: o.photo, onChange: function () { o.photo = this.checked; draw(); } }), "Use my ★ photo"));
+  }
+  var cur = null, drawN = 0;
+  function build() { o.url = akPosterUrlFor(o.kind); var P = akPosterLayers(o); return akPosterAssets(P).then(function () { return P; }); }
+  function draw() {
+    var n = ++drawN; busy.textContent = "Drawing…";
+    build().then(function (P) {
+      if (n !== drawN) return; cur = P;
+      var cv = akPosterCanvas(P, null, Math.min(1, 520 / P.H, 420 / P.W)); cv.className = "ak11-cv"; prev.textContent = ""; prev.appendChild(cv); busy.textContent = "";
+    }).catch(function (e) { busy.textContent = "Couldn't draw it: " + (e && e.message || e); });
+  }
+  function base() { return (akArtistName() || "poster").replace(/[^\w -]+/g, "").trim() + " - " + (AK_POSTER_KINDS.filter(function (k) { return k[0] === o.kind; })[0] || ["", "poster"])[1].replace(/[^\w ]+/g, "").trim(); }
+  function withP(fn) { busy.textContent = "Working…"; build().then(fn).then(function () { busy.textContent = ""; }, function (e) { busy.textContent = "That didn't work: " + (e && e.message || e); }); }
+  drawOpts(); draw();
+  var acts = h("div", { class: "ak11-pacts" },
+    h("button", { class: "primary", onClick: function () { withP(function (P) { return akPosterPdf(P).then(function (b) { akRecDownload(b, base() + ".pdf"); }); }); } }, "PDF (print)"),
+    h("button", { onClick: function () { withP(function (P) { return akCanvasBlob(akPosterCanvas(P)).then(function (b) { akRecDownload(b, base() + ".png"); }); }); } }, "PNG picture"),
+    h("button", { onClick: function () { withP(function (P) { return akPosterSvg(P).then(function (t) { akRecDownload(new Blob([t], { type: "image/svg+xml" }), base() + " (layers).svg"); }); }); } }, "SVG with layers"),
+    h("button", { onClick: function () { withP(function (P) { return akPosterLayerZip(P, base()).then(function (b) { akRecDownload(b, base() + " (layers for Canva).zip"); }); }); } }, "Layers for Canva (.zip)"),
+    (o.kind === "month" || o.kind === "season" || o.kind === "show") ? h("button", { onClick: function () { akShowsCsv(); } }, "Shows CSV") : null);
+  modal("Signs and posters", h("div", { class: "ak11-poster" }, h("div", { class: "ak11-pgrid" }, opts, prev), busy, acts,
+    h("details", { class: "ak11-help" }, h("summary", null, "Which file do I want?"),
+      h("ul", null,
+        h("li", null, h("b", null, "PDF"), ": print it at home or at a print shop."),
+        h("li", null, h("b", null, "PNG"), ": post it, text it, or upload it to Canva as a finished picture."),
+        h("li", null, h("b", null, "Layers for Canva"), ": a zip with one see-through picture per part (background, heading, QR code, photo…), all the same size so they line up when you stack them, a layout guide, the words as text, and shows.csv. In Canva: Uploads > upload the pictures, drop each on the page and stretch it to fill the page, then move or swap parts. Pictures of words aren't editable text in Canva; retype them from words.txt if you want to change the font."),
+        h("li", null, h("b", null, "Shows CSV"), ": for Canva's Bulk Create (Apps > Bulk create > Upload data): design one poster in Canva, connect its text boxes to the columns, and Canva makes one per show."),
+        h("li", null, h("b", null, "SVG with layers"), ": opens with each part as its own layer in Inkscape, Illustrator, Affinity or Figma. Canva opens SVGs as a single graphic, so use the zip for Canva.")))),
+    [{ label: "Close", primary: true }], { wide: true });
+}
+function akPosterLayerZip(P, base) {
+  var files = [], order = [];
+  var jobs = P.layers.map(function (l, i) {
+    var nm = ("0" + i).slice(-2) + " " + l.name.replace(/[^\w ,.-]+/g, "") + ".png"; order.push(nm);
+    return akCanvasBlob(akPosterCanvas(P, l.id)).then(function (b) { files.push({ name: nm, data: b }); });
+  });
+  jobs.push(akCanvasBlob(akPosterGuide(P)).then(function (b) { files.push({ name: "layout guide.png", data: b }); }));
+  jobs.push(akCanvasBlob(akPosterCanvas(P)).then(function (b) { files.push({ name: "finished.png", data: b }); }));
+  return Promise.all(jobs).then(function () {
+    var words = P.layers.filter(function (l) { return l.type === "text"; }).map(function (l) { return l.name + ":\n" + l.text; }).join("\n\n");
+    files.push({ name: "words.txt", data: words + "\n" });
+    files.push({ name: "README.txt", data: base + "\n\nEvery picture is " + P.W + " x " + P.H + " pixels with a see-through background, so they line up when stacked.\nStack them in number order (00 at the bottom). \"layout guide.png\" shows where each part sits; \"finished.png\" is the whole design.\nIn Canva: Uploads > Upload files, put each picture on the page and stretch it to fill the page.\nWords are pictures in these files; the same words are in words.txt so you can retype them as Canva text.\n" });
+    var up = akGigsIn(akTodayKey(), "9999"); if (up.length) files.push({ name: "shows.csv", data: "﻿" + akShowsCsvText(up) });
+    files.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    return akZip(files);
+  });
+}
+
+/* ---------------------------------------------------------------- press kit */
+function akPressKitPdf() { var o = { kind: "presskit", size: "letter", look: "light", photo: true, url: akPosterUrlFor("presskit") }, P = akPosterLayers(o); akPosterAssets(P).then(function () { return akPosterPdf(P); }).then(function (b) { akRecDownload(b, (akArtistName() || "Press kit") + " - press kit.pdf"); }, function (e) { toast("Couldn't make the PDF: " + (e && e.message || e)); }); }
+function akPressKitHtml() {
+  var a = akArtist(), name = akArtistName() || "Artist";
+  function esc(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+  (a.main ? akArtThumb(a.main, 600) : Promise.resolve("")).then(function (photo) {
+    var shows = akGigsIn(akTodayKey(), "9999", true).slice(0, 12);
+    var html = "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>" + esc(name) + " · press kit</title>" +
+      "<style>body{margin:0;font:18px/1.6 Georgia,serif;color:#1b1822;background:#faf8f3}main{max-width:760px;margin:0 auto;padding:32px 20px}header{display:flex;gap:24px;align-items:center;flex-wrap:wrap}img{width:200px;height:200px;object-fit:cover;border-radius:50%}h1{font-size:2.4rem;margin:0}.tag{color:#8A6A1E;font-family:system-ui,sans-serif}h2{font-family:system-ui,sans-serif;font-size:1.05rem;text-transform:uppercase;letter-spacing:.08em;color:#8A6A1E;margin:28px 0 6px}ul{padding-left:20px}a{color:#5b3fa0}</style></head><body><main>" +
+      "<header>" + (photo ? "<img src='" + photo + "' alt='" + esc(name) + "'>" : "") + "<div><h1>" + esc(name) + "</h1><div class='tag'>" + esc([a.tagline, a.genres, a.home].filter(Boolean).join(" · ")) + "</div></div></header>" +
+      ((a.bios.long || a.bios.medium) ? "<h2>Bio</h2>" + String(a.bios.long || a.bios.medium).split(/\n\s*\n/).map(function (p) { return "<p>" + esc(p) + "</p>"; }).join("") : "") +
+      (a.bios.short ? "<h2>Short bio</h2><p>" + esc(a.bios.short) + "</p>" : "") +
+      (shows.length ? "<h2>Upcoming shows</h2><ul>" + shows.map(function (g) { return "<li>" + esc(akDateShort(g.date) + (g.start ? ", " + akTime12(g.start) : "") + " · " + (g.venue || g.name) + (akGigAddr(g) ? ", " + akGigAddr(g) : "")) + "</li>"; }).join("") + "</ul>" : "") +
+      "<h2>Booking</h2><p>" + esc([a.email, a.phone].filter(Boolean).join(" · ")) + (a.booking ? "<br>" + esc(a.booking) : "") + "</p>" +
+      (a.links.some(function (l) { return l.url; }) ? "<h2>Links</h2><ul>" + a.links.filter(function (l) { return l.url; }).map(function (l) { return "<li><a href='" + esc(l.url) + "'>" + esc(l.label || l.url) + "</a></li>"; }).join("") + "</ul>" : "") +
+      (a.rider ? "<h2>Tech rider</h2><p>" + esc(a.rider).replace(/\n/g, "<br>") + "</p>" : "") + (a.plot ? "<h2>Stage plot</h2><p>" + esc(a.plot).replace(/\n/g, "<br>") + "</p>" : "") +
+      "</main></body></html>\n";
+    akRecDownload(new Blob([html], { type: "text/html" }), name + " - press kit.html");
+  });
+}
+
+/* ---------------------------------------------------------------- where to find it */
+function akSettingsExtra17(c) {
+  c.again("requests-and-tips");
+  c.section("Artist info", "Your name, bios, photos, links, posters and show calendars");
+  c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { go("artist"); } }, "Open Artist info"), h("button", { onClick: function () { akPosterDialog("request"); } }, "Signs and posters…")));
+  if (typeof akSettingsExtra18 === "function") akSettingsExtra18(c);
+}
+
+akCss("ak11-c", [
+  ".ak11-artist .card h3{margin:2px 0 6px}.ak11-cnt{font-size:.8rem;margin-right:6px}.ak11-cnt.over{color:#e33;font-weight:700}",
+  ".ak11-gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:6px 0}.ak11-ph{position:relative;padding:0;aspect-ratio:1;overflow:hidden;border-radius:10px;border:2px solid transparent;background:var(--line)}",
+  ".ak11-ph img{width:100%;height:100%;object-fit:cover;display:block}.ak11-ph.main{border-color:var(--accent)}.ak11-ph .star{position:absolute;top:4px;right:6px;color:#ffd84d;text-shadow:0 1px 2px #000;font-size:1.2rem}",
+  ".ak11-make{display:flex;flex-wrap:wrap;gap:8px}",
+  ".ak11-pgrid{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,1.2fr);gap:12px;align-items:start}@media (max-width:640px){.ak11-pgrid{grid-template-columns:1fr}}",
+  ".ak11-prev{display:flex;justify-content:center}.ak11-cv{max-width:100%;height:auto;border-radius:6px;box-shadow:0 4px 18px rgba(0,0,0,.35)}",
+  ".ak11-pacts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.ak11-help ul{padding-left:18px;margin:6px 0}.ak11-help li{margin:4px 0}"
+].join("\n"));
+
+/* ================= Akashic Chords: batch 10, phase D (separate layouts for phone and for tablet / computer) =================
+   settings().devLay = { on, cur, force, store: { phone: {...}, big: {...} }, split, fold }:
+   - on: each kind of screen keeps its own layout. The keys in AK_DEV_KEYS (layout style, Arrange positions, Button bar, side buttons,
+     Info bar, corner buttons, bottom tabs, spacing) are swapped in and out of settings when the kind of screen changes
+     (akDevSwitch), so every screen and Settings keep reading the normal places. Settings travel with backups and sync, so the
+     phone and the tablet each keep their own layout after a restore.
+   - Kind of screen (akDevClass): "phone" when the short side is under 600 px (a phone on its side stays a phone), else "big".
+     force: "phone" | "big" | "" (automatic). S.akDevPreview: try the other layout on this screen while editing it.
+   - split: on a wide screen (900 px and up, "big"), tapping a song in Songs shows it in a side pane (akSplitShow) instead of
+     opening the editor.
+   - fold: on phones, less important controls fold into a "More ▾" row (data-akfold rows) so the important ones get the room. */
+
+var AK_DEV_KEYS = ["ls", "layout", "toolbar", "fab", "bottom", "corner", "tabsPick", "density", "tbInfoOn"];
+var AK_DEV_NAMES = { phone: "Phone", big: "Tablet and computer" };
+function akDevCfg() {
+  var s = settings();
+  if (!s.devLay || typeof s.devLay !== "object") s.devLay = { on: false, cur: "", force: "", store: {}, split: true, fold: true };
+  if (!s.devLay.store) s.devLay.store = {};
+  if (s.devLay.split === undefined) s.devLay.split = true;
+  if (s.devLay.fold === undefined) s.devLay.fold = true;
+  return s.devLay;
+}
+function akDevAuto() { return Math.min(window.innerWidth, window.innerHeight) < 600 ? "phone" : "big"; }
+function akDevClass() { var d = akDevCfg(); return S.akDevPreview || d.force || akDevAuto(); }
+function akDevPick(s) { var o = {}; AK_DEV_KEYS.forEach(function (k) { if (s[k] !== undefined) o[k] = clone(s[k]); }); return o; }
+function akDevPut(s, o) { AK_DEV_KEYS.forEach(function (k) { if (o[k] !== undefined) s[k] = clone(o[k]); else if (k === "layout") s[k] = {}; }); }
+/* make the kind of screen `to` the live one */
+function akDevSwitch(to, quiet) {
+  var s = settings(), d = akDevCfg();
+  document.documentElement.setAttribute("data-akdev", to || akDevAuto());
+  if (!d.on) return false;
+  if (d.cur === to) return false;
+  if (d.cur) d.store[d.cur] = akDevPick(s);
+  if (d.store[to]) akDevPut(s, d.store[to]); else d.store[to] = akDevPick(s);
+  d.cur = to; save();
+  try { akApply(); } catch (e) {}
+  if (!quiet) render();
+  return true;
+}
+function akDevCheck() {
+  if (S.view === "play" && typeof autoOn !== "undefined" && autoOn) return; /* never mid-song */
+  akDevSwitch(akDevClass());
+}
+function akDevTurn(on) {
+  var s = settings(), d = akDevCfg();
+  if (on && !d.on) { d.on = true; d.cur = akDevClass(); var me = akDevPick(s); d.store = d.store || {}; d.store[d.cur] = me; if (!d.store[d.cur === "phone" ? "big" : "phone"]) d.store[d.cur === "phone" ? "big" : "phone"] = clone(me); }
+  else if (!on && d.on) { d.on = false; S.akDevPreview = ""; }
+  save();
+}
+var AKDV = { t: 0 };
+window.addEventListener("resize", function () { clearTimeout(AKDV.t); AKDV.t = setTimeout(akDevCheck, 350); });
+setTimeout(function () { try { akDevCheck(); } catch (e) {} }, 0);
+
+/* ready-made starting points for each kind of screen */
+var AK_DEV_SUGGEST = {
+  phone: { name: "One column, big thumb buttons, bottom bar", ls: { p: "compact", c: { nav: "bar" } }, density: "compact" },
+  big: { name: "Side rail, roomy, song list next to the song", ls: { p: "rail", c: {} }, density: "roomy" }
+};
+function akDevSuggest(kind) {
+  var d = akDevCfg(), s = settings(), sg = AK_DEV_SUGGEST[kind], live = d.cur === kind;
+  var tgt = live ? s : (d.store[kind] = d.store[kind] || akDevPick(s));
+  tgt.ls = clone(sg.ls); tgt.density = sg.density;
+  if (kind === "big") d.split = true;
+  save(); if (live) { try { akApply(); } catch (e) {} }
+}
+
+/* ---------------------------------------------------------------- Settings > Look > Layout style: which screen's layout */
+(function () {
+  var lc = lsControls;
+  lsControls = function (out, ctx) {
+    var d = akDevCfg(), box = h("div", { class: "ak11-dev" });
+    function draw() {
+      box.textContent = "";
+      box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!d.on, onChange: function () { ctx.mark(); akDevTurn(this.checked); ctx.refresh(); go("settings"); } }), "Separate layouts for phone and for tablet / computer"));
+      if (!d.on) { box.appendChild(h("p", { class: "hint" }, "Turn this on and the phone and the tablet each keep their own layout style, arranged blocks, playing-screen buttons and bars, even after a backup or sync moves your settings between them.")); return; }
+      var here = akDevAuto(), live = akDevClass();
+      box.appendChild(h("p", { class: "hint" }, "This screen is a " + (here === "phone" ? "phone" : "tablet or computer") + " size. " + (S.akDevPreview ? "You're trying the " + AK_DEV_NAMES[live].toLowerCase() + " layout here; changes below go to it." : "Changes below go to the " + AK_DEV_NAMES[live].toLowerCase() + " layout.")));
+      box.appendChild(h("div", { class: "seg ak11-devseg", role: "group", "aria-label": "Layout to edit" }, ["phone", "big"].map(function (k) {
+        return h("button", { "aria-pressed": live === k ? "true" : "false", onClick: function () { S.akDevPreview = k === here ? "" : k; akDevSwitch(akDevClass(), true); go("settings"); } }, (k === "phone" ? "📱 " : "💻 ") + AK_DEV_NAMES[k] + " layout");
+      })));
+      box.appendChild(h("div", { class: "row" },
+        h("button", { onClick: function () { ctx.mark(); akDevSuggest(live); ctx.refresh(); go("settings"); } }, "Use the suggested " + (live === "phone" ? "phone" : "tablet") + " layout"),
+        h("select", { "aria-label": "Which layout this screen uses", onChange: function () { ctx.mark(); d.force = this.value; S.akDevPreview = ""; akDevCheck(); ctx.refresh(); go("settings"); } },
+          [["", "Pick by screen size"], ["phone", "Always the phone layout here"], ["big", "Always the tablet layout here"]].map(function (o) { return h("option", { value: o[0], selected: (d.force || "") === o[0] }, o[1]); }))));
+      box.appendChild(h("p", { class: "hint" }, "Suggested: " + AK_DEV_SUGGEST[live].name + "."));
+      if (live === "big") box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!d.split, onChange: function () { ctx.mark(); d.split = this.checked; save(); } }), "On a wide screen, show a song next to the song list (tap a song to see it, tap it again or ▶ to play, ✎ to edit)"));
+      else box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!d.fold, onChange: function () { ctx.mark(); d.fold = this.checked; save(); render(); } }), "Fold less-used controls into “More ▾” so the main ones have room"));
+    }
+    draw();
+    out.appendChild(box);
+    return lc.apply(this, arguments);
+  };
+})();
+/* leaving Settings ends a preview of the other layout */
+(function () {
+  var g0 = go;
+  go = function (v, p) {
+    if (v !== "settings" && S.akDevPreview) { S.akDevPreview = ""; setTimeout(akDevCheck, 0); }
+    if (v === "song" && AKSPLIT.row && akSplitOn() && p && p.songId) { AKSPLIT.row = false; akSplitShow(p.songId); return; }
+    return g0.apply(this, arguments);
+  };
+})();
+
+/* ---------------------------------------------------------------- the song next to the list (wide screens) */
+var AKSPLIT = { row: false, id: "" };
+function akSplitOn() { var d = akDevCfg(); return S.view === "songs" && !S.select && d.on && akDevClass() === "big" && d.split !== false && window.innerWidth >= 900; }
+/* with "tap a song to play it" on, the first tap shows the song next to the list and a second tap on it plays it */
+(function () {
+  var pf = playFromSongs;
+  playFromSongs = function (songs, i) {
+    var s = songs && songs[i];
+    if (AKSPLIT.row && akSplitOn() && s && AKSPLIT.id !== s.id) { AKSPLIT.row = false; akSplitShow(s.id); return; }
+    return pf.apply(this, arguments);
+  };
+})();
+document.addEventListener("click", function (e) { var b = e.target.closest && e.target.closest(".list .item .main-btn"); AKSPLIT.row = !!(b && akSplitOn()); setTimeout(function () { AKSPLIT.row = false; }, 0); }, true);
+/* one lyric line with [C]hords -> [chord row, word row] */
+function akChordRows(line) {
+  var re = /\[([^\]]*)\]/g, words = "", chords = "", m, last = 0;
+  while ((m = re.exec(line))) {
+    words += line.slice(last, m.index); last = re.lastIndex;
+    var col = Math.max(words.length, chords.length ? chords.length + 1 : 0);
+    while (words.length < col) words += " ";
+    while (chords.length < col) chords += " ";
+    chords += m[1];
+  }
+  words += line.slice(last);
+  return [chords.replace(/\s+$/, ""), words];
+}
+function akSplitSheet(s) {
+  var pre = h("pre", { class: "ak11-sheet" }), out = [];
+  String(s.lyrics || "").replace(/\{(?!h\d|\/h)[^}]*\}/g, "").split("\n").forEach(function (ln) {
+    if (/^\s*\[[^\]]*\]\s*$/.test(ln) && !/^[\s\[\]A-G#b\/mMaj0-9sudi+()-]*$/.test(ln.replace(/\[([^\]]*)\]/, "$1"))) { out.push({ sec: ln.replace(/[\[\]]/g, "").trim() }); return; }
+    var r = akChordRows(ln); if (r[0]) out.push({ ch: r[0] }); out.push({ w: r[1] });
+  });
+  out.forEach(function (x) { pre.appendChild(h("span", { class: x.sec ? "sec" : x.ch ? "ch" : "w" }, (x.sec || x.ch || x.w) + "\n")); });
+  return pre;
+}
+function akSplitShow(id) {
+  var s = findSong(id); if (!s) return;
+  AKSPLIT.id = id;
+  var pane = document.querySelector(".ak11-pane"); if (!pane) { render(); pane = document.querySelector(".ak11-pane"); if (!pane) return; }
+  pane.textContent = "";
+  var info = [s.key ? "Key " + s.key : "", s.capo ? "Capo " + s.capo : "", s.tempo ? s.tempo + " bpm" : "", s.timeSig || ""].filter(Boolean).join(" · ");
+  pane.appendChild(h("div", { class: "ak11-ptop" },
+    h("div", { class: "grow" }, h("h2", null, s.title || "Untitled"), s.artist ? h("div", { class: "muted" }, s.artist) : null, info ? h("div", { class: "muted" }, info) : null),
+    h("button", { class: "primary", onClick: function () { var songs = filteredSongs(), i = songs.indexOf(s); playFromSongs(i >= 0 ? songs : [s], Math.max(0, i)); } }, "▶ Play"),
+    h("button", { onClick: function () { go("song", { songId: s.id }); } }, "✎ Edit"),
+    h("button", { class: "icon", "aria-label": "Close the song", onClick: function () { AKSPLIT.id = ""; pane.textContent = ""; pane.appendChild(akSplitEmpty()); } }, "✕")));
+  pane.appendChild(akSplitSheet(s));
+  Array.prototype.forEach.call(document.querySelectorAll(".list .item"), function (x) { var t = x.querySelector(".main-btn .t"); x.classList.toggle("ak11-cur", !!t && t.textContent.replace(/^★ /, "") === (s.title || "Untitled")); });
+  pane.scrollTop = 0;
+}
+function akSplitEmpty() { return h("p", { class: "hint ak11-pempty" }, "Tap a song to see it here. Tap it again to play it."); }
+(function () {
+  var vs = viewSongs;
+  viewSongs = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      if (akSplitOn()) {
+        el.classList.add("ak11-split");
+        var pane = h("aside", { class: "ak11-pane", "aria-label": "Song" }); el.appendChild(pane);
+        if (AKSPLIT.id && findSong(AKSPLIT.id)) setTimeout(function () { akSplitShow(AKSPLIT.id); }, 0); else pane.appendChild(akSplitEmpty());
+      }
+    } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- phones: important things first, the rest under More ▾ */
+var AK_FOLD = [
+  /* [screen, selector of the less-used part, label] */
+  /* Songs already folds its filters under "Filters ▾"; the Shows page's helper row folds here */
+  ["shows", ".main .akshtabs + .row", "More"]
+];
+function akFoldOn() { var d = akDevCfg(); return d.fold !== false && akDevClass() === "phone"; }
+function akFoldApply(root) {
+  if (!akFoldOn() || !root) return;
+  AK_FOLD.forEach(function (f) {
+    if (S.view !== f[0]) return;
+    Array.prototype.forEach.call(root.querySelectorAll(f[1]), function (el) {
+      if (el.closest("details.ak11-fold") || el.dataset.ak11fold) return;
+      el.dataset.ak11fold = "1";
+      var det = h("details", { class: "ak11-fold" }, h("summary", null, f[2] + " ▾"));
+      el.parentNode.insertBefore(det, el); det.appendChild(el);
+      if (S["akFold_" + f[0]]) det.open = true;
+      det.addEventListener("toggle", function () { S["akFold_" + f[0]] = det.open; });
+    });
+  });
+}
+(function () {
+  var r0 = render;
+  render = function () { var out = r0.apply(this, arguments); try { akFoldApply(document.getElementById("app") || document.body); } catch (e) {} return out; };
+})();
+
+akCss("ak11-d", [
+  ".ak11-dev{margin:0 0 10px;padding:8px 10px;border:1px dashed var(--line);border-radius:10px}.ak11-devseg{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.ak11-devseg button[aria-pressed=true]{background:var(--accent);color:var(--on-accent,var(--bg))}",
+  "@media (min-width:900px){.ak11-split{padding-right:min(46vw,620px)}",
+  ".ak11-pane{position:fixed;right:0;top:calc(env(safe-area-inset-top,0px) + 56px);bottom:calc(var(--ak10-tbh,0px) + 64px);width:min(46vw,620px);overflow:auto;padding:12px 16px;box-sizing:border-box;border-left:1px solid var(--line);background:var(--bg);z-index:5}}",
+  ".ak11-ptop{display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;position:sticky;top:-12px;background:var(--bg);padding:6px 0;z-index:1}.ak11-ptop h2{margin:0;font-size:1.25rem}",
+  ".ak11-sheet{white-space:pre;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,'Liberation Mono',monospace;font-size:1rem;line-height:1.35;margin:8px 0}.ak11-sheet .ch{color:var(--chord-color,var(--accent));font-weight:700}.ak11-sheet .sec{font-weight:800;opacity:.8}",
+  ".list .item.ak11-cur{outline:2px solid var(--accent);outline-offset:-2px;border-radius:var(--ls-rad,10px)}",
+  ".ak11-pempty{margin-top:40px;text-align:center}",
+  ".ak11-fold{margin:4px 0}.ak11-fold>summary{cursor:pointer;font-size:.9rem;padding:4px 2px;color:var(--muted)}"
+].join("\n"));
+
+/* ================= Akashic Chords: batch 10, phase E (phone <-> tablet sync, and sending audio and photos) =================
+   Sync = a three-way merge of this device's data with the other device's (from the GitHub backup file, or a sync file sent
+   between devices), so changes made on both are kept instead of one replacing the other.
+   - Every song, set list, show, history entry, request, banter line, setting... is compared by id with the copy the two devices
+     last agreed on (the "base": a short hash per item, IndexedDB "akashic-sync", key "base"; never in backups or settings).
+     Changed on one side only -> that side wins. Deleted on one side and untouched on the other -> deleted. Changed on both ->
+     the newer edit wins (song.updated / .at), and it's counted as a conflict in the summary.
+   - Play counts add up: history entries are merged by id and each song's count follows its history (akSyPlays).
+   - The base is what the other side is known to have: after merging a file it's the file's copy of each item (the other device
+     doesn't have this device's changes yet); after a GitHub sync that also pushed, it's the merged copy.
+   - Libraries are never deleted by sync. Settings that belong to one device stay put (GitHub token, sync, and when separate
+     phone / tablet layouts are on, the layout keys in AK_DEV_KEYS).
+   - settings().sync = { gh } (gh: GitHub automatic backups merge instead of overwrite). Excluded from the merge itself.
+   Audio and photos: a zip (stored, manifest.json + files) with song audio (IndexedDB akashic-audio), song pictures and show
+   photos (IMG) and artist photos (akashic-artist). Importing it puts each file back with the same id and re-attaches it to its
+   song / artist info when the reference isn't there yet. Pictures and show photos already ride along in backups and sync. */
+
+var AK_SY_SONG_SKIP = { plays: 1, lastPlayed: 1, history: 1, updated: 1 };
+var AK_SY_SET_SKIP = { github: 1, sync: 1, devLay: 1, syncLast: 1 };
+var AKSY = { busy: false, last: null };
+
+function akSyncCfg() { var s = settings(); if (!s.sync || typeof s.sync !== "object") s.sync = { gh: false }; return s.sync; }
+
+/* ---------------------------------------------------------------- hashing */
+function akSyStable(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v === undefined ? null : v);
+  if (Array.isArray(v)) return "[" + v.map(akSyStable).join(",") + "]";
+  return "{" + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined; }).map(function (k) { return JSON.stringify(k) + ":" + akSyStable(v[k]); }).join(",") + "}";
+}
+function akSyHash(v, skip) {
+  if (skip && v && typeof v === "object") { var c = {}; Object.keys(v).forEach(function (k) { if (!skip[k]) c[k] = v[k]; }); v = c; }
+  var s = akSyStable(v), h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (var i = 0; i < s.length; i++) { var ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 16777619); h2 = Math.imul(h2 + ch, 2654435761) ^ (h2 >>> 13); }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + s.length.toString(36);
+}
+function akSyKey(x) { return x && typeof x === "object" && !Array.isArray(x) && x.id ? "i" + x.id : "h" + akSyHash(x); }
+function akSyT(v) { return typeof v === "number" ? v : typeof v === "string" ? (Date.parse(v) || Number(v) || 0) : 0; }
+function akSyTime(x) { return x && typeof x === "object" ? akSyT(x.updated) || akSyT(x.at) || akSyT(x.created) : 0; }
+
+/* ---------------------------------------------------------------- the merge
+   ctx = { base: {}, pushed: {}, safe: {}, n: {added, changed, removed, conflicts} } ; "pushed" is the base to keep if the merged
+   result reaches the other side, "safe" the one to keep if it doesn't. */
+function akSyPick(l, r, b, ctx, skip, songs, bk) {
+  var hl = l !== undefined ? akSyHash(l, skip) : null, hr = r !== undefined ? akSyHash(r, skip) : null, bh = b || null, out, from = "l";
+  if (l !== undefined && r !== undefined) {
+    if (hl === hr) out = l;
+    else if (bh === hl) { out = r; from = "r"; ctx.n.changed++; }
+    else if (bh === hr) out = l;
+    else { ctx.n.conflicts++; if (akSyTime(r) > akSyTime(l)) { out = r; from = "r"; } else out = l; }
+  } else if (l !== undefined) {
+    if (b === undefined || hl !== bh) out = l; else { ctx.n.removed++; return undefined; }
+  } else if (r !== undefined) {
+    if (b === undefined || hr !== bh) { out = r; from = "r"; ctx.n.added++; } else return undefined;
+  } else return undefined;
+  if (from === "r") out = clone(out);
+  if (songs && l && r) { var lpd = Math.max(l.lastPlayed || 0, r.lastPlayed || 0); if (lpd && out.lastPlayed !== lpd) { if (out === l) out = Object.assign({}, l); out.lastPlayed = lpd; } }
+  ctx.pushed[bk] = akSyHash(out, skip);
+  if (r !== undefined) ctx.safe[bk] = hr;
+  return out;
+}
+function akSyMergeArr(L, R, pre, ctx, skip, songs) {
+  L = Array.isArray(L) ? L : []; R = Array.isArray(R) ? R : [];
+  var ml = {}, mr = {}, lo = [], after = { "": [] }, prev = "";
+  L.forEach(function (x) { var k = akSyKey(x); if (ml[k] === undefined) { ml[k] = x; lo.push(k); } });
+  /* things only the other side has go right after the item they followed there */
+  R.forEach(function (x) {
+    var k = akSyKey(x); if (mr[k] !== undefined) return; mr[k] = x;
+    if (ml[k] === undefined) (after[prev] = after[prev] || []).push(k);
+    prev = k;
+  });
+  var order = [];
+  function emit(k0) { var st = [k0]; while (st.length) { var k = st.pop(); order.push(k); var a = after[k]; if (a) for (var i = a.length - 1; i >= 0; i--) st.push(a[i]); } }
+  (after[""] || []).forEach(emit);
+  lo.forEach(emit);
+  var out = [];
+  order.forEach(function (k) { var v = akSyPick(ml[k], mr[k], ctx.base[pre + k], ctx, skip, songs, pre + k); if (v !== undefined) out.push(v); });
+  return out;
+}
+function akSyMergeObj(L, R, pre, ctx) {
+  L = L && typeof L === "object" ? L : {}; R = R && typeof R === "object" ? R : {};
+  var out = {}, keys = Object.keys(L).concat(Object.keys(R).filter(function (k) { return !(k in L); }));
+  keys.forEach(function (k) { var v = akSyPick(L[k], R[k], ctx.base[pre + k], ctx, null, false, pre + k); if (v !== undefined) out[k] = v; });
+  return out;
+}
+/* one library: arrays by id, plain objects by key, other values as they are */
+function akSyMergeLib(L, R, ctx) {
+  var id = (L || R).id, pre = "L" + id + ":";
+  if (!L || !R) {
+    var only = clone(L || R);
+    if (!L) ctx.n.added += (only.songs || []).length;
+    akSyRecord(only, ctx); return only;
+  }
+  var out = { id: id }, keys = Object.keys(L).concat(Object.keys(R).filter(function (k) { return !(k in L); }));
+  keys.forEach(function (k) {
+    if (k === "id") return;
+    var l = L[k], r = R[k];
+    if (Array.isArray(l) || Array.isArray(r)) out[k] = akSyMergeArr(l, r, pre + k + ":", ctx, k === "songs" ? AK_SY_SONG_SKIP : null, k === "songs");
+    else if ((l && typeof l === "object") || (r && typeof r === "object")) out[k] = akSyMergeObj(l, r, pre + k + ":", ctx);
+    else { var n0 = Object.assign({}, ctx.n), v = akSyPick(l, r, ctx.base[pre + "=" + k], ctx, null, false, pre + "=" + k); ctx.n = n0; if (v !== undefined) out[k] = v; }
+  });
+  akSyPlays(L, R, out);
+  return out;
+}
+/* play counts: the history (log) is merged entry by entry, so a song's count is the plays its history has, plus any older
+   plays from before the history existed (the larger of the two devices' extra counts). Sending files back and forth never
+   counts a play twice. */
+function akSyPlays(L, R, M) {
+  function cnt(l) { var c = {}; (l.log || []).forEach(function (e) { if (e && e.sid) c[e.sid] = (c[e.sid] || 0) + 1; }); return c; }
+  function byId(l) { var m = {}; (l.songs || []).forEach(function (s) { m[s.id] = s; }); return m; }
+  var cl = cnt(L), cr = cnt(R), cm = cnt(M), sl = byId(L), sr = byId(R);
+  (M.songs || []).forEach(function (s, i) {
+    var a = sl[s.id], b = sr[s.id], off = 0;
+    if (a) off = Math.max(off, (Number(a.plays) || 0) - (cl[s.id] || 0));
+    if (b) off = Math.max(off, (Number(b.plays) || 0) - (cr[s.id] || 0));
+    var p = off + (cm[s.id] || 0);
+    if ((Number(s.plays) || 0) !== p) { if (s === a) M.songs[i] = s = Object.assign({}, a); if (p || s.plays !== undefined) s.plays = p; }
+    if (a && b && (a.history || b.history)) {
+      var seen = {}, hist = [].concat(a.history || [], b.history || []).filter(function (e) { var k = e && (e.at + "|" + (e.showId || "")); if (!e || seen[k]) return false; seen[k] = 1; return true; }).sort(function (x, y) { return x.at - y.at; }).slice(-(typeof PLAY_HIST_MAX === "number" ? PLAY_HIST_MAX : 50));
+      if (akSyStable(hist) !== akSyStable(s.history || [])) { if (s === a) M.songs[i] = s = Object.assign({}, a); s.history = hist; }
+    }
+  });
+}
+/* a library that only one side has: remember all of it as agreed once it's pushed */
+function akSyRecord(l, ctx) {
+  var pre = "L" + l.id + ":";
+  Object.keys(l).forEach(function (k) {
+    var v = l[k];
+    if (Array.isArray(v)) v.forEach(function (x) { var bk = pre + k + ":" + akSyKey(x); ctx.pushed[bk] = akSyHash(x, k === "songs" ? AK_SY_SONG_SKIP : null); });
+    else if (v && typeof v === "object") Object.keys(v).forEach(function (j) { ctx.pushed[pre + k + ":" + j] = akSyHash(v[j]); });
+    else if (k !== "id") ctx.pushed[pre + "=" + k] = akSyHash(v);
+  });
+}
+function akSySkipSettings() {
+  var o = Object.assign({}, AK_SY_SET_SKIP), d = settings().devLay;
+  if (d && d.on && typeof AK_DEV_KEYS !== "undefined") AK_DEV_KEYS.forEach(function (k) { o[k] = 1; });
+  return o;
+}
+/* mine: { libs, settings, banter, fingerings }; theirs: a parsed backup. Returns { data, ctx } without touching the app. */
+function akSyncMerge(mine, theirs, base) {
+  var ctx = { base: base || {}, pushed: {}, safe: {}, n: { added: 0, changed: 0, removed: 0, conflicts: 0 } };
+  var lm = {}, order = [];
+  (mine.libs || []).forEach(function (l) { lm[l.id] = { l: l }; order.push(l.id); });
+  (theirs.libs || []).forEach(function (l) { if (lm[l.id]) lm[l.id].r = l; else { lm[l.id] = { r: l }; order.push(l.id); } });
+  var libs = order.map(function (id) { return akSyMergeLib(lm[id].l, lm[id].r, ctx); });
+  var skip = akSySkipSettings(), ms = mine.settings || {}, ts = theirs.settings || {}, set = {}, n0 = Object.assign({}, ctx.n);
+  Object.keys(ms).concat(Object.keys(ts).filter(function (k) { return !(k in ms); })).forEach(function (k) {
+    if (skip[k]) { if (k in ms) set[k] = ms[k]; return; }
+    var v = akSyPick(ms[k], ts[k], ctx.base["S" + k], ctx, null, false, "S" + k); if (v !== undefined) set[k] = v;
+  });
+  ctx.n = n0; /* settings changes aren't counted in the summary */
+  var banter = akSyMergeArr(mine.banter, theirs.banter, "B", ctx, null, false);
+  var fing = akSyMergeObj(mine.fingerings, theirs.fingerings, "F", ctx);
+  libs.forEach(function (l) { if (Array.isArray(l.log)) l.log.sort(function (a, b) { return (a.at || 0) - (b.at || 0); }); });
+  return { data: { libs: libs, settings: set, banter: banter, fingerings: fing }, ctx: ctx };
+}
+
+/* ---------------------------------------------------------------- the agreed copy (IndexedDB) */
+function akSyDb() {
+  return new Promise(function (res) { try { var r = indexedDB.open("akashic-sync", 1); r.onupgradeneeded = function () { r.result.createObjectStore("b"); }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { res(null); }; } catch (e) { res(null); } });
+}
+function akSyBaseGet() { return akSyDb().then(function (db) { if (!db) return null; return new Promise(function (res) { var q = db.transaction("b").objectStore("b").get("base"); q.onsuccess = function () { res(q.result || null); }; q.onerror = function () { res(null); }; }); }); }
+function akSyBasePut(rec) { return akSyDb().then(function (db) { if (!db) return false; return new Promise(function (res) { var tx = db.transaction("b", "readwrite"); tx.objectStore("b").put(rec, "base"); tx.oncomplete = function () { res(true); }; tx.onerror = function () { res(false); }; }); }); }
+
+/* ---------------------------------------------------------------- putting the merged result into the app */
+function akSyMine() { return { libs: store.libs, settings: store.settings, banter: store.banter, fingerings: store.fingerings }; }
+function akSyApply(data, theirs) {
+  snap("sync");
+  var cur = store.cur;
+  store.libs = data.libs;
+  if (!store.libs.some(function (l) { return l.id === cur; })) store.cur = store.libs[0] && store.libs[0].id;
+  store.settings = deepMerge(clone(DEFAULTS), data.settings);
+  store.banter = data.banter || [];
+  store.fingerings = data.fingerings || store.fingerings;
+  if (theirs && theirs.images) { var m = {}; Object.keys(theirs.images).forEach(function (id) { if (!IMG[id]) m[id] = theirs.images[id]; }); imagesRestore(m); }
+  if (theirs && theirs.fonts) { try { fontsRestore(theirs.fonts); } catch (e) {} }
+  normalizeStore(); try { applyLook(); } catch (e) {}
+  saveNow();
+}
+function akSySummary(n) {
+  var bits = [];
+  if (n.added) bits.push(n.added + " new");
+  if (n.changed) bits.push(n.changed + " changed");
+  if (n.removed) bits.push(n.removed + " removed");
+  if (n.conflicts) bits.push(n.conflicts + " edited on both (kept the newer)");
+  return bits.length ? bits.join(", ") : "nothing new from the other device";
+}
+/* the backup file with a sync marker (still restores like any backup) */
+function akSyncJSON() {
+  return backupJSON(null).replace(/\}\s*$/, ',\n"sync": ' + JSON.stringify({ at: Date.now(), dev: akSyDevName() }) + "\n}");
+}
+function akSyDevName() { var k = typeof akDevAuto === "function" ? akDevAuto() : (Math.min(innerWidth, innerHeight) < 600 ? "phone" : "big"); return k === "phone" ? "phone" : "tablet or computer"; }
+function akSyStatus(msg) { AKSY.last = { at: Date.now(), msg: msg }; try { settings().syncLast = AKSY.last; } catch (e) {} }
+
+/* ---------------------------------------------------------------- GitHub: pull, merge, push (one tap) */
+function akSyncNow(setStatus, quiet, again) {
+  setStatus = setStatus || function () {};
+  if (AKSY.busy) return Promise.resolve(false);
+  if (!ghToken() || !/^[\w.-]+\/[\w.-]+$/.test(ghCfg().repo)) { setStatus("Set up GitHub backup first (Settings > Data and extras > Backups)."); return Promise.resolve(false); }
+  AKSY.busy = true; setStatus("Syncing…");
+  var meta, theirs, res;
+  return Promise.all([ghReq("meta"), akSyBaseGet()]).then(function (a) {
+    meta = a[0]; var base = (a[1] && a[1].base) || {};
+    return (meta ? ghReq("raw") : Promise.resolve(null)).then(function (t) {
+      if (t) { theirs = parseBackup(t); res = akSyncMerge(akSyMine(), theirs, base); akSyApply(res.data, theirs); return akSyBasePut({ base: res.ctx.safe, at: Date.now() }); }
+      res = { ctx: { pushed: {}, n: { added: 0, changed: 0, removed: 0, conflicts: 0 } } }; akSyRecordAll(res.ctx);
+    });
+  }).then(function () {
+    return ghReq("put", { message: "Akashic Chords sync " + new Date().toISOString().slice(0, 16).replace("T", " ") + " (" + akSyDevName() + ")", content: b64utf8(akSyncJSON()), sha: meta && meta.sha ? meta.sha : undefined });
+  }).then(function () {
+    return akSyBasePut({ base: res.ctx.pushed, at: Date.now() });
+  }).then(function () {
+    AKSY.busy = false; markBackedUp();
+    var msg = "Synced at " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ": " + akSySummary(res.ctx.n) + ".";
+    akSyStatus(msg); setStatus(msg); if (!quiet) toast(msg);
+    if (S.view !== "play") render();
+    return true;
+  }).catch(function (e) {
+    AKSY.busy = false;
+    if (!again && /changed on GitHub/.test(e.message || "")) return akSyncNow(setStatus, quiet, true);
+    var msg = (quiet ? "The last automatic sync didn't work: " : "") + (e.message || "Sync didn't work.");
+    akSyStatus(msg); setStatus(msg); return false;
+  });
+}
+function akSyRecordAll(ctx) {
+  store.libs.forEach(function (l) { akSyRecord(l, ctx); });
+  var skip = akSySkipSettings(); Object.keys(store.settings).forEach(function (k) { if (!skip[k]) ctx.pushed["S" + k] = akSyHash(store.settings[k]); });
+  (store.banter || []).forEach(function (x) { ctx.pushed["B" + akSyKey(x)] = akSyHash(x); });
+  Object.keys(store.fingerings || {}).forEach(function (k) { ctx.pushed["F" + k] = akSyHash(store.fingerings[k]); });
+}
+/* with sync on, the GitHub backup button and automatic backups merge first instead of overwriting the other device's changes;
+   never while a song is playing */
+(function () {
+  var gb = ghBackupNow;
+  ghBackupNow = function (setStatus, quiet) {
+    if (!akSyncCfg().gh) return gb.apply(this, arguments);
+    if (quiet && (S.view === "play" || (typeof autoOn !== "undefined" && autoOn))) return Promise.resolve();
+    return akSyncNow(setStatus, quiet);
+  };
+})();
+
+/* ---------------------------------------------------------------- a sync file (no GitHub: AirDrop, email, Drive, a cable) */
+function akSyncSaveFile() {
+  var name = "akashic-sync-" + akSyDevName().split(" ")[0] + "-" + new Date().toISOString().slice(0, 10) + ".json", text = akSyncJSON();
+  var f = null; try { f = new File([text], name, { type: "application/json" }); } catch (e) {}
+  if (f && navigator.canShare && navigator.canShare({ files: [f] })) return navigator.share({ files: [f], title: "Akashic Chords sync file" }).then(function () { markBackedUp(); }, function (e) { if (e && e.name === "AbortError") return; saveFile(name, text, "application/json").then(function (ok) { if (ok) markBackedUp(); }); });
+  return saveFile(name, text, "application/json").then(function (ok) { if (ok) markBackedUp(); });
+}
+function akSyncMergeText(t, done) {
+  var theirs;
+  try { theirs = parseBackup(t); } catch (e) { toast(e.message || "That isn't a Akashic Chords file."); return; }
+  akSyBaseGet().then(function (b) {
+    var base = (b && b.base) || {}, res = akSyncMerge(akSyMine(), theirs, base);
+    akSyApply(res.data, theirs);
+    return akSyBasePut({ base: res.ctx.safe, at: Date.now() }).then(function () {
+      var msg = "Merged: " + akSySummary(res.ctx.n) + ".";
+      akSyStatus(msg); render(); toastUndo(msg);
+      if (done) done(msg);
+    });
+  });
+}
+function akSyncMergeInput(done) {
+  return h("input", { type: "file", accept: ".json,application/json", "aria-label": "Choose the sync file from your other device", onChange: function () {
+    var f = this.files && this.files[0], input = this; if (!f) return;
+    readFileAs(f, "text").then(function (t) { akSyncMergeText(t, done); }).catch(function () { toast("Couldn't read that file."); }).then(function () { input.value = ""; });
+  } });
+}
+/* a sync file opened in Import or Restore: offer the merge first */
+(function () {
+  var orr = offerRestore;
+  offerRestore = function (t) {
+    var d = null; try { d = JSON.parse(t); } catch (e) {}
+    if (!d || !d.sync) return orr.apply(this, arguments);
+    var args = arguments, self = this;
+    modal("A sync file from your " + (d.sync.dev || "other device"), h("div", null,
+      h("p", null, "Saved " + new Date(d.sync.at).toLocaleString() + "."),
+      h("p", { class: "hint" }, "“Merge” keeps the changes from both devices: new and edited songs, set lists, shows and history from there are added here, and play counts add up. The other choices are the usual add or replace.")),
+      [{ label: "Other choices…", onClick: function () { setTimeout(function () { orr.apply(self, args); }, 0); } }, { label: "Merge with mine", primary: true, onClick: function () { akSyncMergeText(t); } }]);
+  };
+})();
+
+/* ---------------------------------------------------------------- audio and photos */
+function akDataUrlBlob(u) { return fetch(u).then(function (r) { return r.blob(); }); }
+function akBlobDataUrl(b) { return new Promise(function (res) { var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = function () { res(""); }; fr.readAsDataURL(b); }); }
+function akExtFor(type, dflt) { var m = String(type || "").match(/\/(x-)?([a-z0-9]+)/i); var e = m ? m[2].toLowerCase() : dflt; return { mpeg: "mp3", "x-m4a": "m4a", mp4a: "m4a", jpeg: "jpg", "svg+xml": "svg", quicktime: "mov" }[e] || e; }
+/* what's on this device: { audio: [{id, songId, lib, title, ref}], img: [{id, name, where}], artist: [{ref}] } */
+function akMediaList() {
+  var out = { audio: [], img: [], artist: [] }, seenI = {};
+  store.libs.forEach(function (l) {
+    (l.songs || []).forEach(function (s) {
+      (s.audio || []).forEach(function (a) { if (akAudioKind(a) !== "link") out.audio.push({ id: a.id, songId: s.id, lib: l.id, title: s.title || "", artist: s.artist || "", ref: a }); });
+      (s.images || []).forEach(function (m) { if (IMG[m.id] && !seenI[m.id]) { seenI[m.id] = 1; out.img.push({ id: m.id, name: m.name || "picture", where: "song" }); } });
+    });
+    [].concat(l.gigs || [], l.venues || []).forEach(function (g) { (g.photos || []).forEach(function (id) { if (IMG[id] && !seenI[id]) { seenI[id] = 1; out.img.push({ id: id, name: (IMG[id] || {}).name || "photo", where: "show" }); } }); });
+  });
+  try { (akArtist().photos || []).forEach(function (p) { out.artist.push({ ref: p }); }); } catch (e) {}
+  return out;
+}
+/* opt: { audio, photos } -> Promise<{ blob, n, bytes }> */
+function akMediaPack(opt, progress) {
+  var L = akMediaList(), files = [], man = { app: "akashic-media", v: 1, at: Date.now(), from: akSyDevName(), items: [] }, chain = Promise.resolve(), bytes = 0;
+  progress = progress || function () {};
+  if (opt.audio) L.audio.forEach(function (a, i) {
+    chain = chain.then(function () { return new Promise(function (res) { akAudioGet(a.id, res); }); }).then(function (b) {
+      progress("Audio " + (i + 1) + " of " + L.audio.length);
+      if (!b) return;
+      var f = "audio/" + a.id + "." + akExtFor(b.type || a.ref.type, "webm");
+      files.push({ name: f, data: b }); bytes += b.size;
+      man.items.push({ f: f, k: "audio", id: a.id, songId: a.songId, lib: a.lib, title: a.title, artist: a.artist, ref: a.ref, type: b.type || "" });
+    });
+  });
+  if (opt.photos) {
+    L.img.forEach(function (m) {
+      chain = chain.then(function () { return akDataUrlBlob(IMG[m.id].data); }).then(function (b) {
+        var f = "photos/" + m.id + "." + akExtFor(b.type, "jpg"); files.push({ name: f, data: b }); bytes += b.size;
+        man.items.push({ f: f, k: "img", id: m.id, name: m.name, where: m.where });
+      }).catch(function () {});
+    });
+    L.artist.forEach(function (p) {
+      chain = chain.then(function () { return akArtPhotoGet(p.ref.id); }).then(function (b) {
+        if (!b) return;
+        var f = "artist/" + p.ref.id + "." + akExtFor(b.type, "jpg"); files.push({ name: f, data: b }); bytes += b.size;
+        man.items.push({ f: f, k: "artist", id: p.ref.id, ref: p.ref });
+      }).catch(function () {});
+    });
+  }
+  return chain.then(function () {
+    files.unshift({ name: "manifest.json", data: JSON.stringify(man, null, 1) });
+    files.push({ name: "README.txt", data: "Audio and photos from Akashic Chords (" + man.from + ", " + new Date(man.at).toLocaleString() + ").\r\nOn your other device open Import > Between my devices > Receive audio and photos, and choose this file.\r\nThey go back into the same songs, shows and artist info.\r\n" });
+    return akZip(files).then(function (blob) { return { blob: blob, n: man.items.length, bytes: bytes }; });
+  });
+}
+/* reads a zip: stored or deflated entries -> [{ name, blob }] */
+function akUnzip(blob) {
+  return blob.arrayBuffer().then(function (buf) {
+    var u = new Uint8Array(buf), dv = new DataView(buf), e = -1;
+    for (var i = u.length - 22; i >= Math.max(0, u.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) throw new Error("That isn't a zip file.");
+    var n = dv.getUint16(e + 10, true), p = dv.getUint32(e + 16, true), out = [], dec = new TextDecoder();
+    for (var k = 0; k < n; k++) {
+      if (dv.getUint32(p, true) !== 0x02014b50) break;
+      var meth = dv.getUint16(p + 10, true), csz = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+      var name = dec.decode(u.subarray(p + 46, p + 46 + nl));
+      var ds = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+      out.push({ name: name, meth: meth, data: u.subarray(ds, ds + csz) });
+      p += 46 + nl + xl + cl;
+    }
+    return Promise.all(out.map(function (f) {
+      if (f.meth === 0) return { name: f.name, blob: new Blob([f.data]) };
+      if (f.meth === 8 && typeof DecompressionStream === "function") return new Response(new Blob([f.data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob().then(function (b) { return { name: f.name, blob: b }; });
+      return null;
+    })).then(function (a) { return a.filter(Boolean); });
+  });
+}
+function akMediaFindSong(it) {
+  var hit = null;
+  store.libs.forEach(function (l) { (l.songs || []).forEach(function (s) { if (!hit && s.id === it.songId) hit = s; }); });
+  if (!hit && it.title) store.libs.forEach(function (l) { (l.songs || []).forEach(function (s) { if (!hit && (s.title || "").toLowerCase() === it.title.toLowerCase() && (s.artist || "").toLowerCase() === (it.artist || "").toLowerCase()) hit = s; }); });
+  return hit;
+}
+/* -> Promise<{ audio, photos, artist, missing }> */
+function akMediaImport(file) {
+  return akUnzip(file).then(function (files) {
+    var map = {}; files.forEach(function (f) { map[f.name] = f.blob; });
+    if (!map["manifest.json"]) throw new Error("That zip isn't audio and photos from Akashic Chords.");
+    return map["manifest.json"].text().then(function (t) {
+      var man = JSON.parse(t); if (!man || man.app !== "akashic-media") throw new Error("That zip isn't audio and photos from Akashic Chords.");
+      var r = { audio: 0, photos: 0, artist: 0, missing: [] }, chain = Promise.resolve();
+      snap("audio and photos");
+      man.items.forEach(function (it) {
+        var b = map[it.f]; if (!b) return;
+        if (it.type) b = new Blob([b], { type: it.type });
+        if (it.k === "audio") chain = chain.then(function () {
+          return new Promise(function (res) { akAudioPut(it.id, b, function () { res(); }); }).then(function () {
+            var s = akMediaFindSong(it);
+            if (!s) { r.missing.push(it.title || "a song"); return; }
+            s.audio = s.audio || [];
+            if (!s.audio.some(function (a) { return a.id === it.id; })) s.audio.push(clone(it.ref));
+            r.audio++;
+          });
+        });
+        else if (it.k === "img") chain = chain.then(function () { return akBlobDataUrl(b); }).then(function (u) { if (u) return imgPut(it.id, { name: it.name || "photo", data: u }).then(function () { r.photos++; }); });
+        else if (it.k === "artist") chain = chain.then(function () { return akArtPhotoPut(it.id, b); }).then(function () {
+          var a = akArtist(); if (!a.photos.some(function (p) { return p.id === it.id; })) a.photos.push(clone(it.ref)); if (!a.main) a.main = it.id; r.artist++;
+        });
+      });
+      return chain.then(function () { saveNow(); return r; });
+    });
+  });
+}
+function akMediaSendDialog() {
+  var L = akMediaList(), au = h("input", { type: "checkbox", checked: L.audio.length > 0 }), ph = h("input", { type: "checkbox", checked: L.img.length + L.artist.length > 0 }), st = h("p", { class: "hint", role: "status" });
+  modal("Send audio and photos", h("div", null,
+    h("p", null, "Packs them into one file to send to your other device (AirDrop, Nearby Share, email, Drive, Files). On that device open it in Import > Between my devices > Receive audio and photos, and they go back into the same songs."),
+    h("label", { class: "chk" }, au, "Song audio: " + L.audio.length + (L.audio.length === 1 ? " recording or file" : " recordings and files")),
+    h("label", { class: "chk" }, ph, "Photos: " + L.img.length + " song pictures and show photos, " + L.artist.length + " artist photos"),
+    h("p", { class: "hint" }, "Sync first (or send a sync file), so the other device has the songs these belong to. Show recordings from My recordings are sent from there, one at a time, because they are big."),
+    st),
+    [{ label: "Cancel" }, { label: "Make the file", primary: true, onClick: function (close) {
+      if (!au.checked && !ph.checked) { st.textContent = "Tick audio, photos or both."; return false; }
+      st.textContent = "Packing…";
+      akMediaPack({ audio: au.checked, photos: ph.checked }, function (m) { st.textContent = "Packing… " + m; }).then(function (r) {
+        var name = "akashic-audio-photos-" + new Date().toISOString().slice(0, 10) + ".zip", f = null;
+        try { f = new File([r.blob], name, { type: "application/zip" }); } catch (e) {}
+        st.textContent = r.n + " files, " + (typeof akRecSize === "function" ? akRecSize(r.blob.size) : Math.round(r.blob.size / 1e6) + " MB") + ".";
+        var send = f && navigator.canShare && navigator.canShare({ files: [f] });
+        if (typeof close === "function") close();
+        modal("Ready to send", h("p", null, r.n + " files in " + name + " (" + st.textContent.split(", ")[1]), [
+          { label: "Save to this device", onClick: function () { akRecDownload(r.blob, name); } },
+          send ? { label: "Send…", primary: true, onClick: function () { navigator.share({ files: [f], title: "Audio and photos" }).catch(function () {}); } } : null].filter(Boolean));
+      }).catch(function (e) { st.textContent = e.message || "Couldn't pack them."; });
+      return false;
+    } }]);
+}
+function akMediaInput() {
+  return h("input", { type: "file", accept: ".zip,application/zip", "aria-label": "Choose the audio and photos file", onChange: function () {
+    var f = this.files && this.files[0], input = this; if (!f) return;
+    toast("Reading " + f.name + "…");
+    akMediaImport(f).then(function (r) {
+      var bits = []; if (r.audio) bits.push(r.audio + " audio"); if (r.photos) bits.push(r.photos + " photos"); if (r.artist) bits.push(r.artist + " artist photos");
+      render();
+      toastUndo("Added " + (bits.join(", ") || "nothing new") + "." + (r.missing.length ? " " + r.missing.length + " belong to songs that aren't here yet; sync first, then open the file again." : ""));
+    }).catch(function (e) { toast(e.message || "Couldn't read that file."); }).then(function () { input.value = ""; });
+  } });
+}
+
+/* ---------------------------------------------------------------- where to find it */
+function akSyncPanel(out, mark) {
+  var cfg = akSyncCfg(), gh = !!ghToken() && /^[\w.-]+\/[\w.-]+$/.test(ghCfg().repo), last = settings().syncLast;
+  var st = h("p", { class: "hint", role: "status" }, last ? last.msg : "Not synced on this device yet.");
+  var setSt = function (m) { st.textContent = m; };
+  out.appendChild(h("p", { class: "hint" }, "Organize on the phone, perform from the tablet: sync keeps the changes made on both. Songs, set lists, shows, history, requests, banter and settings are merged by item; edited on both means the newer edit wins, and play counts add up. Each device keeps its own layout when separate phone and tablet layouts are on."));
+  if (gh) {
+    out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akSyncNow(setSt); } }, "⇄ Sync now (GitHub)")));
+    out.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!cfg.gh, onChange: function () { if (mark) mark(); cfg.gh = this.checked; save(); } }), "Back up to GitHub by syncing (merge with the other device first, automatic backups too)"));
+  } else out.appendChild(h("p", { class: "hint" }, akPersonal() ? "Set up GitHub backup (Settings > Data and extras > Backups) on both devices with the same repository and file for one-tap sync. Until then, use a sync file:" : "No account needed: save a sync file here, send it to your other device (AirDrop, Nearby Share, email, Drive, a cable) and merge it there. Then do the same the other way when you change things there."));
+  out.appendChild(h("div", { class: "row" },
+    h("button", { onClick: function () { akSyncSaveFile(); } }, "Save or send a sync file"),
+    fileBtn("Merge a sync file from my other device", akSyncMergeInput(setSt))));
+  out.appendChild(st);
+  out.appendChild(h("p", { class: "hint", style: "margin-top:10px" }, "Audio recordings on songs don't travel in sync (too big). Send them, with song pictures, show photos and artist photos, as one file:"));
+  out.appendChild(h("div", { class: "row" }, h("button", { onClick: akMediaSendDialog }, "Send audio and photos…"), fileBtn("Receive audio and photos", akMediaInput())));
+}
+function akSettingsExtra18(c) {
+  c.again("data-and-extras");
+  c.section("Sync between my devices", "Phone and tablet: merge changes, send audio and photos");
+  akSyncPanel(c.out, c.mark);
+  if (typeof akSettingsExtra19 === "function") akSettingsExtra19(c);
+}
+(function () {
+  var vi = viewImport;
+  viewImport = function () {
+    var el = vi.apply(this, arguments);
+    try {
+      var root = el.querySelector('[data-blocks="import"]') || el;
+      var body = h("div", { class: "secbody" });
+      root.appendChild(h("details", { class: "card setsec", "data-bk": "between-my-devices" }, h("summary", null, h("span", { class: "st" }, "Between my devices"), h("span", { class: "sd" }, "Sync phone and tablet, send audio and photos")), body));
+      akSyncPanel(body);
+    } catch (e) {}
+    return el;
+  };
+})();
+/* ⋯ menu on Songs and Shows: one tap when GitHub is set up */
+function akSyncMenuItems() { return ghToken() && /^[\w.-]+\/[\w.-]+$/.test(ghCfg().repo) ? [{ label: "⇄ Sync with my other device", onClick: function () { akSyncNow(); } }] : []; }
+(function () {
+  function add(el) {
+    try { var bar = el.querySelector(".topbar"), more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return (b.textContent || "").trim() === "⋯"; })[0]; if (more && akSyncMenuItems().length) akMenuPlus(more, akSyncMenuItems); } catch (e) {}
+    return el;
+  }
+  var vs = viewSongs, vw = viewShows;
+  viewSongs = function () { return add(vs.apply(this, arguments)); };
+  viewShows = function () { return add(vw.apply(this, arguments)); };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
