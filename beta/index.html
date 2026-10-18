@@ -9029,7 +9029,7 @@ function viewAtmosphere() {
   AK_STYLES2.forEach(function (f) { f[2].forEach(function (s) { if (s[0] === curStyle && !curFam) curFam = f[0]; }); });
   if (!tab) tab = curFam || "Whimsy";
   var body = h("div", { class: "akpage", "data-blocks": "atmosphere" });
-  body.appendChild(h("button", { class: "akback", onClick: function () { go("settings"); } }, "‹ Look and feel"));
+  body.appendChild(h("button", { class: "akback", onClick: function () { S.akOpenThemes = true; go("settings"); } }, "‹ Themes"));
   body.appendChild(h("p", { class: "hint", style: "margin:2px 0 10px" }, "Background, borders and glow. It sits on top of any color theme and can be turned off per screen. On the playing screen it only glows at the edges, so the words stay clear."));
 
   function redraw() { var sc = $("mainScroll"), top = sc ? sc.scrollTop : 0; save(); akSig = ""; akApply(); render(); var sc2 = $("mainScroll"); if (sc2) sc2.scrollTop = top; }
@@ -9090,8 +9090,8 @@ function viewAtmosphere() {
   sw.appendChild(a2switch("Pause effects when the battery is low", "Below 20 percent", function () { return ak.battPause !== false; }, function (v) { ak.battPause = v; }));
   sw.appendChild(a2switch("Playing screen: edge glow only", "Keeps the lyrics area completely clear", function () { return (ak.screens || {}).play !== "off"; }, function (v) { ak.screens.play = v ? "edge" : "off"; }));
   body.appendChild(sw);
-  body.appendChild(h("p", { class: "hint", style: "margin:10px 2px" }, "Text, button and press effects, glow, outline and shadow are in Settings, Look, “Atmosphere and effects”."));
-  return shell("Atmosphere", body, {});
+  body.appendChild(h("p", { class: "hint", style: "margin:10px 2px" }, "Text, button and press effects, glow, outline and shadow are in Settings, Look, “Theme effects”. The theme picture and your own photo are in Settings, Look, “Themes and Atmosphere”."));
+  return shell("Themes › Atmosphere", body, {});
 }
 
 akCss("ak-atmo2", [
@@ -9824,17 +9824,17 @@ function viewSettings() {
   }
   root.appendChild(top);
   group("Look", "Theme, fonts, text, colors, effects and saved looks");
-  section("Theme", "Pick a theme and make your own");
+  section("Themes and Atmosphere", "Pick a theme, its picture, and the Atmosphere behind the screens");
   out.appendChild(akThemeHero({ mark: mark, refresh: refresh }));
   out.appendChild(preview);
   check("In light mode, use clear high-contrast colors instead of my custom colors (for playing outside)", function () { return s.lightBoost; }, function (v) { s.lightBoost = v; });
+  /* Atmosphere lives under Themes: the theme picture, your own photo and the Atmosphere page, as folds in this section */
+  akashicControls(out, { mark: mark, refresh: refresh, only: "atmo" });
   section("Layout style", "How blocks, borders, buttons and lists are shaped");
   lsControls(out, { mark: mark, refresh: refresh });
   select("Spacing and sizes on every screen except the playing screen", function () { return s.density || "auto"; }, function (v) { s.density = v; }, AK_DENS);
   section("Navigation and bars", "Side rail, sidebar, dock, top tabs, bar styles");
   lsNavControls(out, { mark: mark, refresh: refresh });
-  section("Atmosphere", "Background decoration and your own background photo");
-  akashicControls(out, { mark: mark, refresh: refresh, only: "atmo" });
   section("Fonts", "Lyric and chord fonts, font packs, your own fonts");
   fontPicker("Lyric font", function () { return s.lyricFont; }, function (v) { s.lyricFont = v; });
   fontPicker("Chord font", function () { return s.chordFont || "mono"; }, function (v) { s.chordFont = v; });
@@ -10023,6 +10023,8 @@ function viewSettings() {
   out.appendChild(h("p", { class: "hint" }, "Press Learn, then press the pedal. Your pedal needs to be in a keyboard-style mode (arrow keys, Page Up/Down, Space or Enter). Left pedal: tap to start or stop auto-scroll, double tap to open or close the song list. Right pedal: tap to scroll down, double tap to scroll up. With the song list open, left scrolls it up a page and right scrolls it down a page."));
   range("Double-tap window", function () { return s.pedalWin; }, function (v) { s.pedalWin = v; }, 0, 800, 50, function (v) { return v ? v + " ms" : "off (no double taps)"; });
   check("Glide when the pedal scrolls (off: jump at once, like a page turn)", function () { return !!s.pedalGlide; }, function (v) { s.pedalGlide = v; });
+  range("How long the glide takes (slower is easier to follow)", function () { return s.pedalGlideMs == null ? 450 : s.pedalGlideMs; }, function (v) { s.pedalGlideMs = v; }, 100, 1500, 50, function (v) { return (v / 1000).toFixed(2) + " s"; });
+  check("After a press, show a line where the edge of the screen was (so you can see where you were)", function () { return s.pedalMark !== false; }, function (v) { s.pedalMark = v; });
   check("Wait to see if a second press is coming (the old way; adds a short delay to every press)", function () { return !!s.pedalWait; }, function (v) { s.pedalWait = v; });
   out.appendChild(h("p", { class: "hint" }, "Every press acts the moment it arrives. A quick second press takes the first one back and does the double-press action instead, so double presses still work with no delay. While auto-scroll is running, the right pedal moves the auto-scroll down with it, and it carries on from there."));
   range("Each “scroll down” press moves", function () { return s.pedalStep; }, function (v) { s.pedalStep = v; }, 0.1, 1, 0.01, function (v) { return Math.round(v * 100) + "% of the screen"; });
@@ -11786,6 +11788,20 @@ function adjustSpeed(dir) {
 /* one pedal step. It moves at once (no waiting), and while auto-scroll runs it moves the auto-scroll with it,
    so the scroll carries on from the new place instead of snapping back. "Glide" (Settings > Pedal) animates it quickly. */
 var glide = null;
+/* how long a pedal glide takes (Settings > Pedal), and a short-lived line where the old bottom (or top) edge of the screen landed,
+   so after a press you can see where you were reading (settings().pedalMark, on unless turned off) */
+function akGlideMs() { var v = settings().pedalGlideMs; return v == null ? 450 : Math.max(60, v); }
+function akPedalMark(sc, from, to) {
+  if (settings().pedalMark === false || Math.abs(to - from) < 4) return;
+  try {
+    if (getComputedStyle(sc).position === "static") sc.style.position = "relative";
+    var old = sc.querySelector(".ak56-mark"); if (old) old.parentNode.removeChild(old);
+    var y = to > from ? from + sc.clientHeight : from, m = document.createElement("div");
+    m.className = "ak56-mark" + (to > from ? "" : " up"); m.style.top = Math.round(y) + "px"; sc.appendChild(m);
+    setTimeout(function () { if (m.parentNode) m.parentNode.removeChild(m); }, akGlideMs() + 2200);
+  } catch (e) {}
+}
+akCss("ak56", ".ak56-mark{position:absolute;left:0;right:0;height:0;border-top:3px solid var(--accent,#d4a640);box-shadow:0 0 10px var(--accent,#d4a640);pointer-events:none;z-index:3;animation:ak56f 2.6s ease-in forwards}.ak56-mark::before{content:'▸';position:absolute;left:2px;top:-.85em;color:var(--accent,#d4a640);font-size:1.1em}@keyframes ak56f{0%,55%{opacity:1}100%{opacity:0}}");
 function scrollBy(sign, frac) {
   var sc = scroller(); if (!sc) return;
   var dy = sign * sc.clientHeight * (frac || settings().pedalStep), max = Math.max(0, sc.scrollHeight - sc.clientHeight);
@@ -11796,12 +11812,13 @@ function scrollBy(sign, frac) {
       var now = performance.now(), left = Math.max(0.1, (endAt - now) / 1000), rem0 = Math.max(1, max - from), sp = rem0 / left;
       endAt = now + Math.max(0, max - to) / Math.max(1e-3, sp) * 1000;
     }
-    if (settings().pedalGlide) { glide = { from: from, to: to, at: from, t0: performance.now(), ms: 140 }; return; }
-    pos = to; sc.scrollTop = pos; lastSet = sc.scrollTop; glide = null; return;
+    if (settings().pedalGlide) { glide = { from: from, to: to, at: from, t0: performance.now(), ms: akGlideMs() }; akPedalMark(sc, from, to); return; }
+    pos = to; sc.scrollTop = pos; lastSet = sc.scrollTop; glide = null; akPedalMark(sc, from, to); return;
   }
-  if (!settings().pedalGlide) { sc.scrollTop = Math.max(0, Math.min(max, sc.scrollTop + dy)); return; }
-  var a = sc.scrollTop, b = Math.max(0, Math.min(max, a + dy)), t0 = performance.now();
-  (function step(t) { var k = Math.min(1, (t - t0) / 140), e = 1 - Math.pow(1 - k, 3); sc.scrollTop = a + (b - a) * e; if (k < 1 && !autoOn) requestAnimationFrame(step); })(t0);
+  var a = sc.scrollTop, b = Math.max(0, Math.min(max, a + dy)), t0 = performance.now(), gms = akGlideMs();
+  akPedalMark(sc, a, b);
+  if (!settings().pedalGlide) { sc.scrollTop = b; return; }
+  (function step(t) { var k = Math.min(1, (t - t0) / gms), e = 1 - Math.pow(1 - k, 3); sc.scrollTop = a + (b - a) * e; if (k < 1 && !autoOn) requestAnimationFrame(step); })(t0);
 }
 function playStep(d) {
   var p = S.play, ni = p.idx + d;
@@ -14403,10 +14420,18 @@ function openLivePanel(root, song) {
     [["play", "Queue", c.play], ["learn", "Learn", c.learn], ["message", "Messages", c.message]].forEach(function (x) { tabs.appendChild(h("button", { role: "tab", "aria-selected": tab === x[0] ? "true" : "false", "aria-pressed": tab === x[0] ? "true" : "false", onClick: function () { tab = S.liveTab = x[0]; draw(); } }, x[1] + (x[2] ? " (" + x[2] + ")" : ""))); });
     body.textContent = "";
     var L = akLive();
-    body.appendChild(h("div", { class: "row akl-top" }, h("span", { class: "muted grow" }, akLiveStatus()), h("button", { onClick: function () { L.open = !L.open; save(); akLivePublish().catch(function () {}); draw(); } }, L.open ? "Pause requests" : "Open requests"), h("button", { onClick: openLiveQr }, "QR"), typeof akLiveClearAll === "function" && akLiveList().length ? h("button", { class: "danger", onClick: function () { akLiveClearAll(draw); } }, "Clear all…") : null));
+    body.appendChild(h("div", { class: "row akl-top" }, h("span", { class: "muted grow" }, akLiveStatus()), h("button", { onClick: function () { L.open = !L.open; save(); akLivePublish().catch(function () {}); draw(); } }, L.open ? "Pause requests" : "Open requests"), h("button", { onClick: openLiveQr }, "QR"), typeof akTipQuick === "function" ? h("button", { onClick: function () { akTipQuick(); } }, "Tips…") : null, typeof akLiveClearAll === "function" && akLiveList().length ? h("button", { class: "danger", onClick: function () { akLiveClearAll(draw); } }, "Clear all…") : null));
     if (!L.open) body.appendChild(h("p", { class: "hint" }, "Requests are paused. The page tells people to try again later."));
     if (tab === "play") {
       var q = akLiveList("play").filter(function (r) { return r.status === "new"; }).sort(function (a, b) { return (a.order || a.at) - (b.order || b.at); }), rows = [];
+      /* held until the tip shows up (Settings: hold tipped requests until I tap Tip received) */
+      var held = typeof akTipHeld === "function" ? q.filter(akTipHeld) : [];
+      if (held.length) {
+        q = q.filter(function (r) { return held.indexOf(r) < 0; });
+        var hb = h("div", { class: "card akl-held" }, h("strong", null, "Waiting for the tip (" + held.length + ")"), h("div", { class: "hint", style: "margin:2px 0 6px" }, "They joined the line as soon as you tap Tip received."));
+        held.forEach(function (r) { hb.appendChild(h("div", { class: "row", style: "margin:4px 0;flex-wrap:wrap" }, h("span", { class: "grow" }, r.title + (r.name ? " · " + r.name : "")), tipLine(r), h("button", { class: "primary", onClick: function () { akLiveUpdate(r, { tipOk: true }); } }, "Tip received"), h("button", { class: "danger", onClick: function () { akLiveUpdate(r, { status: "declined", reply: "The tip didn't come through." }); } }, "Decline"))); });
+        body.appendChild(hb);
+      }
       if (!q.length) body.appendChild(h("p", { class: "hint" }, "No requests waiting. They show up here the moment someone sends one."));
       q.forEach(function (r) {
         var s = have(r), grip = dragGrip("Drag " + r.title + " to change its place");
@@ -14449,7 +14474,7 @@ function openLivePanel(root, song) {
       ms.forEach(function (r) {
         body.appendChild(h("div", { class: "card akl-row" + (r.read ? " read" : "") }, h("div", { class: "muted", style: "font-size:.85rem" }, (r.name || "Someone") + " · " + new Date(r.at || Date.now()).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })),
           h("div", { class: "akl-msg" }, r.note || r.title || ""), tipLine(r),
-          h("div", { class: "row", style: "margin:6px 0 0" }, r.read ? null : h("button", { onClick: function () { akLiveUpdate(r, { read: true }); } }, "Mark read"), h("button", { class: "danger", onClick: function () { confirmBox("Delete this message?", "Delete", function () { akLiveDelete(r); }); } }, "Delete"))));
+          h("div", { class: "row", style: "margin:6px 0 0" }, r.tip && r.tip.method && !r.tipOk ? h("button", { class: "primary", onClick: function () { akLiveUpdate(r, { tipOk: true, read: true }); } }, "Tip received") : null, r.read ? null : h("button", { onClick: function () { akLiveUpdate(r, { read: true }); } }, "Mark read"), h("button", { class: "danger", onClick: function () { confirmBox("Delete this message?", "Delete", function () { akLiveDelete(r); }); } }, "Delete"))));
       });
     }
   }
@@ -22867,23 +22892,24 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "10.1.3";
+var AK_VERSION = "11.0";
 var AK_WHATS_NEW = [
-  "Fixed: Sync now (GitHub) said your backup wasn't an Akashic Chords backup. It reads your GitHub file properly now, and if a file really can't be used, the message says why.",
-  "Fixed: the Atmosphere page. The theme picture was covering every background style, so picking a style, colors, strength, color intensity or slow drift seemed to do nothing. Tapping a style now shows it instead of the picture, Match my theme brings the picture back, the picture choices are on the Atmosphere page too, and slow drift and color intensity work on the picture as well.",
-  "Fixed: on the playing screen, pinching the chord chart smaller (or bigger) now keeps that size instead of jumping back",
-  "Fixed: the crackle when you hear a chord. The guitar sound does much less work now, never plays too loud for your speaker, and fades strings smoothly. If you still hear crackles, check that Smooth sound is on (Settings > Songs and shows > Chord sound)",
-  (typeof akPersonal !== "function" || akPersonal() ? "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one." : "A short web address for your request page, like yoursite/r/yourname, instead of the long one.") + " It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
-  "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end. The QR pop-up and printed sign show the address in words too",
-  "Record my show: auto-scroll can start an audio or video recording of each song, only the songs you mark in a set list (● Record this song), or the whole night. A countdown (30 seconds to start) before scrolling, a level meter with a clipping warning, a camera preview, and a beep to line up a second recording (Settings > Songs and shows > Record my show)",
-  "Recordings are saved every few seconds, so a crash or a dead battery keeps almost everything, and they're kept in My recordings (Shows ⋯) to save, share, or add to the song",
-  "Artist info: your stage name, bios in five lengths with copy buttons and letter counts, a photo gallery, links, booking and a tech rider. Your photo and tagline can show on the request page",
-  "Signs, posters and calendars: request QR sign, tips, follow me, set list board, show poster, month and season calendars from your Shows, and a press kit. Save as PDF or picture, as layers for Figma or Inkscape, as separate see-through pictures for Canva, and your shows as a CSV for Canva Bulk Create",
-  "Separate layouts for phone and for tablet / computer: each keeps its own layout style, arranged blocks, playing-screen buttons and bars, picked by screen size (Settings > Look > Layout style)",
-  "On a wide screen, tapping a song shows it next to the song list; tap it again to play. On a phone, less-used controls fold under More",
-  "Sync between my devices: one tap merges the phone and the tablet through your GitHub backup (or a sync file, no account needed), keeping the changes made on both. Play counts add up, and the newer edit wins when a song was changed on both",
-  "Send audio and photos: song audio, pictures, show photos and artist photos in one file that goes back into the same songs on the other device",
-  "Fixed: the website link on your request page had a typo (now AEDRYANGANTT.com)"
+  "Requests on/off right on the playing screen: a Requests button (Button bar, side buttons or the Info bar corner). Off, the QR page says you're not taking requests right now.",
+  "Save zoom: pinch the words or the chord chart (smaller works too), then tap 💾 Save zoom, for this song or as the default for every song.",
+  "Your theme picture can show behind the playing screen, with a dark layer slider: 0% shows the theme like on other pages, 100% hides it (Settings > Playing screen > Zoom and the theme behind the song).",
+  "Hold any button on the playing screen to put a different button in its place.",
+  "Record button: tap to start or stop recording right away, no auto-scroll needed. Hold it for the recording setup (quality, microphone, camera, lead-in, beep).",
+  "Shows open paused: pick your first song, then tap ▶ Start show in the Info bar. Turn it off in Settings > Songs and shows > Starting a show.",
+  "Fret shapes ⇄ chord names: type xx0232 and get D (with other names it could be), or type D for its shapes (Chord toolkit > Name a shape).",
+  "Fix chords the app doesn't read, in one song or the whole library: chords mixed with commas or marks, and shapes like x02210, become chords it reads. You see every change first (Tidy my library, Songs ⋯, or the song's ⋯).",
+  "Jazz chart: the song as a Real Book style lead sheet, with 1st and 2nd endings (🎼 Jazz chart on the Write tab, or Mode ▸ Jazz chart).",
+  "Atmosphere moved under Themes: Settings > Look > Themes and Atmosphere (the theme picture, your own photo and the Atmosphere page).",
+  "Smoother pedal scrolling: each press now glides, you choose how long the glide takes, and a gold line shows where the edge of the screen was so you can find your place (Settings > Playing screen > Pedal).",
+  "Solo neck: under each Solo, a guitar neck with the scale for the solo and the place to play it boxed (root on the 6th string, or pick the 5th, 4th or a box). It opens as the solo gets close. Resize it and lock it.",
+  "The line you're singing is softly highlighted, and near a solo it counts down the lines (Settings > Songs and shows > Solo neck and the singing line).",
+  "Request page tips: people tap $5, $10, $20, Other or No tip. Hold the Requests button for tips, the suggested amount and encore bribes on the spot.",
+  "Tip required, with “hold tipped requests until I tap Tip received”, so nothing joins your line before you've seen the money.",
+  "🔥 Encore bribes: the request page offers “Keep me playing!” for a price that goes up with every bribe, up to a top price you set."
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -28246,6 +28272,1228 @@ function akSyncMenuItems() { return ghToken() && /^[\w.-]+\/[\w.-]+$/.test(ghCfg
   viewShows = function () { return add(vw.apply(this, arguments)); };
 })();
 
+/* ================= Batch 11, phase A: the playing screen =================
+   - Requests on/off right on the playing screen: button "reqonoff" (Button bar, side buttons, Info bar corner). Off = the request page says
+     "not taking requests right now" (live.open false); On = live requests switched on (live.on) and open.
+   - Zoom: pinching the lyrics or the chord chart changes the size for now (S.akZoom {sid, lyr, ch}); "Save zoom" keeps it for the song
+     (song.size, song.chSize) or makes it the default (settings().lyricSize / chordsSize). settings().zoom12.auto = the old way (a pinch saves at once).
+   - Theme behind the playing screen: akCfg().photoPlay (on) and akCfg().playDark (0 = the theme shows as on every other page, 100 = not at all).
+   - Hold any button on the playing screen to put a different one in its place (akSlotMenu). Hold the Record button for the recording setup.
+   - Record button: tap starts or stops a recording right away (no auto-scroll needed).
+   - Shows open paused (settings().showPaused, on by default): a new show night starts paused until you tap Start show (Info bar corner,
+     the paused pill, or the Pause button). settings().showAutoStart: starting auto-scroll starts it too. */
+
+/* ---------------------------------------------------------------- 43. requests on and off */
+function akReqOnNow() { var L = akLive(); return !!(L.on && L.open !== false); }
+function akReqOnOff(force) {
+  var L = akLive(), want = typeof force === "boolean" ? force : !akReqOnNow();
+  if (want) {
+    if (L.mode === "cloud" && !(L.fb && L.fb.apiKey)) {
+      toast("Live requests aren't set up yet.", { label: "Set up", fn: function () { if (typeof openLiveSetupSteps === "function") openLiveSetupSteps(); else go("settings"); } });
+      return;
+    }
+    var was = L.on; L.on = true; L.open = true; save();
+    if (!was || !AKL.conn) akLiveStart();
+    var tries = 0;
+    (function pub() { akLivePublish().catch(function () { if (++tries < 8) setTimeout(pub, 1500); }); })();
+    toast("Requests are on. People can send songs from the QR page.");
+  } else {
+    L.open = false; save();
+    akLivePublish().catch(function () {});
+    toast("Requests are off. The QR page says you're not taking requests right now.");
+  }
+  akReqOnPaint();
+}
+function akReqOnPaint() {
+  var on = akReqOnNow();
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="reqonoff"],[data-fab="reqonoff"],[data-ak9c="reqonoff"]'), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("live", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.setAttribute("aria-label", on ? "Requests are on. Tap to turn them off" : "Requests are off. Tap to turn them on");
+    if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", on ? "Requests on" : "Requests off");
+    var w = b.querySelector(".ak9-cl"); if (w) w.textContent = on ? "Req on" : "Req off";
+  });
+  if (AKL.panelDraw) try { AKL.panelDraw(); } catch (e) {}
+}
+TB_ITEMS.push(["reqonoff", "Requests on / off"]); TB_SHORT.reqonoff = "Requests";
+FAB_ITEMS.push(["reqonoff", "Requests on / off"]); FAB_OFF.reqonoff = 1; FAB_SHORT.reqonoff = "Requests";
+AK_TB_MODES.reqonoff = "p";
+AK_IC.reqonoff = "M7 12a5 5 0 0 1 5-5h5a5 5 0 0 1 0 10h-5a5 5 0 0 1-5-5z M12 12a0 0 0 0 1 0 0 M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 1 0 0-5z";
+AK_CORNER.push(["reqonoff", "Requests on / off"]);
+(function () {
+  var cb = akCornerBtn;
+  akCornerBtn = function (id, root) {
+    if (id === "reqonoff") {
+      var on = akReqOnNow(), b = h("button", { class: "ak9-cb" + (on ? " live" : ""), onClick: function () { akReqOnOff(); } }, on ? "🙋" : "🚫", h("span", { class: "ak9-cl" }, on ? "Req on" : "Req off"));
+      b.setAttribute("data-ak9c", "reqonoff"); setTimeout(akReqOnPaint, 0); return b;
+    }
+    if (id === "show" && akRun10Paused() && RUN.pausedFresh) {
+      var s = h("button", { class: "ak9-cb ak12-start", "aria-label": "Start the show", onClick: function () { akRunUnpause(); akCornerPaint(); } }, "▶", h("span", { class: "ak9-cl" }, "Start show"));
+      s.setAttribute("data-ak9c", "show"); return s;
+    }
+    return cb.apply(this, arguments);
+  };
+})();
+
+/* ---------------------------------------------------------------- 51. Record: tap to record, hold for the setup */
+function akRec12Toggle() {
+  if (AKREC.lead) { akRecLeadCancel(); return; }
+  if (AKREC.rec) { akRecStop(); return; }
+  if (!akRecOk()) { toast("This browser can't record here."); return; }
+  var c = akRecCfg();
+  akRecStart({ kind: c.mode === "show" ? "show" : "manual" }).then(function (r) { if (r && r.what === "song") { r.what = "take"; akRecPutMeta(r).catch(function () {}); } akRec12Paint(); }, function () {});
+}
+function akRec12Paint() {
+  var on = !!AKREC.rec;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="rec"],[data-fab="rec"]'), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("ak12-recon", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.setAttribute("aria-label", on ? "Stop recording (hold for the recording setup)" : "Record now (hold for the recording setup)");
+    if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", on ? "■ Stop" : btnWord(b.hasAttribute("data-fab") ? "fab" : "toolbar", "rec", "Record"));
+  });
+}
+(function () {
+  var t21 = akExtraTb21;
+  akExtraTb21 = function (id, song, root) {
+    if (id === "rec") { var b = h("button", { onClick: function () { akRec12Toggle(); } }, akIcon("rec")); setTimeout(akRec12Paint, 0); return b; }
+    if (id === "reqonoff") { var r = h("button", { onClick: function () { akReqOnOff(); } }, akIcon("reqonoff")); setTimeout(akReqOnPaint, 0); return r; }
+    return t21.apply(this, arguments);
+  };
+  var f9 = akExtraFab9;
+  akExtraFab9 = function (song, root) {
+    var o = f9.apply(this, arguments) || {};
+    o.rec = function () { var b = h("button", { class: "fb", onClick: function () { akRec12Toggle(); this.blur(); } }, akIcon("rec")); setTimeout(akRec12Paint, 0); return b; };
+    o.reqonoff = function () { var b = h("button", { class: "fb", onClick: function () { akReqOnOff(); this.blur(); } }, akIcon("reqonoff")); setTimeout(akReqOnPaint, 0); return b; };
+    return o;
+  };
+  var rp = akRecPaint;
+  akRecPaint = function () { var r = rp.apply(this, arguments); try { akRec12Paint(); } catch (e) {} return r; };
+  /* the Recorder window doubles as the setup: everything for recording, without leaving the playing screen */
+  var pf = akRecPanelFill;
+  akRecPanelFill = function () {
+    var r = pf.apply(this, arguments), P = AKREC.panelEl; if (!P) return r;
+    try {
+      var c = akRecCfg(), busy = !!AKREC.rec;
+      function sel(label, key, opts, after) {
+        P.appendChild(h("label", { class: "fld" }, label, h("select", { disabled: busy && key !== "tail", onChange: function () { var v = this.value; c[key] = isNaN(Number(v)) || v === "" ? v : Number(v); save(); if (after) after(); akRecPanelFill(); } },
+          opts.map(function (o) { return h("option", { value: String(o[0]), selected: String(c[key]) === String(o[0]) }, o[1]); }))));
+      }
+      var more = h("details", { class: "ak12-recmore", open: !!S.ak12RecMore }); more.addEventListener("toggle", function () { S.ak12RecMore = more.open; });
+      more.appendChild(h("summary", null, "Recording setup"));
+      var hold = P; P = more;
+      sel("Sound quality", "q", [["voice", "Voice (small files)"], ["music", "Music (recommended)"], ["lossless", "Studio (WAV, very large, sound only)"]]);
+      if (c.video) {
+        sel("Camera", "facing", [["environment", "Back camera"], ["user", "Front camera (selfie)"]], function () { akRecGetStream().catch(akRecFail); });
+        sel("Video quality", "vq", [["low", "Low (640×360)"], ["med", "Medium (720p)"], ["high", "High (1080p)"]], function () { akRecGetStream().catch(akRecFail); });
+      }
+      sel("Before the song starts scrolling (auto-scroll)", "lead", [[0, "No wait"], [5, "5 seconds"], [10, "10 seconds"], [20, "20 seconds"], [30, "30 seconds"], [60, "1 minute"]]);
+      sel("Keep recording after the song ends", "tail", [[0, "Stop right away"], [5, "5 seconds"], [15, "15 seconds"], [30, "30 seconds"], [60, "1 minute"]]);
+      P.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: c.beep !== false, onChange: function () { c.beep = this.checked; save(); } }), "Beep at the start (lines up two recordings)"));
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        var micSel = h("select", { disabled: busy, "aria-label": "Microphone", onChange: function () { c.mic = this.value; save(); akRecGetStream().catch(akRecFail); } }, h("option", { value: "" }, "The usual microphone"));
+        navigator.mediaDevices.enumerateDevices().then(function (ds) { ds.filter(function (d) { return d.kind === "audioinput" && d.deviceId && d.deviceId !== "default"; }).forEach(function (d, i) { micSel.appendChild(h("option", { value: d.deviceId, selected: c.mic === d.deviceId }, d.label || "Microphone " + (i + 1))); }); }).catch(function () {});
+        P.appendChild(h("label", { class: "fld" }, "Microphone", micSel));
+      }
+      P.appendChild(h("p", { class: "hint" }, "Tap the Record button to start or stop at any time, with or without auto-scroll. Hold it to open this window."));
+      if (AK12.lp && AK12.lp.id === "rec") P.appendChild(h("button", { class: "sm", onClick: function () { var lp = AK12.lp; akSlotMenu(lp.el, lp.kind, lp.id); } }, "⇄ Put a different button in this place…"));
+      hold.appendChild(more);
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- 48. hold a button to swap it for another */
+var AK12 = { lp: null, t: 0, swallow: 0 };
+var AK_LONG = { rec: function () { akRecFloat(); S.ak12RecMore = true; setTimeout(akRecPanelFill, 0); } };
+function akSlotMenu(anchor, kind, id) {
+  var s = settings(), top = kind === "toolbar", grp = top ? s.toolbar : s.fab, all = top ? TB_ITEMS : FAB_ITEMS;
+  var grid = top ? akGrid() : (typeof akFabGrid === "function" ? akFabGrid() : { on: false });
+  function name(x) { return x[1]; }
+  function done(msg) { save(); keepAutoRender(); if (msg) toast(msg); }
+  function swapTo(nid) {
+    if (grid.on) {
+      var i = grid.cells.indexOf(id), j = grid.cells.indexOf(nid);
+      if (j >= 0) grid.cells[j] = id; grid.cells[i] = nid;
+    } else {
+      var items = grp.items, a = -1, b = -1;
+      items.forEach(function (it, k) { if (it.id === id) a = k; if (it.id === nid) b = k; });
+      if (b < 0) { items.push({ id: nid, on: false }); b = items.length - 1; }
+      var wasOn = !!items[b].on, tmp = items[a]; items[a] = items[b]; items[b] = tmp;
+      items[a].on = true; items[b].on = wasOn;
+      var pos = grp.pos || {};
+      if (pos[id] || pos[nid]) { var p1 = pos[id], p2 = pos[nid]; if (p1) pos[nid] = p1; else delete pos[nid]; if (wasOn && p2) pos[id] = p2; else delete pos[id]; }
+    }
+    var x = all.filter(function (y) { return y[0] === nid; })[0];
+    done("“" + (x ? (top ? TB_SHORT[nid] : FAB_SHORT[nid]) || x[1] : nid) + "” is in that place now.");
+  }
+  var cur = all.filter(function (y) { return y[0] === id; })[0], shown = function (x) {
+    if (grid.on) return grid.cells.indexOf(x[0]) >= 0;
+    var it = grp.items.filter(function (y) { return y.id === x[0]; })[0]; return !!(it && it.on);
+  };
+  var items = [{ head: "Put here instead of “" + (cur ? cur[1] : id) + "”" }];
+  if (AK_LONG[id]) items.push({ label: id === "rec" ? "⚙ Recording setup…" : "⚙ Options…", onClick: function () { AK_LONG[id](); } }, { sep: true });
+  all.forEach(function (x) {
+    if (x[0] === id || x[0] === "title" || !akModesOk(AK_TB_MODES[x[0]])) return;
+    var on = shown(x);
+    items.push({ label: name(x) + (on ? " (swaps places)" : ""), used: on, onClick: function () { swapTo(x[0]); } });
+  });
+  items.push({ sep: true }, { label: "Take this button off", onClick: function () {
+    if (grid.on) { var i = grid.cells.indexOf(id); if (i >= 0) grid.cells[i] = null; }
+    else grp.items.forEach(function (it) { if (it.id === id) it.on = false; });
+    done("Button taken off. Hold another button to bring it back.");
+  } });
+  menu(anchor, items);
+}
+function akLongPressOk() { var s = settings(); return S.view === "play" && !S.layout && !S.locked && s.holdSwap !== false; }
+(function () {
+  function btnOf(e) { var b = e.target && e.target.closest && e.target.closest("[data-tb],[data-fab]"); return b && b.closest(".play") ? b : null; }
+  document.addEventListener("pointerdown", function (e) {
+    clearTimeout(AK12.t); AK12.t = 0;
+    var b = btnOf(e); if (!b || !akLongPressOk() || (e.pointerType === "mouse" && e.button !== 0)) return;
+    var x0 = e.clientX, y0 = e.clientY;
+    AK12.down = { x: x0, y: y0 };
+    AK12.t = setTimeout(function () {
+      AK12.t = 0; AK12.swallow = Date.now();
+      var kind = b.hasAttribute("data-tb") ? "toolbar" : "fab", id = b.getAttribute(kind === "toolbar" ? "data-tb" : "data-fab");
+      AK12.lp = { el: b, kind: kind, id: id };
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch (er) {}
+      if (AK_LONG[id]) AK_LONG[id](); else akSlotMenu(b, kind, id);
+    }, 550);
+  }, true);
+  function cancel(e) { if (!AK12.t) return; if (e && e.type === "pointermove" && AK12.down && Math.hypot(e.clientX - AK12.down.x, e.clientY - AK12.down.y) < 12) return; clearTimeout(AK12.t); AK12.t = 0; }
+  document.addEventListener("pointermove", cancel, true);
+  document.addEventListener("pointerup", cancel, true);
+  document.addEventListener("pointercancel", cancel, true);
+  document.addEventListener("click", function (e) { if (AK12.swallow && Date.now() - AK12.swallow < 900 && btnOf(e)) { AK12.swallow = 0; e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener("contextmenu", function (e) { if (btnOf(e) && akLongPressOk()) e.preventDefault(); }, true);
+})();
+
+/* ---------------------------------------------------------------- 44. zoom now, save it when it looks right */
+function akZoom12() { var s = settings(), z = s.zoom12 = s.zoom12 || {}; if (z.auto === undefined) z.auto = false; return z; }
+function akZoomCur(song) { var z = S.akZoom; return z && song && z.sid === song.id ? z : null; }
+(function () {
+  var ep = enablePinch;
+  enablePinch = function (pane, kind, song, root) {
+    if (akZoom12().auto) return ep.apply(this, arguments);
+    var d0 = 0, v0 = 0, live = false, s = settings();
+    function dist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+    function cur() { var z = akZoomCur(song); return kind === "lyr" ? ((z && z.lyr) || song.size || s.lyricSize) : (parseFloat(getComputedStyle(pane).getPropertyValue("--chords-size")) || (z && z.ch) || song.chSize || s.chordsSize); }
+    function apply(v) {
+      var z = akZoomCur(song) || (S.akZoom = { sid: song.id });
+      if (kind === "lyr") { v = Math.max(14, Math.min(80, v)); z.lyr = v; root.style.setProperty("--lyric-size", v + "px"); fitTabs(pane, "--lyric-size"); }
+      else { v = Math.max(12, Math.min(120, v)); z.ch = v; pane.style.setProperty("--chords-size", v + "px"); fitTabs(pane, "--chords-size"); }
+    }
+    pane.addEventListener("touchstart", function (e) { if (e.touches.length === 2) { d0 = dist(e.touches); v0 = cur(); live = d0 > 10; S.pinching = live; } }, { passive: true });
+    pane.addEventListener("touchmove", function (e) { if (!live || e.touches.length < 2) return; if (e.cancelable) e.preventDefault(); apply(Math.round(v0 * dist(e.touches) / d0)); }, { passive: false });
+    function end(e) { if (live && e.touches.length < 2) { live = false; if (kind === "chords") fitSoon(); akZoomPill(); setTimeout(function () { S.pinching = false; }, 350); } }
+    pane.addEventListener("touchend", end, { passive: true }); pane.addEventListener("touchcancel", end, { passive: true });
+  };
+  var fc = fitChords;
+  fitChords = function () {
+    var cp = $("chPane"), song = S.view === "play" && S.play ? curSong() : null;
+    if (cp && song) { var z = akZoomCur(song), v = (z && z.ch) || song.chSize; if (v) { cp.style.setProperty("--chords-size", v + "px"); fitTabs(cp, "--chords-size"); return; } }
+    return fc.apply(this, arguments);
+  };
+  var fl = fillCharts;
+  fillCharts = function () {
+    try { var song = curSong(), z = akZoomCur(song), root = document.querySelector(".play"); if (root && z && z.lyr) root.style.setProperty("--lyric-size", z.lyr + "px"); } catch (e) {}
+    var r = fl.apply(this, arguments);
+    try { akZoomPill(); } catch (e) {}
+    return r;
+  };
+})();
+function akZoomUnsaved(song) { var z = akZoomCur(song); if (!z) return false; return (z.lyr && z.lyr !== (song.size || settings().lyricSize)) || (z.ch && z.ch !== (song.chSize || settings().chordsSize)); }
+function akZoomPill() {
+  var root = document.querySelector(".play"), old = root && root.querySelector(".ak12-zoom"), song = S.view === "play" && S.play ? curSong() : null;
+  var want = !!(root && song && !S.layout && akZoomUnsaved(song));
+  if (!want) { if (old) old.remove(); return; }
+  if (old) return;
+  var pn = root.querySelector(".panes"); if (!pn) return;
+  pn.appendChild(h("div", { class: "ak12-zoom" },
+    h("button", { class: "primary", onClick: function () { akZoomMenu(this); } }, "💾 Save zoom"),
+    h("button", { class: "icon sm", "aria-label": "Undo the zoom", title: "Back to how it was", onClick: function () { S.akZoom = null; keepAutoRender(); } }, "↶")));
+}
+function akZoomSave(how) {
+  var song = curSong(), z = akZoomCur(song) || {}, s = settings();
+  var lyr = z.lyr || song.size || s.lyricSize, cp = $("chPane"), ch = z.ch || (cp ? parseFloat(getComputedStyle(cp).getPropertyValue("--chords-size")) : 0) || song.chSize || s.chordsSize;
+  if (how === "song") { song.size = lyr; if (z.ch || song.chSize) song.chSize = ch; toast("Zoom saved for “" + song.title + "”."); }
+  else if (how === "all") {
+    s.lyricSize = lyr; if (z.ch || song.chSize) { s.chordsSize = ch; s.autoFit = false; }
+    delete song.size; delete song.chSize;
+    toast("Zoom saved as the default for every song (songs with their own saved zoom keep theirs).");
+  } else if (how === "reset") { delete song.size; delete song.chSize; toast("This song uses the default zoom again."); }
+  S.akZoom = null; save(); keepAutoRender();
+}
+function akZoomMenu(anchor) {
+  var song = curSong();
+  menu(anchor, [{ head: "Save this zoom (lyrics and chord chart)" },
+    { label: "For this song", onClick: function () { akZoomSave("song"); } },
+    { label: "As the default for every song", onClick: function () { akZoomSave("all"); } },
+    { sep: true },
+    { label: "Back to how it was", onClick: function () { S.akZoom = null; keepAutoRender(); } },
+    { label: "Use the default zoom for this song", disabled: !(song.size || song.chSize), onClick: function () { akZoomSave("reset"); } }]);
+}
+TB_ITEMS.push(["savezoom", "Save zoom (text and chord sizes)"]); TB_SHORT.savezoom = "Save zoom";
+AK_IC.savezoom = "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z M21 21l-5-5 M8 11h6 M11 8v6";
+function akExtraTb22(id, song, root) {
+  if (id === "savezoom") return h("button", { "aria-label": "Save zoom", onClick: function () { akZoomMenu(this); } }, akIcon("savezoom"));
+  if (typeof akExtraTb23 === "function") return akExtraTb23(id, song, root);
+  return null;
+}
+SONG_FIELDS.push("chSize");
+
+/* ---------------------------------------------------------------- 45. the theme behind the playing screen */
+function akPlayDark() { var ak = akCfg(); return ak.playDark == null ? 60 : Math.max(0, Math.min(100, Number(ak.playDark))); }
+(function () {
+  var at = akAtmo;
+  akAtmo = function () {
+    var ak = akCfg(), r = document.documentElement;
+    if (S.view !== "play" || !ak.photoPlay || ak.on === false) { r.removeAttribute("data-ak12pb"); if (akSig && akSig.indexOf("PB:") === 0) akSig = ""; return at.apply(this, arguments); }
+    var el = document.getElementById("atmo"), t = akCurTheme(), photo = akBgPhoto(t), style = akAtmoStyle();
+    if (!el) { el = document.createElement("div"); el.id = "atmo"; el.setAttribute("aria-hidden", "true"); document.body.insertBefore(el, document.getElementById("app")); }
+    if (!photo && style === "off") { r.removeAttribute("data-ak12pb"); return at.apply(this, arguments); }
+    var dark = akPlayDark();
+    r.setAttribute("data-ak12pb", "1"); r.setAttribute("data-atmo-on", "1");
+    el.style.display = ""; el.className = ""; el.style.opacity = "1";
+    var iv = ak.intensity == null ? 50 : ak.intensity; el.style.filter = iv === 50 ? "" : "saturate(" + (iv < 50 ? 0.3 + iv / 50 * 0.7 : 1 + (iv - 50) / 50 * 0.9).toFixed(2) + ")";
+    var c = akColors(t), sig = "PB:" + (photo ? (photo.art ? photo.data : photo.data.length) + ":" + (ak.photoBlur || 0) : style + c.g.join("")) + ":" + dark;
+    if (sig === akSig && el.firstChild) return;
+    akSig = sig; el.innerHTML = "";
+    if (photo) {
+      var bl = Number(ak.photoBlur) || 0, pic = document.createElement("div"); pic.className = "akphoto"; pic.style.backgroundImage = "url(" + photo.data + ")";
+      if (bl) pic.style.filter = "blur(" + bl + "px)"; pic.style.transform = bl ? "scale(1.08)" : ""; el.appendChild(pic);
+    } else {
+      var fn = AK_KINDS[style], seed = 0, key = style + c.g.join(""); for (var i = 0; i < key.length; i++) seed = (seed * 31 + key.charCodeAt(i)) >>> 0;
+      if (fn) el.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1280" preserveAspectRatio="xMidYMid slice">' + fn(c.g, !c.p.dark, akRng(seed)) + "</svg>";
+    }
+    var dim = document.createElement("div"); dim.className = "akdim ak12-dark"; dim.style.opacity = String(dark / 100); el.appendChild(dim);
+  };
+})();
+function akPlayBgControls(c) {
+  var ak = akCfg();
+  c.check("Show the theme picture (or Atmosphere) behind the playing screen", function () { return !!ak.photoPlay; }, function (v) { ak.photoPlay = v; akSig = ""; });
+  c.range("Dark layer over it", function () { return akPlayDark(); }, function (v) { ak.playDark = v; akSig = ""; }, 0, 100, 5, function (v) { return v === 0 ? "0% (the theme shows like on other pages)" : v === 100 ? "100% (theme hidden)" : v + "%"; });
+}
+
+/* ---------------------------------------------------------------- 52. shows open paused */
+(function () {
+  var fr = akRunFresh;
+  akRunFresh = function (sh) {
+    var r = fr.apply(this, arguments);
+    try {
+      if (settings().showPaused !== false && RUN && !RUN.ended && !RUN.paused) {
+        akRunPause(true); RUN.pausedFresh = 1; akRunSave(); akRunPaint();
+        setTimeout(function () { toast("The show is open but not started. Tap Start show when you begin.", { label: "Start now", fn: function () { akRunUnpause(); akCornerPaint(); } }); }, 500);
+      }
+    } catch (e) {}
+    return r;
+  };
+  var sa = startAuto;
+  startAuto = function () {
+    try { if (settings().showAutoStart && akRun10Paused() && RUN.pausedFresh) akRunUnpause(); } catch (e) {}
+    return sa.apply(this, arguments);
+  };
+})();
+
+/* ---------------------------------------------------------------- settings */
+function akSettingsExtra19(c) {
+  c.again("playing-screen");
+  c.section("Zoom and the theme behind the song", "Save a pinch zoom, see your theme picture while you play");
+  var z = akZoom12();
+  c.check("A pinch saves the size by itself (no Save zoom button)", function () { return !!z.auto; }, function (v) { z.auto = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "Pinch the words or the chord chart, then tap 💾 Save zoom: for this song, or as the default for every song. The Save zoom button can also go in the Button bar."));
+  akPlayBgControls(c);
+  c.section("Holding a button", "Hold a button to put a different one in its place");
+  c.check("Hold a button on the playing screen to swap it for another", function () { return settings().holdSwap !== false; }, function (v) { settings().holdSwap = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "Hold any button on the Button bar or the side buttons and pick what goes there. The Record button opens its recording setup when you hold it."));
+  c.again("songs-and-shows");
+  c.section("Starting a show", "Open shows paused, then start them when you begin");
+  c.check("Open a show paused (nothing counts until I tap Start show)", function () { return settings().showPaused !== false; }, function (v) { settings().showPaused = v; });
+  c.check("Starting auto-scroll also starts a paused show", function () { return !!settings().showAutoStart; }, function (v) { settings().showAutoStart = v; });
+  c.out.appendChild(h("p", { class: "hint" }, "While a show is paused, “▶ Start show” is in the Info bar's corner buttons and on the paused pill. Pick songs and look around first; plays only count after you start."));
+  if (typeof akSettingsExtra20 === "function") akSettingsExtra20(c);
+}
+
+akCss("ak12-a", [
+  "html[data-ak12pb=\"1\"] .play{background:transparent}",
+  "#atmo .akdim.ak12-dark{background:var(--play-bg,var(--bg))}",
+  ".ak12-zoom{position:absolute;right:10px;bottom:12px;z-index:7;display:flex;gap:6px;align-items:center}",
+  ".ak12-zoom .primary{box-shadow:0 2px 10px rgba(0,0,0,.35)}",
+  ".ak12-recon{background:#c62828!important;color:#fff!important;border-color:#c62828!important}",
+  ".ak12-recmore{margin-top:8px}.ak12-recmore summary{cursor:pointer;font-weight:700}",
+  ".ak12-start{background:var(--accent)!important;color:var(--on-accent,#fff)!important}",
+  "[data-tb=reqonoff].on,[data-fab=reqonoff].on{outline:2px solid var(--accent)}"
+].join("\n"));
+
+/* ================= Batch 11, phase B: fret shapes ⇄ chord names, and fixing chords the app doesn't read =================
+   - A fret shape is one fret per string, low string first: xx0320, 320003, x-10-12-12-11-10 (x = not played). akShapeParse(text) -> frets
+     or null; akShapeNames(frets) -> [{name, long, exact}] best first (named as the shape, in the guitar's tuning: a drop or open tuning
+     changes the notes, a plain tune-down doesn't); akShapesFor(name) -> fret lists from the chord library; akShapeText(frets) writes one.
+   - Chord toolkit > Name a shape: a box to type a shape (or a chord name, for its shapes).
+   - Fix chords the app doesn't read (AK_VIEWS.chordfix, one song or the whole library): on chord lines the app shows as plain text, each
+     chord goes in [brackets] (so it's read, and the spacing above the words stays), fret shapes become names, ♭/♯ become b/#. Left alone:
+     repeat marks (x2, (x4)), your quick-change dash (C-Am becomes [C]-[Am]), words, and a capital A that reads as a word. Everything is
+     shown first, with a tick per line and the other names a shape could be; a backup and an undo step are made before it changes anything. */
+
+/* ---------------------------------------------------------------- shapes */
+function akShapeIns() { var i = settings().instrument; return i === "ukulele" ? "ukulele" : "guitar"; }
+function akShapeParse(text, ins) {
+  ins = ins || akShapeIns();
+  var n = (AK2_STD[ins] || AK2_STD.guitar).length, t = String(text || "").trim().toLowerCase().replace(/^[(\[{]+|[)\]},;:.]+$/g, "");
+  if (!t || !/\d/.test(t) || /[^x\d\s.,\-\/]/.test(t)) return null;
+  var out = null;
+  if (/[\s.,\-\/]/.test(t)) {
+    var parts = t.split(/[\s.,\-\/]+/).filter(Boolean);
+    if (parts.length !== n || !parts.every(function (p) { return p === "x" || (/^\d{1,2}$/.test(p) && Number(p) <= 24); })) return null;
+    out = parts.map(function (p) { return p === "x" ? -1 : Number(p); });
+  } else {
+    if (t.length < n || t.length > n * 2) return null;
+    /* one character per string, or a two-digit fret (10 to 24) where the count needs one: the fewest two-digit frets, then the closest together */
+    var best = null;
+    (function walk(i, acc, two) {
+      if (acc.length === n) { if (i === t.length) { var f = acc.filter(function (x) { return x > 0; }), span = f.length ? Math.max.apply(null, f) - Math.min.apply(null, f) : 0, sc = two * 10 + span; if (!best || sc < best.sc) best = { a: acc.slice(), sc: sc }; } return; }
+      if (i >= t.length) return;
+      var c = t[i];
+      if (c === "x") { acc.push(-1); walk(i + 1, acc, two); acc.pop(); return; }
+      acc.push(Number(c)); walk(i + 1, acc, two); acc.pop();
+      if (i + 1 < t.length && /\d/.test(t[i + 1]) && (c === "1" || (c === "2" && Number(t[i + 1]) <= 4))) { acc.push(Number(c + t[i + 1])); walk(i + 2, acc, two + 1); acc.pop(); }
+    })(0, [], 0);
+    if (!best) return null;
+    out = best.a;
+  }
+  var played = out.filter(function (f) { return f >= 0; });
+  if (played.length < 2) return null;
+  var fr = played.filter(function (f) { return f > 0; });
+  if (fr.length && Math.max.apply(null, fr) - Math.min.apply(null, fr) > 6) return null;
+  return out;
+}
+var AK_SHAPE_ROOT = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+function akShapeNames(frets, ins) {
+  ins = ins || akShapeIns();
+  var notes = akShapeNotes(ins), midis = frets.map(function (f, i) { return f >= 0 && notes[i] != null ? notes[i] + f : null; });
+  var res = akIdentify(midis, false);
+  /* the usual spellings: Bb, Eb, Ab; C#, F# */
+  return res.map(function (r) {
+    var nm = r.name.replace(/^([A-G]#?)/, function (x) { return AK_SHAPE_ROOT[NOTE_IDX[x]]; }).replace(/\/([A-G]#?)$/, function (x, b) { return "/" + AK_SHAPE_ROOT[NOTE_IDX[b]]; });
+    return { name: nm, long: r.long, exact: r.exact };
+  });
+}
+function akShapeText(frets) {
+  var big = frets.some(function (f) { return f >= 10; });
+  return frets.map(function (f) { return f < 0 ? "x" : String(f); }).join(big ? "-" : "");
+}
+function akShapesFor(name, ins) {
+  ins = ins || akShapeIns();
+  var v = typeof allVoicings === "function" ? allVoicings(ins, name) : null, seen = {}, out = [];
+  (v ? v.list : []).forEach(function (x) { var t = akShapeText(x.frets); if (!seen[t]) { seen[t] = 1; out.push(x.frets.slice()); } });
+  return out;
+}
+
+/* Chord toolkit > Name a shape: type it instead of tapping it */
+(function () {
+  var tn = akToolName;
+  akToolName = function (pane, ctx) {
+    var ins = settings().instrument, out = h("div", { class: "ak12-conv" });
+    var inp = h("input", { type: "text", value: S.ak12Conv || "", placeholder: ins === "piano" ? "A chord name, like D or Am7" : "Type a shape (xx0232) or a chord name (D)", autocapitalize: "off", spellcheck: "false", "aria-label": "Shape or chord name",
+      onInput: function () { S.ak12Conv = this.value; show(); }, onKeydown: function (e) { if (e.key === "Enter") { var f = akShapeParse(this.value); if (f && S.ak2Name && S.ak2Name.frets.length === f.length) { S.ak2Name.frets = f; var lo = f.filter(function (x) { return x > 0; }); S.ak2Name.base = lo.length && Math.max.apply(null, lo) > 5 ? Math.min.apply(null, lo) : 1; ctx.redraw(); } } } });
+    var res = h("div", { class: "ak12-convres", role: "status" });
+    function copyBtn(t) { return h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText(t).then(function () { toast("Copied " + t); }, function () { toast(t); }); } catch (e) { toast(t); } } }, "Copy"); }
+    function show() {
+      res.textContent = ""; var v = inp.value.trim(); if (!v) return;
+      var f = ins !== "piano" ? akShapeParse(v) : null;
+      if (f) {
+        var nm = akShapeNames(f);
+        if (!nm.length) { res.appendChild(h("p", { class: "hint" }, "That shape isn't a chord I know (" + akShapeText(f) + ").")); return; }
+        res.appendChild(h("div", { class: "row", style: "align-items:center" }, h("div", { class: "cp-dia" }, chordDiagram({ frets: f, fingers: [] }, ins, 0.45)),
+          h("div", { class: "grow" }, h("div", { style: "font-size:1.6rem;font-weight:800" }, nm[0].name), h("div", { class: "muted" }, nm[0].long + (nm[0].exact ? "" : " (a note is missing)"))), copyBtn(nm[0].name)));
+        if (nm.length > 1) res.appendChild(h("div", { class: "muted" }, "It could also be: ", nm.slice(1, 6).map(function (x) { return x.name; }).join(", ")));
+        res.appendChild(h("p", { class: "hint" }, "Press Enter to put it on the fretboard below."));
+        return;
+      }
+      if (parseChordName(v)) {
+        var sh = ins === "piano" ? [] : akShapesFor(v);
+        if (!sh.length) { res.appendChild(h("p", { class: "hint" }, ins === "piano" ? "Switch the instrument to guitar or ukulele for fret shapes." : "No shapes for " + v + " in the chord library yet.")); return; }
+        res.appendChild(h("div", { class: "muted" }, "Shapes for " + v + " (low string first):"));
+        var row = h("div", { class: "ak12-shapes" });
+        sh.slice(0, 8).forEach(function (fr) { var t = akShapeText(fr); row.appendChild(h("div", { class: "ak12-shape" }, chordDiagram({ frets: fr, fingers: [] }, ins, 0.32), h("b", null, t), copyBtn(t))); });
+        res.appendChild(row); return;
+      }
+      res.appendChild(h("p", { class: "hint" }, "Type a shape, one number per string from the low string: x = not played, like xx0232 or 320003. Frets of 10 and up: x-10-12-12-11-10."));
+    }
+    out.appendChild(h("label", { class: "fld" }, "Shape ⇄ chord name", inp)); out.appendChild(res); show();
+    pane.appendChild(out);
+    return tn.apply(this, arguments);
+  };
+})();
+function akShapeConv() { openChordTools("name"); }
+
+/* ---------------------------------------------------------------- reading a line of chords */
+var AK_FIX_LABELS = /^(intro|verse|chorus|bridge|outro|solo|pre-?chorus|post-?chorus|hook|interlude|riff|instrumental|tag|coda|ending|end|refrain|break|turnaround|vamp|repeat|last|time|first|second|2nd|1st|3rd|fade|capo|fret|walk|slide|slidey|phrase|modulate|n\.?c\.?|stop)$/i;
+function akFixTokClass(core) {
+  if (!core) return "mark";
+  if (/^\(?[x×]?\d{1,2}[x×]?\)?$/i.test(core) && /[x×]/i.test(core)) return "mark";
+  if (/^[|:\/%.\-–—~]+$/.test(core)) return "mark";
+  var n = core.replace(/♭/g, "b").replace(/♯/g, "#");
+  if (isChordTok(n)) return "chord";
+  if (akShapeParse(n)) return "shape";
+  if (/[-–]/.test(n) && n.split(/[-–]/).every(function (p) { return !p || isChordTok(p) || akShapeParse(p); }) && n.split(/[-–]/).some(Boolean)) return "dash";
+  if (/:$/.test(core) || AK_FIX_LABELS.test(core.replace(/[():,.]/g, ""))) return "label";
+  if (/^[A-Za-z][A-Za-z']+$/.test(core.replace(/[(),.!?;:"]/g, ""))) return "word";
+  return "other";
+}
+/* one chord written the app's way: { to, alts, shape } or null when it can't be named */
+function akFixOne(core) {
+  var n = core.replace(/♭/g, "b").replace(/♯/g, "#");
+  if (isChordTok(n)) return { to: n, alts: [] };
+  var f = akShapeParse(n); if (!f) return null;
+  var nm = akShapeNames(f); if (!nm.length) return null;
+  return { to: nm[0].name, alts: nm.slice(1, 6).map(function (x) { return x.name; }), shape: n };
+}
+/* a line -> { text, items: [{from, to, alts}] } or null when it's fine as it is or isn't a chord line */
+function akFixLine(line) {
+  if (!String(line || "").trim() || isTabLine(line)) return null;
+  var items = [];
+  /* chords already in brackets: only shapes and ♭/♯ need work */
+  var t1 = line.replace(/\[([^\]]+)\]/g, function (m, inner) {
+    var c = inner.trim(); if (isChordLike(c)) return m;
+    var r = akFixOne(c.replace(/^\(|\)$/g, "")); if (!r) return m;
+    items.push({ from: c, to: r.to, alts: r.alts }); return "[" + r.to + "]";
+  });
+  var plain = t1.replace(/\[[^\]]*\]/g, function (m) { return new Array(m.length + 1).join(" "); });
+  if (isChordLineText(plain.replace(/\s+/g, " ").trim() ? plain : "")) return items.length ? { text: t1, items: items } : null;
+  /* plain tokens: is this a chord line? */
+  var toks = [], re = /[^\s,]+/g, m;
+  while ((m = re.exec(plain)) !== null) {
+    var raw = m[0], pre = /^[(\[{|]*/.exec(raw)[0], post = /[)\]},;:.!?|]*$/.exec(raw.slice(pre.length))[0], core = raw.slice(pre.length, raw.length - post.length);
+    toks.push({ i: m.index, raw: raw, pre: pre, post: post, core: core, k: akFixTokClass(core) });
+  }
+  if (!toks.length) return items.length ? { text: t1, items: items } : null;
+  /* a capital A between words is the word "A" */
+  toks.forEach(function (tk, i) { if (tk.core === "A" || tk.core === "a") { var p = toks[i - 1], nx = toks[i + 1]; if ((p && p.k === "word") || (nx && nx.k === "word") || tk.core === "a") tk.k = "word"; } });
+  var ch = toks.filter(function (tk) { return tk.k === "chord" || tk.k === "shape" || tk.k === "dash"; }).length, words = toks.filter(function (tk) { return tk.k === "word"; }).length;
+  var bracketed = (t1.match(/\[[^\]]+\]/g) || []).length;
+  if (!ch || !(words === 0 || (ch + bracketed >= 3 && words * 3 <= ch + bracketed))) return items.length ? { text: t1, items: items } : null;
+  /* rewrite right to left so positions hold; use the spaces after a chord for its brackets so the columns stay */
+  var out = t1, did = false;
+  toks.slice().reverse().forEach(function (tk) {
+    if (tk.k !== "chord" && tk.k !== "shape" && tk.k !== "dash") return;
+    /* a shape in brackets right after a chord is that chord's fingering: leave it */
+    if (tk.k === "shape" && /\(/.test(tk.pre) && /\)/.test(tk.post)) { var bef = out.slice(0, tk.i).replace(/\s+$/, ""), lw = bef.split(/\s/).pop() || ""; if (/\]$/.test(bef) || isChordTok(lw.replace(/[(),]/g, ""))) return; }
+    var parts = tk.k === "dash" ? tk.core.split(/([-–])/) : [tk.core], newCore = "", ok = true;
+    parts.forEach(function (p) {
+      if (p === "-" || p === "–" || !p) { newCore += p; return; }
+      var r = akFixOne(p); if (!r) { ok = false; newCore += p; return; }
+      if (r.to !== p) items.unshift({ from: p, to: r.to, alts: r.alts });
+      newCore += "[" + r.to + "]";
+    });
+    if (!ok && tk.k !== "dash") return;
+    var rep = tk.pre + newCore + tk.post, start = tk.i, end = tk.i + tk.raw.length, extra = rep.length - tk.raw.length;
+    var after = out.slice(end), sp = /^ */.exec(after)[0].length, take = Math.max(0, Math.min(extra, sp - 1));
+    if (after.length && after.trim() === "") take = 0;
+    out = out.slice(0, start) + rep + after.slice(take);
+    did = true;
+  });
+  if (!did && !items.length) return null;
+  out = out.replace(/\s+$/, "");
+  return out !== line ? { text: out, items: items } : null;
+}
+/* a whole song: [{ field, n (line index), from, to, items, on }] */
+function akFixSong(s) {
+  var rows = [];
+  ["lyrics", "chords"].forEach(function (fld) {
+    var lines = String(s[fld] || "").replace(/\r\n?/g, "\n").split("\n"), skip = 0;
+    lines.forEach(function (ln, i) {
+      if (i < skip) return; var te = tabRunEnd(lines, i); if (te > i) { skip = te; return; }
+      var r = akFixLine(ln); if (r) rows.push({ songId: s.id, field: fld, n: i, from: ln, to: r.text, items: r.items, on: true });
+    });
+  });
+  return rows;
+}
+function akFixApply(rows) {
+  var by = {};
+  rows.forEach(function (r) { if (!r.on) return; var k = r.songId + "|" + r.field; (by[k] = by[k] || []).push(r); });
+  var songs = 0, lines = 0;
+  Object.keys(by).forEach(function (k) {
+    var p = k.split("|"), s = findSong(p[0]); if (!s) return;
+    var arr = String(s[p[1]] || "").replace(/\r\n?/g, "\n").split("\n"), n0 = lines;
+    by[k].forEach(function (r) { if (arr[r.n] === r.from) { arr[r.n] = r.to; lines++; } });
+    if (lines > n0) { s[p[1]] = arr.join("\n"); s.updated = new Date().toISOString(); delete s.measure; songs++; }
+  });
+  return { songs: songs, lines: lines };
+}
+
+/* ---------------------------------------------------------------- the screen */
+function akFixOpen(songId) { S.ak12Fix = { scope: songId || "all", rows: null, backup: true }; go("chordfix"); }
+function viewChordFix() {
+  var F = S.ak12Fix || (S.ak12Fix = { scope: "all", rows: null, backup: true }), body = h("div", { class: "ak12-fix" });
+  var songs = F.scope === "all" ? lib().songs.filter(function (s) { return !s.deleted; }) : [findSong(F.scope)].filter(Boolean);
+  if (!F.rows) { F.rows = []; songs.forEach(function (s) { F.rows = F.rows.concat(akFixSong(s)); }); }
+  var rows = F.rows, nSongs = {}; rows.forEach(function (r) { nSongs[r.songId] = 1; });
+  body.appendChild(h("p", { class: "hint" }, "Chords on lines the app shows as plain text, and fret shapes like xx0232. Each one is put in [brackets] so the app reads it, and shapes get their chord name. Repeat marks (x2), your quick-change dash (C-Am), words, and an A that's a word stay as they are. Nothing changes until you tap Apply."));
+  body.appendChild(h("div", { class: "row" },
+    h("label", { class: "fld grow", style: "margin:0" }, "Look in", h("select", { onChange: function () { F.scope = this.value; F.rows = null; render(); } },
+      h("option", { value: "all", selected: F.scope === "all" }, "Every song (" + lib().songs.length + ")"),
+      F.scope !== "all" && findSong(F.scope) ? h("option", { value: F.scope, selected: true }, "“" + findSong(F.scope).title + "” only") : null))));
+  if (!rows.length) { body.appendChild(h("div", { class: "card" }, h("b", null, "Nothing to fix."), " Every chord here is already read by the app.")); return shell("Fix chords", body, { back: function () { navBack(); } }); }
+  var on = rows.filter(function (r) { return r.on; }).length;
+  body.appendChild(h("div", { class: "row ak12-fixbar" },
+    h("b", { class: "grow" }, rows.length + " lines in " + Object.keys(nSongs).length + " song" + (Object.keys(nSongs).length === 1 ? "" : "s") + " · " + on + " ticked"),
+    h("button", { class: "sm", onClick: function () { rows.forEach(function (r) { r.on = true; }); render(); } }, "Tick all"),
+    h("button", { class: "sm", onClick: function () { rows.forEach(function (r) { r.on = false; }); render(); } }, "Untick all")));
+  body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: F.backup !== false, onChange: function () { F.backup = this.checked; } }), "Back up everything first (one-tap backup)"));
+  var cur = "";
+  rows.forEach(function (r, ri) {
+    if (r.songId !== cur) { cur = r.songId; var s = findSong(cur); body.appendChild(h("h3", { class: "ak12-fixsong" }, s ? s.title + (s.artist ? " · " + s.artist : "") : "?")); }
+    var after = h("div", { class: "ak12-after" });
+    /* the converted names can be swapped for the other names the shape could be */
+    var txt = r.to, pos = 0;
+    r.items.filter(function (it) { return it.alts && it.alts.length; }).forEach(function (it) {
+      var k = txt.indexOf("[" + it.to + "]", pos); if (k < 0) return;
+      after.appendChild(document.createTextNode(txt.slice(pos, k + 1)));
+      after.appendChild(h("button", { class: "linkbtn ak12-alt", title: "Was " + it.from + ". Tap for other names", onClick: function () {
+        var me = this; menu(me, [{ head: it.from + " could be" }].concat([it.to].concat(it.alts).map(function (a) { return { label: (a === it.to ? "✓ " : "") + a, onClick: function () {
+          var i2 = r.to.indexOf("[" + it.to + "]"); if (i2 >= 0) r.to = r.to.slice(0, i2) + "[" + a + "]" + r.to.slice(i2 + it.to.length + 2);
+          it.alts = [it.to].concat(it.alts).filter(function (x) { return x !== a; }); it.to = a; render(); } }; })));
+      } }, it.to));
+      pos = k + 1 + it.to.length;
+    });
+    after.appendChild(document.createTextNode(txt.slice(pos)));
+    body.appendChild(h("label", { class: "ak12-fixrow" + (r.on ? "" : " off") },
+      h("input", { type: "checkbox", checked: r.on, onChange: function () { r.on = this.checked; this.closest(".ak12-fixrow").classList.toggle("off", !r.on); } }),
+      h("div", { class: "grow" }, h("div", { class: "ak12-before" }, r.from), after, h("div", { class: "muted ak12-where" }, (r.field === "chords" ? "Chords box" : "Lyrics") + ", line " + (r.n + 1)))));
+  });
+  function apply() {
+    var go2 = function () {
+      snap("fix chords");
+      var res = akFixApply(rows); save(); F.rows = null;
+      toast(res.lines ? "Fixed " + res.lines + " lines in " + res.songs + " song" + (res.songs === 1 ? "" : "s") + "." : "Nothing changed.", res.lines ? { label: "Undo", fn: undoLast } : null);
+      render();
+    };
+    if (F.backup !== false && typeof akQuickBackup === "function") akQuickBackup().then(go2, function () { confirmBox("The backup didn't work. Fix the chords anyway? (You can still undo it.)", "Fix them", go2); });
+    else go2();
+  }
+  body.appendChild(h("div", { class: "row", style: "position:sticky;bottom:0;background:var(--bg);padding:8px 0" }, h("button", { class: "primary", disabled: !on, onClick: apply }, "Apply " + on + " line" + (on === 1 ? "" : "s"))));
+  return shell("Fix chords", body, { back: function () { navBack(); } });
+}
+AK_VIEWS.chordfix = viewChordFix; AK_VIEW_TAB.chordfix = "songs";
+
+/* ---------------------------------------------------------------- where you find them */
+function akFixCount(s) { try { return akFixSong(s).length; } catch (e) { return 0; } }
+(function () {
+  var vs = viewSong;
+  viewSong = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      var s = findSong(S.songId), more = el.querySelector('button[aria-label="More"]');
+      if (s && more) akMenuPlus(more, function () { return [{ label: "Fix chords the app doesn't read…", onClick: function () { akFixOpen(s.id); } }, { label: "Chord shapes ⇄ names…", onClick: akShapeConv }]; });
+    } catch (e) {}
+    return el;
+  };
+  var vt = viewTidy;
+  viewTidy = function () {
+    var el = vt.apply(this, arguments);
+    try {
+      var body = el.querySelector('[data-blocks="tidy"]') || el, n = 0;
+      lib().songs.forEach(function (s) { if (!s.deleted && akFixCount(s)) n++; });
+      body.insertBefore(h("details", { class: "card", open: n > 0 }, h("summary", null, h("b", null, "Chords the app doesn't read"), h("span", { class: "muted" }, "  " + (n ? n + " songs" : "none") + " · fret shapes, chords mixed with marks")),
+        h("div", { class: "row" }, h("button", { class: "primary", disabled: !n, onClick: function () { akFixOpen(); } }, "Review and fix…"))), body.firstChild);
+    } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.tidy = viewTidy;
+})();
+function akFixMenuItems() { return [{ label: "Fix chords the app doesn't read…", onClick: function () { akFixOpen(); } }]; }
+(function () {
+  var vs = viewSongs;
+  viewSongs = function () {
+    var el = vs.apply(this, arguments);
+    try { var bar = el.querySelector(".topbar"), more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return (b.textContent || "").trim() === "⋯"; })[0]; if (more) akMenuPlus(more, akFixMenuItems); } catch (e) {}
+    return el;
+  };
+})();
+
+akCss("ak12-b", [
+  ".ak12-conv{margin:0 0 10px}.ak12-convres{margin:6px 0}.ak12-shapes{display:flex;flex-wrap:wrap;gap:8px}.ak12-shape{display:flex;flex-direction:column;align-items:center;gap:2px;font-family:var(--mono,monospace)}",
+  ".ak12-fixrow{display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-bottom:1px solid var(--line)}.ak12-fixrow.off{opacity:.5}",
+  ".ak12-before{font-family:var(--mono,monospace);white-space:pre-wrap;text-decoration:line-through;color:var(--muted);font-size:.9rem}",
+  ".ak12-after{font-family:var(--mono,monospace);white-space:pre-wrap;font-size:.95rem}.ak12-alt{font-family:inherit;font-weight:700;padding:0;min-height:0;text-decoration:underline dotted}",
+  ".ak12-fixsong{margin:14px 0 4px;font-size:1rem}.ak12-where{font-size:.75rem}.ak12-fixbar{align-items:center}"
+].join("\n"));
+
+/* ================= Batch 11, phase C: Jazz chart (Real Book style) =================
+   The measure chart (ak2_measure.js) drawn like a Real Book lead sheet: screen mode "jazz" (Mode ▸ Jazz chart, and 🎼 Jazz chart on the
+   Write tab). Same data as Practice / Write (song.measure); ✎ Edit (S.akJzEdit) makes beats tappable like Write mode.
+   - 1st / 2nd endings: bar.m.v = 1 | 2 | 3 (bar ⋯ menu). akMTimeline plays the right ending each time through the repeat.
+   - Look: settings().jazz12 {paper, font: hand | book | app, sym (−7, △7, ø, °), letters (boxed A, B per section name), simile (% for a repeated bar)}.
+   - Section ends get a double bar, the last bar the final bar; chord qualities are raised like a lead sheet. */
+AKMODES.push(["jazz", "Jazz chart"]);
+function akJz12() { var s = settings(), c = s.jazz12 = s.jazz12 || {}, d = { paper: true, font: "hand", sym: true, letters: true, simile: true }; Object.keys(d).forEach(function (k) { if (c[k] === undefined) c[k] = d[k]; }); return c; }
+var AK_JZ_FONTS = { hand: '"CB Nothing You Could Do","Marker Felt","Chalkboard SE","Segoe Print","Comic Sans MS",cursive', book: '"CB Crimson Pro",Georgia,serif', app: "var(--chord-sym-font,var(--sans))" };
+(function () {
+  var mm = akModeMenu;
+  akModeMenu = function (anchor) {
+    var m0 = menu;
+    menu = function (a, list) { menu = m0; (list || []).forEach(function (it) { if (it && it.label && /Jazz chart$/.test(it.label)) it.label += ": a Real Book style lead sheet"; }); return m0(a, list); };
+    try { return mm.apply(this, arguments); } finally { menu = m0; }
+  };
+})();
+
+/* ---------------------------------------------------------------- chord symbols the jazz way */
+function akJzSym(name) {
+  var m = /^([A-G][#b♯♭]?)(.*?)(\/[A-G][#b♯♭]?)?$/.exec(String(name || ""));
+  if (!m) return { root: name, q: "", bass: "" };
+  var q = m[2];
+  if (akJz12().sym) {
+    q = q.replace(/^m7b5|^min7b5|^-7b5/, "ø7").replace(/^dim7|^°7/, "°7").replace(/^dim/, "°")
+      .replace(/^(m|min|-)\(?(maj|M|Δ|△)7\)?/, "-△7").replace(/^(maj|M|Δ)(?=\d)/, "△").replace(/^(maj|Δ)$/, "△")
+      .replace(/^min|^m(?!aj)/, "-").replace(/^aug/, "+");
+  }
+  return { root: m[1].replace("#", "♯").replace(/b$/, "♭"), q: q.replace(/#/g, "♯").replace(/b(?=\d)/g, "♭"), bass: m[3] ? "/" + m[3].slice(1).replace("#", "♯").replace(/b$/, "♭") : "" };
+}
+function akJzChordEl(shown) { var p = akJzSym(shown); return h("span", { class: "akjz-ch" }, p.root, p.q ? h("sup", null, p.q) : null, p.bass ? h("span", { class: "akjz-bass" }, p.bass) : null); }
+
+/* ---------------------------------------------------------------- endings in the bar menu, and in the timing */
+(function () {
+  var bm = akMBarMenu;
+  akMBarMenu = function (el, song, m, si, bi, ctx) {
+    var b = m.sections[si].bars[bi], m0 = menu;
+    function done(label) { akMKeep(song, m, label); ctx.redraw(); }
+    function set(v) {
+      if (Number(b.m.v) === v) { delete b.m.v; done("ending"); return; }
+      b.m.v = v;
+      if (v === 1 && !b.m.re) { b.m.re = true; b.m.x = Math.max(2, Number(b.m.x) || 2); toast("1st ending: it ends with a repeat back to the start (or to the last “Repeat starts here”). Mark the bars after it as the 2nd ending."); }
+      done("ending");
+    }
+    menu = function (a, list) {
+      menu = m0; var v = Number(b.m.v) || 0;
+      list = (list || []).concat([{ sep: true },
+        { label: (v === 1 ? "✓ " : "") + "1st ending (only the first time through)", onClick: function () { set(1); } },
+        { label: (v === 2 ? "✓ " : "") + "2nd ending (the second time)", onClick: function () { set(2); } },
+        { label: (v === 3 ? "✓ " : "") + "3rd ending", onClick: function () { set(3); } }]);
+      return m0(a, list);
+    };
+    try { return bm.apply(this, arguments); } finally { menu = m0; }
+  };
+})();
+/* every slot in playing order: repeats, endings, holds and slowing down */
+akMTimeline = function (song, m, onlySec) {
+  var beats = akMBeats(song), sub = m.sub || 2, bpm = Number(song.tempo) > 0 ? Number(song.tempo) : 90, slotSec = 60 / bpm / sub, flat = [], ev = [];
+  m.sections.forEach(function (sc, si) { if (onlySec != null && onlySec !== si) return; sc.bars.forEach(function (b, bi) { flat.push({ si: si, bi: bi, b: b }); }); });
+  var i = 0, back = 0, done = {}, guard = 0, pass = 1, jumped = false;
+  while (i < flat.length && guard++ < 5000) {
+    var f = flat[i], b = f.b, n = b.s.length, v = Number(b.m.v) || 0;
+    if (b.m.rs && !jumped) { back = i; pass = 1; }
+    jumped = false;
+    if (v && v !== pass) { i++; continue; }
+    for (var k = 0; k < n; k++) {
+      var d = slotSec;
+      if (b.m.rit) d = slotSec / (1 - 0.3 * (k + 1) / n);
+      if (b.m.ferm && k === n - 1) d += slotSec * sub * 2;
+      ev.push({ si: f.si, bi: f.bi, k: k, d: d, beat: k % sub === 0 ? k / sub : -1 });
+    }
+    if (b.m.re) { var times = Math.max(2, Number(b.m.x) || 2), key = "r" + i; done[key] = (done[key] || 1) + 1; if (done[key] <= times) { i = back; pass++; jumped = true; continue; } done[key] = 1; }
+    i++;
+  }
+  var t = 0; ev.forEach(function (e) { e.t = t; t += e.d; });
+  return { ev: ev, total: t, bpm: bpm, beats: beats, sub: sub };
+};
+
+/* ---------------------------------------------------------------- drawing: endings everywhere, the Real Book look in jazz mode */
+(function () {
+  var md = akMDraw;
+  akMDraw = function (song, host, ctx) {
+    if (S.akJzPending) host.classList.add("akm-jazz");
+    var r = md.apply(this, arguments);
+    try {
+      if (host.classList.contains("akm-jazz")) akJzTitle(song, host);
+      var m = ctx.m, jazz = host.classList.contains("akm-jazz"), c = akJz12(), letters = {}, nl = 0, total = 0;
+      m.sections.forEach(function (sc) { total += sc.bars.length; });
+      var count = 0, prevSig = null;
+      m.sections.forEach(function (sc, si) {
+        var secEl = host.querySelector('.akm-sec[data-si="' + si + '"]'); if (!secEl) return;
+        if (jazz && c.letters) {
+          var key = String(sc.name || "").toLowerCase().replace(/\s*\d+$/, "").trim() || "#" + si;
+          if (!letters[key]) letters[key] = String.fromCharCode(65 + (nl++ % 26));
+          var nm = secEl.querySelector(".akm-name"); if (nm && !secEl.querySelector(".akjz-letter")) nm.parentNode.insertBefore(h("span", { class: "akjz-letter" }, letters[key]), nm);
+        }
+        sc.bars.forEach(function (b, bi) {
+          count++;
+          var el = secEl.querySelector('.akm-bar[data-bi="' + bi + '"]'); if (!el) return;
+          var v = Number(b.m.v) || 0, pv = bi > 0 ? Number(sc.bars[bi - 1].m.v) || 0 : 0;
+          if (v) { el.classList.add("akv"); if (v !== pv) { el.classList.add("akv-start"); el.setAttribute("data-v", v + "."); } }
+          if (bi === sc.bars.length - 1) el.classList.add(count === total ? "akjz-final" : "akjz-endsec");
+          if (!jazz) return;
+          var sig = b.s.join("|");
+          Array.prototype.forEach.call(el.querySelectorAll(".akm-ch"), function (ch) { var t = ch.textContent; ch.textContent = ""; ch.appendChild(akJzChordEl(t)); });
+          if (c.simile && !S.akJzEdit && prevSig !== null && sig === prevSig && b.s.some(Boolean) && !b.m.rs && !v) el.classList.add("akjz-sim");
+          prevSig = sig;
+        });
+      });
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- the screen mode */
+(function () {
+  var ma = akModeApply;
+  akModeApply = function (song, root, panes) {
+    if ((S.playMode || "perform") !== "jazz") return ma.apply(this, arguments);
+    var edit = !!S.akJzEdit, r;
+    S.playMode = edit ? "write" : "practice"; S.akJzPending = true;
+    try { r = ma.apply(this, arguments); } finally { S.playMode = "jazz"; S.akJzPending = false; }
+    var host = root.querySelector(".panes.akm"); if (!host) return r;
+    var c = akJz12();
+    host.classList.add("akm-jazz"); host.classList.toggle("akjz-paper", !!c.paper); host.classList.toggle("akjz-edit", edit);
+    host.style.setProperty("--akjz-font", AK_JZ_FONTS[c.font] || AK_JZ_FONTS.hand);
+    Array.prototype.forEach.call(host.querySelectorAll(".akm-padbtn,.akm-padwrap,.akm-hint"), function (x) { x.remove(); });
+    Array.prototype.forEach.call(host.querySelectorAll(".akm-modes button"), function (b) { var on = b.textContent === "Jazz chart"; b.setAttribute("aria-selected", on ? "true" : "false"); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    var tools = host.querySelector(".akm-tools");
+    if (tools) {
+      tools.insertBefore(h("button", { class: edit ? "on" : "", "aria-pressed": edit ? "true" : "false", onClick: function () { S.akJzEdit = !S.akJzEdit; keepAutoRender(); } }, edit ? "✓ Done" : "✎ Edit"), tools.firstChild.nextSibling);
+      tools.appendChild(h("button", { "aria-label": "Jazz chart look", onClick: function () {
+        var me = this;
+        function tog(k) { return function () { c[k] = !c[k]; save(); keepAutoRender(); }; }
+        menu(me, [{ head: "Jazz chart look" },
+          { label: (c.paper ? "✓ " : "") + "Paper (black on cream)", onClick: tog("paper") },
+          { label: (c.font === "hand" ? "✓ " : "") + "Handwritten chords", onClick: function () { c.font = "hand"; save(); keepAutoRender(); } },
+          { label: (c.font === "book" ? "✓ " : "") + "Book font chords", onClick: function () { c.font = "book"; save(); keepAutoRender(); } },
+          { label: (c.font === "app" ? "✓ " : "") + "My chord font", onClick: function () { c.font = "app"; save(); keepAutoRender(); } },
+          { sep: true },
+          { label: (c.sym ? "✓ " : "") + "Jazz symbols (−7, △7, ø7, °7)", onClick: tog("sym") },
+          { label: (c.letters ? "✓ " : "") + "Boxed letters for sections (A, B)", onClick: tog("letters") },
+          { label: (c.simile ? "✓ " : "") + "% for a bar that repeats the one before", onClick: tog("simile") }]);
+      } }, "Aa"));
+    }
+    return r;
+  };
+})();
+/* the title block, like the top of a Real Book page */
+function akJzTitle(song, host) {
+  var sc = host.querySelector(".akm-scroll"); if (!sc || sc.querySelector(".akjz-title")) return;
+  var who = song.writers || song.origArtist || song.artist || "", style = (song.tags || []).filter(function (t) { return /swing|bossa|ballad|latin|waltz|blues|funk|samba|jazz|bebop|medium|up|slow/i.test(t); })[0] || "";
+  sc.insertBefore(h("div", { class: "akjz-title" },
+    h("div", { class: "akjz-left" }, [style, song.tempo ? "♩ = " + song.tempo : "", song.key ? "Key " + song.key : ""].filter(Boolean).join(" · ")),
+    h("h2", null, song.title || "Untitled"),
+    h("div", { class: "akjz-right" }, who)), sc.firstChild);
+}
+/* the Write tab: open the song as a jazz chart */
+function akJzOpen(s, back) { S.playMode = "jazz"; S.akJzEdit = true; startPlay([{ songId: s.id, setName: "Write", setNo: 1 }], 0, back || function () { go("write"); }); }
+(function () {
+  var vw = viewWrite;
+  viewWrite = function () {
+    var el = vw.apply(this, arguments);
+    try {
+      var tools = el.querySelector(".akw9-tools"); if (!tools) return el;
+      var ta = el.querySelector(".akw9-pad"), ti = el.querySelector(".akw9-title");
+      var b = h("button", { class: "sm", title: "The song as a Real Book style chart: bars, chords, repeats and 1st/2nd endings", onClick: function () {
+        var s = akW9Song();
+        if (!s) { if (!(ta && ta.value.trim()) && !(ti && ti.value.trim())) { s = akW9NewSong({ title: "New song", lyrics: "" }); } else s = akW9NewSong({ title: ti ? ti.value.trim() : "", lyrics: ta ? ta.value : "" }); }
+        else if (ta) s.lyrics = ta.value;
+        save(); akJzOpen(s);
+      } }, "🎼 Jazz chart");
+      tools.insertBefore(b, tools.children[4] || null);
+    } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.write = viewWrite;
+})();
+
+akCss("ak12-c", [
+  ".akm-bar.akv{padding-top:20px}",
+  ".akm-bar.akv::before{content:'';position:absolute;top:3px;left:0;right:0;border-top:2px solid var(--fg)}",
+  ".akm-bar.akv-start::before{border-left:2px solid var(--fg);height:12px}",
+  ".akm-bar.akv-start::after{content:attr(data-v);position:absolute;top:3px;left:5px;font-size:.8rem;font-weight:800;line-height:1}",
+  ".akm-jazz .akm-bar.akjz-endsec{border-right:5px double var(--akjz-ink,var(--fg))}",
+  ".akm-jazz .akm-bar.akjz-final{border-right:6px solid var(--akjz-ink,var(--fg));box-shadow:inset -9px 0 0 -7px var(--akjz-ink,var(--fg))}",
+  ".akm-jazz .akm-ch,.akm-jazz .akjz-title h2,.akm-jazz .akjz-letter{font-family:var(--akjz-font)}",
+  ".akm-jazz .akm-ch{font-size:calc(1.55rem*var(--akm-chord,1));font-weight:700;letter-spacing:.01em}",
+  ".akjz-ch sup{font-size:.62em;vertical-align:.55em;margin-left:.04em}.akjz-bass{font-size:.8em}",
+  ".akjz-title{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:8px;margin:4px 0 10px}",
+  ".akjz-title h2{margin:0;font-size:1.9rem;text-align:center;line-height:1.1}.akjz-left{font-size:.85rem;font-style:italic}.akjz-right{font-size:.9rem;text-align:right}",
+  ".akjz-letter{display:inline-flex;align-items:center;justify-content:center;min-width:1.6em;height:1.6em;border:2px solid currentColor;font-weight:800;font-size:1.1rem;margin-right:4px}",
+  ".akm-jazz .akm-grid{border-left:2px solid var(--akjz-ink,var(--fg))}",
+  ".akm-jazz .akm-bar{border-right:2px solid var(--akjz-ink,var(--fg));border-bottom:1px solid color-mix(in srgb,var(--akjz-ink,var(--fg)) 45%,transparent)}",
+  ".akm-jazz:not(.akjz-edit) .akm-slot.beat{box-shadow:none}.akm-jazz:not(.akjz-edit) .akm-tick{display:none}",
+  ".akm-jazz:not(.akjz-edit) .akm-words.empty,.akm-jazz:not(.akjz-edit) .akm-bmenu,.akm-jazz:not(.akjz-edit) .akm-add{display:none}",
+  ".akm-jazz .akm-words{font-style:italic}",
+  ".akm-jazz .akm-bar.akjz-sim .akm-slots{visibility:hidden}",
+  ".akm-jazz .akm-bar.akjz-sim::after{content:'%';position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);font-size:1.8rem;font-weight:800;font-family:var(--akjz-font)}",
+  ".akm-jazz.akjz-paper .akm-scroll{--akjz-ink:#141414;background:#fbf7ea;color:#141414}",
+  ".akm-jazz.akjz-paper .akm-slot.has,.akm-jazz.akjz-paper .akm-ch,.akm-jazz.akjz-paper .akm-head,.akm-jazz.akjz-paper .akm-words,.akm-jazz.akjz-paper .akm-mark{color:#141414}",
+  ".akm-jazz.akjz-paper .akm-bar.akv::before,.akm-jazz.akjz-paper .akm-bar.akv-start::before{border-color:#141414}",
+  ".akm-jazz.akjz-paper .akm-bar.now{background:rgba(255,196,0,.28)}.akm-jazz.akjz-paper .akm-slot.now{background:#141414}.akm-jazz.akjz-paper .akm-slot.now .akm-ch{color:#fbf7ea}"
+].join("\n"));
+
+/* ================= Batch 11, phase D: Atmosphere under the Themes umbrella =================
+   Settings > Look > "Themes and Atmosphere" holds the theme tiles, the theme picture, your own photo and the Atmosphere card (moved
+   in views_settings.js; the screens and options themselves are unchanged). The Themes panel gets an "✦ Atmosphere" button and ⋯ entry;
+   the Atmosphere page is titled "Themes › Atmosphere" and its back button opens that section (S.akOpenThemes). */
+(function () {
+  var th = akThemeHero;
+  akThemeHero = function (ctx) {
+    var el = th.apply(this, arguments);
+    try {
+      var head = el.querySelector(".akh-head");
+      if (head) head.appendChild(h("button", { class: "ak12-atmo", title: "Background behind the screens: styles, colors, strength", onClick: function () { go("atmosphere"); } }, "✦ Atmosphere"));
+      var more = el.querySelector('button[aria-label="More theme options"]');
+      if (more) akMenuPlus(more, [{ label: "✦ Atmosphere (background behind the screens)…", onClick: function () { go("atmosphere"); } }]);
+    } catch (e) {}
+    return el;
+  };
+  var vs = viewSettings;
+  viewSettings = function () {
+    var el = vs.apply(this, arguments);
+    if (S.akOpenThemes) {
+      S.akOpenThemes = false;
+      setTimeout(function () {
+        try {
+          var d = document.querySelector('details[data-bk="themes-and-atmosphere"]'), g = d && d.parentElement && d.parentElement.closest("details");
+          if (g) g.open = true; if (d) { d.open = true; var a = d.querySelector('details[data-bk="atmosphere"]'); if (a) a.open = true; d.scrollIntoView({ block: "start" }); }
+        } catch (e) {}
+      }, 30);
+    }
+    return el;
+  };
+})();
+akCss("ak12-d", ".ak12-atmo{flex:none;white-space:nowrap}");
+
+/* ================= Akashic Chords: batch 11, items 54 and 55 (the solo neck, the singing line) =================
+   54. Every Solo block (and a [Solo] section header) gets a guitar neck with the solo's scale right under it: the scale picked for that
+       solo (tap the block, as before), or else the best suggestion for the song's key. The suggested playing position is boxed, with the
+       root notes in the accent color: by default the box with the root on the lowest string (6th on guitar); pick the 5th or 4th string,
+       a numbered box, or the whole neck from the neck's own menu. − and + set its size, 🔒 locks it (the controls hide).
+       song.soloNeck[idx] = { at: "r6" | "r5" | "r4" | "b0".. | "whole", view: "neck" | "box", w: 40..100, lock }  (idx: the Solo block's
+       number, as in song.soloPick; [Solo] headers use 100 + their number).
+       settings().solo.neck: "near" (hidden until the scroll gets close, then it opens) | "always" | "off"; solo.neckW: the default size.
+   55. A soft highlight on the line (or the whole verse) at the reading line, the same line where auto-scroll waits for a Solo
+       (Settings > Songs and shows > Solos > It stops when the Solo reaches). It follows auto-scroll, the pedal and your finger, so to
+       correct it just scroll. Near a solo it counts down: "🎸 in 3 lines".
+       settings().solo.track: "solo" (songs with a solo) | "all" | "off"; solo.trackBy: "line" | "para". */
+
+SONG_FIELDS.push("soloNeck");
+function ak54Opt() { var s = settings(); if (!s.solo || typeof s.solo !== "object") s.solo = {}; return s.solo; }
+function ak54Get(song, idx) { return ((song && song.soloNeck) || {})[idx] || {}; }
+function ak54Set(song, idx, k, v) { song.soloNeck = song.soloNeck || {}; var o = song.soloNeck[idx] = song.soloNeck[idx] || {}; o[k] = v; save(); }
+
+/* the scale for a solo: the one picked for it, or the best suggestion for the key. { root, id } or null */
+function ak54Scale(song, idx) {
+  var p = ((song.soloPick || {})[idx] || [])[0]; if (p && akScale(p.id)) return p;
+  var k = akChartKey(song); if (!k) return null;
+  var key = { pc: akMod(k.pc + (song.transpose || 0)), minor: k.minor }, chords = (akSongChords(song) || []).map(parseChordName).filter(Boolean);
+  var r = akScaleRank(key, akSongStyle(song), chords)[0];
+  return r ? { root: r.root, id: r.sc.id, guess: true } : null;
+}
+/* the playing position: { lo, hi, name } (lo..hi frets), or null for the whole neck */
+function ak54Pos(notes, root, iv, at) {
+  var ns = notes.length; at = at || "r" + ns;
+  if (at === "whole") return null;
+  var wide = iv.length > 6 ? 4 : 3;
+  if (at.charAt(0) === "b") {
+    var bx = akScaleBoxes(notes, root, iv, 17), b = bx[Number(at.slice(1)) || 0] || bx[0];
+    return b ? { lo: b.from, hi: b.to, name: "Box " + ((Number(at.slice(1)) || 0) + 1) + " (fret " + b.from + ")" } : null;
+  }
+  var no = Math.max(1, Math.min(ns, Number(at.slice(1)) || ns)), s = ns - no;
+  for (var f = 1; f <= 12; f++) if (akMod(notes[s] + f) === akMod(root)) {
+    /* from a fret below the root (only if a scale note is there) to wide frets above */
+    var set = {}, lo = f; iv.forEach(function (i) { set[akMod(root + i)] = 1; });
+    notes.forEach(function (n) { if (f > 0 && set[akMod(n + f - 1)]) lo = f - 1; });
+    return { lo: lo, hi: f + wide, rootFret: f, rootStr: s, name: "Root on the " + akOrd(no) + " string (fret " + f + ")" };
+  }
+  return null;
+}
+function akOrd(n) { return n + (n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"); }
+
+/* the neck picture for one solo */
+function ak54Neck(song, idx, raw) {
+  var cfg = ak54Get(song, idx), p = ak54Scale(song, idx), so = ak54Opt();
+  var box = h("div", { class: "ak54" + (cfg.lock ? " locked" : ""), "data-ak54": String(idx) });
+  box.style.maxWidth = (cfg.w || so.neckW || 100) + "%";
+  if (!p) { box.appendChild(h("button", { class: "ak54-empty", onClick: function () { akSoloPicker(song, idx, raw); } }, "🎸 Pick a scale for this solo")); return box; }
+  var sc = akScale(p.id), title = akRootName(akMod(p.root)) + " " + sc.n;
+  if (akPiano()) {
+    var marks = {}; sc.iv.forEach(function (i) { var m = 60 + akMod(p.root + i); marks[m] = { cls: i === 0 ? "root" : "on", label: AK_DEG_NAMES[i] }; marks[m + 12] = { cls: i === 0 ? "root" : "on" }; });
+    box.appendChild(h("div", { class: "akfbwrap" }, akKeyboard(60, 84, marks, { label: sc.n })));
+  } else {
+    var notes = akShapeNotes(settings().instrument), pos = ak54Pos(notes, p.root, sc.iv, cfg.at), compact = cfg.view === "box" && pos;
+    var F0 = compact ? Math.max(0, pos.lo - 1) : 0, F = compact ? pos.hi + 1 : Math.max(15, pos ? pos.hi + 2 : 15), set = {}, cells = [];
+    sc.iv.forEach(function (i) { set[akMod(p.root + i)] = 1; });
+    notes.forEach(function (n, s) {
+      for (var f = F0; f <= F; f++) if (set[akMod(n + f)]) {
+        var inBox = !pos || (f >= pos.lo && f <= pos.hi);
+        cells.push([s, f, inBox ? akRole(akMod(n + f), p.root) : "ak54-out" + (akMod(n + f - p.root) === 0 ? " root" : "")]);
+      }
+    });
+    var svg = akFb2(notes, cells, { from: F0, frets: F, label: title, root: p.root, iv: sc.iv, onTap: function (s, f) { try { akTone(notes[s] + f + (tuningOffset() || 0), 0.6, 0, "pluck"); } catch (e) {} } });
+    if (pos) {
+      /* the box around the position (akFb2's grid: x0 46, a fret 44 wide, strings 26 apart from y 16) */
+      var x0 = 46, gx = 44, left = pos.lo <= F0 ? (F0 === 0 && pos.lo === 0 ? x0 - 28 : x0) : x0 + (pos.lo - F0 - 1) * gx, right = x0 + (pos.hi - F0) * gx;
+      var r = svgEl("rect", { x: left - 3, y: 16 - 15, width: right - left + 6, height: 26 * (notes.length - 1) + 30, rx: 10, class: "ak54-boxr" });
+      svg.insertBefore(r, svg.querySelector(".akfb-dot"));
+    }
+    box.appendChild(h("div", { class: "akfbwrap" }, svg));
+  }
+  var bar = h("div", { class: "ak54-bar" },
+    h("button", { class: "ak54-name", onClick: function () { akSoloPicker(song, idx, raw); } }, "🎸 " + title + (p.guess ? " (suggested)" : "") + " ▾"),
+    akPiano() ? null : h("button", { onClick: function () { ak54PosMenu(this, song, idx); } }, ak54PosLabel(song, idx, p) + " ▾"),
+    h("button", { "aria-label": "Smaller", onClick: function () { ak54Size(box, song, idx, -10); } }, "−"),
+    h("button", { "aria-label": "Bigger", onClick: function () { ak54Size(box, song, idx, 10); } }, "+"),
+    h("button", { onClick: function () { ak54Set(song, idx, "lock", true); box.classList.add("locked"); toast("Locked. Tap the 🔒 to change it again."); } }, "🔒 Lock"));
+  box.appendChild(bar);
+  box.appendChild(h("button", { class: "ak54-unlock", "aria-label": "Unlock the neck", onClick: function () { ak54Set(song, idx, "lock", false); box.classList.remove("locked"); } }, "🔒"));
+  return box;
+}
+function ak54PosLabel(song, idx, p) {
+  var cfg = ak54Get(song, idx), notes = akShapeNotes(settings().instrument), sc = akScale(p.id), pos = ak54Pos(notes, p.root, sc.iv, cfg.at);
+  return pos ? pos.name.replace(/ \(fret \d+\)$/, "") : "Whole neck";
+}
+function ak54PosMenu(btn, song, idx) {
+  var p = ak54Scale(song, idx); if (!p) return;
+  var notes = akShapeNotes(settings().instrument), ns = notes.length, sc = akScale(p.id), cfg = ak54Get(song, idx), cur = cfg.at || "r" + ns, items = [{ head: "Where to play it" }];
+  [ns, ns - 1, ns - 2].filter(function (n) { return n >= 1; }).forEach(function (n) { var ps = ak54Pos(notes, p.root, sc.iv, "r" + n); if (ps) items.push({ label: (cur === "r" + n ? "✓ " : "") + ps.name, onClick: function () { ak54Redraw(song, idx, "at", "r" + n); } }); });
+  akScaleBoxes(notes, p.root, sc.iv, 17).forEach(function (b, i) { items.push({ label: (cur === "b" + i ? "✓ " : "") + "Box " + (i + 1) + " (frets " + b.from + "–" + b.to + ")", onClick: function () { ak54Redraw(song, idx, "at", "b" + i); } }); });
+  items.push({ label: (cur === "whole" ? "✓ " : "") + "Whole neck, no box", onClick: function () { ak54Redraw(song, idx, "at", "whole"); } });
+  items.push({ sep: true }, { label: cfg.view === "box" ? "Show the whole neck around it" : "Show just the position (bigger notes)", onClick: function () { ak54Redraw(song, idx, "view", cfg.view === "box" ? "neck" : "box"); } });
+  items.push({ label: "Use this size for every solo", onClick: function () { ak54Opt().neckW = cfg.w || ak54Opt().neckW || 100; save(); toast("Every solo neck now starts at " + (ak54Opt().neckW) + "%."); } });
+  menu(btn, items);
+}
+function ak54Redraw(song, idx, k, v) {
+  ak54Set(song, idx, k, v);
+  var old = document.querySelector('.play .ak54[data-ak54="' + idx + '"]'); if (!old) return;
+  var nu = ak54Neck(song, idx, old.akRaw || ""); nu.akRaw = old.akRaw; nu.className = old.className; nu.style.maxWidth = old.style.maxWidth;
+  if (old.parentNode) old.parentNode.replaceChild(nu, old);
+}
+function ak54Size(box, song, idx, d) {
+  var w = Math.max(30, Math.min(100, (ak54Get(song, idx).w || ak54Opt().neckW || 100) + d));
+  ak54Set(song, idx, "w", w); box.style.maxWidth = w + "%";
+}
+/* put the necks in after each draw of the chart */
+(function () {
+  var fc = fillCharts;
+  fillCharts = function () {
+    var r = fc.apply(this, arguments);
+    try { ak54Place(); } catch (e) {}
+    return r;
+  };
+})();
+function ak54Place() {
+  var so = ak54Opt(), song = S.view === "play" && S.play && curSong(); if (!song || so.neck === "off") return;
+  Array.prototype.forEach.call(document.querySelectorAll(".play .ak54"), function (el) { el.parentNode.removeChild(el); });
+  var add = function (el, idx, raw) {
+    var n = ak54Neck(song, idx, raw); n.akRaw = raw;
+    if (so.neck !== "always") n.classList.add("ak54-wait");
+    el.parentNode.insertBefore(n, el.nextSibling);
+  };
+  Array.prototype.forEach.call(document.querySelectorAll(".play .aksolo"), function (el, i) { add(el, i, el.getAttribute("data-solo") || ""); });
+  Array.prototype.forEach.call(document.querySelectorAll(".play .sec"), function (el, i) { if (/^(guitar |lead |instrumental )?solo\b/i.test(el.textContent.trim())) add(el, 100 + i, ""); });
+  ak54Near();
+}
+/* "near": a neck opens once its Solo gets close to the bottom of the screen (and stays open) */
+function ak54Near() {
+  var sc = scroller(); if (!sc) return;
+  var wait = sc.querySelectorAll(".ak54.ak54-wait:not(.ak54-open)"); if (!wait.length) return;
+  var top = sc.getBoundingClientRect().top, lim = sc.clientHeight * 0.92;
+  Array.prototype.forEach.call(wait, function (el) { var cue = el.previousElementSibling || el; if (cue.getBoundingClientRect().top - top < lim) el.classList.add("ak54-open"); });
+}
+
+/* ---------------------------------------------------------------- 55. the singing line */
+var AK55 = { on: [], key: "" };
+function ak55Clear() { AK55.on.forEach(function (e) { e.classList.remove("ak55-on"); e.removeAttribute("data-ak55"); }); AK55.on = []; AK55.key = ""; }
+function ak55Tick() {
+  if (S.view !== "play" || !S.play || S.layout) { if (AK55.on.length) ak55Clear(); return; }
+  ak54Near();
+  var so = ak54Opt(), mode = so.track || "solo", sc = scroller();
+  if (mode === "off" || !sc) { if (AK55.on.length) ak55Clear(); return; }
+  if (mode === "solo" && !sc.querySelector(".aksolo, .ak54")) { if (AK55.on.length) ak55Clear(); return; }
+  var els = sc.querySelectorAll(".chart > .ln, .chart > .sec, .chart > .aksolo, .rawchart > div:not(.gap):not(.ak54), .chart > .tab"); if (!els.length) return;
+  var y = sc.getBoundingClientRect().top + sc.clientHeight * (Number(so.at) || 0.3), hit = null, i;
+  for (i = 0; i < els.length; i++) { var r = els[i].getBoundingClientRect(); if (r.height && r.bottom > y) { hit = els[i]; break; } }
+  if (!hit) { if (AK55.on.length) ak55Clear(); return; }
+  var group = [hit];
+  if (so.trackBy === "para" && !hit.classList.contains("sec") && !hit.classList.contains("aksolo")) {
+    var stop = function (e) { return !e || e.classList.contains("gap") || e.classList.contains("sec") || e.classList.contains("aksolo") || e.classList.contains("ak54"); };
+    for (var a = hit.previousElementSibling; !stop(a); a = a.previousElementSibling) group.unshift(a);
+    for (var b = hit.nextElementSibling; !stop(b); b = b.nextElementSibling) group.push(b);
+  }
+  /* how far to the next solo */
+  var note = "";
+  if (hit.classList.contains("aksolo")) note = "🎸 solo now";
+  else { var n = 0; for (var e = group[group.length - 1].nextElementSibling; e && n <= 8; e = e.nextElementSibling) { if (e.classList.contains("aksolo") || (e.classList.contains("sec") && e.nextElementSibling && e.nextElementSibling.classList.contains("ak54"))) { note = "🎸 in " + (n + 1) + (n ? " lines" : " line"); break; } if (e.classList.contains("ln")) n++; } }
+  var key = Array.prototype.indexOf.call(els, hit) + "|" + group.length + "|" + note;
+  if (key === AK55.key && AK55.on[0] === group[0] && group[0].isConnected) return;
+  ak55Clear(); AK55.key = key; AK55.on = group;
+  group.forEach(function (g) { g.classList.add("ak55-on"); });
+  if (note) group[0].setAttribute("data-ak55", note);
+}
+setInterval(ak55Tick, 160);
+
+/* ---------------------------------------------------------------- settings */
+function akSettingsExtra20(c) {
+  c.again("songs-and-shows");
+  c.section("Solo neck and the singing line", "A guitar neck with the scale at each Solo, and a highlight on the line you're singing");
+  var so = ak54Opt();
+  c.select("Guitar neck under each Solo", function () { return so.neck || "near"; }, function (v) { so.neck = v; }, [["near", "Hidden until the scroll gets close, then it opens"], ["always", "Always showing"], ["off", "Off"]]);
+  c.range("Neck size", function () { return so.neckW || 100; }, function (v) { so.neckW = v; }, 30, 100, 10, function (v) { return v + "% of the width (each solo can have its own)"; });
+  c.select("Highlight the line I'm singing", function () { return so.track || "solo"; }, function (v) { so.track = v; }, [["solo", "In songs with a Solo"], ["all", "In every song"], ["off", "Off"]]);
+  c.select("Highlight", function () { return so.trackBy || "line"; }, function (v) { so.trackBy = v; }, [["line", "The line"], ["para", "The whole verse (lines between gaps)"]]);
+  c.out.appendChild(h("p", { class: "hint" }, "The highlight sits on the same reading line where auto-scroll waits for a Solo (“It stops when the Solo reaches”, under Solos). It moves with auto-scroll, the pedal and your finger, so if it's on the wrong line, just scroll. Near a solo it counts the lines left. On the neck, tap the scale name to change the scale, the position button to pick the 6th, 5th or 4th string root or a box, − and + for the size, and 🔒 to lock it."));
+  if (typeof akSettingsExtra21 === "function") akSettingsExtra21(c);
+}
+
+akCss("ak13a", [
+  ".ak54{margin:.2em 0 .6em;border-radius:12px;padding:4px 6px 6px;background:color-mix(in srgb,var(--panel) 70%,transparent);position:relative;transition:max-height .5s ease,opacity .5s ease}",
+  ".ak54.ak54-wait{max-height:0;opacity:0;overflow:hidden;padding:0;margin:0}",
+  ".ak54.ak54-wait.ak54-open{max-height:900px;opacity:1;padding:4px 6px 6px;margin:.2em 0 .6em}",
+  ".ak54 .akfbwrap{overflow-x:auto}.ak54 svg.akfb2{width:100%;height:auto;display:block}",
+  ".ak54-bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;font-size:.55em}.ak54-bar button{min-height:32px;padding:2px 10px}",
+  ".ak54-name{font-weight:700;color:var(--accent)}",
+  ".ak54.locked .ak54-bar{display:none}.ak54-unlock{display:none;position:absolute;top:2px;right:2px;min-height:0;padding:0 6px;font-size:.5em;opacity:.55;background:transparent;border:0}.ak54.locked .ak54-unlock{display:block}",
+  ".ak54-boxr{fill:color-mix(in srgb,var(--accent) 13%,transparent);stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}",
+  ".akfb-dot.ak54-out{opacity:.32}",
+  ".ak54-empty{font-size:.6em}",
+  ".ak55-on{background:color-mix(in srgb,var(--accent) 15%,transparent);box-shadow:inset 4px 0 0 var(--accent);border-radius:6px;transition:background .3s}",
+  ".ak55-on[data-ak55]{position:relative}.ak55-on[data-ak55]::after{content:attr(data-ak55);position:absolute;right:4px;top:0;font-size:.55em;font-weight:700;color:var(--accent);background:var(--play-bg,var(--bg));padding:0 6px;border-radius:8px}"
+].join(""));
+
+/* ================= Akashic Chords: batch 11, items 57 to 59 (tips on the request page, tip-to-request, encore bribes) =================
+   57. The request page shows tip amounts to tap ($5, $10, $20, Other) and, when tips are optional, a "No tip" choice, so nobody has to
+       delete the $5. rules.tipStart: "suggested" | "none" (which one starts picked). Hold the Requests button on the playing screen (or
+       Tips… in the Live panel) for a quick sheet: requests open, tips mode, suggested amount, encore bribes.
+   58. rules.holdUnpaid: a request that comes with a tip waits in "Waiting for the tip" until you tap Tip received, then joins the line.
+       Payments go straight to Venmo / Cash App / PayPal / Square, so the app can't see them: you are the one who confirms.
+   59. Encore bribes: L.encore = { on, price, step, cap, songs, when: "end" | "always" | "manual" }, L.encState = { open, n, day }.
+       The page shows "Keep … playing! Encore bribe: $X". A bribe arrives as a message titled "Encore bribe" (no Firebase rules change);
+       when you tap Tip received the count goes up and so does the price (price + step × bribes, up to cap). The count starts over each night.
+       "end": the offer shows once the show has ended (and during the encore), "always": all night, "manual": only while you've opened it. */
+
+(function () { AK_LIVE_DEF.rules.tipStart = "suggested"; AK_LIVE_DEF.rules.holdUnpaid = false; })();
+function akEncCfg() {
+  var L = akLive(), d = { on: false, price: 20, step: 10, cap: 0, songs: 1, when: "end" };
+  if (!L.encore || typeof L.encore !== "object") L.encore = {};
+  Object.keys(d).forEach(function (k) { if (L.encore[k] === undefined) L.encore[k] = d[k]; });
+  return L.encore;
+}
+function akEncState() {
+  var L = akLive(), day = new Date(Date.now() - 6 * 3600e3).toDateString(); /* a night runs past midnight */
+  if (!L.encState || L.encState.day !== day) L.encState = { open: false, n: 0, day: day };
+  return L.encState;
+}
+function akEncPrice() { var c = akEncCfg(), n = akEncState().n, p = (Number(c.price) || 0) + (Number(c.step) || 0) * n; return c.cap ? Math.min(Number(c.cap), p) : p; }
+function akEncOpen() {
+  var c = akEncCfg(); if (!c.on) return false;
+  if (c.when === "always") return true;
+  if (c.when === "manual") return !!akEncState().open;
+  return !!akEncState().open || (typeof RUN !== "undefined" && !!RUN && (!!(RUN.ended && akRunJustEnded()) || (!RUN.ended && RUN.encore > 0)));
+}
+function akIsBribe(r) { return r && r.kind === "message" && r.title === "Encore bribe"; }
+function akTipHeld(r) { var L = akLive(); return !!(L.rules.holdUnpaid && r.kind === "play" && r.status === "new" && r.tip && r.tip.method && !r.tipOk); }
+
+/* what the page gets */
+(function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = pp.apply(this, arguments), c = akEncCfg();
+    p.encore = akEncOpen() ? { open: true, price: akEncPrice(), songs: Number(c.songs) || 1, n: akEncState().n, step: Number(c.step) || 0, cap: Number(c.cap) || 0 } : { open: false };
+    return p;
+  };
+  /* held requests are not in the line (Requests pill, marquee, auto-played) */
+  if (typeof akLiveQueue === "function") { var lq = akLiveQueue; akLiveQueue = function () { return lq.apply(this, arguments).filter(function (r) { return !akTipHeld(r); }); }; }
+  /* a bribe that's confirmed: one more, and the price goes up */
+  var lu = akLiveUpdate;
+  akLiveUpdate = function (r, patch) {
+    var was = r && r.tipOk, out = lu.apply(this, arguments);
+    if (akIsBribe(r) && patch && patch.tipOk && !was) {
+      var st = akEncState(); st.n++; save(); akEncPush(true);
+      toast("🔥 Encore bribe received (" + st.n + " tonight). " + (akEncCfg().songs > 1 ? akEncCfg().songs + " more songs!" : "One more song!") + " Next one costs $" + akEncPrice() + ".");
+    } else if (patch && patch.tipOk && !was && r && r.kind === "play" && akLive().rules.holdUnpaid) toast("“" + r.title + "” joined the line.");
+    return out;
+  };
+  /* a new bribe gets its own toast with a button */
+  var li = akLiveIncoming;
+  akLiveIncoming = function (list) {
+    var fresh = (list || []).filter(function (r) { return akIsBribe(r) && !AKL.items[r.id] && !AKL.seen[r.id] && !r.tipOk; }), booted = AKL.booted;
+    var out = li.apply(this, arguments);
+    if (booted) fresh.forEach(function (r) {
+      var k = (AK_PAY_KINDS.filter(function (x) { return x[0] === (r.tip || {}).method; })[0] || [0, "a tip link"])[1];
+      toast("🔥 Encore bribe" + (r.name ? " from " + r.name : "") + ": $" + ((r.tip || {}).amount || "?") + " by " + k + ". Tap Received once you see it.", { label: "Received", fn: function () { akLiveUpdate(r, { tipOk: true, read: true }); } });
+    });
+    return out;
+  };
+})();
+/* publish again when the encore offer opens, closes or changes price */
+var AKENC = { sig: "" };
+function akEncPush(force) {
+  var c = akEncCfg(), sig = JSON.stringify([akEncOpen(), akEncPrice(), c.songs, c.step, c.cap]);
+  if (!force && sig === AKENC.sig) return; AKENC.sig = sig;
+  if (akLive().on && AKL.conn) akLivePublish().catch(function () {});
+}
+setInterval(function () { try { if (akEncCfg().on || AKENC.sig) akEncPush(); } catch (e) {} }, 5000);
+
+/* ---------------------------------------------------------------- the quick sheet (hold the Requests button, or Tips… in the Live panel) */
+function akTipQuick() {
+  var L = akLive(), R = L.rules, c = akEncCfg(), body = h("div", { class: "ak13-tq" }), lp = typeof AK12 !== "undefined" && AK12.lp && AK12.lp.id === "reqonoff" ? AK12.lp : null;
+  function pub() { save(); akEncPush(true); if (AKL.conn) akLivePublish().catch(function () {}); try { akReqOnPaint(); } catch (e) {} draw(); }
+  function stepper(label, get, set, step, min) {
+    return h("div", { class: "row ak13-step" }, h("span", { class: "grow" }, label), h("button", { "aria-label": "Less", onClick: function () { set(Math.max(min, get() - step)); pub(); } }, "−"), h("b", null, "$" + get()), h("button", { "aria-label": "More", onClick: function () { set(get() + step); pub(); } }, "+"));
+  }
+  function draw() {
+    body.textContent = "";
+    if (!L.on) { body.appendChild(h("p", { class: "hint" }, "Live requests are off. Turn them on in Settings > Requests and tips first.")); return; }
+    body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: L.open !== false, onChange: function () { L.open = this.checked; pub(); } }), "Taking requests now"));
+    body.appendChild(h("label", { class: "fld" }, "Tips", h("select", { onChange: function () { R.mode = this.value; pub(); } }, [["free", "Requests are free"], ["optional", "Tip optional"], ["required", "Tip required to request"]].map(function (o) { return h("option", { value: o[0], selected: R.mode === o[0] }, o[1]); }))));
+    if (R.mode !== "free") {
+      body.appendChild(stepper("Suggested tip", function () { return Number(R.price) || 5; }, function (v) { R.price = v; }, 1, 1));
+      if (R.mode === "optional") body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: R.tipStart === "none", onChange: function () { R.tipStart = this.checked ? "none" : "suggested"; pub(); } }), "Start on “No tip” (people tap an amount to tip)"));
+      body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!R.holdUnpaid, onChange: function () { R.holdUnpaid = this.checked; pub(); } }), "Hold tipped requests until I tap Tip received"));
+    }
+    body.appendChild(h("h3", { class: "akl-h" }, "🔥 Encore bribes"));
+    body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.on, onChange: function () { c.on = this.checked; pub(); } }), "Offer encore bribes on the request page"));
+    if (c.on) {
+      var st = akEncState();
+      body.appendChild(h("p", { class: "muted", style: "margin:2px 0" }, (akEncOpen() ? "Showing now" : "Not showing now") + " · $" + akEncPrice() + " for " + (c.songs > 1 ? c.songs + " songs" : "one song") + " · " + st.n + " tonight"));
+      body.appendChild(h("div", { class: "row" },
+        c.when === "always" ? null : h("button", { class: st.open ? "" : "primary", onClick: function () { st.open = !st.open; pub(); } }, st.open ? "Close the offer" : "Open the offer now"),
+        st.n ? h("button", { onClick: function () { st.n = 0; pub(); } }, "Start the price over") : null));
+      body.appendChild(stepper("Starting price", function () { return Number(c.price) || 0; }, function (v) { c.price = v; }, 5, 0));
+      body.appendChild(stepper("Goes up by, each bribe", function () { return Number(c.step) || 0; }, function (v) { c.step = v; }, 5, 0));
+    }
+    if (lp) body.appendChild(h("div", { class: "row", style: "margin-top:10px" }, h("button", { onClick: function () { closeModals(); akSlotMenu(lp.el, lp.kind, lp.id); } }, "⇄ Put a different button in this place…")));
+  }
+  draw();
+  modal("Requests and tips", body, [{ label: "More settings", onClick: function () { go("settings"); setTimeout(function () { var d = document.querySelector('[data-bk="requests-and-tips"]'); if (d) { d.open = true; d.scrollIntoView({ block: "start" }); } }, 300); } }, { label: "Done", primary: true }]);
+}
+if (typeof AK_LONG !== "undefined") AK_LONG.reqonoff = function () { akTipQuick(); };
+
+/* ---------------------------------------------------------------- settings */
+(function () {
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    var r = ls.apply(this, arguments), L = akLive(); if (!L.on) return r;
+    var R = L.rules, c = akEncCfg();
+    function ck(label, get, set) { out.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { ctx.mark(); set(this.checked); ctx.refresh(); akEncPush(true); } }), label)); }
+    function sel(label, get, set, opts) { out.appendChild(h("label", { class: "fld" }, label, h("select", { onChange: function () { ctx.mark(); set(this.value); ctx.refresh(); akEncPush(true); } }, opts.map(function (o) { return h("option", { value: o[0], selected: String(get()) === String(o[0]) }, o[1]); })))); }
+    function num(label, get, set) { out.appendChild(h("label", { class: "fld" }, label, h("input", { type: "number", min: 0, step: 1, inputmode: "decimal", value: get(), onChange: function () { ctx.mark(); set(Number(this.value) || 0); ctx.refresh(); akEncPush(true); } }))); }
+    out.appendChild(h("h3", { class: "akl-h" }, "Tip choices"));
+    sel("When tips are optional, the page starts on", function () { return R.tipStart || "suggested"; }, function (v) { R.tipStart = v; }, [["suggested", "The suggested amount ($" + (R.price || 5) + ")"], ["none", "No tip (people tap an amount to tip)"]]);
+    ck("Hold tipped requests until I tap Tip received (they join the line then)", function () { return R.holdUnpaid; }, function (v) { R.holdUnpaid = v; });
+    out.appendChild(h("p", { class: "hint" }, "Tips go straight to your Venmo, Cash App, PayPal or Square link, so the app can't see them arrive. “Tip required” means people have to open a tip link before they can send; holding them means nothing joins your line until you've seen the money. Hold the Requests button on the playing screen to change these on the spot."));
+    out.appendChild(h("h3", { class: "akl-h" }, "🔥 Encore bribes"));
+    ck("Offer encore bribes on the request page", function () { return c.on; }, function (v) { c.on = v; });
+    if (c.on) {
+      sel("Show the offer", function () { return c.when; }, function (v) { c.when = v; }, [["end", "When the show ends (and during the encore)"], ["always", "All night"], ["manual", "Only when I open it (Requests button, hold)"]]);
+      num("Starting price ($)", function () { return c.price; }, function (v) { c.price = v; });
+      num("Price goes up by, with each bribe ($, 0 = same price)", function () { return c.step; }, function (v) { c.step = v; });
+      num("Highest price ($, 0 = no limit)", function () { return c.cap; }, function (v) { c.cap = v; });
+      sel("Each bribe buys", function () { return c.songs; }, function (v) { c.songs = Number(v) || 1; }, [[1, "One more song"], [2, "Two more songs"], [3, "Three more songs"]]);
+      out.appendChild(h("p", { class: "hint" }, "Each bribe you mark received raises the next one, until nobody pays and you go home. The count starts over the next night."));
+    }
+    return r;
+  };
+})();
+
+akCss("ak13b", [
+  ".ak13-step{align-items:center;gap:8px;margin:6px 0}.ak13-step b{min-width:3.5em;text-align:center}",
+  ".akl-held{border:1px dashed #C99A00}"
+].join(""));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
@@ -28363,6 +29611,8 @@ try { trackUpdated(); } catch (e) {}
 /* one time: put the Rickroll button on the Button bar, next to Back (it can still be turned off in Settings) */
 try { var st1 = settings(); if (!st1.fabV3) { st1.fabV3 = true; var old1 = { sharp: 1, flat: 1, auto: 1, slower: 1, faster: 1, speed: 1, list: 1, chordpanel: 1 }, untouched = st1.fab.items.every(function (it) { return it.id === "chordpanel" || !!old1[it.id] === !!it.on; }); if (untouched) { var order1 = FAB_ITEMS.map(function (x) { return x[0]; }); st1.fab.items.sort(function (a, b) { return order1.indexOf(a.id) - order1.indexOf(b.id); }); st1.fab.items.forEach(function (it) { it.on = !FAB_OFF[it.id]; }); } if (st1.fab.pos) delete st1.fab.pos.back; save(); } } catch (e) {}
 try { var st0 = settings(); if (!st0.rickTop) { st0.rickTop = true; var ti = st0.toolbar.items, ri = -1; ti.forEach(function (x, i) { if (x.id === "rick") ri = i; }); if (ri >= 0) { var rk = ti.splice(ri, 1)[0]; rk.on = true; var bi = -1; ti.forEach(function (x, i) { if (x.id === "back") bi = i; }); ti.splice(bi + 1, 0, rk); } save(); } } catch (e) {}
+/* one time (11.0): turn on the pedal glide, now slower and adjustable (Settings > Pedal) */
+try { var st2 = settings(); if (!st2.glide11) { st2.glide11 = true; st2.pedalGlide = true; save(); } } catch (e) {}
 applyLook();
 render();
 setTimeout(function () { try { tourAuto(); } catch (e) {} }, 900);
