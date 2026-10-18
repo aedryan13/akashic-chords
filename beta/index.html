@@ -12672,7 +12672,7 @@ function akPersonal() { return AK_EDITION !== "public"; }
 function akEditionName() { return akPersonal() ? "Personal edition" : "Public edition"; }
 /* Aedryan's own details: used only by the Personal build, as the starting values for the song-request page */
 var AK_PERSONAL_PROFILE = {
-  name: "Aedryan Gantt", website: "https://AedryanGant.com",
+  name: "Aedryan Gantt", website: "https://AEDRYANGANTT.com",
   links: [{ label: "Instagram", url: "https://instagram.com/aedryan_g" }, { label: "Facebook", url: "https://facebook.com/aedryanganttmusic" }],
   pay: [{ kind: "venmo", label: "Venmo", url: "https://venmo.com/code?user_id=3496453519443679287&created=1792090388" }, { kind: "cashapp", label: "Cash App", url: "https://cash.app/$aedryan" }]
 };
@@ -22820,20 +22820,12 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "9.1";
+var AK_VERSION = "10.0";
 var AK_WHATS_NEW = [
-  "Requests on stage: the Info bar shows how many requests are waiting with a scrolling list (tap it for the requests), the corner Requests button counts QR requests, and the Info window has a Requests tab you can dock at the side",
-  "A new request flashes the screen edge (for as long as you pick), with an optional buzz or beep, so you notice it even with your eyes closed",
-  "A request is marked played by itself when you play that song",
-  "Your request page takes your app's theme colors and picture, has a friendly first-time guide for people who've never used one, and a Shows tab with your upcoming public shows (list or month, add to their calendar). Tick “Show on my request page” in a show's details",
-  "Settings > Requests and tips > Setup steps is now a step-by-step walkthrough, and the printed QR sign says how to scan it",
-  "Shows keep the night: playing any set list from a show counts toward that show, switching set lists keeps the same show going, and you're only asked about an encore for the show that just ended",
-  "Pause a show (⏸ on the show page, in the timers card, or as a Button bar / Info bar corner button): nothing counts and the timer stops until you resume. “⏸ Open, start later” opens a show without starting it",
-  "Requests are saved with the show they came in at (see “Requests at this show” on the show page, delete one or all), and the Live panel has Clear all",
-  "Delete a show can also delete what was played at it, so test shows don't count in your stats",
-  "The Info window stays closed until you tap an Info button, and floating windows no longer cover the bottom bar",
-  "Firebase setup: pasting the settings works with curly quotes and any copy of the config block; the in-app rules now allow email signups",
-  "The ⇅ button at the top of each page opens one Customize menu (arrange, options for the page, colors). On the playing screen, Buttons ▾ > Arrange the buttons… shows only while auto-scroll is stopped"
+  "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one. It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
+  "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end",
+  "The QR pop-up and the printed sign show the short address in words for people who'd rather type it",
+  "Fixed: the website link on your request page had a typo (now AEDRYANGANTT.com)"
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -26261,6 +26253,162 @@ akCss("ak10-b", [
   ".ak10-wiz h3{margin:6px 0}.ak10-wiz-dots{display:flex;gap:6px;justify-content:center;margin:2px 0 8px}.ak10-wiz-dots span{width:10px;height:10px;border-radius:5px;background:var(--line)}.ak10-wiz-dots span.on{background:var(--accent);width:22px}.ak10-wiz-dots span.done{background:color-mix(in srgb,var(--accent) 50%,var(--line))}",
   ".ak10-wiz .akl-steps li{margin:8px 0;font-size:1.02rem}.ak10-wiz-nav{align-items:center;margin-top:14px}",
   ".ak10-pubnote{margin:4px 0 8px}"
+].join("\n"));
+
+/* ================= Akashic Chords: batch 10, phase A (a short, permanent web address for the request page) =================
+   settings().live.short = { on, slug, base, go, ok, why, at }:
+   - The QR code and links use <base><slug>/ (Personal: https://aedryan13.github.io/akashic-chords/r/aedryan/) instead of the long
+     address with the Firebase project and performer id in it. The little page at r/ (site_src/r/go.html, built by build_beta.py)
+     looks the name up in r/slugs.json and sends people on, so printed QR codes keep working if the Firebase project ever changes:
+     only slugs.json changes.
+   - go: the tab the request page opens with when someone comes in through the short address (songs, shows, tip, more),
+     published as profile.go. A sign can force a tab with ?shows / ?tip / ?more after the address.
+   - ok / why / at: the last check of r/slugs.json against this account (akShortCheck). When it points somewhere else the app
+     falls back to the long address and shows the line to put in slugs.json. */
+
+var AK_SHORT_BASE = akPersonal() ? "https://aedryan13.github.io/akashic-chords/r/" : "";
+var AK_SHORT_SLUG = akPersonal() ? "aedryan" : "";
+var AK_SHORT_GO = [["songs", "Song requests"], ["shows", "My upcoming shows"], ["tip", "Tips"], ["more", "Learn a song or send a message"]];
+var AKSH = { busy: false, last: 0 };
+
+function akShortCfg() {
+  var L = akLive();
+  if (!L.short || typeof L.short !== "object") L.short = {};
+  var c = L.short;
+  if (c.slug === undefined) c.slug = AK_SHORT_SLUG;
+  if (c.base === undefined) c.base = AK_SHORT_BASE;
+  if (c.on === undefined) c.on = !!(c.slug && c.base);
+  if (!c.go) c.go = "songs";
+  return c;
+}
+function akShortSlug(t) { return String(t || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30); }
+function akShortUrl() {
+  var c = akShortCfg(); if (!c.slug || !c.base) return "";
+  return c.base.replace(/\/?$/, "/") + encodeURIComponent(c.slug) + "/";
+}
+/* what to show people: no https://, no trailing slash */
+function akShortPretty(u) { return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, ""); }
+/* the line that belongs in site_src/r/slugs.json for this account */
+function akShortLine() {
+  var L = akLive(), c = akShortCfg(), e = {};
+  e[c.slug || "yourname"] = { name: L.profile.name || "", page: "beta/request/", k: (L.fb || {}).apiKey || "", j: (L.fb || {}).projectId || "", p: AKL.uid || "" };
+  return JSON.stringify(e, null, 2);
+}
+/* the short address is used only for the online mode, when it's on, and unless the last check found it pointing elsewhere */
+function akShortActive() { var L = akLive(), c = akShortCfg(); return L.mode === "cloud" && !!c.on && !!akShortUrl() && c.ok !== false; }
+(function () {
+  var pu = akLivePageUrl;
+  akLivePageUrl = function (long) { if (!long && akShortActive()) return akShortUrl(); return pu.apply(this, arguments); };
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = prof.apply(this, arguments); p.go = akShortCfg().go || "songs"; return p; };
+})();
+
+/* does r/slugs.json send this name to this account? cb(ok, why); ok is undefined when it couldn't be checked */
+function akShortCheck(cb, force) {
+  var L = akLive(), c = akShortCfg();
+  function done(ok, why) { AKSH.busy = false; if (ok !== undefined) { c.ok = ok; c.why = why || ""; c.at = Date.now(); save(); } if (cb) cb(ok, why); }
+  if (!c.slug || !c.base) return done(undefined, "No short address yet.");
+  if (L.mode !== "cloud" || !AKL.uid || !L.fb || !L.fb.projectId) { if (cb) cb(undefined, "Sign in first, then I can check it."); return; }
+  if (AKSH.busy || (!force && Date.now() - AKSH.last < 60000 && c.at)) { if (cb) cb(c.ok, c.why); return; }
+  AKSH.busy = true; AKSH.last = Date.now();
+  fetch(c.base.replace(/\/?$/, "/") + "slugs.json?t=" + Date.now(), { cache: "no-cache" }).then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); }).then(function (m) {
+    var e = m && m[c.slug];
+    if (!e) return done(false, "The name “" + c.slug + "” isn't set up there yet.");
+    if (e.j !== L.fb.projectId) return done(false, "It points to a different Firebase project (" + e.j + ").");
+    if (e.p !== AKL.uid) return done(false, "It points to a different performer account.");
+    done(true, "");
+  }).catch(function () { done(undefined, "Couldn't check right now (no signal?)."); });
+}
+
+/* Settings > Requests and tips: the short address */
+(function () {
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    ls.apply(this, arguments);
+    var L = akLive(); if (!L.on || L.mode !== "cloud") return;
+    var c = akShortCfg(), u = akShortUrl();
+    var box = h("div", { class: "ak11-short" });
+    out.appendChild(h("h3", { class: "akl-h" }, "Short web address"));
+    out.appendChild(box);
+    if (!u) {
+      box.appendChild(h("p", { class: "hint" }, "A short address needs the small r/ page on a website of yours. Fill in where it lives and the name to use (under “Change the address”)."));
+    } else {
+      box.appendChild(h("div", { class: "ak11-url" }, h("code", null, akShortPretty(u)),
+        h("button", { onClick: function () { copyPlain(u, "Short address copied."); } }, "Copy"),
+        h("a", { class: "btn", href: u, target: "_blank", rel: "noopener" }, "Open")));
+      var st = h("p", { class: "hint ak11-st", role: "status" });
+      box.appendChild(st);
+      var fix = h("div", { style: "display:none" }, h("p", { class: "hint" }, "To fix it, this line goes in the site's r/slugs.json (send it to Claude, or paste it there yourself). Until then your QR code uses the long address, which always works."),
+        h("pre", { class: "ak11-line" }, akShortLine()), h("div", { class: "row" }, h("button", { onClick: function () { copyPlain(akShortLine(), "Copied."); } }, "Copy the line")));
+      box.appendChild(fix);
+      var paint = function (ok, why) {
+        st.textContent = ok === true ? "✓ Works: it opens your request page." : ok === false ? "⚠ " + why : (c.ok === true ? "✓ Worked last time I checked. " : "") + (why || "Checking…");
+        fix.style.display = ok === false ? "" : "none";
+      };
+      paint(c.ok === undefined ? undefined : c.ok, c.ok === false ? c.why : c.ok ? "" : "Checking…");
+      akShortCheck(paint);
+      box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.on, onChange: function () { ctx.mark(); c.on = this.checked; ctx.refresh(); } }), "Use the short address on my QR code and links"));
+      box.appendChild(h("label", { class: "fld" }, "When someone scans it, open", h("select", { onChange: function () { ctx.mark(); c.go = this.value; ctx.refresh(); if (AKL.conn) akLivePublish().catch(function () {}); } },
+        AK_SHORT_GO.map(function (o) { return h("option", { value: o[0], selected: c.go === o[0] }, o[1]); }))));
+      box.appendChild(h("p", { class: "hint" }, "You can change this any time; printed signs keep working. A sign can always open one tab: add ?shows, ?tip or ?more to the end, like " + akShortPretty(u) + "/?shows"));
+      box.appendChild(h("p", { class: "hint" }, "It stays the same if you ever move to a new Firebase project or account: only the r/slugs.json line changes, not your printed QR codes."));
+    }
+    var slugIn = h("input", { type: "text", value: c.slug || "", placeholder: "yourname", "aria-label": "Name in the address" });
+    var baseIn = h("input", { type: "url", value: c.base || "", placeholder: "https://yourname.github.io/yoursite/r/", "aria-label": "Where the short page lives" });
+    box.appendChild(h("details", { class: "ak11-chg" }, h("summary", null, "Change the address"),
+      h("label", { class: "fld" }, "Name in the address (letters, numbers and dashes)", slugIn),
+      h("label", { class: "fld" }, "Where the short page lives", baseIn),
+      h("div", { class: "row" }, h("button", { onClick: function () {
+        ctx.mark(); c.slug = akShortSlug(slugIn.value); c.base = baseIn.value.trim(); c.ok = undefined; c.at = 0; AKSH.last = 0; save(); ctx.refresh();
+      } }, "Save"), h("button", { onClick: function () { ctx.mark(); c.slug = AK_SHORT_SLUG; c.base = AK_SHORT_BASE; c.ok = undefined; c.at = 0; AKSH.last = 0; save(); ctx.refresh(); } }, "Back to the default")),
+      h("p", { class: "hint" }, "Changing it means new QR codes, so pick it once.")));
+  };
+})();
+
+/* the QR pop-up and the printed sign show the address in words too, for people who'd rather type it */
+(function () {
+  var oq = openLiveQr;
+  openLiveQr = function () {
+    oq.apply(this, arguments);
+    if (!akShortActive()) return;
+    setTimeout(function () {
+      var q = document.querySelector(".modal .akqr"); if (!q || q.parentNode.querySelector(".ak11-qrurl")) return;
+      q.parentNode.insertBefore(h("p", { class: "ak11-qrurl" }, "or go to ", h("strong", null, akShortPretty(akShortUrl()))), q.nextSibling);
+    }, 0);
+  };
+  var pr = akLiveQrPrint;
+  akLiveQrPrint = function (url) {
+    if (!akShortActive() || url !== akShortUrl()) return pr.apply(this, arguments);
+    var wo = window.open;
+    window.open = function () {
+      var w = wo.apply(window, arguments); if (!w) return w;
+      var dw = w.document.write;
+      w.document.write = function (s) { return dw.call(w.document, String(s).replace("<ol ", "<p style='font-size:22px;margin:10px 0 0'>or type <b>" + akShortPretty(url).replace(/</g, "&lt;") + "</b></p><ol ")); };
+      return w;
+    };
+    try { return pr.apply(this, arguments); } finally { window.open = wo; }
+  };
+})();
+
+/* check it once after signing in, so the QR code never uses an address that goes somewhere else */
+setTimeout(function () {
+  var n = 0, t = setInterval(function () { if (++n > 20) { clearInterval(t); return; } if (AKL.conn === "cloud" && AKL.uid) { clearInterval(t); akShortCheck(null); } }, 3000);
+}, 2000);
+
+/* Personal: the website on the request page had a typo (one t) */
+setTimeout(function () {
+  if (!akPersonal()) return;
+  try {
+    var L = akLive();
+    if (!L.migWeb11 && L.profile && /aedryangant\.com/i.test(L.profile.website || "")) L.profile.website = "https://AEDRYANGANTT.com";
+    L.migWeb11 = true;
+  } catch (e) {}
+}, 0);
+
+akCss("ak11-a", [
+  ".ak11-url{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.ak11-url code{font-size:1.02rem;padding:6px 10px;border:1px solid var(--line);border-radius:8px;word-break:break-all}",
+  ".ak11-line{white-space:pre-wrap;word-break:break-all;font-size:.8rem;padding:8px;border:1px solid var(--line);border-radius:8px;max-height:180px;overflow:auto}",
+  ".ak11-qrurl{margin:8px 0 0;font-size:1.05rem;word-break:break-all}.ak11-chg{margin:8px 0}.ak11-chg summary{cursor:pointer}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
