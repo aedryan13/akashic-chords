@@ -64,6 +64,8 @@
   .cal .blank { min-height: 44px; }
   .calhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; } .calhead strong { font-size: 1.1rem; }
   .show .when { font-weight: 800; font-size: 1.1rem; } .show .where { margin-top: 2px; }
+.amts { margin: 6px 0; } .amts button { padding-left: 4px; padding-right: 4px; }
+  .card.encore { border: 2px solid var(--accent); } .enc-h { font-size: 1.3rem; font-weight: 800; margin-bottom: 4px; }
 .artist{display:flex;gap:12px;align-items:center;margin:6px 0 10px;text-align:left}.artist img{width:72px;height:72px;border-radius:50%;object-fit:cover;flex:0 0 auto;border:2px solid var(--accent,#c9a7ff)}.atag{font-weight:700}.abio{font-size:.92rem;line-height:1.35}
 </style>
 </head>
@@ -244,6 +246,14 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         h("div", { class: "row" }, ML.link ? h("a", { class: "pill primary", href: ML.link, target: "_blank", rel: "noopener" }, "Sign up") : h("button", { class: "primary", onClick: function () { draft = { kind: "signup", title: "" }; draw(); } }, "Sign up"))));
     }
     var R = prof.rules || {};
+    var EN = prof.encore;
+    if (EN && EN.open && !draft) {
+      var pays0 = (prof.pay || []).filter(function (p) { return p.url; });
+      if (pays0.length) add(app, h("div", { class: "card encore" }, h("div", { class: "enc-h" }, "🔥 Keep " + (prof.name || "the music") + (prof.name ? " playing!" : " going!")),
+        h("div", null, "Encore bribe: ", h("strong", null, "$" + EN.price), " for " + (EN.songs > 1 ? EN.songs + " more songs" : "one more song") + "."),
+        EN.n ? h("div", { class: "muted" }, "Bribes so far tonight: " + EN.n + ". The price goes up with each one" + (EN.cap ? " (up to $" + EN.cap + ")" : "") + ".") : (EN.step ? h("div", { class: "muted" }, "The price goes up with each encore.") : null),
+        h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { draft = { kind: "encore", title: "Encore bribe", price: EN.price }; draw(); } }, "Bribe for an encore"))));
+    }
     var tabs = [["songs", "Request"], ["more", R.learn || R.msg ? "Learn or message" : "Message"], ["tip", "Tip"]];
     if (!R.learn && !R.msg) tabs.splice(1, 1);
     if ((prof.shows || []).length) tabs.push(["shows", "Shows"]);
@@ -288,8 +298,9 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     } else if (view === "mine") {
       mineList = mineList.filter(function (r) { return r.kind !== "signup"; });
       mineList.sort(function (a, b) { return (b.at && b.at.toMillis ? b.at.toMillis() : b.at || 0) - (a.at && a.at.toMillis ? a.at.toMillis() : a.at || 0); }).forEach(function (r) {
-        var st = { new: r.kind === "message" ? "Sent" : "Waiting", played: "Played!", declined: "Not tonight", looking: "I'll look into it", working: "Working on it" }[r.status] || r.status;
-        add(app, h("div", { class: "card" }, h("div", null, h("strong", null, r.kind === "message" ? "Message" : r.title), r.kind === "learn" ? h("span", { class: "muted" }, "  (learn request)") : null), r.note ? h("div", { class: "muted" }, r.note) : null,
+        var enc = r.kind === "message" && r.title === "Encore bribe", held = r.kind === "play" && r.status === "new" && r.tip && !r.tipOk && (prof.rules || {}).holdUnpaid;
+        var st = { new: enc ? (r.read ? "Received. Thank you!" : "Sent") : r.kind === "message" ? "Sent" : held ? "Waiting for your tip to come through" : "Waiting", played: "Played!", declined: "Not tonight", looking: "I'll look into it", working: "Working on it" }[r.status] || r.status;
+        add(app, h("div", { class: "card" }, h("div", null, h("strong", null, enc ? "🔥 Encore bribe" + (r.tip && r.tip.amount ? " ($" + r.tip.amount + ")" : "") : r.kind === "message" ? "Message" : r.title), r.kind === "learn" ? h("span", { class: "muted" }, "  (learn request)") : null), r.note ? h("div", { class: "muted" }, r.note) : null,
           h("div", { style: "margin-top:6px" }, h("span", { class: "status s-" + r.status }, st)), r.reply && r.status !== "new" && r.reply !== st ? h("div", { style: "margin-top:6px" }, "“" + r.reply + "”") : null));
       });
     }
@@ -311,8 +322,22 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       } }, "Join"))]);
     add(app, card);
   }
+  function drawEncore(name) {
+    var d = draft, card = h("div", { class: "card encore" }), tip = null, pays = (prof.pay || []).filter(function (p) { return p.url; }), err = h("p", { class: "notice hidden" }), msg = h("p", { class: "muted" });
+    var nIn = h("input", { type: "text", value: name, placeholder: "Your name (optional)", maxlength: 40 }), note = h("textarea", { placeholder: "Which song? A shout-out? (optional)", maxlength: 600 });
+    add(card, [h("div", { class: "enc-h" }, "🔥 Encore bribe: $" + d.price), h("p", { class: "muted" }, "1. Send the bribe with one of these. 2. Come back and tap I sent it."),
+      h("div", { class: "row" }, pays.map(function (p) { return h("button", { onClick: function () { tip = { method: p.kind, amount: d.price, cover: false }; window.open(payUrl(p, d.price), "_blank", "noopener"); msg.textContent = "When it's sent in " + (p.label || PAY[p.kind]) + ", tap I sent it."; } }, p.label || PAY[p.kind] || "Pay"); })),
+      msg, h("label", null, "Your name"), nIn, h("label", null, "Note"), note, err,
+      h("div", { class: "row" }, h("button", { onClick: function () { draft = null; draw(); } }, "Back"), h("button", { class: "primary", onClick: function () {
+        if (!tip) { err.textContent = "Pick a way to pay first, then come back and tap I sent it."; err.classList.remove("hidden"); return; }
+        this.disabled = true; store("akreq:name", nIn.value.trim());
+        send({ kind: "message", title: "Encore bribe", name: nIn.value.trim(), note: note.value.trim(), tip: tip }).then(function () { draft = null; view = "mine"; draw(); }, function () { err.textContent = "That didn't go through. Try again."; err.classList.remove("hidden"); });
+      } }, "I sent it"))]);
+    add(app, card);
+  }
   function drawDraft(name) {
     if (draft.kind === "signup") { drawSignup(name); return; }
+    if (draft.kind === "encore") { drawEncore(name); return; }
     var d = draft, R = prof.rules || {}, card = h("div", { class: "card" });
     var tIn = h("input", { type: "text", value: d.title || "", placeholder: "Song title", maxlength: 120 }), aIn = h("input", { type: "text", value: d.artist || "", placeholder: "Artist (optional)", maxlength: 80 });
     var nIn = h("input", { type: "text", value: name, placeholder: "Your name (optional)", maxlength: 40 }), note = h("textarea", { placeholder: d.kind === "message" ? "Your message" : "A note (optional): a dedication, a birthday…", maxlength: 600 });
@@ -322,15 +347,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     var tipBox = h("div"), tip = null, pays = (prof.pay || []).filter(function (p) { return p.url; });
     var tipNow = d.kind === "play" && (needTip() || R.mode === "optional") && pays.length;
     if (tipNow) {
-      var amt = h("input", { type: "number", min: 1, step: 1, value: R.price || 5, inputmode: "decimal", "aria-label": "Tip amount in dollars" });
+      /* amounts to tap: the suggested one, double, four times, your own, and (when tips are optional) No tip */
+      var base = Number(R.price) || 5, pick = needTip() || R.tipStart !== "none" ? base : 0;
+      var amt = h("input", { type: "number", min: 1, step: 1, value: base, inputmode: "decimal", "aria-label": "Tip amount in dollars", class: "hidden" });
       var cover = h("input", { type: "checkbox" }), coverRow = h("label", { class: "chk hidden" }, cover, h("span", null, "Add a little to cover the card fee (optional)"));
-      add(tipBox, [h("label", null, needTip() ? "Your tip (comes with the request)" : "Add a tip? (optional)"), amt]);
+      var chips = h("div", { class: "seg amts", role: "group", "aria-label": "Tip amount" }), choices = [[base, "$" + base], [base * 2, "$" + base * 2], [base * 4, "$" + base * 4], ["other", "Other"]];
+      if (!needTip()) choices.push([0, "No tip"]);
+      chips.style.gridTemplateColumns = "repeat(" + choices.length + ",1fr)";
+      function paintAmt() {
+        chips.textContent = "";
+        choices.forEach(function (c) { add(chips, h("button", { "aria-pressed": (c[0] === "other" ? pick === "other" : pick === c[0]) ? "true" : "false", onClick: function () { pick = c[0]; if (c[0] !== "other" && c[0]) amt.value = c[0]; if (!pick) tip = null; paintAmt(); if (pick === "other") amt.focus(); } }, c[1])); });
+        amt.classList.toggle("hidden", pick !== "other"); btns.classList.toggle("hidden", !pick); sentMsg.textContent = pick ? sentMsg.textContent : "No tip. Just tap Send request.";
+      }
+      add(tipBox, [h("label", null, needTip() ? "Your tip (comes with the request)" : "Add a tip? (optional)"), chips, amt]);
       var btns = h("div", { class: "row" }, pays.map(function (p) { return h("button", { onClick: function () {
         var a = Number(amt.value) || R.price || 5; if (p.kind === "square" && R.coverBox) { coverRow.classList.remove("hidden"); if (cover.checked) a = Math.round(a * (1 + (R.coverPct || 3.5) / 100) * 100) / 100; }
-        tip = { method: p.kind, amount: a, cover: !!cover.checked }; window.open(payUrl(p, a), "_blank", "noopener"); sentMsg.textContent = "When you've sent the tip in " + (p.label || PAY[p.kind]) + ", come back here and tap Send request.";
+        tip = { method: p.kind, amount: a, cover: !!cover.checked }; window.open(payUrl(p, a), "_blank", "noopener"); sentMsg.textContent = "When you've sent the tip in " + (p.label || PAY[p.kind]) + ", come back here and tap Send request." + (R.holdUnpaid ? " Your request joins the line once " + (prof.name || "the performer") + " sees the tip." : "");
       } }, p.label || PAY[p.kind] || "Tip"); }));
       var sentMsg = h("p", { class: "muted" });
-      add(tipBox, [btns, coverRow, sentMsg]);
+      add(tipBox, [btns, coverRow, sentMsg]); paintAmt();
       add(card, tipBox);
     }
     var err = h("p", { class: "notice hidden" });
