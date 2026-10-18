@@ -22914,6 +22914,7 @@ var AK_WHATS_NEW = [
   "Recordings belong to their song and show: tap 🎥 in the Info bar on the playing screen, or a song's menu in the set list, or the Recordings card on a show, to watch, save or delete what was recorded of it. The phone recorders now tag every file with its song too.",
   "Sync next to Backup on every screen. It brings the list of recordings to your other devices too (the files stay on the device that made them; tap ⬇ Get to copy one over, with the app open on both).",
   "🎬 Put the sound phone's sound on a video: in My recordings (or on the video phone's recorder page after the show). The app finds the matching sound file, copies it from the sound phone if needed, lines the two up by their sound, and saves a new video with the good sound. The picture isn't re-made, so it's quick and loses nothing.",
+  "Fix: a loop you start in Learn (like Strum along with the loop) now stops when you leave the screen, switch tabs, or close that step.",
   "One Info: ⓘ Info shows the info in the Button bar or as the floating window you can drag or dock. ▾ next to it picks where it shows and which kinds of info are in it (next up, banter, about the song, chords, history, tips, requests)."
 ];
 
@@ -30344,6 +30345,13 @@ function akWsStop() {
   if (AKWS.host) { Array.prototype.forEach.call(AKWS.host.querySelectorAll(".now"), function (x) { x.classList.remove("now"); }); var ph = AKWS.host.querySelector(".akws-ph"); if (ph) ph.style.display = "none"; }
   akWsPaint();
 }
+/* the loop's own screen is gone (another screen or tab, its box redrawn) or folded shut: stop, so no sound plays from nowhere */
+function akWsGone() {
+  var h0 = AKWS.host; if (!h0 || document.querySelector(".akws-over")) return false;
+  if (!h0.isConnected) return true;
+  for (var e = h0.parentNode; e && e !== document; e = e.parentNode) if (e.tagName === "DETAILS" && !e.open) return true;
+  return false;
+}
 function akWsPaint() { Array.prototype.forEach.call(document.querySelectorAll(".akws-play"), function (b) { b.textContent = AKWS.on ? "■ Stop" : "▶ Play"; b.classList.toggle("on", AKWS.on); b.setAttribute("aria-pressed", AKWS.on ? "true" : "false"); }); }
 function akWsStart(st, host, from) {
   var ac = akAudio(); if (!ac) { toast("This browser can't play sound."); return; }
@@ -30366,6 +30374,7 @@ function akWsStart(st, host, from) {
 }
 function akWsTick() {
   if (!AKWS.on) return;
+  if (akWsGone()) { akWsStop(); return; }
   var ac = akAudio(), tl = AKWS.tl, ahead = 0.3, now = ac.currentTime;
   for (var guard = 0; guard < 400; guard++) {
     if (AKWS.i >= tl.ev.length) {
@@ -31036,7 +31045,7 @@ function akWsFull(o) {
 /* leaving the screen stops the loop */
 (function () {
   var r0 = render;
-  render = function () { var r = r0.apply(this, arguments); if (AKWS.on && S.view !== AKWS.view && !document.querySelector(".akws-over")) akWsStop(); return r; };
+  render = function () { var r = r0.apply(this, arguments); if (AKWS.on && (S.view !== AKWS.view && !document.querySelector(".akws-over") || akWsGone())) akWsStop(); return r; };
 })();
 
 akCss("ak14-a", [
@@ -31211,7 +31220,7 @@ function akCourseView(box) {
   AK_COURSE_STEPS.forEach(function (s, i) {
     if (lv >= 3 && (s[0] === "tune" || s[0] === "warm")) return;
     var open = first && first[0] === s[0] || S.ak14Open === s[0];
-    var d = h("details", { class: "card ak14-step" + (done[s[0]] ? " done" : ""), open: open, onToggle: function () { if (this.open) S.ak14Open = s[0]; } },
+    var d = h("details", { class: "card ak14-step" + (done[s[0]] ? " done" : ""), open: open, onToggle: function () { if (this.open) S.ak14Open = s[0]; else if (AKWS.on && akWsGone()) akWsStop(); } },
       h("summary", null, h("span", { class: "akles-ck" }, done[s[0]] ? "✓" : String(i + 1)), h("b", null, " " + s[1]), h("span", { class: "muted" }, "  " + s[2])));
     var body = h("div", { class: "ak14-sb" }); akCourseStep(s[0], goal, body, redraw); d.appendChild(body);
     d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!done[s[0]], onChange: function () { if (this.checked) done[s[0]] = Date.now(); else delete done[s[0]]; S.ak14Open = ""; save(); redraw(); } }), done[s[0]] ? " Done" : " I've done this"));
