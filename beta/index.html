@@ -22910,8 +22910,9 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "13.0.1";
+var AK_VERSION = "13.1";
 var AK_WHATS_NEW = [
+  "🎸 Chords now play with your own recorded guitar, built into the app (1.1 MB, loaded the first time it plays, then kept offline). Pick another sound, your own recordings or the synthetic one, in Settings > Songs and shows > Chord sound.",
   "The info window no longer pops up when you open a song. Chords, banter, about the song and history now live under ⓘ Info at the top left of the playing screen, next to Buttons ▾. To have it as a window you can move or dock, tap ▾ next to ⓘ Info and pick a window; ⇩ in the window puts it back.",
   "Recordings belong to their song and show: tap 🎥 in the Info bar on the playing screen, or a song's menu in the set list, or the Recordings card on a show, to watch, save or delete what was recorded of it. The phone recorders now tag every file with its song too.",
   "Sync next to Backup on every screen. It brings the list of recordings to your other devices too (the files stay on the device that made them; tap ⬇ Get to copy one over, with the app open on both).",
@@ -25411,7 +25412,12 @@ akCss("ak9-d", [
 var AKS = { loaded: {}, loading: {}, ac: null, bus: null, voices: {}, last: null };
 (function () { [DEFAULTS, store.settings].forEach(function (d) { if (d && d.hear && !d.hear.smp) d.hear.smp = {}; }); })();
 function akSmpCfg() { var c = akHearCfg(); if (!c.smp || typeof c.smp !== "object") c.smp = {}; return c.smp; }
-function akSmpActiveId(ins) { return akSmpCfg()[ins || akHearIns()] || ""; }
+/* the built-in sound: Aedryan's own guitar, shipped with the app (sound/my-guitar.json + one MP3 per take, 1.1 MB), fetched the
+   first time it plays and kept offline after that. It is the default guitar sound in the Personal edition until you pick another
+   (settings().hear.smp.guitar is then a recorded sound's id, or "" for the built-in synthetic sound). */
+var AK_SMP_BUILTIN = "builtin-mine";
+function akSmpHasBuiltin(ins) { return (ins || "guitar") === "guitar" && akPersonal(); }
+function akSmpActiveId(ins) { var c = akSmpCfg(), i = ins || akHearIns(); if (c[i] === undefined && akSmpHasBuiltin(i)) return AK_SMP_BUILTIN; return c[i] || ""; }
 function akSmpHz(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 function akSmpName(m) { return akMidiName(m, false) + Math.floor(m / 12 - 1); }
 
@@ -25532,6 +25538,7 @@ function akSmpLoad(id, cb) {
   var ac = akAudio(); if (!ac || !id) { cb && cb(null); return; }
   if (AKS.loading[id]) { if (cb) AKS.loading[id].push(cb); return; }
   AKS.loading[id] = cb ? [cb] : [];
+  if (id === AK_SMP_BUILTIN) { akSmpLoadBuiltin(ac); return; }
   akSmpGetSet(id, function (set, list) {
     var waiting = AKS.loading[id] || []; delete AKS.loading[id];
     if (!set) { waiting.forEach(function (f) { f(null); }); return; }
@@ -25546,6 +25553,34 @@ function akSmpLoad(id, cb) {
     AKS.loaded[id] = L;
     waiting.forEach(function (f) { f(L); });
   });
+}
+/* the built-in sound: decode each MP3 and line its start up with the original take (MP3 adds a little silence at the front) */
+function akSmpLoadBuiltin(ac) {
+  var id = AK_SMP_BUILTIN, done = function (L) { var w = AKS.loading[id] || []; delete AKS.loading[id]; if (L) AKS.loaded[id] = L; w.forEach(function (f) { f(L); }); };
+  fetch("sound/my-guitar.json").then(function (r) { if (!r.ok) throw new Error("no sound"); return r.json(); }).then(function (d) {
+    var set = d.set; set.id = id; set.name = set.name || "My guitar";
+    var L = { set: set, ac: ac, notes: [], strums: [] };
+    return Promise.all(d.samples.map(function (r) {
+      return fetch("sound/" + r.f).then(function (x) { if (!x.ok) throw new Error("no take"); return x.arrayBuffer(); }).then(function (ab) {
+        return new Promise(function (res) { var p = ac.decodeAudioData(ab, res, function () { res(null); }); if (p && p.catch) p.catch(function () { res(null); }); });
+      }).then(function (buf) {
+        if (!buf) return;
+        buf = akSmpAlign(ac, buf, r.on || 0);
+        if (r.chord) L.strums.push({ chord: r.chord, sig: r.sig || [], buf: buf });
+        else L.notes.push({ k: r.k, m: r.m, det: r.det == null ? r.m : r.det, soft: !!r.soft, buf: buf });
+      }, function () {});
+    })).then(function () { return L.notes.length ? L : null; });
+  }).then(done, function () { done(null); });
+}
+function akSmpAlign(ac, buf, on) {
+  var d = buf.getChannelData(0), pk = 0, i, n = Math.min(d.length, Math.round(buf.sampleRate * 0.6));
+  for (i = 0; i < n; i++) if (Math.abs(d[i]) > pk) pk = Math.abs(d[i]);
+  if (!pk) return buf;
+  for (i = 0; i < n && Math.abs(d[i]) < pk * 0.05; i++);
+  var cut = i - Math.round(on * buf.sampleRate);
+  if (cut <= 0 || cut > buf.sampleRate * 0.1) return buf;
+  var out = ac.createBuffer(1, d.length - cut, buf.sampleRate); out.getChannelData(0).set(d.subarray(cut));
+  return out;
 }
 /* the loaded sound for the instrument, or null (then the built-in sound plays; loading starts in the background) */
 function akSmpReady() {
@@ -25576,7 +25611,7 @@ function akSmpPick(list, midi, soft) {
 function akSmpRate(x, midi, fix) { return Math.pow(2, (midi - (fix === false ? x.m : x.det)) / 12); }
 function akSmpVoiceStop(id, t) { var v = AKS.voices[id]; if (!v) return; akVoiceOff(v, t, AKS.ac); delete AKS.voices[id]; }
 function akSmpStart(buf, rate, vol, t, sid, o) {
-  var ac = AKS.ac, bus = akSmpBus(); if (!bus) return null;
+  var bus = akSmpBus(), ac = AKS.ac; if (!bus) return null; /* the bus first: it sets AKS.ac (a strum can be the first sound) */
   var ring = akHearCfg().ring;
   akSmpVoiceStop(sid, t);
   var v = AKS.voices[sid] = akVoiceStart(ac, buf, rate, vol, t, bus.inp), src = v.src, end0 = src.onended;
@@ -25749,7 +25784,7 @@ function akSmpWizard(set, list) {
       if (!ok) { toast("Couldn't save that note on this device."); return; }
       have[s.k] = rec; akSmpPutSet(set);
       var next = -1; for (var i = 1; i <= steps.length; i++) { var j = (idx + i) % steps.length; if (!have[steps[j].k]) { next = j; break; } }
-      if (next < 0) { paint(); status.textContent = "All done. Your sound is ready."; if (!akSmpActiveId(set.ins)) { akSmpCfg()[set.ins] = set.id; save(); } return; }
+      if (next < 0) { paint(); status.textContent = "All done. Your sound is ready."; if (!akSmpCfg()[set.ins]) { akSmpCfg()[set.ins] = set.id; save(); } return; }
       go(next);
     });
   }
@@ -25787,7 +25822,7 @@ function akSmpImport() {
       var d = null; try { d = JSON.parse(t); } catch (e) {}
       akSmpImportData(d, function (set, err) {
         if (!set) { toast(err || "Couldn't import that file."); return; }
-        if (!akSmpActiveId(set.ins)) { akSmpCfg()[set.ins] = set.id; save(); }
+        if (!akSmpCfg()[set.ins]) { akSmpCfg()[set.ins] = set.id; save(); }
         toast("Added the sound “" + set.name + "”"); render();
       });
     }, function () { toast("Couldn't read that file."); });
@@ -25804,7 +25839,7 @@ function akSmpSettings(out) {
     box.innerHTML = "";
     var ins = akHearIns(), cur = akSmpActiveId(ins), mine = sets.filter(function (s) { return (s.ins || "guitar") === ins; });
     box.appendChild(h("p", { class: "hint" }, "Record your own " + (ins === "ukulele" ? "ukulele" : "guitar") + " one note at a time and every chord in the app plays with your real sound, tuned exactly. Sounds stay on this device; use Export and Import to move one to your phone or tablet."));
-    var opts = [h("option", { value: "" }, "Built-in sound (" + (ins === "ukulele" ? "ukulele" : AK_GTR[akHearCfg().type] ? AK_GTR[akHearCfg().type].n : "steel") + ")")].concat(mine.map(function (s) { return h("option", { value: s.id, selected: s.id === cur }, "My recording: " + s.name); }));
+    var opts = [h("option", { value: "" }, "Synthetic sound (" + (ins === "ukulele" ? "ukulele" : AK_GTR[akHearCfg().type] ? AK_GTR[akHearCfg().type].n : "steel") + ")")].concat(akSmpHasBuiltin(ins) ? [h("option", { value: AK_SMP_BUILTIN, selected: cur === AK_SMP_BUILTIN }, "🎸 My guitar (built into the app)")] : []).concat(mine.map(function (s) { return h("option", { value: s.id, selected: s.id === cur }, "My recording: " + s.name); }));
     box.appendChild(h("label", { class: "field" }, "Chords play with", h("select", { onChange: function () { akSmpCfg()[ins] = this.value; save(); if (this.value) akSmpLoad(this.value, function () { akHearDemo(); }); } }, opts)));
     mine.forEach(function (s) {
       box.appendChild(h("div", { class: "row aks-item" }, h("b", null, s.name), h("span", { class: "muted" }, " " + (AK_SMP_KINDS.filter(function (k) { return k[0] === s.kind; })[0] || ["", ""])[1] + ", " + (s.tname || "")),
