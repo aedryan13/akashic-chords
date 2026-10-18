@@ -42,6 +42,28 @@
   .notice { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--warn); color: var(--fg); background: color-mix(in srgb, var(--warn) 12%, transparent); margin: 10px 0; }
   .hidden { display: none !important; }
   .chk { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; } .chk input { width: auto; min-height: 0; margin-top: 4px; }
+  /* the performer's app theme (profile.theme) */
+  body.themed { background: var(--bg) var(--art, none) center / cover fixed no-repeat; }
+  body.themed::before { content: ""; position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); pointer-events: none; z-index: -1; }
+  body.themed .tabs { background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); }
+  body.themed .card, body.themed .song, body.themed input, body.themed select, body.themed textarea { background: color-mix(in srgb, var(--panel) 90%, transparent); }
+  /* first-time guide */
+  .guide { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, .6); display: flex; align-items: flex-end; justify-content: center; padding: 12px; }
+  .guide .gcard { background: var(--panel); color: var(--fg); border-radius: 20px; padding: 22px 20px; max-width: 520px; width: 100%; font-size: 1.25rem; line-height: 1.45; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); margin-bottom: env(safe-area-inset-bottom, 0px); }
+  .guide .gbig { font-size: 3rem; line-height: 1; margin-bottom: 6px; }
+  .guide h2 { font-size: 1.5rem; margin: 4px 0 8px; }
+  .guide .gdots { display: flex; gap: 8px; justify-content: center; margin: 14px 0 4px; } .guide .gdots span { width: 12px; height: 12px; border-radius: 6px; background: var(--line); } .guide .gdots span.on { background: var(--accent); width: 28px; }
+  .guide .row button { flex: 1; min-height: 56px; font-size: 1.2rem; }
+  .helpbtn { margin-top: 10px; font-size: 1rem; }
+  /* shows */
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 8px 0; }
+  .cal .dow { text-align: center; font-size: .8rem; color: var(--muted); font-weight: 700; }
+  .cal button { min-height: 44px; padding: 0; border-radius: 10px; font-size: 1rem; }
+  .cal button.has { background: var(--accent); color: var(--on); border-color: var(--accent); font-weight: 800; }
+  .cal button.sel { outline: 3px solid var(--fg); }
+  .cal .blank { min-height: 44px; }
+  .calhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; } .calhead strong { font-size: 1.1rem; }
+  .show .when { font-weight: 800; font-size: 1.1rem; } .show .where { margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -105,6 +127,99 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     return me.db.collection("performers").doc(me.pid).collection("requests").add(r);
   }
   function fail(msg) { app.textContent = ""; add(app, h("header", null, h("h1", null, "Song requests"), h("p", { class: "notice" }, msg))); }
+  /* ---------- the performer's theme ---------- */
+  var themeSig = "";
+  function applyTheme() {
+    var T = prof && prof.theme, sig = JSON.stringify(T || null); if (sig === themeSig) return; themeSig = sig;
+    var r = document.documentElement.style, ok = function (c) { return typeof c === "string" && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%deg]+\))$/i.test(c.trim()); };
+    ["bg", "panel", "fg", "muted", "line", "accent", "on"].forEach(function (k) { if (T && ok(T[k])) r.setProperty("--" + k, T[k].trim()); else r.removeProperty("--" + k); });
+    if (T && typeof T.art === "string" && /^https?:\/\/[^"'()\s]+$/.test(T.art)) r.setProperty("--art", "url(\"" + T.art + "\")"); else r.removeProperty("--art");
+    document.body.classList.toggle("themed", !!(T && ok(T.bg)));
+    var m = document.querySelector('meta[name="theme-color"]'); if (m && T && ok(T.bg)) m.setAttribute("content", T.bg.trim());
+  }
+  /* ---------- first-time guide (big, plain, for anyone) ---------- */
+  function guideSteps() {
+    var R = prof.rules || {}, who = prof.name || "the performer", out = [
+      ["👋", "Welcome!", "This page lets you ask " + who + " to play a song. No app or account needed."],
+      ["🎵", "Pick a song", "Scroll the list, or type a few letters of the song or the singer in the search box. Then tap the song."],
+      ["✉️", "Send it", "Type your name if you like, then tap the big Send request button. That's it!"]];
+    if (R.mode !== "free" && (prof.pay || []).some(function (p) { return p.url; })) out.push(["💵", "Tips", R.mode === "required" ? "A tip goes with each request. You'll see the ways to tip before you send." : "Tips are welcome but never required. The Tip tab has the ways to tip."]);
+    out.push(["👀", "See what happens", "Your requests show under Mine, with a note when it's played."]);
+    if ((prof.mail || {}).on) out.push(["📬", "Stay in touch", "Tap Sign up near the top to join the email list."]);
+    if ((prof.shows || []).length) out.push(["📅", "Upcoming shows", "The Shows tab has the next dates. You can add them to your phone's calendar."]);
+    return out;
+  }
+  function showGuide() {
+    var st = guideSteps(), i = 0, ov = h("div", { class: "guide", role: "dialog", "aria-modal": "true", "aria-label": "How this page works" });
+    function paint() {
+      ov.textContent = "";
+      var s = st[i], last = i === st.length - 1;
+      add(ov, h("div", { class: "gcard" }, h("div", { class: "gbig", "aria-hidden": "true" }, s[0]), h("h2", null, s[1]), h("div", null, s[2]),
+        h("div", { class: "gdots", "aria-hidden": "true" }, st.map(function (x, k) { return h("span", { class: k === i ? "on" : "" }); })),
+        h("div", { class: "row" }, i ? h("button", { onClick: function () { i--; paint(); } }, "Back") : h("button", { onClick: done }, "Skip"),
+          h("button", { class: "primary", onClick: function () { if (last) done(); else { i++; paint(); } } }, last ? "Let's go!" : "Next"))));
+    }
+    function done() { store("akreq:guided", 1); ov.remove(); }
+    paint(); document.body.appendChild(ov);
+  }
+  /* ---------- shows: list, month, add to calendar ---------- */
+  var cal = { mode: "list", ym: "", sel: "" };
+  function pd(d) { var p = String(d || "").split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+  function hm(t) { var m = /^(\d+):(\d+)$/.exec(t || ""); if (!m) return ""; var d = new Date(2000, 0, 1, +m[1], +m[2]); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  function whenText(x) { return pd(x.d).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) + (x.s ? " · " + hm(x.s) + (x.e ? "–" + hm(x.e) : "") : ""); }
+  function icsEsc(t) { return String(t || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/([,;])/g, "\\$1"); }
+  function icsFor(list) {
+    var L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Akashic Chords//Shows//EN", "CALSCALE:GREGORIAN"], stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+    list.forEach(function (x, k) {
+      var day = x.d.replace(/-/g, ""), title = (prof.name ? prof.name + " live" : "Live music") + (x.v ? " at " + x.v : x.n ? " · " + x.n : "");
+      L.push("BEGIN:VEVENT", "UID:" + day + "-" + k + "-" + norm(prof.name || "show").replace(/ /g, "") + "@akashic-chords", "DTSTAMP:" + stamp);
+      if (x.s) {
+        L.push("DTSTART:" + day + "T" + x.s.replace(":", "") + "00");
+        var end = x.e || (("0" + Math.min(23, +x.s.split(":")[0] + 2)).slice(-2) + ":" + x.s.split(":")[1]);
+        var endDay = x.e && x.e < x.s ? (function () { var d = pd(x.d); d.setDate(d.getDate() + 1); return d.getFullYear() + ("0" + (d.getMonth() + 1)).slice(-2) + ("0" + d.getDate()).slice(-2); })() : day;
+        L.push("DTEND:" + endDay + "T" + end.replace(":", "") + "00");
+      } else { var nd = pd(x.d); nd.setDate(nd.getDate() + 1); L.push("DTSTART;VALUE=DATE:" + day, "DTEND;VALUE=DATE:" + nd.getFullYear() + ("0" + (nd.getMonth() + 1)).slice(-2) + ("0" + nd.getDate()).slice(-2)); }
+      L.push("SUMMARY:" + icsEsc(title));
+      if (x.a || x.v) L.push("LOCATION:" + icsEsc([x.v, x.a].filter(Boolean).join(", ")));
+      if (x.x || prof.website) L.push("DESCRIPTION:" + icsEsc([x.x, prof.website].filter(Boolean).join("\n")));
+      L.push("END:VEVENT");
+    });
+    L.push("END:VCALENDAR"); return L.join("\r\n");
+  }
+  function saveIcs(list, name) {
+    var blob = new Blob([icsFor(list)], { type: "text/calendar" }), a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name + ".ics"; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+  function showCard(x) {
+    return h("div", { class: "card show" }, h("div", { class: "when" }, whenText(x)), x.v || x.n ? h("div", { class: "where" }, [x.v, x.n && x.n !== x.v ? x.n : ""].filter(Boolean).join(" · ")) : null,
+      x.a ? h("div", { class: "muted" }, x.a) : null, x.x ? h("div", { style: "margin-top:4px" }, x.x) : null,
+      h("div", { class: "row" }, x.u ? h("a", { class: "pill", href: x.u, target: "_blank", rel: "noopener" }, "📍 Map") : null, h("button", { onClick: function () { saveIcs([x], "show-" + x.d); } }, "📅 Add to my calendar")));
+  }
+  function drawShows() {
+    var all = (prof.shows || []).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x.d || ""); });
+    if (!all.length) { add(app, h("p", { class: "muted center" }, "No upcoming shows listed right now.")); return; }
+    var seg = h("div", { class: "seg", style: "grid-template-columns:1fr 1fr" }, [["list", "List"], ["month", "Month"]].map(function (m) { return h("button", { "aria-pressed": cal.mode === m[0] ? "true" : "false", onClick: function () { cal.mode = m[0]; draw(); } }, m[1]); }));
+    add(app, seg);
+    if (cal.mode === "list") all.forEach(function (x) { add(app, showCard(x)); });
+    else {
+      if (!cal.ym) cal.ym = all[0].d.slice(0, 7);
+      var y = +cal.ym.slice(0, 4), mo = +cal.ym.slice(5, 7) - 1, first = new Date(y, mo, 1), days = new Date(y, mo + 1, 0).getDate(), byDay = {};
+      all.forEach(function (x) { (byDay[x.d] = byDay[x.d] || []).push(x); });
+      function shift(n) { var d = new Date(y, mo + n, 1); cal.ym = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2); cal.sel = ""; draw(); }
+      add(app, h("div", { class: "calhead" }, h("button", { "aria-label": "Previous month", onClick: function () { shift(-1); } }, "‹"), h("strong", null, first.toLocaleDateString([], { month: "long", year: "numeric" })), h("button", { "aria-label": "Next month", onClick: function () { shift(1); } }, "›")));
+      var grid = h("div", { class: "cal" });
+      ["S", "M", "T", "W", "T", "F", "S"].forEach(function (d) { add(grid, h("div", { class: "dow", "aria-hidden": "true" }, d)); });
+      for (var b = 0; b < first.getDay(); b++) add(grid, h("div", { class: "blank" }));
+      for (var d = 1; d <= days; d++) (function (d) {
+        var key = cal.ym + "-" + ("0" + d).slice(-2), has = byDay[key];
+        add(grid, h("button", { class: (has ? "has" : "") + (cal.sel === key ? " sel" : ""), "aria-label": new Date(y, mo, d).toLocaleDateString([], { month: "long", day: "numeric" }) + (has ? ", " + has.length + (has.length === 1 ? " show" : " shows") : ""), disabled: !has, onClick: function () { cal.sel = key; draw(); } }, String(d)));
+      })(d);
+      add(app, grid);
+      if (cal.sel && byDay[cal.sel]) byDay[cal.sel].forEach(function (x) { add(app, showCard(x)); });
+      else add(app, h("p", { class: "muted center" }, "Tap a highlighted day to see the show."));
+    }
+    if (all.length > 1) add(app, h("div", { class: "row", style: "justify-content:center" }, h("button", { onClick: function () { saveIcs(all, "shows"); } }, "📅 Add all " + all.length + " shows to my calendar")));
+  }
   /* ---------- page ---------- */
   function usedCount() { return Object.keys(mine).map(function (k) { return mine[k]; }).filter(function (r) { return r.kind === "play"; }).length; }
   function needTip() { var R = prof.rules || {}; if (R.mode !== "required") return false; return !(R.firstFree && usedCount() === 0); }
@@ -112,8 +227,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     app.textContent = "";
     if (!prof) { fail(LOCAL ? "Open this from the app's QR screen (This device only mode) in the same browser." : "This performer's page isn't set up yet."); return; }
     var name = store("akreq:name") || "";
+    applyTheme();
+    if (!store("akreq:guided") && !draft && !document.querySelector(".guide")) setTimeout(function () { if (!store("akreq:guided") && !document.querySelector(".guide")) showGuide(); }, 300);
     add(app, h("header", null, h("h1", null, prof.name || "Song requests"),
-      h("div", { class: "links" }, prof.website ? h("a", { class: "pill", href: prof.website, target: "_blank", rel: "noopener" }, "Website") : null, (prof.links || []).filter(function (l) { return l.url; }).map(function (l) { return h("a", { class: "pill", href: l.url, target: "_blank", rel: "noopener" }, l.label || "Link"); }))));
+      h("div", { class: "links" }, prof.website ? h("a", { class: "pill", href: prof.website, target: "_blank", rel: "noopener" }, "Website") : null, (prof.links || []).filter(function (l) { return l.url; }).map(function (l) { return h("a", { class: "pill", href: l.url, target: "_blank", rel: "noopener" }, l.label || "Link"); })),
+      h("button", { class: "helpbtn", onClick: showGuide }, "❓ How this works")));
     if (prof.open === false) add(app, h("p", { class: "notice" }, "Requests are paused right now. Try again in a bit."));
     var ML = prof.mail || {};
     if (ML.on && !draft) {
@@ -125,6 +243,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     var R = prof.rules || {};
     var tabs = [["songs", "Request"], ["more", R.learn || R.msg ? "Learn or message" : "Message"], ["tip", "Tip"]];
     if (!R.learn && !R.msg) tabs.splice(1, 1);
+    if ((prof.shows || []).length) tabs.push(["shows", "Shows"]);
     var mineList = Object.keys(mine).map(function (k) { return mine[k]; }).filter(function (r) { return r.kind !== "signup"; });
     if (mineList.length) tabs.push(["mine", "Mine (" + mineList.length + ")"]);
     var tb = h("nav", { class: "tabs", style: "grid-template-columns:repeat(" + tabs.length + ",1fr)" }); tabs.forEach(function (t) { add(tb, h("button", { "aria-pressed": view === t[0] ? "true" : "false", onClick: function () { view = t[0]; draft = null; draw(); } }, t[1])); }); add(app, tb);
@@ -161,6 +280,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       add(app, h("p", { class: "muted center" }, "Thank you! Pick one:"));
       (prof.pay || []).filter(function (p) { return p.url; }).forEach(function (p) { var c = qr(p.url); add(app, h("div", { class: "card center" }, h("a", { class: "pill primary", href: payUrl(p, R.price), target: "_blank", rel: "noopener" }, "Tip with " + (p.label || PAY[p.kind] || "a link")), c ? h("div", { style: "margin-top:10px" }, c) : null)); });
       if (!(prof.pay || []).some(function (p) { return p.url; })) add(app, h("p", { class: "muted center" }, "No tip links yet."));
+    } else if (view === "shows") {
+      drawShows();
     } else if (view === "mine") {
       mineList = mineList.filter(function (r) { return r.kind !== "signup"; });
       mineList.sort(function (a, b) { return (b.at && b.at.toMillis ? b.at.toMillis() : b.at || 0) - (a.at && a.at.toMillis ? a.at.toMillis() : a.at || 0); }).forEach(function (r) {
