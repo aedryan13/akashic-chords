@@ -14367,7 +14367,7 @@ function openLivePanel(root, song) {
     [["play", "Queue", c.play], ["learn", "Learn", c.learn], ["message", "Messages", c.message]].forEach(function (x) { tabs.appendChild(h("button", { role: "tab", "aria-selected": tab === x[0] ? "true" : "false", "aria-pressed": tab === x[0] ? "true" : "false", onClick: function () { tab = S.liveTab = x[0]; draw(); } }, x[1] + (x[2] ? " (" + x[2] + ")" : ""))); });
     body.textContent = "";
     var L = akLive();
-    body.appendChild(h("div", { class: "row akl-top" }, h("span", { class: "muted grow" }, akLiveStatus()), h("button", { onClick: function () { L.open = !L.open; save(); akLivePublish().catch(function () {}); draw(); } }, L.open ? "Pause requests" : "Open requests"), h("button", { onClick: openLiveQr }, "QR")));
+    body.appendChild(h("div", { class: "row akl-top" }, h("span", { class: "muted grow" }, akLiveStatus()), h("button", { onClick: function () { L.open = !L.open; save(); akLivePublish().catch(function () {}); draw(); } }, L.open ? "Pause requests" : "Open requests"), h("button", { onClick: openLiveQr }, "QR"), typeof akLiveClearAll === "function" && akLiveList().length ? h("button", { class: "danger", onClick: function () { akLiveClearAll(draw); } }, "Clear all…") : null));
     if (!L.open) body.appendChild(h("p", { class: "hint" }, "Requests are paused. The page tells people to try again later."));
     if (tab === "play") {
       var q = akLiveList("play").filter(function (r) { return r.status === "new"; }).sort(function (a, b) { return (a.order || a.at) - (b.order || b.at); }), rows = [];
@@ -14439,9 +14439,9 @@ function akLiveSettings(out, ctx) {
     cfg.value = L.fb.apiKey ? "apiKey: \"" + L.fb.apiKey + "\",\nprojectId: \"" + L.fb.projectId + "\"" + (L.fb.appId ? ",\nappId: \"" + L.fb.appId + "\"" : "") : "";
     out.appendChild(h("label", { class: "fld" }, "Firebase settings", cfg));
     out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () {
-      var t = cfg.value, g = function (k) { var m = new RegExp(k + "\\s*[:=]\\s*[\"']([^\"']+)[\"']").exec(t); return m ? m[1] : ""; };
-      var ak = g("apiKey"), pj = g("projectId"); if (!ak || !pj) { toast("I couldn't find apiKey and projectId in that."); return; }
-      ctx.mark(); L.fb = { apiKey: ak, projectId: pj, appId: g("appId") }; ctx.refresh(); toast("Firebase settings saved."); akLiveStart(); redraw();
+      var f = akFbParse(cfg.value);
+      if (!f.apiKey || !f.projectId) { toast("I couldn't find apiKey and projectId in that. Copy the whole firebaseConfig block from Firebase (Project settings > Your apps > Config) and paste it again."); return; }
+      ctx.mark(); L.fb = { apiKey: f.apiKey, projectId: f.projectId, appId: f.appId || "" }; ctx.refresh(); toast("Firebase settings saved."); akLiveStart(); redraw();
     } }, "Save Firebase settings"), h("button", { onClick: openLiveSetupSteps }, "Setup steps…")));
     if (L.fb.apiKey) {
       if (AKL.conn === "cloud") out.appendChild(h("div", { class: "row" }, h("span", { class: "grow" }, "Signed in as " + (L.email || "you")), h("button", { onClick: function () { akCloudSignOut(); redraw(); } }, "Sign out")));
@@ -14484,7 +14484,7 @@ function akLiveSettings(out, ctx) {
   ck("For card tips, offer an optional box to add a little to cover the card fee (never added on its own)", "coverBox");
   out.appendChild(h("p", { class: "hint" }, "California doesn't allow adding a required card fee on top of a price, so the fee box is always optional and starts unticked."));
 }
-var AK_FB_RULES = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{db}/documents {\n    match /performers/{pid} {\n      allow read: if true;\n      allow write: if request.auth != null && request.auth.uid == pid;\n      match /requests/{rid} {\n        allow create: if request.auth != null\n          && request.resource.data.uid == request.auth.uid\n          && request.resource.data.kind in ['play', 'learn', 'message']\n          && request.resource.data.status == 'new'\n          && request.resource.data.keys().hasOnly(['kind', 'title', 'artist', 'songId', 'name', 'note', 'tip', 'status', 'uid', 'at', 'reply', 'order'])\n          && request.resource.data.title is string && request.resource.data.title.size() <= 120\n          && request.resource.data.note is string && request.resource.data.note.size() <= 600\n          && get(/databases/$(db)/documents/performers/$(pid)).data.open == true;\n        allow read: if request.auth != null && (request.auth.uid == pid || resource.data.uid == request.auth.uid);\n        allow update, delete: if request.auth != null && request.auth.uid == pid;\n      }\n    }\n  }\n}\n";
+var AK_FB_RULES = "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{db}/documents {\n    match /performers/{pid} {\n      allow read: if true;\n      allow write: if request.auth != null && request.auth.uid == pid;\n      match /requests/{rid} {\n        allow create: if request.auth != null\n          && request.resource.data.uid == request.auth.uid\n          && request.resource.data.kind in ['play', 'learn', 'message', 'signup']\n          && request.resource.data.status == 'new'\n          && request.resource.data.keys().hasOnly(['kind', 'title', 'artist', 'songId', 'name', 'note', 'tip', 'status', 'uid', 'at', 'reply', 'order'])\n          && request.resource.data.title is string && request.resource.data.title.size() <= 120\n          && request.resource.data.note is string && request.resource.data.note.size() <= 600\n          && get(/databases/$(db)/documents/performers/$(pid)).data.open == true;\n        allow read: if request.auth != null && (request.auth.uid == pid || resource.data.uid == request.auth.uid);\n        allow update, delete: if request.auth != null && request.auth.uid == pid;\n      }\n    }\n  }\n}\n";
 function openLiveSetupSteps() {
   var rules = h("pre", { class: "akl-pre" }, AK_FB_RULES);
   modal("Set up online requests", h("div", null,
@@ -14494,10 +14494,25 @@ function openLiveSetupSteps() {
       h("li", null, "Build > Authentication > Get started. Under Sign-in method, turn on Anonymous and Email/Password."),
       h("li", null, "Build > Firestore Database > Create database. Pick a location near you, start in production mode."),
       h("li", null, "In Firestore, open the Rules tab, replace everything with the rules below, and tap Publish."),
-      h("li", null, "Authentication > Settings > Authorized domains: add the website the app runs on (like aedryangant.com, or yourname.github.io)."),
+      h("li", null, "Authentication > Settings > Authorized domains: tap Add domain and type the website the app runs on: " + location.hostname.replace(/^www\\./, "") + (location.hostname ? "" : "yourname.github.io") + ". The request page lives there too."),
       h("li", null, "Back here: paste the firebaseConfig block, tap Save Firebase settings, then Make my account (your email and a password).")),
     rules, h("div", { class: "row" }, h("button", { onClick: function () { copyPlain(AK_FB_RULES, "Rules copied."); } }, "Copy the rules"))),
     [{ label: "Close", primary: true }], { wide: true });
+}
+
+/* reads the firebaseConfig block however it was pasted: JS (apiKey: "…"), JSON ("apiKey": "…"), curly quotes from a notes app,
+   key = value lines, or just the bare values on their own lines */
+function akFbParse(text) {
+  var t = String(text || "").replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"').replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'").replace(/\u00A0/g, " ");
+  function g(k) {
+    var m = new RegExp("[\"']?" + k + "[\"']?\\s*[:=]\\s*[\"'`]?([^\"'`,\\s}]+)").exec(t);
+    return m ? m[1].trim() : "";
+  }
+  var o = { apiKey: g("apiKey"), projectId: g("projectId"), appId: g("appId") };
+  if (!o.apiKey) { var a = /AIza[0-9A-Za-z_\-]{20,}/.exec(t); if (a) o.apiKey = a[0]; }
+  if (!o.projectId) { var d = /([a-z0-9][a-z0-9\-]{3,})\.(?:firebaseapp\.com|appspot\.com|firebasestorage\.app)/.exec(t); if (d) o.projectId = d[1]; }
+  if (!o.appId) { var p = /\b\d+:\d+:web:[0-9a-f]+\b/.exec(t); if (p) o.appId = p[0]; }
+  return o;
 }
 
 /* start listening when the app opens */
@@ -14675,9 +14690,11 @@ function akRunCard(sh, redraw) {
     box.style.display = "";
     var name = rs ? rs.name : "Show";
     if (live) {
-      box.appendChild(h("div", { class: "akrun-h" }, "● ", sh ? "Show is on" : name, RUN.encore ? h("span", { class: "akrun-tag" }, "Encore") : null));
-      box.appendChild(h("div", { class: "muted" }, "Started " + tmClock(RUN.began) + " · last song activity " + tmClock(RUN.lastAct)));
-      box.appendChild(h("div", { class: "row" }, h("button", { class: "danger", onClick: function () { akEndShowAsk(function () { draw(); if (redraw) redraw(); }); } }, "■ End show")));
+      var pz = !!RUN.paused;
+      box.appendChild(h("div", { class: "akrun-h" }, pz ? "⏸ " : "● ", (sh ? "Show is on" : name) + (pz ? " (paused)" : ""), RUN.encore ? h("span", { class: "akrun-tag" }, "Encore") : null));
+      box.appendChild(h("div", { class: "muted" }, "Started " + tmClock(RUN.began) + (pz ? " · paused at " + tmClock(RUN.paused) : " · last song activity " + tmClock(RUN.lastAct))));
+      box.appendChild(h("div", { class: "row" }, typeof akRunPauseToggle === "function" ? h("button", { class: pz ? "primary" : "", onClick: function () { akRunPauseToggle(); draw(); if (redraw) redraw(); } }, pz ? "⏵ Resume" : "⏸ Pause") : null,
+        h("button", { class: "danger", onClick: function () { akEndShowAsk(function () { draw(); if (redraw) redraw(); }); } }, "■ End show")));
     } else {
       box.appendChild(h("div", { class: "akrun-h" }, sh ? "Show ended" : name + " ended"));
       box.appendChild(h("div", { class: "muted" }, "Ended at " + tmClock(RUN.ended) + (RUN.why === "idle" ? " (nothing played for a while)" : RUN.why === "gap" ? " (as of the last song, the app was closed)" : "") + ". Resume it to put encore songs into this show."));
@@ -17373,7 +17390,7 @@ function akSettingsExtra4(c) {
   akGridEditor(c);
   c.section("Info window and notepad", "Floating windows on the playing screen");
   var iw = settings().infoWin = settings().infoWin || {};
-  c.select("Info window size", function () { return iw.size || "small"; }, function (v) { iw.size = v; akInfoSizeSet(v); }, [["small", "Small, tucked into its title bar until you tap it (default)"], ["full", "Full size"], ["off", "Off (the Info buttons do nothing)"]]);
+  c.select("Info window", function () { return iw.size || (typeof akInfoMode === "function" ? akInfoMode() : "small"); }, function (v) { iw.size = v; akInfoSizeSet(v); }, [["tap", "Only when I tap an Info button (default)"], ["small", "Small, tucked into its title bar until you tap it"], ["full", "Full size"], ["off", "Off (the Info buttons do nothing)"]]);
   c.check("Bring it back by itself on the next song after I close the app", function () { return !!iw.reopen; }, function (v) { iw.reopen = v; });
   c.select("The info window opens by itself", function () { return iw.auto || "off"; }, function (v) { iw.auto = v; }, [["off", "Never"], ["start", "At the start of each song"]]);
   c.select("…showing", function () { return iw.tab || "banter"; }, function (v) { iw.tab = v; }, AK_INFO_TABS);
@@ -22803,11 +22820,20 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "8.4";
+var AK_VERSION = "9.1";
 var AK_WHATS_NEW = [
-  "Your own guitar sound: Settings > Songs and shows > Chord sound > 🎙 Record my guitar walks you through playing one note at a time (and a few strums), and every chord in the app then plays with your real guitar",
-  "Each note is tuned exactly for you (it shows how many cents it fixed), trimmed and evened out; a take that clipped, stopped early or was far out of tune is flagged so you can re-take it",
-  "Record more than one (acoustic, nylon, electric, ukulele), switch between them, redo any note, and Export / Import a sound to move it to your phone or tablet. The built-in sound is still there when you have none"
+  "Requests on stage: the Info bar shows how many requests are waiting with a scrolling list (tap it for the requests), the corner Requests button counts QR requests, and the Info window has a Requests tab you can dock at the side",
+  "A new request flashes the screen edge (for as long as you pick), with an optional buzz or beep, so you notice it even with your eyes closed",
+  "A request is marked played by itself when you play that song",
+  "Your request page takes your app's theme colors and picture, has a friendly first-time guide for people who've never used one, and a Shows tab with your upcoming public shows (list or month, add to their calendar). Tick “Show on my request page” in a show's details",
+  "Settings > Requests and tips > Setup steps is now a step-by-step walkthrough, and the printed QR sign says how to scan it",
+  "Shows keep the night: playing any set list from a show counts toward that show, switching set lists keeps the same show going, and you're only asked about an encore for the show that just ended",
+  "Pause a show (⏸ on the show page, in the timers card, or as a Button bar / Info bar corner button): nothing counts and the timer stops until you resume. “⏸ Open, start later” opens a show without starting it",
+  "Requests are saved with the show they came in at (see “Requests at this show” on the show page, delete one or all), and the Live panel has Clear all",
+  "Delete a show can also delete what was played at it, so test shows don't count in your stats",
+  "The Info window stays closed until you tap an Info button, and floating windows no longer cover the bottom bar",
+  "Firebase setup: pasting the settings works with curly quotes and any copy of the config block; the in-app rules now allow email signups",
+  "The ⇅ button at the top of each page opens one Customize menu (arrange, options for the page, colors). On the playing screen, Buttons ▾ > Arrange the buttons… shows only while auto-scroll is stopped"
 ];
 
 /* ---------------------------------------------------------------- the edition: Claude-only features, the PDF maker */
@@ -23227,7 +23253,7 @@ function akCornerPaint() {
   akRunPaint = function () { var r = rp.apply(this, arguments); try { if (S.view === "play") akCornerPaint(); } catch (e) {} return r; };
 })();
 /* new requests arrive while playing: the count follows */
-setInterval(function () { try { if (S.view !== "play") return; var b = document.querySelector('.play [data-ak9c="request"]'); if (!b) return; var n = reqNewCount(), bd = b.querySelector(".ak9-badge"); if (String(n || "") !== (bd ? bd.textContent : "")) akCornerPaint(); } catch (e) {} }, 5000);
+setInterval(function () { try { if (S.view !== "play") return; var b = document.querySelector('.play [data-ak9c="request"]'); if (!b) return; var n = typeof akReqWaiting === "function" ? akReqWaiting() : reqNewCount(), bd = b.querySelector(".ak9-badge"); if (String(n || "") !== (bd ? bd.textContent : "")) akCornerPaint(); } catch (e) {} }, 5000);
 
 /* ---------------------------------------------------------------- see-through parts of the playing screen */
 function akOpacApply() {
@@ -24405,8 +24431,10 @@ viewGig = function () {
     det.appendChild(h("label", { class: "fld" }, "Notes for this show (who booked you, staff names, anything to remember)", h("textarea", { rows: 3, value: g.notes || "", onInput: function () { g.notes = this.value; save(); } })));
     if (v) det.appendChild(h("label", { class: "fld" }, "People at " + v.name + " (kept with the venue for every show there)", h("textarea", { rows: 2, value: v.staff || "", placeholder: "Bartenders, managers, sound person…", onInput: function () { v.staff = this.value; save(); } })));
     det.appendChild(h("div", { class: "fld" }, "Color", colorPicker(g.color, function (c) { g.color = c; save(); })));
+    if (typeof akGigPubRow === "function") det.appendChild(akGigPubRow(g));
     det.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akGig9Like(g); } }, "＋ New show like this one")));
     body.appendChild(det);
+    if (typeof akGigRunCard === "function") body.appendChild(akGigRunCard(g, draw));
     /* set lists first, with Play */
     var sl = h("div", { class: "card akgig-card akgig9-sets", "data-bk": "setlists", "data-bt": "Set lists" });
     if (!lists.length) {
@@ -24415,12 +24443,14 @@ viewGig = function () {
       function use(play) { var sh = findShow(pick.value); if (!sh) { toast("Pick a set list first."); return; } snap("add set list"); g.setlists = [sh.id]; settings().gigDefaultSet = sh.id; save(); if (play) akGigPlay(g, sh); else draw(); }
       sl.appendChild(h("h3", null, "Set list"));
       sl.appendChild(h("div", { class: "row akgig9-pick" }, pick, h("button", { class: "primary", onClick: function () { use(true); } }, "▶ Play"), h("button", { onClick: function () { use(false); } }, "Use it")));
+      if (typeof akGigOpenPaused === "function") sl.appendChild(h("div", { class: "row" }, h("button", { class: "sm", title: "Opens the playing screen with the show paused, so nothing counts until you start", onClick: function () { var sh = findShow(pick.value); if (!sh) { toast("Pick a set list first."); return; } snap("add set list"); g.setlists = [sh.id]; settings().gigDefaultSet = sh.id; save(); akGigOpenPaused(g, sh); } }, "⏸ Open, start later")));
     } else {
       sl.appendChild(h("h3", null, lists.length === 1 ? "Set list" : "Set lists"));
       lists.forEach(function (sh, i) {
         var uses = (g.used || []).filter(function (u) { return u.sl === sh.id; });
         sl.appendChild(h("div", { class: "item akgig9-sl" },
           h("button", { class: "primary akgig9-play", "aria-label": "Play " + (sh.name || "the set list"), onClick: function () { akGigPlay(g, sh); } }, "▶ Play"),
+          typeof akGigOpenPaused === "function" ? h("button", { class: "icon", "aria-label": "Open " + (sh.name || "the set list") + " without starting the show", title: "Open, start later (the show stays paused until you start it)", onClick: function () { akGigOpenPaused(g, sh); } }, "⏸") : null,
           h("button", { class: "main-btn", onClick: function () { go("show", { showId: sh.id }); } }, h("div", { class: "t" }, sh.name || "Untitled"), h("div", { class: "s" }, showCounts(sh) + (uses.length ? " · played " + uses.map(function (u) { return tmClock(u.at); }).join(", ") : ""))),
           h("button", { class: "icon", "aria-label": "Swap " + sh.name + " for another set list", title: "Swap for another set list", onClick: function () { akPickSetlist(function (nw) { snap("swap set list"); g.setlists[g.setlists.indexOf(sh.id)] = nw.id; settings().gigDefaultSet = nw.id; save(); draw(); }, g.setlists); } }, "⇄"),
           h("button", { class: "icon", "aria-label": "Take " + sh.name + " off this show", onClick: function () { snap("set list off show"); g.setlists.splice(g.setlists.indexOf(sh.id), 1); save(); draw(); toastUndo("Taken off this show (the set list is kept)."); } }, "✕")));
@@ -24436,6 +24466,7 @@ viewGig = function () {
     body.appendChild(h("div", { class: "row akgig9-money", "data-bk": "money", "data-bt": "Pay and tips" }, h("button", { onClick: function () { akGigMoneyDialog(g, draw); } }, "💵 Pay and tips" + (m.earned ? " · " + akMoney(m.earned) : ""))));
     body.appendChild(akGigPhotos(g, draw));
     body.appendChild(akGigLogCard(g, draw));
+    if (typeof akGigReqCard === "function") body.appendChild(akGigReqCard(g, draw));
     layRun(body);
     if (sc) sc.scrollTop = keep;
   }
@@ -24443,10 +24474,10 @@ viewGig = function () {
   var more = h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
     { label: "＋ New show like this one", onClick: function () { akGig9Like(g); } },
     { label: "Duplicate (no date)", onClick: function () { snap("duplicate show"); var c = akNewGig(Object.assign(clone(g), { id: uid(), date: "", tips: [], costs: [], pay: g.pay, paid: false, used: [], photos: (g.photos || []).slice() })); akGigs().push(c); save(); go("gig", { gigId: c.id }); } },
-    { label: "Customize and arrange this page", onClick: function () { layStart(); } },
+    { label: "⇅ Customize and arrange this page…", onClick: function () { layStart(); } },
     { label: "Venue card", disabled: !akVenueFor(g), onClick: function () { akVenueCard(akVenueFor(g), { done: render }); } },
     { label: "Edit what was played…", onClick: function () { akLogEdit({ gig: g, redraw: render }); } },
-    { label: "Delete this show…", danger: true, onClick: function () { confirmBox("Delete “" + akGigTitle(g) + "”? Its set lists and the play history are kept.", "Delete", function () { snap("delete show"); lib().gigs = akGigs().filter(function (x) { return x !== g; }); (lib().log || []).forEach(function (e) { if (e.g === g.id) { delete e.g; delete e.gn; } }); save(); go("shows"); toastUndo("Show deleted."); }); } }]); } }, "⋯");
+    { label: "Delete this show…", danger: true, onClick: function () { akGigDelete(g); } }]); } }, "⋯");
   return shell(akGigTitle(g), body, { back: function () { saveNow(); if (!navBack()) go("shows"); }, noBanner: true, actions: more });
 };
 (function () { try { var mp = typeof AK_VIEWS === "object" ? AK_VIEWS : null; if (mp && mp.gig) mp.gig = viewGig; } catch (e) {} })();
@@ -25606,6 +25637,631 @@ akCss("ak9-e", [
   ".aks-h{margin:14px 0 4px;font-size:1rem}",
   ".aks-item{flex-wrap:wrap;gap:6px;align-items:center}"
 ]);
+
+/* ================= Akashic Chords: batch 9, phase A (shows and requests) =================
+   - The SHOW (lib().gigs) is the night: playing a set list from a show joins that show's night (RUN.gigId) instead of starting
+     a new one, switching set lists keeps the same night, timer and log; a show that just ended asks about an encore only for
+     that same show. Played marks left on a set list from an earlier night are cleared quietly when a new show night starts.
+   - Pause a show: RUN.paused (time it was paused). While paused nothing is counted, the show timer stops and the show doesn't
+     end by itself. "Open, start later" on the show page opens the playing screen with the show paused (RUN.pausedFresh:
+     the start time is taken from Resume). Buttons: Pause/Resume on the show page and timers card, Info bar corner "pause",
+     Button bar / side button "pauseshow".
+   - Requests saved with the show: request log entries (lib().reqLog) that come in during a show night get g / gn. The show
+     page lists them (delete one, or all). The Live panel has "Clear all…" (they stay in the log and the show).
+   - Delete a show can also delete what was played at it (log entries, song play counts and history) and its requests.
+   - Info window: new default "tap" (never opens by itself, the Info buttons open it); floating windows keep clear of the
+     bottom tab bar.
+   - ⇅ on each page opens one "Customize this page" sheet (arrange, options, colors). Playing screen: Buttons ▾ > Arrange
+     the buttons… only while auto-scroll is stopped, with a confirm. */
+
+/* ---------------------------------------------------------------- the show is the night */
+function akRun10Gig() { return typeof RUN !== "undefined" && RUN && RUN.gigId ? akGig(RUN.gigId) : null; }
+function akRun10Paused() { return !!(RUN && !RUN.ended && RUN.paused); }
+/* clear played marks a set list still has from an earlier night */
+function akRun10Stale(sh, since) {
+  var t = akLastMark(sh);
+  if (t && t < since) { sh.played = {}; sh.counted = {}; delete sh.lastEnd; save(); try { refreshListTicks(); } catch (e) {} }
+}
+/* another set list of the same show night */
+function akRun10Switch(sh, g) {
+  var old = RUN.showId;
+  if (TM.show === old) { TM.show = sh.id; tmSave(); }
+  akRun10Stale(sh, RUN.began);
+  RUN.showId = sh.id; RUN.lastAct = Date.now(); akRunSave();
+  if (g) akGigUse(g, sh);
+}
+(function () {
+  var fresh = akRunFresh;
+  akRunFresh = function (sh) {
+    var g = S.akGigNext ? akGig(S.akGigNext) : null, now = Date.now();
+    /* a new show night from a show: last night's marks on this set list are old news, without the "cleared" toast */
+    if (g) { akRun10Stale(sh, now); delete sh.lastEnd; }
+    return fresh.apply(this, arguments);
+  };
+  var begin = akRunBegin;
+  akRunBegin = function (sh, then) {
+    var g = S.akGigNext ? akGig(S.akGigNext) : null;
+    akRunCheck();
+    if (g && RUN && RUN.gigId === g.id) {
+      /* the same show is on: keep going, even with a different set list */
+      if (!RUN.ended) { S.akGigNext = ""; if (RUN.showId !== sh.id) akRun10Switch(sh, g); else { RUN.lastAct = Date.now(); akRunSave(); akGigUse(g, sh); } then(); return; }
+      /* the same show just ended: encore? */
+      if (akRunJustEnded()) {
+        modal("Encore or a new show?", h("p", null, "“" + akGigTitle(g) + "” ended at " + tmClock(RUN.ended) + ". Resume it for an encore, or start a new show night?"),
+          [{ label: "Cancel" }, { label: "New show night", onClick: function () { S.akGigNext = g.id; akRunFresh(sh); then(); } },
+           { label: "Resume (encore)", primary: true, onClick: function () { S.akGigNext = ""; if (RUN.showId !== sh.id) { RUN.showId = sh.id; akGigUse(g, sh); } akRunResume(true); then(); } }]);
+        return;
+      }
+    }
+    /* a different show than the one that just ended: no encore question, it's a new night */
+    if (g && RUN && RUN.ended && RUN.gigId !== g.id) { akRunFresh(sh); then(); return; }
+    if (g && RUN && !RUN.ended && RUN.gigId !== g.id) { akRunEnd("other", RUN.lastAct, true); akRunFresh(sh); then(); return; }
+    return begin.apply(this, arguments);
+  };
+  /* a play from any set list of tonight's show goes into that show */
+  var lp = logPlay;
+  logPlay = function (s, sh, info, at) {
+    var r = lp.apply(this, arguments);
+    var g = typeof akRunGig === "function" ? akRunGig() : null, l = lib().log, e = l[l.length - 1];
+    if (g && sh && e && e.sid === s.id && !e.g && (g.setlists || []).indexOf(sh.id) >= 0) { e.g = g.id; e.gn = akGigTitle(g); e.pl = g.venue || akGigTitle(g); }
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- pause a show */
+function akRunPause(quiet) {
+  if (!RUN || RUN.ended || RUN.paused) return;
+  RUN.paused = Date.now();
+  if (TM.play.on || TM.play.byBreak) { tmPausePlay(); TM.play.byPause = true; tmSave(); }
+  akRunSave(); akRunPaint();
+  if (!quiet) toast("Show paused. Nothing is counted until you resume it.");
+}
+function akRunUnpause(quiet) {
+  if (!RUN || RUN.ended || !RUN.paused) return;
+  var now = Date.now(), freshStart = !!RUN.pausedFresh;
+  RUN.paused = 0; RUN.lastAct = now;
+  if (freshStart) {
+    /* opened without starting: the night starts now */
+    RUN.began = now; delete RUN.pausedFresh;
+    if (TM.show === RUN.showId && !TM.play.acc) { TM.play.began = 0; TM.play.on = false; tmSave(); }
+  }
+  akRunSave();
+  if (TM.show === RUN.showId) {
+    if (TM.play.byPause) { delete TM.play.byPause; tmStartPlay(); }
+    else if (!TM.play.began && tmOpt().playStart === "play") tmStartPlay();
+  }
+  akRunPaint();
+  if (!quiet) toast(freshStart ? "The show is on." : "Show resumed.");
+}
+function akRunPauseToggle() { if (akRun10Paused()) akRunUnpause(); else if (akRunLive()) akRunPause(); else toast("No show is on. Press Play on a show to start one."); }
+(function () {
+  /* nothing counts while paused */
+  var cp = countPlay;
+  countPlay = function (songId, showId, info, at) {
+    if (akRun10Paused() && !(info && info.manual)) return false;
+    return cp.apply(this, arguments);
+  };
+  var sp = tmStartPlay;
+  tmStartPlay = function () { if (akRun10Paused()) return; return sp.apply(this, arguments); };
+  var rt = akRunTouch;
+  akRunTouch = function () { if (akRun10Paused()) return; return rt.apply(this, arguments); };
+  /* a paused show doesn't end by itself (until it has been paused for 12 hours) */
+  var chk = akRunCheck;
+  akRunCheck = function () {
+    if (akRun10Paused()) {
+      if (Date.now() - RUN.paused > 12 * 3600e3) { var at = RUN.paused; RUN.paused = 0; akRunSave(); akRunEnd("idle", at, true); }
+      return;
+    }
+    return chk.apply(this, arguments);
+  };
+  var end = akRunEnd;
+  akRunEnd = function () { if (RUN && !RUN.ended && RUN.paused) { RUN.paused = 0; delete RUN.pausedFresh; if (TM.play.byPause) delete TM.play.byPause; } return end.apply(this, arguments); };
+  var res = akRunResume;
+  akRunResume = function () { var r = res.apply(this, arguments); if (RUN && RUN.paused) { RUN.paused = 0; akRunSave(); } return r; };
+  /* "open, start later": the playing screen opens with the show paused */
+  var bg = akRunBegin;
+  akRunBegin = function (sh, then) {
+    if (!S.ak10OpenPaused) return bg.apply(this, arguments);
+    S.ak10OpenPaused = false;
+    return bg.call(this, sh, function () {
+      if (RUN && !RUN.ended && !RUN.paused) {
+        var untouched = Date.now() - RUN.began < 5000;
+        akRunPause(true); if (untouched) { RUN.pausedFresh = 1; akRunSave(); }
+        setTimeout(function () { toast("The show is open but not started. Tap Resume (⏵) when you begin.", { label: "Start now", fn: function () { akRunUnpause(); } }); }, 400);
+      }
+      then();
+    });
+  };
+})();
+function akGigOpenPaused(g, sh) { S.ak10OpenPaused = true; akGigPlay(g, sh); setTimeout(function () { S.ak10OpenPaused = false; }, 4000); }
+
+/* the playing screen: a pill while the show is paused */
+function akPause10Paint() {
+  var root = document.querySelector(".play"), old = document.querySelector(".ak10-pause");
+  var on = !!(root && S.view === "play" && akRun10Paused() && !S.layout);
+  if (!on) { if (old) old.remove(); return; }
+  if (old) return;
+  root.appendChild(h("button", { class: "ak10-pause", "aria-label": "The show is paused. Tap to resume", onClick: function () { akRunUnpause(); } }, "⏸ Show paused · ", h("b", null, RUN.pausedFresh ? "Start the show" : "Resume")));
+}
+(function () {
+  var rp = akRunPaint;
+  akRunPaint = function () {
+    var r = rp.apply(this, arguments);
+    try {
+      akPause10Paint(); setTimeout(akPause10Paint, 0);
+      var p = akRun10Paused();
+      Array.prototype.forEach.call(document.querySelectorAll('[data-tb="pauseshow"],[data-fab="pauseshow"]'), function (b) {
+        b.classList.toggle("on", p); b.setAttribute("aria-pressed", p ? "true" : "false");
+        b.setAttribute("aria-label", p ? "Resume the show" : "Pause the show");
+        if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", p ? "Resume" : btnWord(b.hasAttribute("data-fab") ? "fab" : "toolbar", "pauseshow", "Pause show"));
+      });
+    } catch (e) {}
+    return r;
+  };
+})();
+TB_ITEMS.push(["pauseshow", "Pause / resume the show"]); TB_SHORT.pauseshow = "Pause show";
+FAB_ITEMS.push(["pauseshow", "Pause / resume the show"]); FAB_OFF.pauseshow = 1; FAB_SHORT.pauseshow = "Pause";
+AK_IC.pauseshow = "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M10 9v6 M14 9v6";
+function akExtraTb20(id, song, root) {
+  if (id === "pauseshow") { var b = h("button", { onClick: function () { akRunPauseToggle(); } }, akIcon("pauseshow")); setTimeout(akRunPaint, 0); return b; }
+  if (typeof akExtraTb21 === "function") return akExtraTb21(id, song, root);
+  return null;
+}
+function akExtraFab8(song, root) {
+  var o = { pauseshow: function () { var b = h("button", { class: "fb", "aria-label": "Pause the show", onClick: function () { akRunPauseToggle(); this.blur(); } }, akIcon("pauseshow")); setTimeout(akRunPaint, 0); return b; } };
+  if (typeof akExtraFab9 === "function") Object.assign(o, akExtraFab9(song, root));
+  return o;
+}
+/* Info bar corner: Pause / Resume */
+AK_CORNER.splice(1, 0, ["pause", "Pause / resume the show"]);
+(function () {
+  var cb = akCornerBtn;
+  akCornerBtn = function (id, root) {
+    if (id !== "pause") return cb.apply(this, arguments);
+    if (!akRunLive()) return null;
+    var p = akRun10Paused(), b = h("button", { class: "ak9-cb" + (p ? " live" : ""), "aria-label": p ? "Resume the show" : "Pause the show", onClick: function () { akRunPauseToggle(); akCornerPaint(); } }, p ? "⏵" : "⏸", h("span", { class: "ak9-cl" }, p ? "Resume" : "Pause"));
+    b.setAttribute("data-ak9c", "pause");
+    return b;
+  };
+})();
+
+/* ---------------------------------------------------------------- requests saved with the show */
+function akGigReqs(g) { return akReqLog().filter(function (r) { return r.g === g.id; }).sort(function (a, b) { return a.at - b.at; }); }
+function akReq10Tag(e) { var g = typeof akRunGig === "function" ? akRunGig() : null; if (g && e && !e.g) { e.g = g.id; e.gn = akGigTitle(g); } }
+(function () {
+  var add = akReqLogAdd;
+  akReqLogAdd = function (r) {
+    var log = akReqLog(), had = log.length, out = add.apply(this, arguments);
+    if (log.length > had) akReq10Tag(log[log.length - 1]);
+    return out;
+  };
+  if (typeof akReqToggle === "function") {
+    var tg = akReqToggle;
+    akReqToggle = function () {
+      var r = tg.apply(this, arguments), it = S.play && curItem(), e = it && it._rq ? akReqLog().filter(function (x) { return x.id === it._rq; })[0] : null;
+      if (e && !e.g) { akReq10Tag(e); save(); }
+      return r;
+    };
+  }
+})();
+function akGigReqCard(g, redraw) {
+  var rs = akGigReqs(g), card = h("div", { class: "card akgig-card akgig10-req", "data-bk": "requests", "data-bt": "Requests" }, h("h3", null, "Requests at this show" + (rs.length ? " (" + rs.length + ")" : "")));
+  if (!rs.length) { card.appendChild(h("p", { class: "hint" }, "Song requests, learn requests and messages that come in while this show is on are saved here.")); return card; }
+  var kindW = { play: "", learn: "Learn: ", message: "Message: " };
+  rs.forEach(function (r) {
+    var st = r.status === "played" ? "✓ played" : r.status === "declined" ? "declined" : r.status === "new" ? "not played" : r.status || "";
+    card.appendChild(h("div", { class: "hline" },
+      h("div", { class: "grow" }, (kindW[r.kind] || "") + (r.title || "(no title)"), r.artist ? h("span", { class: "muted" }, "  " + r.artist) : null,
+        h("div", { class: "muted", style: "font-size:.85rem" }, [r.name ? "from " + r.name : "", histTime(r.at), st, r.tip ? "$" + r.tip + " tip" + (r.tipOk ? " ✓" : "") : "", r.src === "stage" ? "asked in person" : ""].filter(Boolean).join(" · "))),
+      h("button", { class: "icon sm", "aria-label": "Delete the request for " + (r.title || "this"), onClick: function () { snap("delete request"); lib().reqLog = akReqLog().filter(function (x) { return x !== r; }); save(); redraw(); toastUndo("Request deleted."); } }, "✕")));
+  });
+  card.appendChild(h("div", { class: "row" }, h("button", { class: "sm danger", onClick: function () {
+    confirmBox("Delete all " + rs.length + " requests saved with “" + akGigTitle(g) + "”? They also leave your request stats.", "Delete all", function () { snap("delete requests"); lib().reqLog = akReqLog().filter(function (x) { return x.g !== g.id; }); save(); redraw(); toastUndo("Requests deleted."); });
+  } }, "Delete all requests")));
+  return card;
+}
+/* Live panel: Clear all */
+function akLiveClearAll(after) {
+  var all = akLiveList(); if (!all.length) { toast("The live list is already empty."); return; }
+  confirmBox("Clear all " + all.length + " requests and messages from the live list? They stay saved in your request log" + (akRunGig() ? " and with tonight's show" : "") + ".", "Clear all", function () {
+    all.forEach(function (r) { akLiveDelete(r); });
+    toast("Live list cleared."); if (after) after();
+  });
+}
+
+/* ---------------------------------------------------------------- delete a show, and what was played at it */
+function akGig10DropPlays(g) {
+  var log = lib().log || [], gone = log.filter(function (e) { return e.g === g.id; });
+  if (!gone.length) return 0;
+  var ids = {}; gone.forEach(function (e) { ids[e.id] = 1; });
+  lib().log = log.filter(function (e) { return !ids[e.id]; });
+  var touched = {};
+  gone.forEach(function (e) {
+    var s = findSong(e.sid); if (!s) return; touched[s.id] = s;
+    s.plays = Math.max(0, (s.plays || 0) - 1);
+    var hi = -1; (s.history || []).forEach(function (x, i) { if (hi < 0 && Math.abs((x.at || 0) - e.at) < 1000) hi = i; });
+    if (hi >= 0) s.history.splice(hi, 1);
+  });
+  Object.keys(touched).forEach(function (id) { var s = touched[id], last = 0; lib().log.forEach(function (e) { if (e.sid === id && e.at > last) last = e.at; }); s.lastPlayed = last; });
+  return gone.length;
+}
+function akGigDelete(g) {
+  var nPlays = akGigEntries(g).length, nReq = akGigReqs(g).length;
+  var cPlays = h("input", { type: "checkbox" }), cReq = h("input", { type: "checkbox" });
+  var body = h("div", null, h("p", null, "Delete the show “" + akGigTitle(g) + "”? Its set lists are kept."),
+    nPlays ? h("label", { class: "chk" }, cPlays, "Also delete what was played at this show (" + nPlays + (nPlays === 1 ? " song" : " songs") + "), so it doesn't count in your stats and play counts. Good for test shows.") : null,
+    nReq ? h("label", { class: "chk" }, cReq, "Also delete the " + nReq + (nReq === 1 ? " request" : " requests") + " saved with it") : null,
+    nPlays ? h("p", { class: "hint" }, "Leave it unticked to keep the plays in your history (they just won't be linked to a show).") : null);
+  modal("Delete this show?", body, [{ label: "Cancel" }, { label: "Delete", danger: true, onClick: function () {
+    snap("delete show");
+    var dropped = cPlays.checked ? akGig10DropPlays(g) : 0;
+    if (cReq.checked) lib().reqLog = akReqLog().filter(function (x) { return x.g !== g.id; });
+    else akReqLog().forEach(function (x) { if (x.g === g.id) { delete x.g; delete x.gn; } });
+    lib().gigs = akGigs().filter(function (x) { return x !== g; });
+    (lib().log || []).forEach(function (e) { if (e.g === g.id) { delete e.g; delete e.gn; } });
+    if (RUN && RUN.gigId === g.id) { if (!RUN.ended) akRunEnd("other", Date.now(), true); delete RUN.gigId; akRunSave(); }
+    save(); go("shows"); toastUndo("Show deleted" + (dropped ? " with " + dropped + (dropped === 1 ? " play." : " plays.") : "."));
+  } }]);
+}
+
+/* the show night card on the show page: on / paused / ended, with Pause and End */
+function akGigRunCard(g, redraw) {
+  var box = h("div", { class: "card akrun akgig10-run", "data-bk": "showrun", "data-bt": "Show on now" });
+  var mine = RUN && RUN.gigId === g.id;
+  if (!mine || (!akRunLive() && !akRunJustEnded())) { box.style.display = "none"; return box; }
+  if (akRunLive()) {
+    var p = akRun10Paused();
+    box.appendChild(h("div", { class: "akrun-h" }, p ? "⏸ Show paused" : "● Show is on", RUN.encore ? h("span", { class: "akrun-tag" }, "Encore") : null));
+    box.appendChild(h("div", { class: "muted" }, p && RUN.pausedFresh ? "Opened " + tmClock(RUN.paused) + ", not started yet." : "Started " + tmClock(RUN.began) + (p ? " · paused at " + tmClock(RUN.paused) : " · last song activity " + tmClock(RUN.lastAct))));
+    box.appendChild(h("div", { class: "row" },
+      h("button", { class: p ? "primary" : "", onClick: function () { akRunPauseToggle(); redraw(); } }, p ? (RUN.pausedFresh ? "⏵ Start the show" : "⏵ Resume") : "⏸ Pause"),
+      h("button", { class: "danger", onClick: function () { akEndShowAsk(redraw); } }, "■ End show")));
+  } else {
+    box.appendChild(h("div", { class: "akrun-h" }, "Show ended"));
+    box.appendChild(h("div", { class: "muted" }, "Ended at " + tmClock(RUN.ended) + ". Resume it to put encore songs into this show."));
+    box.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akRunResume(); redraw(); } }, "↺ Resume / Encore")));
+  }
+  return box;
+}
+
+/* ---------------------------------------------------------------- the Info window: only when you open it */
+(function () {
+  akInfoMode = function () { var iw = settings().infoWin = settings().infoWin || {}; return iw.size || "tap"; };
+  var iwin = akInfoWin;
+  akInfoWin = function (tab) {
+    var iw = settings().infoWin || {};
+    /* "tap": it opens when you tap an Info button, or by itself only if you asked for that (opens at the start of each song) */
+    if (akInfoMode() === "tap" && S.ak9InfoAuto && (!iw.auto || iw.auto === "off")) { var c = akFloatCfg("info"); if (!akFloatOpen("info")) c.open = false; return; }
+    return iwin.apply(this, arguments);
+  };
+})();
+/* floating windows never sit on the bottom tab bar */
+function akFloat10Clear() {
+  var tb = document.querySelector(".tabbar"), r = tb && tb.getBoundingClientRect(), H = window.innerHeight;
+  var limit = r && r.height && r.top > H * 0.5 ? r.top : H;
+  document.documentElement.style.setProperty("--ak10-tbh", Math.max(0, H - limit) + "px");
+  Object.keys(AK_FLOATS).forEach(function (id) {
+    var el = AK_FLOATS[id].el; if (!el || !el.isConnected || akFloatCfg(id).dock) return;
+    var b = el.getBoundingClientRect(); if (!b.height) return;
+    if (b.bottom > limit - 4) el.style.top = Math.max(4, limit - b.height - 8) + "px";
+  });
+}
+(function () {
+  var fs = akFloatsSync;
+  akFloatsSync = function () { var r = fs.apply(this, arguments); try { setTimeout(akFloat10Clear, 0); } catch (e) {} return r; };
+  var db = akDockBody;
+  akDockBody = function () { var r = db.apply(this, arguments); try { setTimeout(akFloat10Clear, 0); } catch (e) {} return r; };
+  window.addEventListener("resize", function () { try { akFloat10Clear(); } catch (e) {} });
+})();
+
+/* ---------------------------------------------------------------- one clear "Customize this page" */
+function akCustomize10(btn) {
+  var scr = { songs: "songs", shows: "shows", gigs: "shows", gig: "shows", learn: "learn", write: "write", settings: "" }[S.view];
+  var items = [{ head: "Customize this page" },
+    { label: S.arrange ? "✓ Done arranging" : "⇅ Arrange: move, resize and hide what's on it", onClick: function () { if (S.arrange) layStop(); else layStart(); } }];
+  if (scr && typeof akScreenCustomize === "function") items.push({ label: "⚙ Options for this page…", onClick: function () { akScreenCustomize(scr); } });
+  if (typeof akColorMode === "function") items.push({ label: "🎨 Colors: tap anything to color it", onClick: function () { akColorMode(); } });
+  if (typeof akColorScreenMenu === "function") items.push({ label: "🎨 Color a whole screen…", onClick: function () { akColorScreenMenu(btn); } });
+  menu(btn, items);
+}
+(function () {
+  var lb = layButtonEl;
+  layButtonEl = function () {
+    var b = lb.apply(this, arguments); if (!b) return b;
+    if (S.arrange) return b;
+    var nb = h("button", { class: "icon laybtn ak10-cust", "aria-label": "Customize this page", title: "Customize this page (arrange, options, colors)", onClick: function () { akCustomize10(this); } }, "⇅");
+    return nb;
+  };
+  /* the playing screen: arranging the buttons only while nothing scrolls, and after a yes */
+  var sm = akSetsMenu;
+  akSetsMenu = function (btn) {
+    var mo = menu, extra = !autoOn && !S.layout ? { label: "⇅ Arrange the buttons on this screen…", onClick: function () {
+      confirmBox("Leave the song and arrange the buttons? You come back to this song when you tap Done.", "Arrange", function () { stopAuto(); startLayoutMode(); });
+    } } : null;
+    if (!extra) return sm.apply(this, arguments);
+    menu = function (b, items) { menu = mo; items = items.slice(); var at = -1; items.forEach(function (x, i) { if (x && x.label === "Turn buttons on and off…") at = i; }); items.splice(at >= 0 ? at + 1 : items.length, 0, extra); return mo(b, items); };
+    try { return sm.apply(this, arguments); } finally { menu = mo; }
+  };
+})();
+
+akCss("ak10-a", [
+  ".ak10-pause{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 64px);z-index:45;min-height:40px;padding:0 16px;border-radius:999px;border:2px solid #C99A00;background:color-mix(in srgb,var(--panel) 92%,#C99A00);color:var(--fg);font-size:.95rem;box-shadow:0 4px 18px rgba(0,0,0,.3)}",
+  ".ak10-pause b{color:#C99A00}",
+  ".akfloat.dock-bottom{bottom:var(--ak10-tbh,0px)}",
+  ".akgig10-run .row{margin:6px 0 0}",
+  ".akgig10-req .hline{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)}"
+].join("\n"));
+
+/* ================= Akashic Chords: batch 9, phase B (requests on the playing screen, walkthroughs, the request page) =================
+   settings().live.stage = { bar, flash, vibrate, beep, autoPlayed }:
+   - bar: a requests pill in the Info bar: "🙋 3" and a scrolling line of what's waiting (tap: the Live panel). Also an Info window
+     tab and a toolbar info kind "Requests", so the list can sit docked at the side while you play.
+   - flash: seconds a new request flashes the screen edge and the request buttons (0 = off); vibrate / beep: also buzz or beep.
+   - autoPlayed: a waiting request is marked played when that song is counted or starts scrolling.
+   - The Info bar corner Requests button counts live (QR) requests too and opens the Live panel.
+   - live.pageTheme "app" | "plain": the request page takes the app's theme colors and theme picture (profile.theme).
+   - Shows marked public (gig.pub) are published as profile.shows; the request page has a Shows tab (list, month, add to calendar).
+   - Walkthroughs: openLiveSetupSteps is a step-by-step guide; the request page has a first-time guide (site_src/request). */
+
+function akStageCfg() {
+  var L = akLive(), d = { bar: true, flash: 20, vibrate: true, beep: false, autoPlayed: true };
+  if (!L.stage || typeof L.stage !== "object") L.stage = {};
+  Object.keys(d).forEach(function (k) { if (L.stage[k] === undefined) L.stage[k] = d[k]; });
+  if (!L.pageTheme) L.pageTheme = "app";
+  if (L.showCal === undefined) L.showCal = true;
+  return L.stage;
+}
+/* waiting song requests, in queue order */
+function akLiveQueue() { return akLiveList("play").filter(function (r) { return r.status === "new"; }).sort(function (a, b) { return (a.order || a.at) - (b.order || b.at); }); }
+function akReqWaiting() { var L = akLive(); return (L.on ? akLiveQueue().length : 0) + reqNewCount(); }
+
+/* ---------------------------------------------------------------- a request is played when its song is played */
+function akReqAutoPlayed(songId) {
+  if (!songId || !akStageCfg().autoPlayed) return 0;
+  var s = findSong(songId); if (!s) return 0;
+  var n = 0, t = normTitle(s.title);
+  if (akLive().on) akLiveQueue().forEach(function (r) {
+    var same = r.songId ? r.songId === songId : normTitle(r.title) === t && (!r.artist || !s.artist || normTitle(r.artist) === normTitle(s.artist));
+    if (same) { akLiveUpdate(r, { status: "played" }); n++; }
+  });
+  reqList().forEach(function (r) { if (r.status === "new" && (r.songId === songId || normTitle(r.title) === t)) { r.status = "played"; n++; } });
+  if (n) { save(); setTimeout(akStagePaint, 0); }
+  return n;
+}
+(function () {
+  var cp = countPlay;
+  countPlay = function (songId) { var r = cp.apply(this, arguments); if (r) try { akReqAutoPlayed(songId); } catch (e) {} return r; };
+  var as = akOnAutoStart;
+  akOnAutoStart = function () { var r = as.apply(this, arguments); try { var it = S.play && curItem(); if (it) akReqAutoPlayed(it.songId); } catch (e) {} return r; };
+})();
+
+/* ---------------------------------------------------------------- new request: flash, buzz, beep */
+var AKST = { flashT: 0 };
+function akReqAlert(n) {
+  var c = akStageCfg();
+  if (c.flash > 0) {
+    document.body.classList.add("ak10-flash");
+    clearTimeout(AKST.flashT); AKST.flashT = setTimeout(function () { document.body.classList.remove("ak10-flash"); }, c.flash * 1000);
+  }
+  if (c.vibrate && navigator.vibrate) try { navigator.vibrate([220, 120, 220]); } catch (e) {}
+  if (c.beep) try {
+    var ac = typeof akAudio === "function" ? akAudio() : new (window.AudioContext || window.webkitAudioContext)(), t = ac.currentTime + 0.02;
+    [880, 1175].forEach(function (f, i) { var o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = f; o.type = "sine"; g.gain.setValueAtTime(0.0001, t + i * 0.18); g.gain.exponentialRampToValueAtTime(0.25, t + i * 0.18 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.18 + 0.16); o.connect(g); g.connect(ac.destination); o.start(t + i * 0.18); o.stop(t + i * 0.18 + 0.2); });
+  } catch (e) {}
+}
+function akReqAlertStop() { clearTimeout(AKST.flashT); document.body.classList.remove("ak10-flash"); }
+(function () {
+  var inc = akLiveIncoming;
+  akLiveIncoming = function (list) {
+    var booted = AKL.booted, fresh = 0;
+    list.forEach(function (r) { if (!AKL.items[r.id] && !AKL.seen[r.id] && r.status === "new" && r.kind !== "signup") fresh++; });
+    var out = inc.apply(this, arguments);
+    if (fresh && booted) try { akReqAlert(fresh); } catch (e) {}
+    try { akStagePaint(); } catch (e) {}
+    return out;
+  };
+  /* opening the panel answers the alert */
+  var op = openLivePanel;
+  openLivePanel = function () { akReqAlertStop(); return op.apply(this, arguments); };
+  var lp = akLivePaint;
+  akLivePaint = function () { var r = lp.apply(this, arguments); try { akStagePaint(); } catch (e) {} return r; };
+})();
+
+/* ---------------------------------------------------------------- the requests pill in the Info bar */
+function akReqLine() {
+  var q = akLive().on ? akLiveQueue() : [], bits = q.map(function (r) { return r.title + (r.name ? " (for " + r.name + ")" : ""); });
+  reqList().forEach(function (r) { if (r.status === "new") bits.push(r.title + (r.from ? " (for " + r.from + ")" : "")); });
+  return bits;
+}
+function akStagePaint() {
+  var root = document.querySelector(".play");
+  Array.prototype.forEach.call(document.querySelectorAll('.play [data-ak9c="request"]'), function (b) {
+    var n = akReqWaiting(), bd = b.querySelector(".ak9-badge");
+    if (n) { if (!bd) { bd = h("span", { class: "ak9-badge" }); b.appendChild(bd); } bd.textContent = String(n); } else if (bd) bd.remove();
+  });
+  if (!root || S.view !== "play" || S.layout) return;
+  var old = root.querySelector(".ak10-rq"), c = akStageCfg(), bits = akReqLine();
+  if (!c.bar || !(akLive().on || reqList().length) || !bits.length) { if (old) old.remove(); return; }
+  var txt = "🙋 " + bits.length + (bits.length === 1 ? " request: " : " requests: ") + bits.join("  ·  ");
+  if (old && old.getAttribute("data-t") === txt) return;
+  var mq = h("span", { class: "ak10-rq-t" }, h("span", null, bits.join("  ·  ")));
+  var el = h("button", { class: "ak10-rq", "data-t": txt, "aria-label": bits.length + " waiting requests: " + bits.join(", ") + ". Tap to open the requests.", onClick: function (e) { e.stopPropagation(); if (akLive().on) openLivePanel(root, curSong()); else openRequests(); } },
+    h("b", { class: "ak10-rq-n" }, "🙋 " + bits.length), mq);
+  var bar = root.querySelector(".pbottom"); if (!bar) { if (old) old.remove(); return; }
+  var bx = bar.querySelector(".brow2") || bar;
+  if (old) old.replaceWith(el); else { var corner = bx.querySelector(".ak9-corner"); if (corner) bx.insertBefore(el, corner); else bx.appendChild(el); }
+  /* scroll only when it doesn't fit */
+  setTimeout(function () { var inner = mq.firstChild; if (!inner || !mq.isConnected) return; var over = inner.scrollWidth - mq.clientWidth; mq.classList.toggle("go", over > 4); if (over > 4) { inner.style.setProperty("--ak10-mq", -(inner.scrollWidth + 24) + "px"); inner.style.animationDuration = Math.max(8, (inner.scrollWidth + 24) / 40) + "s"; inner.setAttribute("data-dup", " ·  " + inner.textContent); } }, 30);
+}
+(function () {
+  var fc = fillCharts;
+  fillCharts = function () { var r = fc.apply(this, arguments); try { akStagePaint(); } catch (e) {} return r; };
+  var cb = akCornerBtn;
+  akCornerBtn = function (id, root) {
+    if (id !== "request" || !akLive().on) return cb.apply(this, arguments);
+    var n = akReqWaiting(), b = h("button", { class: "ak9-cb", "aria-label": "Song requests" + (n ? ", " + n + " waiting" : ""), onClick: function () { openLivePanel(root || document.querySelector(".play"), curSong()); } }, "🙋", h("span", { class: "ak9-cl" }, "Requests"), n ? h("span", { class: "ak9-badge" }, String(n)) : null);
+    b.setAttribute("data-ak9c", "request");
+    return b;
+  };
+})();
+
+/* the Info window tab and toolbar info kind: Requests */
+AK_INFO_TABS.push(["requests", "Requests"]);
+AK_INFO_KINDS.push(["requests", "Requests"]);
+function akReqInfoBody(short) {
+  var box = h("div", { class: "akinfo-body ak10-rqlist" }), q = akLive().on ? akLiveQueue() : [], inPlay = !!(S.view === "play" && S.play);
+  var manual = reqList().filter(function (r) { return r.status === "new"; });
+  if (!q.length && !manual.length) { box.appendChild(h("span", { class: "muted" }, akLive().on ? "No requests waiting." : "No requests waiting. Turn on live requests in Settings > Requests and tips for the QR page.")); return box; }
+  if (short) { box.appendChild(h("span", { class: "akinfo-txt" }, akReqLine().join("  ·  "))); return box; }
+  q.forEach(function (r) {
+    var s = (r.songId && findSong(r.songId)) || findSongByTitle(r.title, r.artist);
+    box.appendChild(h("div", { class: "ak10-rqrow" }, h("div", { class: "grow" }, h("b", null, r.title), r.name ? h("span", { class: "muted" }, "  for " + r.name) : null, r.note ? h("div", { class: "muted" }, "“" + r.note + "”") : null),
+      inPlay && s ? h("button", { class: "sm", onClick: function () { playInsert(s.id, false); toast("“" + s.title + "” is next."); } }, "Next") : null,
+      h("button", { class: "sm", "aria-label": "Mark " + r.title + " played", onClick: function () { akLiveUpdate(r, { status: "played" }); akFloatFill("info"); } }, "✓")));
+  });
+  manual.forEach(function (r) { box.appendChild(h("div", { class: "ak10-rqrow" }, h("div", { class: "grow" }, h("b", null, r.title), r.from ? h("span", { class: "muted" }, "  for " + r.from) : null), h("button", { class: "sm", onClick: function () { r.status = "played"; save(); akFloatFill("info"); } }, "✓"))); });
+  return box;
+}
+(function () {
+  var ib = akInfoBody;
+  akInfoBody = function (kind, song, short) { if (kind === "requests") return akReqInfoBody(short); return ib.apply(this, arguments); };
+  /* the Requests tab doesn't need a song */
+  var fl = akFloat;
+  akFloat = function (id, def) {
+    if (id === "info" && def && def.body) { var b0 = def.body; def.body = function (tab, el) { if (tab === "requests") { el.appendChild(h("div", { class: "akf-song" }, "Waiting requests")); el.appendChild(akReqInfoBody(false)); return; } return b0.apply(this, arguments); }; }
+    return fl.apply(this, arguments);
+  };
+  var lp = akLivePaint;
+  akLivePaint = function () { var r = lp.apply(this, arguments); try { if (akFloatOpen("info") && akFloatCfg("info").tab === "requests") akFloatFill("info"); if (S.tbInfo && S.tbInfoKind === "requests") akInfoRefresh(); } catch (e) {} return r; };
+})();
+
+/* ---------------------------------------------------------------- the request page: theme and shows */
+function akPageTheme() {
+  var L = akLive(); akStageCfg(); if (L.pageTheme === "plain") return null;
+  var cs = getComputedStyle(document.body), v = function (k) { return (cs.getPropertyValue(k) || "").trim(); }, t = typeof akCurTheme === "function" ? akCurTheme() : null;
+  var o = { bg: v("--bg"), panel: v("--panel"), fg: v("--fg"), muted: v("--muted"), line: v("--line"), accent: v("--accent"), on: v("--on-accent"), name: t ? t.name || t.id : "" };
+  try { var a = t && akArtFor(t); if (a && /^https?:/.test(location.protocol)) o.art = new URL(a.data, location.href).href; } catch (e) {}
+  return o.bg ? o : null;
+}
+function akPublicShows() {
+  var L = akLive(); akStageCfg(); if (!L.showCal) return [];
+  var today = akTodayKey();
+  return akGigs().filter(function (g) { return g.pub && g.date && g.date >= today; }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }).slice(0, 60).map(function (g) {
+    var v = akVenueFor(g), addr = akGigAddr(g);
+    return { d: g.date, s: g.start || "", e: g.end || "", n: g.name || "", v: g.venue || (v && v.name) || "", a: addr, u: akMapsUrl(g.venue, addr), x: g.pubNote || "" };
+  });
+}
+(function () {
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = prof.apply(this, arguments); p.theme = akPageTheme(); p.shows = akPublicShows(); return p; };
+})();
+/* the theme changed: update the page (checked now and then, only while connected) */
+var AKPT = { sig: "" };
+setInterval(function () {
+  try {
+    if (!AKL.conn) return;
+    var sig = JSON.stringify([akPageTheme(), akPublicShows()]);
+    if (!AKPT.sig) { AKPT.sig = sig; return; }
+    if (sig !== AKPT.sig) { AKPT.sig = sig; akLivePublish().catch(function () {}); }
+  } catch (e) {}
+}, 20000);
+
+/* ---------------------------------------------------------------- settings: Requests and tips gets the playing-screen part */
+(function () {
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    ls.apply(this, arguments);
+    var L = akLive(); if (!L.on) return;
+    var c = akStageCfg();
+    function ck(label, obj, key, after) { out.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!obj[key], onChange: function () { ctx.mark(); obj[key] = this.checked; ctx.refresh(); if (after) after(); } }), label)); }
+    out.appendChild(h("h3", { class: "akl-h" }, "On the playing screen"));
+    ck("Show waiting requests in the Info bar (a count and a scrolling list; tap it for the requests)", c, "bar", function () { akStagePaint(); });
+    out.appendChild(h("label", { class: "fld" }, "A new request flashes the screen edge for", h("select", { onChange: function () { ctx.mark(); c.flash = Number(this.value); ctx.refresh(); } },
+      [[0, "Don't flash"], [10, "10 seconds"], [20, "20 seconds"], [45, "45 seconds"], [90, "1½ minutes"], [600, "Until I open the requests"]].map(function (o) { return h("option", { value: o[0], selected: c.flash === o[0] }, o[1]); }))));
+    ck("…and buzz (phones and tablets that can vibrate)", c, "vibrate");
+    ck("…and play a short beep", c, "beep");
+    out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akReqAlert(1); setTimeout(akReqAlertStop, 3000); } }, "Try the alert")));
+    ck("Mark a request played when I play that song", c, "autoPlayed");
+    out.appendChild(h("p", { class: "hint" }, "Tip: the Info window has a Requests tab you can dock at the side (⇲), and the Button bar's info view can show Requests too."));
+    out.appendChild(h("h3", { class: "akl-h" }, "Your request page"));
+    out.appendChild(h("label", { class: "fld" }, "Page look", h("select", { onChange: function () { ctx.mark(); L.pageTheme = this.value; ctx.refresh(); if (AKL.conn) akLivePublish().catch(function () {}); } },
+      [["app", "Follow my app's theme (colors and picture)"], ["plain", "Plain (dark or light, as the phone likes)"]].map(function (o) { return h("option", { value: o[0], selected: L.pageTheme === o[0] }, o[1]); }))));
+    ck("Show my upcoming public shows on the page (tick “Show on my request page” in a show's details)", L, "showCal", function () { if (AKL.conn) akLivePublish().catch(function () {}); });
+    var n = akPublicShows().length;
+    out.appendChild(h("p", { class: "hint" }, n ? n + (n === 1 ? " show is" : " shows are") + " public right now." : "No shows are public yet."));
+  };
+})();
+/* a show's details: public on the request page (the checkbox is drawn by viewGig) */
+function akGigPubRow(g) {
+  return h("div", { class: "ak10-pubbox" },
+    h("label", { class: "chk ak10-pub" }, h("input", { type: "checkbox", checked: !!g.pub, onChange: function () { g.pub = this.checked; save(); if (AKL.conn) akLivePublish().catch(function () {}); } }), "Show on my request page (people can see the date, time and place, and add it to their calendar)"),
+    h("input", { type: "text", class: "ak10-pubnote", value: g.pubNote || "", placeholder: "Note for the public, like “Free entry, all ages” (optional)", "aria-label": "Public note", onInput: function () { g.pubNote = this.value; save(); } }));
+}
+
+/* ---------------------------------------------------------------- the setup walkthrough (performer side) */
+var AK_SETUP_STEPS = [
+  { t: "What you'll set up", b: ["People scan your QR code and get a page with your songs. Their requests pop up on your playing screen.", "For phones in the room to reach you, the app uses a free Firebase project from Google: a little mailbox for requests. No credit card.", "A computer is easiest for the Firebase part, but a phone works. It takes about 15 minutes, once."] },
+  { t: "1. Create the project", b: ["Go to console.firebase.google.com and sign in with your Google account.", "Tap Create a project (or Get started). Name it akashic-requests and tap Continue.", "If it asks about Gemini or Google Analytics, turn them off. Tap Create project and wait for Continue."], link: "https://console.firebase.google.com" },
+  { t: "2. Add the web app", b: ["On the project's home page tap the </> (Web) button.", "Nickname: Akashic Chords. Leave Firebase Hosting unticked. Tap Register app.", "It shows a block that starts with const firebaseConfig = {. Copy the whole block, down to };. (It isn't a password; it only names your project.)", "Lost it? It's always under the gear ⚙ > Project settings > Your apps > Config."], paste: true },
+  { t: "3. Turn on sign-in", b: ["Left menu: Authentication (under Build or Security) > Get started.", "Sign-in method: turn on Email/Password (leave Email link off), Save. Add new provider > Anonymous > on, Save.", "Settings tab > Authorized domains > Add domain: " + "{host}" + ". That's where the app and the request page live."] },
+  { t: "4. Make the database", b: ["Left menu: Firestore Database > Create database. Pick Standard if asked, a location near you, and production mode.", "Open the Rules tab, delete everything, paste the rules (button below) and tap Publish."], rules: true },
+  { t: "5. Your performer account", b: ["Back in the app (Settings > Requests and tips): make sure “Online, with my free Firebase project” is picked and your settings are saved.", "Type your email and a new password (6 or more letters) and tap Make my account. Next time it's Sign in.", "Fill in “About you”: your name as you want it on the page, website, tip links."] },
+  { t: "6. Test it", b: ["Tap Show my QR code and scan it with another phone (on cell data if you can).", "Send a request from that phone. It shows up in the Live panel on your playing screen within a few seconds.", "Print the sign with Print… on the QR screen. The code stays the same as long as you keep this Firebase project and account."], qr: true }
+];
+function akSetupWizard(start) {
+  var i = Math.max(0, Math.min(AK_SETUP_STEPS.length - 1, start || 0)), body = h("div", { class: "ak10-wiz" }), close = null;
+  function draw() {
+    var st = AK_SETUP_STEPS[i], host = /^https?:/.test(location.protocol) ? location.hostname : "yourname.github.io";
+    body.textContent = "";
+    body.appendChild(h("div", { class: "ak10-wiz-dots", "aria-hidden": "true" }, AK_SETUP_STEPS.map(function (x, k) { return h("span", { class: k === i ? "on" : k < i ? "done" : "" }); })));
+    body.appendChild(h("h3", null, st.t));
+    body.appendChild(h("ol", { class: "akl-steps" }, st.b.map(function (t) { return h("li", null, t.replace("{host}", host)); })));
+    if (st.link) body.appendChild(h("p", null, h("a", { class: "btn", href: st.link, target: "_blank", rel: "noopener" }, "Open Firebase ↗")));
+    if (st.paste) {
+      var ta = h("textarea", { rows: 5, spellcheck: "false", placeholder: "Paste the firebaseConfig block here", "aria-label": "Firebase settings" }), msg = h("p", { class: "hint", role: "status" });
+      body.appendChild(ta); body.appendChild(msg);
+      body.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () {
+        var f = akFbParse(ta.value); if (!f.apiKey || !f.projectId) { msg.textContent = "I couldn't find apiKey and projectId in that. Copy the whole block and try again."; return; }
+        var L = akLive(); L.on = true; L.mode = "cloud"; L.fb = { apiKey: f.apiKey, projectId: f.projectId, appId: f.appId || "" }; save(); akLiveStart();
+        msg.textContent = "Saved: project “" + f.projectId + "”. Tap Next.";
+      } }, "Save these settings")));
+    }
+    if (st.rules) body.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { copyPlain(AK_FB_RULES, "Rules copied. Paste them in the Rules tab."); } }, "Copy the rules"), h("button", { onClick: function () { modal("Firestore rules", h("pre", { class: "akl-pre" }, AK_FB_RULES), [{ label: "Close", primary: true }], { wide: true }); } }, "Show them")));
+    if (st.qr) body.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { openLiveQr(); } }, "Show my QR code"), h("span", { class: "muted" }, "Status: " + akLiveStatus())));
+    body.appendChild(h("div", { class: "row ak10-wiz-nav" },
+      h("button", { disabled: i === 0, onClick: function () { i--; draw(); } }, "‹ Back"),
+      h("span", { class: "grow muted" }, "Step " + (i + 1) + " of " + AK_SETUP_STEPS.length),
+      i < AK_SETUP_STEPS.length - 1 ? h("button", { class: "primary", onClick: function () { i++; settings().akSetupStep = i; save(); draw(); } }, "Next ›") : h("button", { class: "primary", onClick: function () { var m = body.closest(".modal"); if (m) m.remove(); go("settings"); } }, "Done")));
+  }
+  draw();
+  modal("Set up song requests", body, [{ label: "Close" }], { wide: true });
+}
+openLiveSetupSteps = function () { akSetupWizard(settings().akSetupStep || 0); };
+
+/* the printed sign says how to scan */
+akLiveQrPrint = function (url) {
+  var L = akLive(), w = window.open("", "_blank"); if (!w) { toast("Allow pop-ups to print."); return; }
+  var svg = akQrSvg(url, 520).outerHTML, nm = (L.profile.name || "Song requests").replace(/</g, "&lt;");
+  w.document.write("<!doctype html><title>Requests</title><body style='font-family:sans-serif;text-align:center;padding:36px'><h1 style='font-size:44px;margin:0'>" + nm + "</h1><p style='font-size:28px;margin:10px 0'>Scan to request a song" + (L.rules.mode !== "free" ? " or leave a tip" : "") + "</p>" + svg +
+    "<ol style='display:inline-block;text-align:left;font-size:22px;line-height:1.5;margin:18px auto 0'><li>Open your phone's camera</li><li>Point it at the square code</li><li>Tap the link that pops up</li><li>Pick a song and tap Send</li></ol><p style='font-size:18px;color:#555'>No app or account needed.</p><script>setTimeout(function(){print()},400)<\/script></body>");
+  w.document.close();
+};
+
+akCss("ak10-b", [
+  ".ak10-rq{display:inline-flex;align-items:center;gap:6px;min-height:32px;max-width:min(52vw,420px);padding:0 10px;border-radius:999px;border:1px solid #C99A00;background:color-mix(in srgb,#C99A00 16%,transparent);color:var(--fg);font-size:.85rem;overflow:hidden;flex:0 1 auto}",
+  ".ak10-rq-n{flex:0 0 auto}.ak10-rq-t{overflow:hidden;white-space:nowrap;flex:1 1 auto;min-width:0}",
+  ".ak10-rq-t>span{display:inline-block;white-space:nowrap}",
+  ".ak10-rq-t.go>span{animation:ak10mq linear infinite;padding-right:24px}.ak10-rq-t.go>span::after{content:attr(data-dup)}",
+  "@keyframes ak10mq{from{transform:translateX(0)}to{transform:translateX(var(--ak10-mq,-100%))}}",
+  "@media (prefers-reduced-motion:reduce){.ak10-rq-t.go>span{animation:none}}",
+  "body.ak10-flash .play::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:60;border:6px solid #E5B800;animation:ak10fl 1s ease-in-out infinite}",
+  "body.ak10-flash [data-tb=live],body.ak10-flash [data-ak9c=request],body.ak10-flash .ak10-rq{animation:ak10pl 1s ease-in-out infinite}",
+  "@keyframes ak10fl{0%,100%{opacity:1}50%{opacity:.15}}@keyframes ak10pl{0%,100%{box-shadow:0 0 0 0 rgba(229,184,0,.9)}50%{box-shadow:0 0 0 8px rgba(229,184,0,0)}}",
+  ".ak10-rqrow{display:flex;gap:6px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--line)}",
+  ".ak10-wiz h3{margin:6px 0}.ak10-wiz-dots{display:flex;gap:6px;justify-content:center;margin:2px 0 8px}.ak10-wiz-dots span{width:10px;height:10px;border-radius:5px;background:var(--line)}.ak10-wiz-dots span.on{background:var(--accent);width:22px}.ak10-wiz-dots span.done{background:color-mix(in srgb,var(--accent) 50%,var(--line))}",
+  ".ak10-wiz .akl-steps li{margin:8px 0;font-size:1.02rem}.ak10-wiz-nav{align-items:center;margin-top:14px}",
+  ".ak10-pubnote{margin:4px 0 8px}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
