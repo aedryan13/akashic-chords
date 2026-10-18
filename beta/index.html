@@ -10031,7 +10031,7 @@ function viewSettings() {
   range("In the song list, a press moves", function () { return s.listPage; }, function (v) { s.listPage = v; }, 0.3, 1, 0.05, function (v) { return Math.round(v * 100) + "% of the list"; });
   var last = h("code", { id: "lastKey" }, S.lastKey || "—");
   out.appendChild(h("div", { class: "row" }, "Last key received:", last));
-  var actions = [["toggle", "Left pedal: start / stop auto-scroll"], ["down", "Right pedal: scroll down"], ["up", "Scroll up"], ["faster", "Scroll faster"], ["slower", "Scroll slower"], ["next", "Next song"], ["prev", "Previous song"], ["nextset", "Jump to the next set"], ["prevset", "Jump to the previous set"], ["list", "Open or close the song list"], ["breaktoggle", "Start or stop a break"]];
+  var actions = [["toggle", "Left pedal: start / stop auto-scroll"], ["down", "Right pedal: scroll down"], ["up", "Scroll up"], ["faster", "Scroll faster"], ["slower", "Scroll slower"], ["next", "Next song"], ["prev", "Previous song"], ["nextset", "Jump to the next set"], ["prevset", "Jump to the previous set"], ["list", "Open or close the song list"], ["breaktoggle", "Start or stop a break"]].concat(typeof AK_PEDAL_MORE !== "undefined" ? AK_PEDAL_MORE : []);
   var rows = h("div");
   function drawKeys() {
     rows.textContent = "";
@@ -22892,8 +22892,11 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "11.0";
+var AK_VERSION = "11.1";
 var AK_WHATS_NEW = [
+  "Two-phone recording: one phone films, one records the sound, and this tablet tells them when. Each phone opens a link from the tablet (Settings > Songs and shows > Two-phone recording > Phone recorders).",
+  "▶ Start song and ■ End song buttons (Button bar, side buttons, or a pedal key) make one file per song, or one file for the show with song marks. End song can start the next file at once.",
+  "Choose the sound phone's sample rate, bit depth (16, 24 or 32-bit float WAV) and mono or stereo, and the video phone's resolution, frames per second and quality. Each phone shows what it actually got.",
   "Requests on/off right on the playing screen: a Requests button (Button bar, side buttons or the Info bar corner). Off, the QR page says you're not taking requests right now.",
   "Save zoom: pinch the words or the chord chart (smaller works too), then tap 💾 Save zoom, for this song or as the default for every song.",
   "Your theme picture can show behind the playing screen, with a dark layer slider: 0% shows the theme like on other pages, 100% hides it (Settings > Playing screen > Zoom and the theme behind the song).",
@@ -29493,6 +29496,521 @@ akCss("ak13b", [
   ".ak13-step{align-items:center;gap:8px;margin:6px 0}.ak13-step b{min-width:3.5em;text-align:center}",
   ".akl-held{border:1px dashed #C99A00}"
 ].join(""));
+
+/* ================= Akashic Chords: batch 11, item 53 (two phones record, the tablet controls them) =================
+   The tablet records nothing. Phone A records video (with its own sound as a guide track), phone B records sound only. Each phone opens
+   this app's address with ?rr=video or ?rr=audio (a QR code from the tablet), taps "Get ready", and from then on does what the tablet says.
+   - Go-between: the requests Firebase project (Settings > Requests and tips, online). The tablet writes its wishes into the field "rr" of
+     its own performer page (no rules change: anyone can read that page, only you can write it). The wishes are a state, not one-off
+     events: { sess, seq, rec, file, title, show, mark, cfg }, so a phone that joins late or misses a message still ends up right.
+     With "This device only" requests (or none) it uses this browser only (BroadcastChannel), for trying it out with tabs.
+   - Phones report back (recording, time, file size, free space, warnings) to performers/{you}/recorders/{phone}. That needs one extra block
+     in the Firebase rules (AK_FB_RULES has it; "Copy rules" in Settings > Requests and tips). Without it, recording still works and the
+     tablet says it can't see the phones.
+   - settings().rr = { on, mode: "split" (a file per song) | "one" (one file with song marks), next (End song starts the next file at once),
+     autoStart (auto-scroll = Start song), autoEnd (going to another song = End song), maxMin (remind me to End), beep,
+     a: { sr, bits: 16 | 24 | 32 (float), ch, fmt: "wav" | "aac", kbps, proc (phone's echo/noise/level processing) },
+     v: { res: "720" | "1080" | "2160", fps, mbps, facing, audio } }
+   - Files stay on each phone (IndexedDB "akashic-rec", the same store as My recordings), saved as they record (every 4 seconds), named
+     "2026-10-18 Show - 03 Song (video).mp4". Save or Share them from the phone's list when the show is over.
+   - Split mode cuts with no gap: the sound file is cut at the exact sample; the video starts the next file a moment before it stops the
+     last one, so the files overlap by about a quarter second instead of missing anything.
+   - Pedal: "Phones: start or end a song" (one button), "Phones: start song", "Phones: end song" (Settings > Pedal > Learn). */
+
+var AKRR = { sess: "", seq: 0, cmd: null, rec: false, file: 0, n: 0, title: "", songOn: false, songAt: 0, markN: 0, mark: null, phones: {}, stErr: "", stUnsub: null, stKey: "", bc: null, warned: 0, lastSong: "" };
+function akRrCfg() {
+  var s = settings(), d = { on: false, mode: "split", next: true, autoStart: false, autoEnd: true, maxMin: 15, beep: true,
+    a: { sr: 48000, bits: 24, ch: 2, fmt: "wav", kbps: 256, proc: false }, v: { res: "1080", fps: 30, mbps: 8, facing: "environment", audio: true } };
+  if (!s.rr || typeof s.rr !== "object") s.rr = {};
+  Object.keys(d).forEach(function (k) { if (s.rr[k] === undefined) s.rr[k] = clone(d[k]); else if (typeof d[k] === "object") Object.keys(d[k]).forEach(function (j) { if (s.rr[k][j] === undefined) s.rr[k][j] = d[k][j]; }); });
+  return s.rr;
+}
+function akRrCloud() { var L = akLive(); return !!(L.on && L.mode === "cloud" && AKL.conn === "cloud" && AKL.db && AKL.uid); }
+function akRrPhoneUrl(role) {
+  var L = akLive(), base = location.href.split(/[?#]/)[0];
+  return base + "?rr=" + role + (akRrCloud() ? "&k=" + encodeURIComponent(L.fb.apiKey) + "&j=" + encodeURIComponent(L.fb.projectId) + "&p=" + encodeURIComponent(AKL.uid) : "&m=local");
+}
+
+/* ---------------------------------------------------------------- the tablet: sending */
+function akRrBc() { if (!AKRR.bc) try { AKRR.bc = new BroadcastChannel("akrr"); AKRR.bc.onmessage = function (e) { if (e.data && e.data.t === "st") akRrGotStatus(e.data.st); }; } catch (e) {} return AKRR.bc; }
+function akRrSend() {
+  var c = akRrCfg(); if (!AKRR.sess) AKRR.sess = Date.now().toString(36);
+  var cmd = { sess: AKRR.sess, seq: ++AKRR.seq, at: Date.now(), rec: AKRR.rec, file: AKRR.file, title: AKRR.title, show: akRrShowName(), mark: AKRR.mark, mode: c.mode,
+    cfg: { a: clone(c.a), v: clone(c.v) } };
+  AKRR.cmd = cmd;
+  if (akRrCloud()) AKL.db.collection("performers").doc(AKL.uid).set({ rr: cmd }, { merge: true }).catch(function () { toast("Couldn't reach the phones (no connection?)."); });
+  try { localStorage.setItem("akrr:cmd", JSON.stringify(cmd)); } catch (e) {}
+  var bc = akRrBc(); if (bc) bc.postMessage({ t: "cmd", cmd: cmd });
+  akRrPaint();
+}
+/* the requests page publish replaces the whole performer page: keep the phones' field in it */
+(function () { var pp = akLivePublicProfile; akLivePublicProfile = function () { var p = pp.apply(this, arguments); if (AKRR.cmd) p.rr = AKRR.cmd; return p; }; })();
+function akRrShowName() { try { var g = typeof akRunGig === "function" ? akRunGig() : null; if (g) return akGigTitle(g); var sh = RUN && RUN.showId && findShow(RUN.showId); return sh ? sh.name : ""; } catch (e) { return ""; } }
+function akRrSongTitle() { var s = S.play && curSong(); return s ? s.title : "Song"; }
+function akRrNextTitle() { try { var p = S.play, it = p && p.list[p.idx + 1], s = it && findSong(it.songId); return s ? s.title : "Between songs"; } catch (e) { return "Between songs"; } }
+function akRrNum(t) { return ("0" + AKRR.n).slice(-2) + " " + t; }
+
+/* ---------------------------------------------------------------- the tablet: songs */
+function akRrStartSong(why) {
+  var c = akRrCfg(), t = akRrSongTitle();
+  if (AKRR.songOn) akRrEndSong(true); /* a forgotten End: close the last song first */
+  AKRR.n++; AKRR.songOn = true; AKRR.songAt = Date.now(); AKRR.warned = 0; AKRR.lastSong = S.play && curItem() ? curItem().songId : "";
+  if (c.mode === "one") {
+    var fresh = !AKRR.rec; if (fresh) { AKRR.rec = true; AKRR.file = 1; }
+    AKRR.markN++; AKRR.mark = { n: AKRR.markN, k: "start", title: akRrNum(t) }; AKRR.title = akRrShowName() || "Whole show";
+    akRrSend(); if (fresh) akRrBeepSoon();
+  } else {
+    if (AKRR.rec && AKRR.autoNext) { AKRR.title = akRrNum(t); AKRR.autoNext = false; akRrSend(); } /* the file that started at the last End: just name it */
+    else { AKRR.rec = true; AKRR.file++; AKRR.title = akRrNum(t); AKRR.autoNext = false; akRrSend(); akRrBeepSoon(); }
+  }
+  if (!why) toast("● Phones: recording “" + t + "”");
+}
+function akRrEndSong(quiet) {
+  var c = akRrCfg();
+  if (!AKRR.songOn) { if (!quiet) toast("No song is recording on the phones."); return; }
+  AKRR.songOn = false;
+  if (c.mode === "one") { AKRR.markN++; AKRR.mark = { n: AKRR.markN, k: "end", title: AKRR.mark ? AKRR.mark.title : "" }; akRrSend(); }
+  else if (c.next) { AKRR.file++; AKRR.title = ("0" + (AKRR.n + 1)).slice(-2) + " " + akRrNextTitle(); AKRR.autoNext = true; akRrSend(); }
+  else { AKRR.rec = false; akRrSend(); }
+  if (!quiet) toast("■ Phones: song ended" + (c.mode !== "one" && c.next ? ", the next file has started" : ""));
+}
+function akRrToggleSong() { if (AKRR.songOn) akRrEndSong(); else akRrStartSong(); }
+function akRrStopAll() { AKRR.songOn = false; AKRR.rec = false; AKRR.autoNext = false; akRrSend(); toast("■ Phones stopped. The files are on the phones."); }
+function akRrBeepSoon() { if (akRrCfg().beep) setTimeout(function () { try { akRecBeep(); } catch (e) {} }, 900); }
+/* reminders and the automatic triggers */
+setInterval(function () {
+  try {
+    var c = akRrCfg(); if (!c.on) return;
+    if (AKRR.songOn && c.maxMin && Date.now() - AKRR.songAt > c.maxMin * 60e3 && !AKRR.warned) {
+      AKRR.warned = 1; toast("The phones are still recording “" + AKRR.title.slice(3) + "” (" + c.maxMin + " min). Did the song end?", { label: "End song", fn: function () { akRrEndSong(); } });
+    }
+    if (AKRR.songOn && c.autoEnd && S.view === "play" && S.play && curItem() && AKRR.lastSong && curItem().songId !== AKRR.lastSong) akRrEndSong();
+  } catch (e) {}
+}, 1000);
+(function () {
+  var sa = startAuto;
+  startAuto = function () { try { var c = akRrCfg(); if (c.on && c.autoStart && !AKRR.songOn && S.play && !autoOn) akRrStartSong("auto"); } catch (e) {} return sa.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- the tablet: what the phones say */
+function akRrGotStatus(st) { if (!st || !st.dev) return; st.seen = Date.now(); AKRR.phones[st.dev] = st; akRrPaint(); }
+function akRrListen() {
+  var key = akRrCloud() ? "cloud:" + AKL.uid : "local";
+  if (AKRR.stKey === key) return; AKRR.stKey = key;
+  if (AKRR.stUnsub) { try { AKRR.stUnsub(); } catch (e) {} AKRR.stUnsub = null; }
+  akRrBc(); AKRR.stErr = "";
+  if (key !== "local") AKRR.stUnsub = AKL.db.collection("performers").doc(AKL.uid).collection("recorders").onSnapshot(function (s) { s.forEach(function (d) { akRrGotStatus(d.data()); }); }, function () { AKRR.stErr = "rules"; akRrPaint(); });
+}
+setInterval(function () { try { if (akRrCfg().on) akRrListen(); } catch (e) {} }, 3000);
+function akRrPhoneRows() {
+  var now = Date.now();
+  return Object.keys(AKRR.phones).map(function (k) { return AKRR.phones[k]; }).filter(function (p) { return now - p.seen < 10 * 60e3; }).sort(function (a, b) { return a.role < b.role ? 1 : -1; });
+}
+
+/* ---------------------------------------------------------------- the tablet: buttons and the Phones window */
+TB_ITEMS.push(["rrstart", "Start song (phone recorders)"], ["rrend", "End song (phone recorders)"], ["rrphones", "Phone recorders"]);
+TB_SHORT.rrstart = "Start song"; TB_SHORT.rrend = "End song"; TB_SHORT.rrphones = "Phones";
+FAB_ITEMS.push(["rrstart", "Start song (phone recorders)"], ["rrend", "End song (phone recorders)"], ["rrphones", "Phone recorders"]);
+FAB_OFF.rrstart = FAB_OFF.rrend = FAB_OFF.rrphones = 1; FAB_SHORT.rrstart = "Start song"; FAB_SHORT.rrend = "End song"; FAB_SHORT.rrphones = "Phones";
+AK_TB_MODES.rrstart = AK_TB_MODES.rrend = AK_TB_MODES.rrphones = "p";
+AK_IC.rrstart = "M7 3h10v18H7z M10 8l5 4-5 4z";
+AK_IC.rrend = "M7 3h10v18H7z M10 9h4v6h-4z";
+AK_IC.rrphones = "M3 5h7v14H3z M14 5h7v14h-7z M6.5 16h0 M17.5 16h0";
+var AK_RR_ACTS = { rrstart: akRrStartSong, rrend: function () { akRrEndSong(); }, rrphones: function () { akRrWin(); } };
+function akExtraTb23(id, song, root) {
+  if (AK_RR_ACTS[id]) { var b = h("button", { "aria-label": TB_SHORT[id], onClick: function () { AK_RR_ACTS[id](); } }, akIcon(id)); setTimeout(akRrPaint, 0); return b; }
+  if (typeof akExtraTb24 === "function") return akExtraTb24(id, song, root);
+  return null;
+}
+function akExtraFab10(song, root) {
+  var o = {};
+  Object.keys(AK_RR_ACTS).forEach(function (id) { o[id] = function () { var b = h("button", { class: "fb", "aria-label": FAB_SHORT[id], onClick: function () { AK_RR_ACTS[id](); this.blur(); } }, akIcon(id)); setTimeout(akRrPaint, 0); return b; }; });
+  if (typeof akExtraFab11 === "function") Object.assign(o, akExtraFab11(song, root));
+  return o;
+}
+if (typeof AK_LONG !== "undefined") { AK_LONG.rrstart = AK_LONG.rrend = function () { akRrWin(); }; }
+var AK_PEDAL_MORE = [["rrsong", "Phone recorders: start or end a song (one button)"], ["rrstart", "Phone recorders: start song"], ["rrend", "Phone recorders: end song"]];
+(function () {
+  var pa = pedalAct;
+  pedalAct = function (act) {
+    if (act === "rrsong") { akRrToggleSong(); return; }
+    if (act === "rrstart") { akRrStartSong(); return; }
+    if (act === "rrend") { akRrEndSong(); return; }
+    return pa.apply(this, arguments);
+  };
+})();
+function akRrPaint() {
+  var on = AKRR.songOn;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="rrstart"],[data-fab="rrstart"]'), function (b) { b.classList.toggle("on", on); b.classList.toggle("ak12-recon", on); });
+  var w = document.querySelector(".akrr-win"); if (w && w.akDraw) w.akDraw();
+}
+function akRrWin() {
+  var body = h("div", { class: "akrr-win" }), c = akRrCfg();
+  function sel(label, get, set, opts) { return h("label", { class: "fld" }, label, h("select", { onChange: function () { set(this.value); save(); draw(); } }, opts.map(function (o) { return h("option", { value: String(o[0]), selected: String(get()) === String(o[0]) }, o[1]); }))); }
+  function ck(label, get, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); save(); draw(); } }), label); }
+  function draw() {
+    body.textContent = "";
+    if (!c.on) { c.on = true; save(); }
+    akRrListen();
+    var where = akRrCloud() ? "online (your requests Firebase project)" : "this browser only (for trying it out; turn on online requests to use real phones)";
+    body.appendChild(h("p", { class: "muted", style: "margin-top:0" }, "Connected: " + where + "."));
+    /* state and the big buttons */
+    body.appendChild(h("div", { class: "akrr-state" + (AKRR.rec ? " rec" : "") }, AKRR.rec ? "● Recording: " + (AKRR.title || "") + (c.mode === "one" ? (AKRR.songOn ? " · song on" : " · between songs") : "") : "Not recording"));
+    body.appendChild(h("div", { class: "row" },
+      h("button", { class: "primary", onClick: function () { akRrStartSong(); } }, "▶ Start song"),
+      h("button", { disabled: !AKRR.songOn, onClick: function () { akRrEndSong(); } }, "■ End song"),
+      h("button", { class: "danger", disabled: !AKRR.rec, onClick: function () { akRrStopAll(); } }, "Stop the phones")));
+    /* phones */
+    var rows = akRrPhoneRows(), box = h("div", { class: "card" }, h("strong", null, "Phones"));
+    if (AKRR.stErr === "rules") box.appendChild(h("p", { class: "hint" }, "The phones record, but they can't tell the tablet how it's going until you add one block to your Firebase rules: Settings > Requests and tips > Copy rules, then paste them in Firebase (Firestore Database > Rules > Publish)."));
+    else if (!rows.length) box.appendChild(h("p", { class: "hint" }, "No phones yet. Scan a code below with each phone."));
+    rows.forEach(function (p) {
+      var old = Date.now() - p.seen > 15000;
+      box.appendChild(h("div", { class: "akrr-ph" + (old ? " old" : "") + (p.warn ? " warn" : "") },
+        h("b", null, (p.role === "video" ? "🎥 Video phone" : "🎙 Sound phone") + (old ? " (not heard from for " + Math.round((Date.now() - p.seen) / 1000) + " s)" : "")),
+        h("div", null, p.rec ? "● " + (p.title || "") + " · " + fmtTime(p.secs || 0) + " · " + akRecSize(p.bytes || 0) : p.ready ? "Ready" : "Waiting for a tap on the phone"),
+        h("div", { class: "muted" }, [p.got || "", p.free ? akRecSize(p.free) + " free" : "", p.files ? p.files + " files" : "", p.wake === false ? "screen may sleep" : ""].filter(Boolean).join(" · ")),
+        p.warn ? h("div", { class: "akrr-w" }, "⚠ " + p.warn) : null));
+    });
+    body.appendChild(box);
+    var qr = h("div", { class: "row akrr-qr" });
+    [["video", "🎥 Video phone"], ["audio", "🎙 Sound phone"]].forEach(function (r) {
+      var url = akRrPhoneUrl(r[0]), q = typeof akQrSvg === "function" ? akQrSvg(url) : null;
+      qr.appendChild(h("div", { class: "card center" }, h("b", null, r[1]), q, h("div", { class: "row center" }, h("button", { onClick: function () { try { navigator.clipboard.writeText(url); toast("Link copied."); } catch (e) { toast(url); } } }, "Copy link"))));
+    });
+    body.appendChild(h("details", { class: "card", open: !rows.length }, h("summary", null, "Add a phone"), h("p", { class: "hint" }, "Scan with the phone's camera, open the link, tap Get ready and allow the camera or microphone. Leave the page open with the screen on (it can go black)."), qr));
+    /* how */
+    var how = h("details", { class: "card" }, h("summary", null, "How it records"));
+    how.appendChild(sel("Files", function () { return c.mode; }, function (v) { c.mode = v; }, [["split", "One file per song"], ["one", "One file for the whole show, with song marks"]]));
+    if (c.mode === "split") how.appendChild(ck("End song starts the next song's file right away (nothing between songs is lost)", function () { return c.next; }, function (v) { c.next = v; }));
+    how.appendChild(ck("Starting auto-scroll = Start song", function () { return c.autoStart; }, function (v) { c.autoStart = v; }));
+    how.appendChild(ck("Going to another song = End song", function () { return c.autoEnd; }, function (v) { c.autoEnd = v; }));
+    how.appendChild(sel("Remind me to End a song after", function () { return c.maxMin; }, function (v) { c.maxMin = Number(v) || 0; }, [[0, "Never"], [8, "8 minutes"], [10, "10 minutes"], [15, "15 minutes"], [20, "20 minutes"], [30, "30 minutes"]]));
+    how.appendChild(ck("Beep at the start of each file (to line up sound and video later)", function () { return c.beep; }, function (v) { c.beep = v; }));
+    body.appendChild(how);
+    var snd = h("details", { class: "card" }, h("summary", null, "Sound phone settings"));
+    snd.appendChild(sel("Format", function () { return c.a.fmt; }, function (v) { c.a.fmt = v; }, [["wav", "WAV, uncompressed (best)"], ["aac", "Compressed (much smaller)"]]));
+    if (c.a.fmt === "wav") {
+      snd.appendChild(sel("Sample rate", function () { return c.a.sr; }, function (v) { c.a.sr = Number(v); }, [[44100, "44.1 kHz"], [48000, "48 kHz"], [96000, "96 kHz (if the phone can)"]]));
+      snd.appendChild(sel("Bit depth", function () { return c.a.bits; }, function (v) { c.a.bits = Number(v); }, [[16, "16-bit"], [24, "24-bit"], [32, "32-bit float"]]));
+    } else snd.appendChild(sel("Quality", function () { return c.a.kbps; }, function (v) { c.a.kbps = Number(v); }, [[128, "128 kbps"], [192, "192 kbps"], [256, "256 kbps"], [320, "320 kbps"]]));
+    snd.appendChild(sel("Channels", function () { return c.a.ch; }, function (v) { c.a.ch = Number(v); }, [[1, "Mono"], [2, "Stereo (if the mic is)"]]));
+    snd.appendChild(ck("Let the phone clean up the sound (echo, noise, auto level). Off is best for music.", function () { return c.a.proc; }, function (v) { c.a.proc = v; }));
+    snd.appendChild(h("p", { class: "hint" }, akRrSize(c) + " The phone says what it actually gave."));
+    body.appendChild(snd);
+    var vid = h("details", { class: "card" }, h("summary", null, "Video phone settings"));
+    vid.appendChild(sel("Resolution", function () { return c.v.res; }, function (v) { c.v.res = v; }, [["720", "720p"], ["1080", "1080p"], ["2160", "4K (if the phone can)"]]));
+    vid.appendChild(sel("Frames per second", function () { return c.v.fps; }, function (v) { c.v.fps = Number(v); }, [[24, "24"], [30, "30"], [60, "60"]]));
+    vid.appendChild(sel("Quality (bit rate)", function () { return c.v.mbps; }, function (v) { c.v.mbps = Number(v); }, [[4, "4 Mbps (smaller)"], [8, "8 Mbps"], [12, "12 Mbps"], [20, "20 Mbps (best)"]]));
+    vid.appendChild(sel("Camera", function () { return c.v.facing; }, function (v) { c.v.facing = v; }, [["environment", "Back camera"], ["user", "Front camera"]]));
+    vid.appendChild(ck("Record the video phone's sound too (a guide track for lining up)", function () { return c.v.audio; }, function (v) { c.v.audio = v; }));
+    vid.appendChild(h("p", { class: "hint" }, "About " + Math.round(c.v.mbps * 450) + " MB per hour of video. Changes reach the phones the next time a file starts."));
+    body.appendChild(vid);
+  }
+  body.akDraw = draw; draw();
+  modal("Phone recorders", body, [{ label: "Done", primary: true }], { wide: true });
+}
+function akRrSize(c) {
+  if (c.a.fmt !== "wav") return "About " + Math.round(c.a.kbps * 450 / 1000) + " MB per hour.";
+  var bps = c.a.sr * c.a.ch * (c.a.bits / 8), gb = bps * 3600 / 1e9;
+  return "About " + (gb < 1 ? Math.round(gb * 1000) + " MB" : gb.toFixed(1) + " GB") + " per hour." + (bps * 3 * 3600 > 4e9 && c.mode === "one" ? " A WAV file can't go past 4 GB: use one file per song, or less." : "");
+}
+if (typeof AK_FB_RULES === "string" && AK_FB_RULES.indexOf("recorders") < 0)
+  AK_FB_RULES = AK_FB_RULES.replace("      match /requests/{rid} {", "      match /recorders/{dev} {\n        allow read: if request.auth != null && request.auth.uid == pid;\n        allow write: if request.auth != null && request.resource.data.keys().hasOnly(['dev', 'role', 'rec', 'ready', 'title', 'secs', 'bytes', 'free', 'files', 'got', 'warn', 'wake', 'at']);\n      }\n      match /requests/{rid} {");
+
+/* ---------------------------------------------------------------- settings: Songs and shows > Record my show (next to it) */
+function akSettingsExtra21(c) {
+  c.again("songs-and-shows");
+  c.section("Two-phone recording", "Two phones record (video, sound), the tablet tells them when");
+  var r = akRrCfg();
+  c.check("Use phone recorders (adds the Start song / End song buttons to the list of buttons)", function () { return r.on; }, function (v) { r.on = v; });
+  c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akRrWin(); } }, "Phone recorders…")));
+  c.out.appendChild(h("p", { class: "hint" }, "Each phone opens a link from this tablet in its browser and records there: their own camera and voice memo apps can't be controlled from here. Keep that page open on the phones with the screen on (the page can make it black). Put ▶ Start song and ■ End song on the Button bar or a pedal (Pedal > Learn)."));
+  if (typeof akSettingsExtra22 === "function") akSettingsExtra22(c);
+}
+
+/* ================================================================ the phone */
+var AKRP = { role: "", local: false, pid: "", db: null, dev: "", cfg: null, stream: null, ac: null, node: null, src: null, cur: null, mr: null, lastSeq: 0, sess: "", file: -1, markN: 0,
+  wake: null, warn: "", hiddenAt: 0, files: 0, free: 0, ready: false, got: "", el: null, an: null, stErrShown: false, joinedAt: 0 };
+(function () {
+  var q = new URLSearchParams(location.search), role = q.get("rr");
+  if (role !== "video" && role !== "audio") return;
+  AKRP.role = role; AKRP.local = q.get("m") === "local" || !q.get("k"); AKRP.pid = q.get("p") || ""; AKRP.key = q.get("k") || ""; AKRP.proj = q.get("j") || "";
+  try { AKRP.dev = localStorage.getItem("akrr:dev") || ("ph" + Math.random().toString(36).slice(2, 8)); localStorage.setItem("akrr:dev", AKRP.dev); } catch (e) { AKRP.dev = "ph" + Math.random().toString(36).slice(2, 8); }
+  AKRP.dev += "-" + role;
+  /* nothing else from the app pops up on a recorder phone */
+  try { tourAuto = function () {}; askBackupAtOpen = function () {}; } catch (e) {}
+  setTimeout(akRpBoot, 0);
+})();
+function akRpBoot() {
+  akRpCss();
+  var el = h("div", { class: "akrp" }); AKRP.el = el; document.body.appendChild(el);
+  setInterval(function () { if (typeof closeModals === "function" && document.querySelector(".modal")) closeModals(); }, 700);
+  akRpDraw(); akRpConnect();
+  setInterval(function () { akRpTick(); }, 1000);
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { if (AKRP.cur) AKRP.hiddenAt = Date.now(); return; }
+    akRpWake();
+    if (AKRP.hiddenAt) { var s = Math.round((Date.now() - AKRP.hiddenAt) / 1000); AKRP.hiddenAt = 0; if (s >= 2) akRpWarn("The screen went off or the page was left for " + s + " s. Phones pause the camera and microphone then, so “" + ((AKRP.cur && AKRP.cur.title) || "this file") + "” may have a gap there."); }
+  });
+}
+function akRpWarn(t) { AKRP.warn = t; akRpDraw(); akRpReport(true); }
+/* the tablet's wishes */
+function akRpConnect() {
+  if (AKRP.local) {
+    try { AKRP.bc = new BroadcastChannel("akrr"); AKRP.bc.onmessage = function (e) { if (e.data && e.data.t === "cmd") akRpCmd(e.data.cmd); }; } catch (e) {}
+    try { var c0 = JSON.parse(localStorage.getItem("akrr:cmd") || "null"); if (c0) akRpCmd(c0); } catch (e) {}
+    AKRP.conn = "this browser"; akRpDraw(); return;
+  }
+  var b = "https://www.gstatic.com/firebasejs/" + AK_FB_VER + "/";
+  akLoadScript(b + "firebase-app-compat.js").then(function () { return Promise.all([akLoadScript(b + "firebase-auth-compat.js"), akLoadScript(b + "firebase-firestore-compat.js")]); }).then(function () {
+    var app = firebase.initializeApp({ apiKey: AKRP.key, authDomain: AKRP.proj + ".firebaseapp.com", projectId: AKRP.proj }, "akrr");
+    AKRP.db = app.firestore(); return app.auth().signInAnonymously();
+  }).then(function () {
+    AKRP.conn = "online";
+    AKRP.db.collection("performers").doc(AKRP.pid).onSnapshot(function (d) { var x = d.exists ? d.data() : null; akRpCmd(x && x.rr); AKRP.connErr = ""; akRpDraw(); }, function () { AKRP.connErr = "Couldn't read the tablet's page. Scan the code again."; akRpDraw(); });
+  }).catch(function () { AKRP.connErr = "Couldn't connect. Check the phone's internet and reload."; akRpDraw(); });
+}
+function akRpCmd(cmd) {
+  if (!cmd || !cmd.seq) return;
+  if (cmd.sess === AKRP.sess && cmd.seq <= AKRP.lastSeq) return;
+  var fresh = cmd.sess !== AKRP.sess; AKRP.sess = cmd.sess; AKRP.lastSeq = cmd.seq; AKRP.want = cmd;
+  if (fresh) { AKRP.file = AKRP.cur ? AKRP.file : -1; AKRP.markN = cmd.mark ? cmd.mark.n - (Date.now() - cmd.at < 20000 ? 1 : 0) : 0; }
+  akRpApply();
+}
+function akRpApply() {
+  var w = AKRP.want; if (!w || !AKRP.ready) { akRpDraw(); return; }
+  AKRP.cfg = w.cfg || AKRP.cfg;
+  if (!w.rec) { if (AKRP.cur) akRpStop(); }
+  else if (!AKRP.cur) akRpStartFile(w, false);
+  else if (w.file !== AKRP.file) { if (w.mode === "one") AKRP.file = w.file; else akRpStartFile(w, true); }
+  else if (AKRP.cur.title !== w.title && w.mode !== "one") { AKRP.cur.title = w.title; akRecPutMeta(AKRP.cur).catch(function () {}); }
+  if (AKRP.cur && w.mode === "one" && w.mark && w.mark.n > AKRP.markN) {
+    AKRP.markN = w.mark.n; var t = Math.round((performance.now() - AKRP.cur.t0) / 1000);
+    AKRP.cur.marks.push({ t: t, title: (w.mark.k === "end" ? "■ end " : "") + w.mark.title, k: w.mark.k }); akRecPutMeta(AKRP.cur).catch(function () {});
+  }
+  akRpDraw(); akRpReport(true);
+}
+/* Get ready: the camera / microphone (needs a tap), the screen kept on */
+function akRpReady() {
+  AKRP.cfg = AKRP.cfg || (AKRP.want && AKRP.want.cfg) || { a: akRrCfg().a, v: akRrCfg().v };
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  return akRpStream().then(function () { AKRP.ready = true; akRpWake(); akRpApply(); akRpDraw(); }, function (e) {
+    akRpWarn(e && e.name === "NotAllowedError" ? "The browser isn't allowed to use the " + (AKRP.role === "video" ? "camera" : "microphone") + ". Allow it in the site settings, then tap Get ready." : "Couldn't start the " + (AKRP.role === "video" ? "camera" : "microphone") + (e && e.message ? ": " + e.message : "."));
+  });
+}
+function akRpStream() {
+  var c = AKRP.cfg, A = c.a || {}, V = c.v || {};
+  if (AKRP.stream) AKRP.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+  var proc = !!A.proc, aud = { echoCancellation: proc, noiseSuppression: proc, autoGainControl: proc, channelCount: { ideal: A.ch || 2 }, sampleRate: { ideal: A.sr || 48000 }, sampleSize: { ideal: Math.min(24, A.bits || 16) } }, vid = false;
+  if (AKRP.role === "video") {
+    var hgt = Number(V.res) || 1080, wid = Math.round(hgt * 16 / 9);
+    vid = { facingMode: { ideal: V.facing || "environment" }, width: { ideal: wid }, height: { ideal: hgt }, frameRate: { ideal: V.fps || 30 } };
+    if (V.audio === false) aud = false; else aud = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  }
+  AKRP.asked = AKRP.role === "video" ? (Number(V.res) || 1080) + "p at " + (V.fps || 30) + " fps" : (A.fmt === "aac" ? "compressed " + (A.kbps || 256) + " kbps" : ((A.sr || 48000) / 1000) + " kHz " + (A.bits === 32 ? "32-bit float" : (A.bits || 24) + "-bit")) + ", " + ((A.ch || 2) === 1 ? "mono" : "stereo");
+  return navigator.mediaDevices.getUserMedia({ audio: aud, video: vid }).then(function (st) {
+    AKRP.stream = st; AKRP.cfgKey = JSON.stringify(c);
+    var vt = st.getVideoTracks()[0], at = st.getAudioTracks()[0], vs = vt ? vt.getSettings() : {}, as = at ? at.getSettings() : {};
+    AKRP.got = vt ? (vs.width || "?") + "×" + (vs.height || "?") + " at " + Math.round(vs.frameRate || 0) + " fps" : (as.sampleRate ? as.sampleRate / 1000 + " kHz mic" : "mic") + ", " + (as.channelCount || "?") + (as.channelCount === 1 ? " channel" : " channels");
+    st.getTracks().forEach(function (t) { t.addEventListener("ended", function () { if (AKRP.cur) akRpWarn("The " + t.kind + " stopped (another app took it?). Tap Get ready again."); AKRP.ready = false; akRpDraw(); }); });
+    akRpMeter(st);
+    var pv = AKRP.el && AKRP.el.querySelector("video"); if (pv) { pv.srcObject = st; pv.play().catch(function () {}); }
+    return st;
+  });
+}
+function akRpMeter(st) {
+  try {
+    if (!st.getAudioTracks().length) return;
+    var ac = AKRP.ac || akRpAc(), src = ac.createMediaStreamSource(st), an = ac.createAnalyser(); an.fftSize = 2048; src.connect(an); AKRP.an = an;
+    var buf = new Float32Array(an.fftSize);
+    (function loop() { if (AKRP.an !== an) return; requestAnimationFrame(loop); an.getFloatTimeDomainData(buf); var pk = 0, sum = 0; for (var i = 0; i < buf.length; i += 2) { var x = Math.abs(buf[i]); if (x > pk) pk = x; sum += buf[i] * buf[i]; } akRecLevel(pk, Math.sqrt(sum / (buf.length / 2))); })();
+  } catch (e) {}
+}
+function akRpAc() {
+  var A = (AKRP.cfg && AKRP.cfg.a) || {}, ac = null;
+  try { ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: A.sr || 48000 }); } catch (e) { ac = new (window.AudioContext || window.webkitAudioContext)(); }
+  AKRP.ac = ac; try { ac.resume(); } catch (e) {} return ac;
+}
+function akRpWake() {
+  try { if (navigator.wakeLock) { if (!AKRP.wake) navigator.wakeLock.request("screen").then(function (w) { AKRP.wake = w; AKRP.wakeOk = true; w.addEventListener("release", function () { if (AKRP.wake === w) AKRP.wake = null; }); akRpDraw(); }, function () { AKRP.wakeOk = false; akRpDraw(); }); } else AKRP.wakeOk = false; } catch (e) { AKRP.wakeOk = false; }
+}
+/* ---------------------------------------------------------------- recording on the phone */
+function akRpNewRec(w) {
+  var c = AKRP.cfg || {}, A = c.a || {}, id = "rr" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  return { id: id, at: Date.now(), t0: performance.now(), kind: "media", video: AKRP.role === "video", mime: "", bytes: 0, n: 0, secs: 0, done: false, remote: AKRP.role,
+    what: w.mode === "one" ? "show" : "song", title: w.mode === "one" ? (w.show || "Whole show") : w.title || "Song", gig: w.show || "", set: "", marks: [], q: A.fmt || "" };
+}
+function akRpSave(r, blob) {
+  var n = r.n++; r.bytes += blob.size; r.secs = Math.round((performance.now() - r.t0) / 1000);
+  akRecPutChunk(r.id, n, blob).then(function () { if (n % 4 === 0) akRecPutMeta(r).catch(function () {}); }, function () { akRpWarn("Couldn't save the recording: the phone's storage may be full."); });
+}
+function akRpStartFile(w, cut) {
+  /* settings changed since the stream started: new stream first (only between files) */
+  var key = JSON.stringify(w.cfg || AKRP.cfg);
+  if (w.cfg && key !== AKRP.cfgKey && !cut) { AKRP.cfg = w.cfg; return akRpStream().then(function () { akRpStartFile(w, false); }, function () {}); }
+  var old = AKRP.cur, r = akRpNewRec(w); AKRP.file = w.file; AKRP.warn = "";
+  if (AKRP.role === "video" || ((AKRP.cfg || {}).a || {}).fmt === "aac") akRpStartMedia(r, old);
+  else akRpStartWav(r, old);
+  AKRP.cur = r; akRecPutMeta(r).catch(function () {});
+  if (w.mode === "one" && w.mark && w.mark.k === "start") { AKRP.markN = w.mark.n; r.marks.push({ t: 0, title: w.mark.title, k: "start" }); }
+}
+function akRpStartMedia(r, old) {
+  var c = AKRP.cfg || {}, video = AKRP.role === "video", mime = akRecMime(video), opt = {};
+  if (mime) opt.mimeType = mime;
+  if (video) { opt.videoBitsPerSecond = ((c.v || {}).mbps || 8) * 1e6; opt.audioBitsPerSecond = 192000; } else opt.audioBitsPerSecond = ((c.a || {}).kbps || 256) * 1000;
+  var tracks = video ? AKRP.stream.getTracks() : AKRP.stream.getAudioTracks(), mr = new MediaRecorder(new MediaStream(tracks), opt);
+  r.mime = mr.mimeType || mime || (video ? "video/webm" : "audio/webm");
+  mr.ondataavailable = function (e) { if (e.data && e.data.size) akRpSave(r, e.data); };
+  mr.onerror = function () { akRpWarn("The recorder stopped with an error. What was recorded is kept."); };
+  mr.start(4000);
+  var prev = AKRP.mr; AKRP.mr = mr; r.mr = mr;
+  /* the new file runs before the old one stops: a short overlap, never a gap */
+  if (old && prev) setTimeout(function () { akRpFinish(old, prev); }, 250);
+  else if (old) akRpFinish(old, null);
+}
+function akRpFinish(r, mr) {
+  var fin = function () { r.done = true; r.end = Date.now(); r.secs = Math.round((performance.now() - r.t0) / 1000); delete r.mr; delete r.t0x; var meta = Object.assign({}, r); delete meta.mr; akRecPutMeta(meta).then(function () { AKRP.files++; akRpDraw(); akRpReport(true); if (AKRP.autoSave) akRpSaveOut(meta); }, function () {}); };
+  if (mr && mr.state !== "inactive") { mr.onstop = function () { setTimeout(fin, 60); }; try { mr.stop(); } catch (e) { fin(); } } else fin();
+}
+var AK_RP_WORKLET = "class P extends AudioWorkletProcessor{constructor(){super();this.b=[];this.n=0}process(i){var x=i[0];if(x&&x.length){this.b.push(x.map(function(c){return c.slice(0)}));this.n+=x[0].length;if(this.n>=8192){this.port.postMessage(this.b);this.b=[];this.n=0}}return true}}registerProcessor('akrr-pcm',P);";
+function akRpStartWav(r, old) {
+  var A = (AKRP.cfg || {}).a || {}, bits = A.bits === 32 ? 32 : A.bits === 16 ? 16 : 24, ch = A.ch === 1 ? 1 : 2;
+  r.kind = "wav"; r.mime = "audio/wav"; r.bits = bits; r.ch = ch; r.fmtFloat = bits === 32;
+  if (old) { akRpFlush(old); akRpFinish(old, null); } /* cut at this exact sample: no gap */
+  r.parts = []; r.len = 0;
+  if (AKRP.node) { r.sr = AKRP.ac.sampleRate; return; }
+  var ac = AKRP.ac && AKRP.ac.state !== "closed" ? AKRP.ac : akRpAc(); r.sr = ac.sampleRate;
+  var src = ac.createMediaStreamSource(AKRP.stream), sink = ac.createGain(); sink.gain.value = 0; AKRP.src = src;
+  var take = function (chans) { var w = AKRP.cur; if (!w || w.kind !== "wav") return; akRpPcm(w, chans); };
+  var viaScript = function () {
+    var sp = ac.createScriptProcessor(4096, 2, 2);
+    sp.onaudioprocess = function (e) { var b = e.inputBuffer, cs = []; for (var k = 0; k < b.numberOfChannels; k++) cs.push(new Float32Array(b.getChannelData(k))); take([cs]); };
+    src.connect(sp); sp.connect(sink); sink.connect(ac.destination); AKRP.node = sp;
+  };
+  if (ac.audioWorklet && window.AudioWorkletNode) {
+    AKRP.node = "starting";
+    ac.audioWorklet.addModule(URL.createObjectURL(new Blob([AK_RP_WORKLET], { type: "application/javascript" }))).then(function () {
+      var n = new AudioWorkletNode(ac, "akrr-pcm", { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit" });
+      n.port.onmessage = function (e) { take(e.data); };
+      src.connect(n); n.connect(sink); sink.connect(ac.destination); AKRP.node = n;
+    }, function () { viaScript(); });
+  } else viaScript();
+}
+/* blocks: [[ch0, ch1], ...] of Float32Array; written as 16 / 24-bit or 32-bit float, saved every 4 seconds */
+function akRpPcm(r, blocks) {
+  blocks.forEach(function (cs) {
+    var n = cs[0].length, ch = r.ch, L = cs[0], R = cs[1] || cs[0], out, i, k, x, v;
+    if (r.bits === 16) { out = new Int16Array(n * ch); for (i = 0; i < n; i++) for (k = 0; k < ch; k++) { x = Math.max(-1, Math.min(1, k ? R[i] : L[i])); out[i * ch + k] = x < 0 ? x * 0x8000 : x * 0x7FFF; } }
+    else if (r.bits === 32) { out = new Float32Array(n * ch); for (i = 0; i < n; i++) for (k = 0; k < ch; k++) out[i * ch + k] = k ? R[i] : L[i]; }
+    else { out = new Uint8Array(n * ch * 3); var o = 0; for (i = 0; i < n; i++) for (k = 0; k < ch; k++) { x = Math.max(-1, Math.min(1, k ? R[i] : L[i])); v = Math.round(x < 0 ? x * 0x800000 : x * 0x7FFFFF); out[o++] = v & 255; out[o++] = (v >> 8) & 255; out[o++] = (v >> 16) & 255; } }
+    if (ch === 1 && cs.length > 1) { /* mono: the two sides mixed */ }
+    r.parts.push(out); r.len += n;
+  });
+  if (r.len >= r.sr * 4) akRpFlush(r);
+}
+function akRpFlush(r) { if (r.parts && r.parts.length) { akRpSave(r, new Blob(r.parts)); r.parts = []; r.len = 0; } }
+function akRpStop() {
+  var r = AKRP.cur; if (!r) return; AKRP.cur = null;
+  if (r.kind === "wav") { akRpFlush(r); akRpFinish(r, null); }
+  else { var mr = AKRP.mr; AKRP.mr = null; akRpFinish(r, mr); }
+}
+/* WAV header for 24-bit and 32-bit float (16-bit uses the recorder's own) */
+function akWavHeaderX(bytes, sr, ch, bits, flt) {
+  var b = new ArrayBuffer(44), v = new DataView(b), ba = ch * bits / 8;
+  function s(o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); }
+  s(0, "RIFF"); v.setUint32(4, Math.min(0xFFFFFFFF, 36 + bytes), true); s(8, "WAVE"); s(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, flt ? 3 : 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sr, true); v.setUint32(28, sr * ba, true); v.setUint16(32, ba, true); v.setUint16(34, bits, true);
+  s(36, "data"); v.setUint32(40, Math.min(0xFFFFFFFF, bytes), true);
+  return b;
+}
+(function () {
+  var rb = akRecBlob;
+  akRecBlob = function (r) {
+    if (!r || r.kind !== "wav" || !r.bits || r.bits === 16) return rb.apply(this, arguments);
+    return akRecChunks(r.id).then(function (parts) { var bytes = parts.reduce(function (a, b) { return a + b.size; }, 0); return new Blob([akWavHeaderX(bytes, r.sr, r.ch, r.bits, r.bits === 32)].concat(parts), { type: "audio/wav" }); });
+  };
+  var fn = akRecFileName;
+  akRecFileName = function (r) {
+    if (!r || !r.remote) return fn.apply(this, arguments);
+    var d = new Date(r.at), p = function (n) { return ("0" + n).slice(-2); };
+    return (d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + (r.gig ? r.gig + " - " : "") + (r.title || "Recording") + " (" + (r.remote === "video" ? "video" : "sound") + ")").replace(/[\\\/:*?"<>|]+/g, "-").slice(0, 110) + "." + akRecExt(r);
+  };
+})();
+function akRpSaveOut(r) { akRecBlob(r).then(function (b) { akRecDownload(b, akRecFileName(r)); }); }
+
+/* ---------------------------------------------------------------- the phone: telling the tablet, the screen */
+function akRpReport(now) {
+  if (!now && Date.now() - (AKRP.repAt || 0) < 3000) return; AKRP.repAt = Date.now();
+  var r = AKRP.cur, st = { dev: AKRP.dev, role: AKRP.role, rec: !!r, ready: AKRP.ready, title: r ? r.title + (r.marks && r.marks.length ? " · " + r.marks[r.marks.length - 1].title : "") : "", secs: r ? Math.round((performance.now() - r.t0) / 1000) : 0, bytes: r ? r.bytes : 0,
+    free: AKRP.free || 0, files: AKRP.files, got: AKRP.got || "", warn: AKRP.warn || "", wake: AKRP.wakeOk !== false, at: Date.now() };
+  if (AKRP.local) { try { if (AKRP.bc) AKRP.bc.postMessage({ t: "st", st: st }); } catch (e) {} return; }
+  if (AKRP.db && AKRP.pid) AKRP.db.collection("performers").doc(AKRP.pid).collection("recorders").doc(AKRP.dev).set(st).catch(function () { AKRP.noReport = true; });
+}
+function akRpTick() {
+  if (navigator.storage && navigator.storage.estimate && (!AKRP.freeAt || Date.now() - AKRP.freeAt > 30000)) { AKRP.freeAt = Date.now(); navigator.storage.estimate().then(function (e) { AKRP.free = Math.max(0, (e.quota || 0) - (e.usage || 0)); }, function () {}); }
+  if (AKRP.cur && AKRP.free && AKRP.free < 300e6 && !AKRP.lowWarned) { AKRP.lowWarned = 1; akRpWarn("Less than 300 MB of room left on this phone for recordings."); }
+  akRpReport(false); akRpPaintLive();
+}
+function akRpPaintLive() {
+  var r = AKRP.cur, t = AKRP.el && AKRP.el.querySelectorAll(".akrp-time");
+  if (t) Array.prototype.forEach.call(t, function (x) { x.textContent = r ? fmtTime(Math.round((performance.now() - r.t0) / 1000)) + " · " + akRecSize(r.bytes) : ""; });
+}
+function akRpDraw() {
+  var el = AKRP.el; if (!el) return;
+  var r = AKRP.cur, w = AKRP.want, role = AKRP.role === "video" ? "🎥 Video recorder" : "🎙 Sound recorder";
+  el.textContent = "";
+  var black = h("div", { class: "akrp-black" + (AKRP.black ? " on" : ""), onDblclick: function () { AKRP.black = false; akRpDraw(); } }, h("span", null, r ? "● REC " : "Ready ", h("span", { class: "akrp-time" })), h("small", null, "Double-tap to light the screen"));
+  el.appendChild(black);
+  el.appendChild(h("div", { class: "akrp-in" },
+    h("h1", null, role),
+    h("p", { class: "muted" }, AKRP.connErr ? "⚠ " + AKRP.connErr : w ? "Connected to the tablet (" + AKRP.conn + ")." : "Waiting for the tablet… (" + (AKRP.conn || "connecting") + ")"),
+    h("div", { class: "akrp-state" + (r ? " rec" : "") }, r ? h("div", null, "● Recording", h("div", { class: "akrp-t" }, r.title), h("div", { class: "akrp-time" })) : AKRP.ready ? "Ready. The tablet starts and stops this phone." : "Not ready yet"),
+    AKRP.role === "video" ? h("video", { class: "akrp-pv", muted: true, playsinline: true, autoplay: true }) : null,
+    akRecMeterEl(),
+    AKRP.ready ? null : h("button", { class: "primary akrp-go", onClick: function () { this.disabled = true; akRpReady(); } }, "Get ready"),
+    AKRP.got ? h("p", { class: "muted" }, "Asked for " + (AKRP.asked || "") + ". Got " + AKRP.got + (AKRP.role === "audio" && ((AKRP.cfg || {}).a || {}).fmt !== "aac" ? ", saved as " + (AKRP.ac ? AKRP.ac.sampleRate / 1000 + " kHz " : "") + (((AKRP.cfg || {}).a || {}).bits === 32 ? "32-bit float" : (((AKRP.cfg || {}).a || {}).bits || 24) + "-bit") + " WAV" : "") + ".") : null,
+    AKRP.wakeOk === false ? h("p", { class: "akrp-w" }, "This browser can't keep the screen on by itself. Set the phone's screen timeout (Auto-Lock) to Never while recording.") : null,
+    AKRP.warn ? h("p", { class: "akrp-w" }, "⚠ " + AKRP.warn, " ", h("button", { onClick: function () { AKRP.warn = ""; akRpDraw(); akRpReport(true); } }, "OK")) : null,
+    h("div", { class: "row" }, h("button", { onClick: function () { AKRP.black = true; akRpDraw(); } }, "⬛ Black screen"), h("button", { onClick: function () { akRpFiles(); } }, "Files on this phone")),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!AKRP.autoSave, onChange: function () { AKRP.autoSave = this.checked; } }), "Save each file to Downloads as soon as it ends"),
+    h("p", { class: "hint" }, "Keep this page open with the screen on. Black screen saves battery and still records. Files are kept on this phone until you save them.")));
+  var pv = el.querySelector("video"); if (pv && AKRP.stream) { pv.srcObject = AKRP.stream; pv.play().catch(function () {}); }
+  akRpPaintLive();
+}
+function akRpFiles() {
+  akRecList().then(function (all) {
+    var list = all.filter(function (r) { return r.remote; }), body = h("div");
+    if (!list.length) body.appendChild(h("p", { class: "hint" }, "No recordings on this phone yet."));
+    else body.appendChild(h("p", { class: "hint" }, list.length + " files, " + akRecSize(list.reduce(function (a, r) { return a + (r.bytes || 0); }, 0)) + ". Save them (Downloads) or Share them (Files, Photos, AirDrop, Drive)."));
+    list.forEach(function (r) {
+      body.appendChild(h("div", { class: "row", style: "margin:4px 0;flex-wrap:wrap" }, h("span", { class: "grow" }, akRecFileName(r), h("div", { class: "muted" }, fmtTime(r.secs || 0) + " · " + akRecSize(r.bytes || 0) + (r.done ? "" : " · still recording or cut off"))),
+        h("button", { onClick: function () { akRpSaveOut(r); } }, "Save"),
+        h("button", { onClick: function () { akRecBlob(r).then(function (b) { var f = new File([b], akRecFileName(r), { type: b.type }); if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f] }).catch(function () {}); else akRecDownload(b, f.name); }); } }, "Share"),
+        h("button", { class: "danger", onClick: function () { confirmBox("Delete " + akRecFileName(r) + "?", "Delete", function () { akRecDelete(r.id).then(function () { closeModals(); akRpFiles(); }); }); } }, "Delete")));
+    });
+    var btns = [{ label: "Close" }];
+    if (list.length) btns.unshift({ label: "Save all", primary: true, onClick: function () { list.filter(function (r) { return r.done; }).forEach(function (r, i) { setTimeout(function () { akRpSaveOut(r); }, i * 1500); }); } });
+    modal("Files on this phone", body, btns, { wide: true });
+    var m = document.querySelector(".modal"); if (m) m.style.zIndex = "2147483600";
+  });
+}
+function akRpCss() {
+  akCss("ak13c", [
+    ".akrp{position:fixed;inset:0;z-index:2147483000;background:var(--bg,#111);color:var(--fg,#eee);overflow:auto}",
+    ".akrp-in{max-width:560px;margin:0 auto;padding:18px 16px 40px}.akrp h1{font-size:1.4rem;margin:0 0 4px}",
+    ".akrp-state{margin:12px 0;padding:16px;border-radius:14px;border:2px solid var(--line,#444);font-size:1.15rem;font-weight:700;text-align:center}",
+    ".akrp-state.rec{border-color:#e5484d;color:#ff6b6b}.akrp-t{font-size:1rem;color:var(--fg,#eee);margin-top:4px}.akrp-time{font-variant-numeric:tabular-nums;font-weight:400}",
+    ".akrp-pv{width:100%;max-height:30vh;background:#000;border-radius:10px;object-fit:contain}",
+    ".akrp-go{width:100%;min-height:64px;font-size:1.3rem;margin:12px 0}",
+    ".akrp-w{color:#ffb224;font-weight:600}",
+    ".akrp-black{display:none;position:fixed;inset:0;z-index:2147483500;background:#000;color:#333;align-items:center;justify-content:center;flex-direction:column;gap:6px;font-size:.9rem}.akrp-black.on{display:flex}",
+    ".akrr-state{margin:6px 0 10px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);font-weight:700}.akrr-state.rec{border-color:#e5484d;color:#e5484d}",
+    ".akrr-ph{padding:6px 0;border-top:1px solid var(--line)}.akrr-ph.old{opacity:.6}.akrr-ph .akrr-w{color:#C99A00}",
+    ".akrr-qr{gap:10px;flex-wrap:wrap}.akrr-qr .card{flex:1 1 200px}.akrr-qr svg{width:170px;height:170px;background:#fff;padding:6px;border-radius:8px}"
+  ].join(""));
+}
+akRpCss();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
