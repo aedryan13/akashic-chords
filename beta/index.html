@@ -5749,7 +5749,8 @@ function akBaseCss() {
   return '#atmo{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}\n#atmo svg{position:absolute;inset:0;width:100%;height:100%}\n' +
     '#app{position:relative;z-index:1}\n' +
     '#atmo .akphoto{position:absolute;inset:0;background-size:cover;background-position:center}\n#atmo .akdim{position:absolute;inset:0;background:var(--bg)}\n#atmo.edge{z-index:2}\n#atmo .edgeglow{position:absolute;inset:0}\n' +
-    'html[data-anim="1"] #atmo svg{animation:akdrift 60s ease-in-out infinite alternate}\n@keyframes akdrift{from{transform:scale(1) translate(0,0)}to{transform:scale(1.06) translate(-1.2%,1%)}}\n' +
+    'html[data-anim="1"] #atmo svg{animation:akdrift 40s ease-in-out infinite alternate}\n@keyframes akdrift{from{transform:scale(1) translate(0,0)}to{transform:scale(1.1) translate(-3%,2%)}}\n' +
+    'html[data-anim="1"] #atmo .akphoto{animation:akdriftp 40s ease-in-out infinite alternate}\n@keyframes akdriftp{from{transform:scale(1.08) translate(0,0)}to{transform:scale(1.16) translate(-3%,2%)}}\n' +
     'html[data-atmo-on="1"] .play.akclear{background:transparent}\n';
 }
 
@@ -5787,6 +5788,10 @@ function akApply() {
 }
 /* the person's own background photo: one for the current theme, or one for every theme */
 function akPhotoFor(t) { return (t && IMG["bg:" + t.id]) || IMG["bg:all"] || akArtFor(t) || null; }
+/* what goes behind the screens: your own photo always wins; a drawn style picked on the Atmosphere page (or None there)
+   replaces the theme picture; "Match my theme" shows the theme picture when the theme has one, else the theme's drawn style */
+function akDrawnPick() { var st = akCfg().style; return !!st && st !== "auto"; }
+function akBgPhoto(t) { return (t && IMG["bg:" + t.id]) || IMG["bg:all"] || (akDrawnPick() ? null : akArtFor(t)) || null; }
 function akPhotoScope(t) { return t && IMG["bg:" + t.id] ? "theme" : IMG["bg:all"] ? "all" : ""; }
 function akPickPhoto(file, key, done) {
   if (!file) return;
@@ -5804,7 +5809,7 @@ function akAtmoStyle() { var ak = akCfg(), t = akCurTheme(); return ak.style ===
 function akAtmo() {
   var ak = akCfg(), r = document.documentElement, el = document.getElementById("atmo"), t = akCurTheme(), c = akColors(t), v = S.view, style = akAtmoStyle();
   if (!el) { el = document.createElement("div"); el.id = "atmo"; el.setAttribute("aria-hidden", "true"); document.body.insertBefore(el, document.getElementById("app")); }
-  var scr = ak.screens || {}, show = false, edge = false, photo = ak.on !== false ? akPhotoFor(t) : null;
+  var scr = ak.screens || {}, show = false, edge = false, photo = ak.on !== false ? akBgPhoto(t) : null;
   if (photo) {
     if (v === "play") show = !!ak.photoPlay;
     else if (v === "song") show = scr.edit !== false;
@@ -5820,7 +5825,7 @@ function akAtmo() {
   el.className = edge ? "edge" : "";
   r.setAttribute("data-atmo-on", show && !edge ? "1" : "0");
   el.style.opacity = photo ? "1" : String(Math.max(0, Math.min(1, (ak.strength == null ? 60 : ak.strength) / 100)));
-  var iv = ak.intensity == null ? 50 : ak.intensity; el.style.filter = photo || iv === 50 ? "" : "saturate(" + (iv < 50 ? 0.3 + iv / 50 * 0.7 : 1 + (iv - 50) / 50 * 0.9).toFixed(2) + ")";
+  var iv = ak.intensity == null ? 50 : ak.intensity; el.style.filter = iv === 50 ? "" : "saturate(" + (iv < 50 ? 0.3 + iv / 50 * 0.7 : 1 + (iv - 50) / 50 * 0.9).toFixed(2) + ")";
   if (!show) return;
   if (photo) {
     var psig = "P:" + (photo.art ? photo.data : photo.data.length) + ":" + (ak.photoDim == null ? 45 : ak.photoDim) + ":" + (ak.photoBlur || 0) + ":" + (v === "play" ? "p" : "n");
@@ -5868,7 +5873,7 @@ function akashicControls(out, ctx) {
   if (ctx.only !== "fx") {
   if (akArtList(th).length) {
     subgroup("Theme picture");
-    box.appendChild(h("p", { class: "hint" }, scope ? "Your own photo is in use, so it shows instead of these. Remove it below to see the theme picture." : "A background picture made for " + th.name + ". Pick Original look for the theme without a picture. Each theme remembers its own choice. Dim and blur are under My background photo."));
+    box.appendChild(h("p", { class: "hint" }, scope ? "Your own photo is in use, so it shows instead of these. Remove it below to see the theme picture." : akDrawnPick() ? (ak.style === "off" ? "Atmosphere is set to None, so no picture shows. Tap a picture to bring it back." : "A drawn Atmosphere style is showing instead of the picture. Tap a picture to bring it back, or pick Match my theme on the Atmosphere page.") : "A background picture made for " + th.name + ". Pick Original look for the theme without a picture. Each theme remembers its own choice. Dim and blur are under My background photo."));
     box.appendChild(akArtPicker(th, function () { rerenderKeepScroll(); }));
   }
   subgroup("My background photo");
@@ -8998,6 +9003,7 @@ function a2slider(title, get, set, words, stops, fmt) {
 }
 function viewAtmosphere() {
   var ak = akCfg(), cur = a2colors(), tab = S.atmoTab || null;
+  if (!ak.screens) ak.screens = clone(AK_DEFAULTS.screens);
   var curStyle = ak.style || "auto", curFam = null;
   AK_STYLES2.forEach(function (f) { f[2].forEach(function (s) { if (s[0] === curStyle && !curFam) curFam = f[0]; }); });
   if (!tab) tab = curFam || "Whimsy";
@@ -9010,6 +9016,13 @@ function viewAtmosphere() {
   /* match my theme / none */
   body.appendChild(h("div", { class: "akpick" },
     [["auto", "Match my theme"], ["off", "None"]].map(function (o) { return h("button", { class: "chip" + (curStyle === o[0] ? " on" : ""), "aria-pressed": curStyle === o[0] ? "true" : "false", onClick: function () { ak.style = o[0]; if (o[0] !== "off") ak.on = true; redraw(); } }, o[1]); })));
+
+  /* the theme picture and your own photo sit in the same spot, so say which one is showing */
+  var th = akCurTheme(), own = IMG["bg:" + th.id] || IMG["bg:all"];
+  if (own) body.appendChild(h("p", { class: "hint akbgnote" }, "Your own background photo is showing, so these styles stay hidden. Remove it in Settings, Look, My background photo."));
+  else if (akArtList(th).length) body.appendChild(h("div", { class: "akcard akartcard", "data-bk": "picture", "data-bt": "Theme picture" }, h("div", { class: "akcardhead" }, h("span", null, "Theme picture"), h("output", { class: "akval" }, akDrawnPick() ? "Off" : akArtChoice(th) ? "On" : "Off")),
+    h("p", { class: "hint", style: "margin:4px 0" }, akDrawnPick() ? "A style below is showing instead. Tap a picture (or Match my theme) to bring the picture back." : akArtChoice(th) ? "The picture made for " + th.name + " is showing. Tap any style below to use it instead." : "Original look: no picture. Tap one to bring it back."),
+    akArtPicker(th, redraw)));
 
   /* family tabs */
   var tabs = h("div", { class: "chips akfams", role: "tablist", "data-bk": "families", "data-bt": "Style families" });
@@ -21446,10 +21459,10 @@ function akArtChoice(t) {
 }
 function akArtName(slot) { var r = /^bg(\d)([a-z]?)$/.exec(slot) || []; return "Picture " + (r[1] || "1") + (r[2] ? " (other version)" : ""); }
 function akArtFor(t) { var c = akArtChoice(t); return c ? { data: AK_ART_BASE + t.id + "_" + c + ".webp", name: akArtName(c), art: true } : null; }
-function akArtPick(t, slot) { var ak = akCfg(); if (!ak.art) ak.art = {}; ak.art[t.id] = slot; akSig = ""; saveNow(); akApply(); }
+function akArtPick(t, slot) { var ak = akCfg(); if (!ak.art) ak.art = {}; ak.art[t.id] = slot; if (slot !== "none" && akDrawnPick()) { ak.style = "auto"; ak.on = true; } akSig = ""; saveNow(); akApply(); }
 /* the row of picture choices for the current theme, in Settings > Atmosphere */
 function akArtPicker(t, done) {
-  var cur = akArtChoice(t) || "none", row = h("div", { class: "akartrow" });
+  var cur = akDrawnPick() ? "" : akArtChoice(t) || "none", row = h("div", { class: "akartrow" });
   function tile(slot, label, img) {
     return h("button", { class: "akarttile" + (cur === slot ? " on" : ""), "aria-pressed": cur === slot ? "true" : "false", title: label,
       onClick: function () { akArtPick(t, slot); done && done(); } },
@@ -22821,8 +22834,9 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "10.0";
+var AK_VERSION = "10.1";
 var AK_WHATS_NEW = [
+  "Fixed: the Atmosphere page. The theme picture was covering every background style, so picking a style, colors, strength, color intensity or slow drift seemed to do nothing. Tapping a style now shows it instead of the picture, Match my theme brings the picture back, the picture choices are on the Atmosphere page too, and slow drift and color intensity work on the picture as well.",
   (typeof akPersonal !== "function" || akPersonal() ? "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one." : "A short web address for your request page, like yoursite/r/yourname, instead of the long one.") + " It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
   "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end. The QR pop-up and printed sign show the address in words too",
   "Record my show: auto-scroll can start an audio or video recording of each song, only the songs you mark in a set list (● Record this song), or the whole night. A countdown (30 seconds to start) before scrolling, a level meter with a clipping warning, a camera preview, and a beep to line up a second recording (Settings > Songs and shows > Record my show)",
