@@ -12,6 +12,7 @@ function fromNetwork(req, ms) {
 self.addEventListener("fetch", function (e) {
   var req = e.request, url = new URL(req.url);
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
+  if (/\/(r|request)\//.test(url.pathname)) return; /* the short request address and the audience page: never saved as the app's offline copy */
   if (req.mode === "navigate") {   /* the app itself: newest copy if the network answers quickly, otherwise the saved one */
     e.respondWith(fromNetwork(req, 3500).then(function (r) { if (r && r.ok) { var copy = r.clone(); caches.open(CACHE).then(function (c) { c.put("index.html", copy); }); } return r; }).catch(function () { return caches.match("index.html").then(function (m) { return m || caches.match("./"); }); }));
     return;
