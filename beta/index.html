@@ -1609,11 +1609,30 @@ function backupJSON(libIds) {
 }
 function markBackedUp() { store.lastBackup = new Date().toISOString(); store.changes = 0; saveNow(); }
 function daysSince(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 864e5 : Infinity; }
-function parseBackup(text) {
-  var d = JSON.parse(text);
+function parseBackup(text, inner) {
+  var t = String(text == null ? "" : text).replace(/^\uFEFF/, ""), d;
+  if (!t.trim()) throw new Error("That isn't an Akashic Chords backup: the file is empty.");
+  try { d = JSON.parse(t); } catch (e) { throw new Error("That isn't an Akashic Chords backup: it isn't a data file (it starts with “" + t.trim().slice(0, 40) + "”)."); }
   if (d && Array.isArray(d.libs)) return { libs: d.libs, settings: d.settings, banter: d.banter, fingerings: d.fingerings, images: d.images, fonts: d.fonts };
   if (d && Array.isArray(d.songs)) return { libs: [fromV1(d)], settings: d.settings };
-  throw new Error("That isn't a Akashic Chords backup.");
+  /* GitHub's file details (name, sha, content in base64) instead of the file itself: open the content */
+  if (!inner && d && d.type === "file" && d.encoding === "base64" && typeof d.content === "string" && d.content) {
+    var bin = atob(d.content.replace(/\s/g, "")), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return parseBackup(new TextDecoder().decode(bytes), true);
+  }
+  throw new Error("That isn't an Akashic Chords backup: " + backupWhyNot(d));
+}
+function backupWhyNot(d) {
+  if (Array.isArray(d)) return "it's a list of " + d.length + " things" + (d.length && d[0] && d[0].type ? " (it looks like a folder on GitHub: check the file name)" : "") + ", not a backup.";
+  if (!d || typeof d !== "object") return "it holds just " + JSON.stringify(d) + ".";
+  if (d.type === "file" && d.sha) return "GitHub sent the file's details instead of the file itself" + (d.encoding === "none" ? " (the file is large)" : "") + ". Try again.";
+  if (d.type === "akashic-guitar-sound") return "it's a guitar sound file (open it in Settings > Chord sound).";
+  if (d.app === "akashic-media") return "it's an audio and photos file (open it in Import > Between my devices).";
+  if (d.show) return "it's a set list file (open it in Import).";
+  if (d.song || d.title) return "it's a single song (open it in Import > Songs).";
+  var k = Object.keys(d);
+  return k.length ? "there are no songs in it (it has " + k.slice(0, 6).join(", ") + (k.length > 6 ? "…" : "") + ")." : "it's empty.";
 }
 
 /* ---- colours for parts of a song (Verse, Chorus…): this song's own choice wins over the one for all songs ---- */
@@ -5099,7 +5118,9 @@ function ghReq(what, body) {
   if (!t || !/^[\w.-]+\/[\w.-]+$/.test(c.repo)) return Promise.reject(new Error("Fill in the repository (like yourname/chordbook-backup) and the token first."));
   var url = "https://api.github.com/repos/" + c.repo + "/contents/" + c.path.split("/").map(encodeURIComponent).join("/");
   var headers = { Authorization: "Bearer " + t, "X-GitHub-Api-Version": "2022-11-28", Accept: what === "raw" ? "application/vnd.github.raw+json" : what === "meta" ? "application/vnd.github.object+json" : "application/vnd.github+json" };
-  var opt = { method: what === "put" ? "PUT" : "GET", headers: headers };
+  /* no-store: the browser may otherwise answer the "raw" request with the file details it just cached for "meta"
+     (same address, different Accept), and then the sync sees no songs */
+  var opt = { method: what === "put" ? "PUT" : "GET", headers: headers, cache: "no-store" };
   if (what === "put") { headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
   return fetch(url, opt).then(function (r) {
     if (r.status === 404 && what !== "put") return null;
@@ -22821,8 +22842,9 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "10.0";
+var AK_VERSION = "10.1";
 var AK_WHATS_NEW = [
+  "Fixed: Sync now (GitHub) said your backup wasn't an Akashic Chords backup. It reads your GitHub file properly now, and if a file really can't be used, the message says why.",
   (typeof akPersonal !== "function" || akPersonal() ? "A short web address for your request page: your QR code and links can use aedryan13.github.io/akashic-chords/r/aedryan instead of the long one." : "A short web address for your request page, like yoursite/r/yourname, instead of the long one.") + " It never changes, even if you move to a new Firebase project, so printed signs keep working (Settings > Requests and tips > Short web address)",
   "Pick what the short address opens: song requests, your upcoming shows, tips, or learn and message. A sign can open one tab with ?shows or ?tip at the end. The QR pop-up and printed sign show the address in words too",
   "Record my show: auto-scroll can start an audio or video recording of each song, only the songs you mark in a set list (● Record this song), or the whole night. A countdown (30 seconds to start) before scrolling, a level meter with a clipping warning, a camera preview, and a beep to line up a second recording (Settings > Songs and shows > Record my show)",
