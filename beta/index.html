@@ -22905,8 +22905,11 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "12.0";
+var AK_VERSION = "12.1";
 var AK_WHATS_NEW = [
+  "Learn by level: pick 🌱 Beginner, 🎸 Intermediate or 🔥 Advanced at the top of Learn. Beginners see a short, clear list; Show everything opens the rest.",
+  "🧭 My course: pick a style and a goal song, then follow the steps to play it: tune up, warm up, learn its chords, one-minute changes, strum along with the loop (slow first), the whole song, then your first solo over the loop.",
+  "This week's homework for each level, and ⏩ Speed trainer (Advanced): a click that speeds up by itself and remembers your best tempo.",
   "Chord workshop (Write tab > Chord workshop, or 🎡 Workshop on the playing screen's Write mode): tap a beat in the chart, then a chord, and the next beat is picked, so tap, tap, tap makes a progression. Hold a chord to slide it. Grid in beats, eighths, triplets or sixteenths, with zoom.",
   "The wheel spins: turn the outer ring of notes (or tap one) to start from another chord, and the suggestions follow. The chord you pick in the chart sits in the middle.",
   "Sections like clips: Verse, Pre-chorus, Chorus, transitions. Duplicate, split, join, rename, color, and hold one to slide it into a new place. Each has its own time signature (5/4, 7/8 as 2+2+3, 5/16 and more) and strum.",
@@ -31096,6 +31099,322 @@ akCss("ak14-a", [
   ".akws-oh{display:flex;align-items:center;gap:8px;padding:8px 0;position:sticky;top:0;z-index:4;background:var(--bg)}",
   ".akws-over .akws-tp{top:52px}",
   "@media (max-width:640px){.akws-chips{grid-template-columns:repeat(auto-fill,minmax(78px,1fr))}.akws-clip{flex-basis:84px}.akws-tp .akws-lab{font-size:.85rem}}"
+].join("\n"));
+
+/* ================= Akashic Chords 12.1: Learn by level, a song-goal course, homework, the speed trainer
+   - The Learn page asks once where you are (🌱 Beginner, 🎸 Intermediate, 🔥 Advanced; settings().level, the same level the libraries
+     already use) and what you'd like to play (a style or a song). Each level sees its own set of tabs: beginners see My course,
+     Chords, the Tuner and Metronome and their practice log ("Show everything" opens the rest); advanced sees everything plus ⏩ Speed trainer.
+   - 🧭 My course: a goal song you'd want to play, then the steps to play it: tune up, warm up, learn its chords one at a time,
+     one-minute changes, strum along with the loop (slow first), play the whole song, then loop its chords and play the scale over them
+     (your first solo). Done steps are ticked; then the next song (one new idea at a time).
+   - Homework for the week for each level (ticks kept per week), and the practice log counts course and speed-trainer time.
+   - ⏩ Speed trainer: a click that speeds up by itself (start, goal, + bpm every so many bars) for scales, licks or changes; your best
+     tempo per exercise is kept.
+   State: settings().course = { asked, style, goal, done: { goalId: { step: true } }, best: { goalId: changes }, hw: { "2026-W42": { i: true } },
+   all (beginner sees every tab), speed: { what, from, to, step, every, beats, best: {} } }. */
+
+/* ---------------------------------------------------------------- the goal songs: chords as usually played (no words) */
+/* [id, title, artist, style, level 1-3, key, [loop chords], [all chords], bpm, strum, scale for the solo ("minpent" | "majpent" | "blues" | ...), solo root pc, tip] */
+var AK_GOALS = [
+  ["knock", "Knockin' on Heaven's Door", "Bob Dylan", "rock", 1, "G", ["G", "D", "Am", "Am", "G", "D", "C", "C"], ["G", "D", "Am", "C"], 69, "D - D U - U D U", "minpent", 4, "Four chords, slow and steady: the classic first song."],
+  ["letitbe", "Let It Be", "The Beatles", "pop", 1, "C", ["C", "G", "Am", "F"], ["C", "G", "Am", "F"], 72, "D - D U - U D U", "majpent", 0, "The F chord is the only hard one: a small F (four strings) is fine to start."],
+  ["standby", "Stand By Me", "Ben E. King", "soul", 1, "A", ["A", "A", "F#m", "F#m", "D", "E", "A", "A"], ["A", "F#m", "D", "E"], 118, "D - D U - U D U", "majpent", 9, "The bass line is the hook: play the root note, then strum."],
+  ["birds", "Three Little Birds", "Bob Marley", "reggae", 1, "A", ["A", "A", "D", "A", "A", "E", "A", "D"], ["A", "D", "E"], 74, "- U - U - U - U", "majpent", 9, "Reggae strums on the off-beats: mute on the beat, chop on the 'and'."],
+  ["badmoon", "Bad Moon Rising", "Creedence Clearwater Revival", "rock", 1, "D", ["D", "A", "G", "D"], ["D", "A", "G"], 179, "D - D U - U D U", "majpent", 2, "Three chords, quick changes: great for building speed."],
+  ["jetplane", "Leaving on a Jet Plane", "John Denver", "folk", 1, "G", ["G", "C", "G", "C", "G", "C", "D", "D"], ["G", "C", "D"], 92, "D - D U - U D U", "majpent", 7, "G, C and D are the three chords behind hundreds of songs."],
+  ["riptide", "Riptide", "Vance Joy", "pop", 1, "C", ["Am", "G", "C", "C"], ["Am", "G", "C", "F"], 102, "D - D U - U D U", "minpent", 9, "Famous on ukulele, just as good on guitar."],
+  ["wagon", "Wagon Wheel", "Old Crow Medicine Show", "country", 1, "G", ["G", "D", "Em", "C", "G", "D", "C", "C"], ["G", "D", "Em", "C"], 145, "D - D U - U D U", "majpent", 7, "Same four chords as a lot of pop: once you have them, you have dozens of songs."],
+  ["sunshine", "Ain't No Sunshine", "Bill Withers", "soul", 1, "Am", ["Am", "Em", "G", "Am"], ["Am", "Em", "G"], 78, "D - - - D - D U", "minpent", 9, "A perfect song for your first solo: the A minor pentatonic fits all of it."],
+  ["folsom", "Folsom Prison Blues", "Johnny Cash", "country", 1, "E", ["E", "E", "E", "E", "A", "A", "E", "E", "B7", "B7", "E", "E"], ["E", "A", "B7"], 105, "D - D U D - D U", "majpent", 4, "Bass note, strum, bass note, strum: the boom-chicka."],
+  ["blues", "12-bar blues in A", "Everyone", "blues", 1, "A", ["A7", "A7", "A7", "A7", "D7", "D7", "A7", "A7", "E7", "D7", "A7", "E7"], ["A7", "D7", "E7"], 90, "D - D U D - D U", "blues", 9, "The form behind rock and roll. Solo with the A blues scale."],
+  ["zombie", "Zombie", "The Cranberries", "rock", 2, "Em", ["Em", "C", "G", "D"], ["Em", "C", "G", "D"], 84, "D - D> U - U D> U", "minpent", 4, "Four chords, a big strum, and a melody you can solo around."],
+  ["wish", "Wish You Were Here", "Pink Floyd", "rock", 2, "G", ["C", "D", "Am", "G", "D", "C", "Am", "G"], ["C", "D", "Am", "G", "Em"], 60, "D - D U - U D U", "minpent", 4, "Learn the chords first; the famous intro riff uses the same notes."],
+  ["rising", "House of the Rising Sun", "The Animals", "folk", 2, "Am", ["Am", "C", "D", "F", "Am", "C", "E", "E"], ["Am", "C", "D", "F", "E"], 116, "D - D U D U", "minpent", 9, "In 6/8 (count 1-2-3-4-5-6), picked one string at a time."],
+  ["creep", "Creep", "Radiohead", "rock", 2, "G", ["G", "B", "C", "Cm"], ["G", "B", "C", "Cm"], 92, "D - D U - U D U", "majpent", 7, "B and C minor are borrowed colors: this is where a song gets its ache."],
+  ["teen", "Smells Like Teen Spirit", "Nirvana", "rock", 2, "F", ["F5", "Bb5", "Ab5", "Db5"], ["F5", "Bb5", "Ab5", "Db5"], 117, "D - D U D - D U", "minpent", 5, "Power chords: one shape moved around the neck."],
+  ["wonder", "Wonderwall", "Oasis", "pop", 2, "Em", ["Em7", "G", "Dsus4", "A7sus4"], ["Em7", "G", "Dsus4", "A7sus4", "Cadd9"], 87, "D - D U - U D U", "minpent", 4, "Keep the top two strings ringing through every chord."],
+  ["hallelujah", "Hallelujah", "Leonard Cohen", "folk", 2, "C", ["C", "Am", "C", "Am", "F", "G", "C", "G"], ["C", "Am", "F", "G", "E7"], 56, "D - D U D U", "majpent", 0, "6/8 feel. The E7 near the end of the verse pulls back to Am."],
+  ["nowoman", "No Woman, No Cry", "Bob Marley", "reggae", 2, "C", ["C", "G", "Am", "F"], ["C", "G", "Am", "F"], 78, "- U - U - U - U", "majpent", 0, "Same chords as Let It Be with a reggae feel."],
+  ["imagine", "Imagine", "John Lennon", "pop", 2, "C", ["C", "Cmaj7", "F", "F"], ["C", "Cmaj7", "F", "Am", "Dm", "G", "E7"], 76, "D - D U - U D U", "majpent", 0, "Lovely on piano: the Cmaj7 is just one finger away from C."],
+  ["heyjude", "Hey Jude", "The Beatles", "pop", 2, "F", ["F", "C", "C7", "F", "Bb", "F", "C", "F"], ["F", "C", "C7", "Bb"], 74, "D - D U - U D U", "majpent", 5, "Your first song with barre chords (F and Bb), or capo and play it in another key."],
+  ["hotel", "Hotel California", "Eagles", "rock", 3, "Bm", ["Bm", "F#", "A", "E", "G", "D", "Em", "F#"], ["Bm", "F#", "A", "E", "G", "D", "Em"], 74, "D - D U - U D U", "minpent", 11, "Eight chords, a borrowed-sounding F# and one of the great solos."],
+  ["flyme", "Fly Me to the Moon", "Frank Sinatra", "jazz", 3, "C", ["Am7", "Dm7", "G7", "Cmaj7", "Fmaj7", "Bm7b5", "E7", "Am7"], ["Am7", "Dm7", "G7", "Cmaj7", "Fmaj7", "Bm7b5", "E7"], 120, "D - D - D - D -", "major", 0, "The circle of fifths in one tune: every chord moves down a fifth."],
+  ["autumn", "Autumn Leaves", "Joseph Kosma", "jazz", 3, "Gm", ["Cm7", "F7", "Bbmaj7", "Ebmaj7", "Am7b5", "D7", "Gm", "Gm"], ["Cm7", "F7", "Bbmaj7", "Ebmaj7", "Am7b5", "D7", "Gm"], 120, "D - D - D - D -", "minpent", 7, "A major ii–V–I, then a minor one: the standard jazz players learn first."]
+];
+var AK_GOAL_STYLES = [["rock", "Rock"], ["pop", "Pop"], ["folk", "Folk and singer-songwriter"], ["country", "Country"], ["blues", "Blues"], ["soul", "Soul and R&B"], ["reggae", "Reggae"], ["jazz", "Jazz"]];
+function akGoal(id) { var r = AK_GOALS.filter(function (g) { return g[0] === id; })[0]; return r ? { id: r[0], t: r[1], a: r[2], sty: r[3], lv: r[4], key: r[5], loop: r[6], chords: r[7], bpm: r[8], strum: r[9], sc: r[10], root: r[11], tip: r[12] } : null; }
+function akCourse() { var c = settings().course = settings().course || {}; ["done", "best", "hw"].forEach(function (k) { c[k] = c[k] || {}; }); return c; }
+/* a goal from one of my own songs (its chords, its key) */
+function akGoalFromSong(s) {
+  var chs = []; akSongChords(s).forEach(function (c) { if (chs.indexOf(c) < 0) chs.push(c); });
+  var k = akSongKey(s), loop = [], seen = 0; akSongChords(s).some(function (c) { if (loop[loop.length - 1] !== c) loop.push(c); return loop.length >= 8; });
+  var minor = k && k.minor;
+  return { id: "song:" + s.id, t: s.title || "My song", a: s.artist || "", sty: "", lv: chs.length <= 4 ? 1 : chs.length <= 7 ? 2 : 3, key: k ? NAMES.sharp[k.pc] + (minor ? "m" : "") : "C", loop: loop.length ? loop : chs.slice(0, 4), chords: chs.slice(0, 12), bpm: Number(s.tempo) || 90, strum: "D - D U - U D U", sc: minor ? "minpent" : "majpent", root: k ? k.pc : 0, tip: "One of your own songs.", sid: s.id };
+}
+function akGoalNow() { var c = akCourse(); if (!c.goal) return null; if (/^song:/.test(c.goal)) { var s = findSong(c.goal.slice(5)); return s ? akGoalFromSong(s) : null; } return akGoal(c.goal); }
+function akGoalsFor(style, lv) {
+  return AK_GOALS.map(function (r) { return akGoal(r[0]); }).filter(function (g) { return (!style || g.sty === style) && g.lv <= Math.max(lv, 1) + (lv === 1 ? 0 : 1); })
+    .sort(function (a, b) { return Math.abs(a.lv - lv) - Math.abs(b.lv - lv) || a.chords.length - b.chords.length; });
+}
+
+/* ---------------------------------------------------------------- which tabs each level sees */
+var AK_LEVEL_TABS = { beginner: ["course", "chords", "log"], intermediate: ["course", "guide", "plans", "log", "warmups", "lessons", "chords", "scales", "licks", "jazz", "trainer"], advanced: null };
+(function () {
+  if (typeof AK_LEARN_TABS_ALL === "undefined") return;
+  AK_LEARN_TABS_ALL.unshift(["course", "🧭 My course"]);
+  AK_LEARN_TABS_ALL.push(["speed", "⏩ Speed trainer"]);
+  try { AK_LEARN_ROWS[0][1].unshift("🧭 My course"); AK_LEARN_ROWS[2][1].push("⏩ Speed trainer"); } catch (e) {}
+  var vl = viewLearn;
+  viewLearn = function () {
+    var lv = akLevel(), c = akCourse(), keep = AK_LEARN_TABS_ALL.slice(), allow = c.all ? null : AK_LEVEL_TABS[lv];
+    if (lv !== "advanced") allow = (allow || keep.map(function (t) { return t[0]; })).filter(function (id) { return id !== "speed"; });
+    if (allow) { var f = keep.filter(function (t) { return allow.indexOf(t[0]) >= 0; }); AK_LEARN_TABS_ALL.length = 0; f.forEach(function (t) { AK_LEARN_TABS_ALL.push(t); }); }
+    if (!S.learnTab || (allow && allow.indexOf(S.learnTab) < 0)) S.learnTab = "course";
+    var el;
+    try { el = vl.apply(this, arguments); } finally { AK_LEARN_TABS_ALL.length = 0; keep.forEach(function (t) { AK_LEARN_TABS_ALL.push(t); }); }
+    var wrap = el.querySelector("[data-blocks=learn]"), pane = el.querySelector(".aklearn-pane");
+    if (wrap) wrap.insertBefore(akLevelBar(), wrap.firstChild);
+    if (lv === "beginner" && wrap) {
+      /* fewer things on the screen: the Reference and Tools rows fold into "Show everything" */
+      var more = h("button", { class: "linkish ak14-all", onClick: function () { c.all = !c.all; save(); render(); } }, c.all ? "Show less (just my course)" : "Show everything (lessons, scales, licks, loop player…)");
+      var tabs = wrap.querySelector(".aklearn-tabs"); if (tabs) tabs.parentNode.insertBefore(more, tabs.nextSibling);
+    }
+    if (pane && S.learnTab === "course") { pane.textContent = ""; akCourseView(pane); }
+    else if (pane && S.learnTab === "speed") { pane.textContent = ""; akSpeedView(pane); }
+    return el;
+  };
+})();
+function akLevelBar() {
+  var lv = akLevel(), c = akCourse();
+  var row = h("div", { class: "ak14-lv", role: "group", "aria-label": "Your level" }, [["beginner", "🌱 Beginner", "Just starting"], ["intermediate", "🎸 Intermediate", "I know some chords and songs"], ["advanced", "🔥 Advanced", "Show me everything"]].map(function (x) {
+    return h("button", { class: lv === x[0] ? "on" : "", "aria-pressed": lv === x[0] ? "true" : "false", onClick: function () { settings().level = x[0]; c.asked = true; if (x[0] !== "beginner") c.all = false; save(); render(); } }, h("b", null, x[1]), h("small", null, x[2]));
+  }));
+  return row;
+}
+
+/* ---------------------------------------------------------------- 🧭 My course */
+var AK_COURSE_STEPS = [
+  ["tune", "Tune up", "Every practice starts in tune: it makes everything sound better."],
+  ["warm", "Warm up (2 minutes)", "One finger per fret, 1-2-3-4 on each string, slow and even."],
+  ["chords", "Learn the chords", "One chord at a time: every string ringing, then take your hand away and put it back."],
+  ["changes", "One-minute changes", "Switch between two chords as many times as you can in a minute. 30 clean changes and you're ready."],
+  ["along", "Strum along with the loop", "The song's chords loop while you play. Start slow, then speed up."],
+  ["song", "Play the whole song", "Start to finish without stopping, even if a chord goes wrong."],
+  ["solo", "Your first solo", "Loop the chords and play the scale over them. Start with the notes in the accent color."],
+  ["share", "Play it for someone", "Play it for a friend, or record yourself. That's the goal reached!"]
+];
+function akCourseView(box) {
+  var c = akCourse(), lv = akLevelN(), goal = akGoalNow();
+  function redraw() { box.textContent = ""; akCourseView(box); }
+  if (!c.asked) { box.appendChild(akCourseWelcome(redraw)); return; }
+  if (!goal) { box.appendChild(akGoalPicker(redraw)); return; }
+  var done = c.done[goal.id] = c.done[goal.id] || {}, n = AK_COURSE_STEPS.filter(function (s) { return done[s[0]]; }).length;
+  /* the goal */
+  box.appendChild(h("div", { class: "card ak14-goal" },
+    h("div", { class: "muted" }, "Your goal song"),
+    h("h2", { style: "margin:2px 0" }, goal.t), h("div", { class: "muted" }, (goal.a ? goal.a + " · " : "") + "key of " + goal.key.replace(/m$/, " minor") + " · " + goal.chords.length + " chords"),
+    h("p", { style: "margin:6px 0" }, goal.tip),
+    h("div", { class: "akprog-bar", role: "img", "aria-label": n + " of " + AK_COURSE_STEPS.length + " steps done" }, h("i", { style: "width:" + Math.round(n * 100 / AK_COURSE_STEPS.length) + "%" })),
+    h("div", { class: "row", style: "flex-wrap:wrap;gap:6px" },
+      h("button", { onClick: function () { c.goal = ""; save(); redraw(); } }, "Pick another song"),
+      h("a", { class: "btn", href: "https://www.youtube.com/results?search_query=" + encodeURIComponent(goal.t + " " + goal.a + " " + (akLearnInst() === "piano" ? "piano" : akLearnInst()) + " lesson easy"), target: "_blank", rel: "noopener" }, "▶ Find a video lesson ↗"))));
+  /* the steps */
+  var first = AK_COURSE_STEPS.filter(function (s) { return !done[s[0]]; })[0];
+  AK_COURSE_STEPS.forEach(function (s, i) {
+    if (lv >= 3 && (s[0] === "tune" || s[0] === "warm")) return;
+    var open = first && first[0] === s[0] || S.ak14Open === s[0];
+    var d = h("details", { class: "card ak14-step" + (done[s[0]] ? " done" : ""), open: open, onToggle: function () { if (this.open) S.ak14Open = s[0]; } },
+      h("summary", null, h("span", { class: "akles-ck" }, done[s[0]] ? "✓" : String(i + 1)), h("b", null, " " + s[1]), h("span", { class: "muted" }, "  " + s[2])));
+    var body = h("div", { class: "ak14-sb" }); akCourseStep(s[0], goal, body, redraw); d.appendChild(body);
+    d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!done[s[0]], onChange: function () { if (this.checked) done[s[0]] = Date.now(); else delete done[s[0]]; S.ak14Open = ""; save(); redraw(); } }), done[s[0]] ? " Done" : " I've done this"));
+    box.appendChild(d);
+  });
+  if (n >= AK_COURSE_STEPS.length - 1) {
+    var nx = akGoalsFor(goal.sty, lv).filter(function (g) { return !c.done[g.id] || Object.keys(c.done[g.id]).length < 6; }).filter(function (g) { return g.id !== goal.id; }).slice(0, 4);
+    box.appendChild(h("div", { class: "card akteach-ready" }, h("h3", { style: "margin-top:0" }, "🎉 Next song"), h("p", { class: "hint" }, "Each one adds a chord or an idea you haven't had yet."),
+      h("div", { class: "ak14-glist" }, nx.map(function (g) { return akGoalRow(g, function () { c.goal = g.id; save(); redraw(); }); }))));
+  }
+  box.appendChild(akHomework(goal));
+}
+function akCourseWelcome(done) {
+  var c = akCourse(), box = h("div", { class: "card ak14-welcome" });
+  box.appendChild(h("h2", { style: "margin-top:0" }, "Welcome! Let's get you playing."));
+  box.appendChild(h("p", null, "Where are you starting?"));
+  box.appendChild(akLevelBar());
+  box.appendChild(h("p", { style: "margin-top:14px" }, "What kind of music do you want to play? We'll start with a song you'd actually like to play, and learn its chords."));
+  box.appendChild(h("div", { class: "chips" }, AK_GOAL_STYLES.map(function (x) { return h("button", { class: "chip" + (c.style === x[0] ? " on" : ""), onClick: function () { c.style = x[0]; c.asked = true; save(); done(); } }, x[1]); }),
+    h("button", { class: "chip", onClick: function () { c.style = ""; c.asked = true; save(); done(); } }, "Anything")));
+  return box;
+}
+function akGoalRow(g, pick) {
+  return h("button", { class: "ak14-grow", onClick: pick }, h("span", null, h("b", null, g.t), g.a ? h("span", { class: "muted" }, " · " + g.a) : null), h("small", { class: "muted" }, ["", "🌱", "🎸", "🔥"][g.lv] + " " + g.chords.length + " chords: " + g.chords.join(" ")));
+}
+function akGoalPicker(done) {
+  var c = akCourse(), lv = akLevelN(), box = h("div", { class: "card" });
+  box.appendChild(h("h2", { style: "margin-top:0" }, "Pick a goal song"));
+  box.appendChild(h("div", { class: "chips" }, [["", "Any style"]].concat(AK_GOAL_STYLES).map(function (x) { return h("button", { class: "chip" + ((c.style || "") === x[0] ? " on" : ""), onClick: function () { c.style = x[0]; save(); done(); } }, x[1]); })));
+  var list = akGoalsFor(c.style, lv); if (!list.length) list = akGoalsFor("", lv);
+  box.appendChild(h("div", { class: "ak14-glist" }, list.map(function (g) { return akGoalRow(g, function () { c.goal = g.id; save(); done(); }); })));
+  box.appendChild(h("p", { class: "hint" }, "Or learn one of your own songs (its chords and key):"));
+  box.appendChild(h("button", { onClick: function () { histSongPicker("Learn which song?", function (ids) { var s = findSong(ids[0]); if (!s) return; if (!akSongChords(s).length) { toast("That song has no chords yet."); return; } c.goal = "song:" + s.id; save(); done(); }); } }, "🎵 One of my songs…"));
+  return box;
+}
+/* each step's own tools */
+function akCourseStep(id, g, body, redraw) {
+  var c = akCourse(), inst = akLearnInst(), piano = inst === "piano";
+  if (id === "tune") { body.appendChild(h("button", { class: "primary", onClick: function () { openChordTools("tuner"); } }, "🎚 Open the tuner")); return; }
+  if (id === "warm") {
+    body.appendChild(h("p", { class: "hint" }, piano ? "Play C D E F G and back with each hand, fingers 1 to 5, slow and even." : "Index finger on fret 1, then fingers 2, 3, 4 on frets 2, 3, 4, on each string from the thickest down. Keep each note clean."));
+    body.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akPlanRun([{ k: "warm", t: "Finger warm-up", how: piano ? "C D E F G and back, each hand." : "1-2-3-4 on each string, up and back.", mins: 2, bpm: 60 }], redraw); } }, "▶ 2-minute warm-up with the click"),
+      h("button", { onClick: function () { S.learnTab = "warmups"; akCourse().all = akCourse().all || akLevel() === "beginner"; save(); render(); } }, "More warm-ups")));
+    return;
+  }
+  if (id === "chords") {
+    var grid = h("div", { class: "ak14-chords" });
+    g.chords.forEach(function (ch) {
+      var cell = h("div", { class: "ak14-ch" }, h("b", null, ch));
+      try { var d = akDiagramsRow(ch, 1); cell.appendChild(d); } catch (e) {}
+      cell.appendChild(h("button", { class: "sm", onClick: function () { akHearChord(ch, { capo: 0, force: true }); } }, "▶ Hear it"));
+      grid.appendChild(cell);
+    });
+    body.appendChild(grid);
+    body.appendChild(h("p", { class: "hint" }, "Tap a picture to hear that shape. Press each string one at a time: if one buzzes, press closer to the fret."));
+    return;
+  }
+  if (id === "changes") {
+    var pairs = []; for (var i = 0; i < g.chords.length; i++) { var a = g.chords[i], b = g.chords[(i + 1) % g.chords.length]; if (a !== b && !pairs.some(function (p) { return p[0] === b && p[1] === a; })) pairs.push([a, b]); }
+    var best = c.best[g.id] = c.best[g.id] || {};
+    pairs.slice(0, 5).forEach(function (p) {
+      var k = p.join(">"), out = h("span", { class: "muted" }, best[k] ? "Best: " + best[k] + " changes" : "Not tried yet");
+      body.appendChild(h("div", { class: "row ak14-pair" }, h("b", null, p[0] + " ⇄ " + p[1]), out,
+        h("button", { class: "sm", onClick: function () { akMinuteChanges(p, function (n) { if (n > (best[k] || 0)) { best[k] = n; save(); } redraw(); }); } }, "⏱ One minute")));
+    });
+    return;
+  }
+  if (id === "along" || id === "solo") {
+    var bpmPct = c.pct = c.pct || 70, out2 = h("output", null, bpmPct + "% (" + Math.round(g.bpm * bpmPct / 100) + " bpm)");
+    var host = h("div", { class: "ak14-loop" });
+    var st = { key: g.key, bpm: Math.round(g.bpm * bpmPct / 100), prog: [], ws: null };
+    var ts = g.id === "rising" || g.id === "hallelujah" ? [6, 8] : [4, 4];
+    st.ws = { v: 1, secs: [{ id: "g", name: g.t, ts: ts, grp: "", st: id === "solo" ? "D - - - D - - -" : g.strum, bars: g.loop.map(function (ch) { return { c: [{ t: 0, ch: ch }] }; }) }], loop: { on: true, what: "sec" }, click: c.click !== false, count: true };
+    akWsNorm(st);
+    var bars = h("div", { class: "ak14-bars" }); g.loop.forEach(function (ch, bi) { bars.appendChild(h("div", { class: "akws-bar ak14-bar", "data-k": "0:" + bi }, h("div", { class: "akws-cells" }, h("b", null, ch)))); });
+    host.appendChild(bars);
+    host.appendChild(h("div", { class: "row", style: "align-items:center;flex-wrap:wrap;gap:6px" },
+      h("button", { class: "primary akws-play", onClick: function () { if (AKWS.on) akWsStop(); else akWsStart(st, host); } }, "▶ Play"),
+      h("label", { class: "akws-lab" }, "Speed ", h("input", { type: "range", min: "40", max: "120", step: "5", value: String(bpmPct), "aria-label": "Speed", onInput: function () { c.pct = Number(this.value); st.bpm = Math.round(g.bpm * c.pct / 100); out2.textContent = c.pct + "% (" + st.bpm + " bpm)"; save(); }, onChange: function () { akWsReplay(st); } }), out2),
+      h("label", { class: "chk" }, h("input", { type: "checkbox", checked: c.click !== false, onChange: function () { c.click = this.checked; st.ws.click = this.checked; save(); akWsReplay(st); } }), " Click")));
+    body.appendChild(host);
+    if (id === "along") { body.appendChild(h("p", { class: "hint" }, "Strum: " + akWsGlyphs(g.strum) + ". Start at 60–70%; when it feels easy, go up 5% at a time until you reach 100%.")); return; }
+    /* the solo: the scale over the loop */
+    var sc = akScale(g.sc) || akScale("minpent"), key = akParseKey(g.key) || { pc: 0 };
+    body.appendChild(h("p", null, h("b", null, akRootName(g.root) + " " + sc.n), ": " + sc.iv.map(function (x) { return akRootName(akMod(g.root + x)); }).join(" ")));
+    try {
+      if (piano) { var marks = {}, r0 = 60 + g.root; sc.iv.concat([12]).forEach(function (x) { marks[r0 + x] = { cls: x % 12 === 0 ? "root" : "on", label: AK_DEG_NAMES[x % 12] }; }); body.appendChild(h("div", { class: "akkbwrap" }, akKeyboard(r0 - 2, r0 + 14, marks, { onTap: function (m) { akTone(m, 0.6, 0, "keys"); } }))); }
+      else {
+        var notes = akShapeNotes(settings().instrument), poss = akScalePositions(notes, g.root, sc.iv, "boxes", 17), p0 = poss.slice().sort(function (a, b) { return Math.abs(a.from - 5) - Math.abs(b.from - 5); })[0];
+        if (p0) body.appendChild(h("div", { class: "akfbwrap" }, akFb2(notes, p0.cells.map(function (cc) { return [cc[0], cc[1], akRole(akMod(notes[cc[0]] + cc[1]), g.root)]; }), { from: Math.max(0, p0.from - 1), frets: p0.from + 5, label: sc.n, root: g.root, iv: sc.iv })));
+      }
+    } catch (e) {}
+    body.appendChild(h("p", { class: "hint" }, "Play the scale up and down slowly with the loop. Then play short bits, and leave space: stop on a note in the accent color (the home note) at the end of each phrase. That's soloing!"));
+    return;
+  }
+  if (id === "song") {
+    var mine = g.sid ? findSong(g.sid) : lib().songs.filter(function (s) { return !s.deleted && !s.trashed && String(s.title || "").toLowerCase() === g.t.toLowerCase(); })[0];
+    body.appendChild(h("p", { class: "hint" }, "Play along with the recording, or with the loop at 100%. Don't stop for mistakes: keep the strum going and catch the next chord."));
+    body.appendChild(h("div", { class: "row", style: "flex-wrap:wrap;gap:6px" },
+      mine ? h("button", { class: "primary", onClick: function () { S.playMode = "perform"; startPlay([{ songId: mine.id, setName: "Learn", setNo: 1 }], 0, function () { go("learn"); }); } }, "▶ Open “" + mine.title + "” in my songs")
+        : h("button", { class: "primary", onClick: function () { snap("learn song"); var s = newSong({ title: g.t, artist: g.a, key: g.key, tempo: g.bpm, lyrics: "[Chords]\n" + g.loop.map(function (x) { return "[" + x + "]"; }).join(" ") + "\n\n(Add the words from the recording.)", tags: ["learning"] }); lib().songs.push(s); save(); toast("Added to your songs with its chords.", { label: "Open", fn: function () { go("song", { songId: s.id }); } }); redraw(); } }, "+ Add it to my songs (with its chords)"),
+      h("a", { class: "btn", href: "https://www.google.com/search?q=" + encodeURIComponent(g.t + " " + g.a + " lyrics"), target: "_blank", rel: "noopener" }, "Find the words ↗")));
+    return;
+  }
+  if (id === "share") {
+    body.appendChild(h("p", { class: "hint" }, "Record yourself (Write tab > Record), listen back, and pick one thing to fix next time."));
+    body.appendChild(h("button", { onClick: function () { go("write"); } }, "🎙 Record it on the Write tab"));
+  }
+}
+/* one-minute changes: count each clean change with a tap (or the space bar) */
+function akMinuteChanges(pair, done) {
+  var n = 0, left = 60, iv = 0, cnt = h("div", { class: "ak14-big" }, "0"), tm = h("div", { class: "muted" }, "1:00"), cur = h("div", { class: "ak14-pairnow" }, pair[0]);
+  var tap = h("button", { class: "primary ak14-tap", onClick: function () { if (!iv) start(); n++; cnt.textContent = String(n); cur.textContent = pair[n % 2]; } }, "Tap on each change");
+  function start() { var t0 = Date.now(); iv = setInterval(function () { left = 60 - Math.floor((Date.now() - t0) / 1000); tm.textContent = "0:" + ("0" + Math.max(0, left)).slice(-2); if (left <= 0) { clearInterval(iv); tap.disabled = true; tm.textContent = "Time! " + n + " changes" + (n >= 30 ? " 🎉" : n >= 20 ? ", nearly there" : ""); akPracticeLog().push({ sid: "", at: Date.now(), secs: 60, kind: "course", what: "One-minute changes " + pair.join(" ⇄ ") }); save(); } }, 250); }
+  modal("One-minute changes: " + pair.join(" ⇄ "), h("div", { style: "text-align:center" }, h("p", { class: "hint" }, "Tap the button each time you land the next chord cleanly. The clock starts on your first tap."), cur, cnt, tm, tap),
+    [{ label: "Done", primary: true, onClick: function () { clearInterval(iv); done(n); } }]);
+}
+/* homework for the week: the level's routine plus the goal song */
+var AK_HW = {
+  1: [["Practise 10 minutes on 5 days", "Short and often beats long and rare."], ["One-minute changes on your hardest pair, every day", "Write down your score."], ["Strum along with the loop at 70%", "Then 80% when it's easy."], ["Learn one new chord from the song", ""]],
+  2: [["Practise 20 minutes on 5 days", ""], ["Scale with the click: up and down, 5 bpm faster each day", "Use the Speed trainer."], ["Play your song at full speed, start to finish", ""], ["Learn one lick and use it in the song", "Learn > Licks."], ["Put one borrowed chord into a progression", "Write tab > Chord workshop > Borrowed."]],
+  3: [["Practise 45 minutes on 5 days", ""], ["Speed trainer: a scale or lick 4 bpm faster than last week", ""], ["Solo over the loop using a mode", "Learn > Loop player."], ["Learn a solo or melody by ear", "Slow the recording down."], ["Write or rearrange a song in the Chord workshop", ""]]
+};
+function akWeekKey(t) { var d = new Date(t || Date.now()); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7); var w1 = new Date(d.getFullYear(), 0, 4); return d.getFullYear() + "-W" + ("0" + (1 + Math.round(((d - w1) / 86400000 - 3 + (w1.getDay() + 6) % 7) / 7))).slice(-2); }
+function akHomework(goal) {
+  var c = akCourse(), lv = akLevelN(), wk = akWeekKey(), hw = c.hw[wk] = c.hw[wk] || {}, list = AK_HW[lv].slice();
+  if (goal) list.push(["Play “" + goal.t + "” for someone (or record it)", ""]);
+  var card = h("div", { class: "card ak14-hw" }, h("h3", { style: "margin-top:0" }, "📝 This week's homework"), h("p", { class: "hint" }, "New list every Monday. Tick what you've done."));
+  list.forEach(function (x, i) { card.appendChild(h("label", { class: "chk ak14-hwi" + (hw[i] ? " ok" : "") }, h("input", { type: "checkbox", checked: !!hw[i], onChange: function () { if (this.checked) hw[i] = Date.now(); else delete hw[i]; save(); this.parentNode.classList.toggle("ok", this.checked); } }), " ", h("span", null, x[0], x[1] ? h("small", { class: "muted" }, "  " + x[1]) : null))); });
+  var mins = akPracMins(Date.now() - 6 * 86400000); card.appendChild(h("p", { class: "muted" }, "Practised this week: " + mins + " min."));
+  return card;
+}
+
+/* ---------------------------------------------------------------- ⏩ Speed trainer */
+var AKSP = { on: false, timer: 0, t: 0, bpm: 0, beat: 0, bar: 0, started: 0 };
+function akSpeedCfg() { var c = akCourse(), s = c.speed = c.speed || {}; var d = { what: "Scale up and down", from: 60, to: 120, step: 4, every: 4, beats: 4, best: {} }; Object.keys(d).forEach(function (k) { if (s[k] === undefined) s[k] = clone(d[k]); }); return s; }
+function akSpeedStop() {
+  if (!AKSP.on) return; AKSP.on = false; clearTimeout(AKSP.timer);
+  var s = akSpeedCfg(), secs = Math.round((Date.now() - AKSP.started) / 1000), top = Math.round(AKSP.bpm - (AKSP.bar < s.every ? 0 : 0));
+  if (secs >= 20) { akPracticeLog().push({ sid: "", at: Date.now(), secs: secs, kind: "speed", what: "Speed trainer: " + s.what + " to " + top + " bpm" }); }
+  if (top > (s.best[s.what] || 0)) s.best[s.what] = top;
+  save();
+  Array.prototype.forEach.call(document.querySelectorAll(".ak14-sgo"), function (b) { b.textContent = "▶ Start"; b.classList.remove("on"); });
+}
+function akSpeedStart(paint) {
+  var ac = akAudio(); if (!ac) return; var s = akSpeedCfg();
+  AKSP.on = true; AKSP.bpm = s.from; AKSP.beat = 0; AKSP.bar = 0; AKSP.t = ac.currentTime + 0.15; AKSP.started = Date.now();
+  (function tick() {
+    if (!AKSP.on) return;
+    while (AKSP.t < ac.currentTime + 0.2) {
+      var acc = AKSP.beat === 0; try { akRClick(Math.max(0, AKSP.t - ac.currentTime), acc); } catch (e) {}
+      AKSP.t += 60 / AKSP.bpm; AKSP.beat++;
+      if (AKSP.beat >= s.beats) { AKSP.beat = 0; AKSP.bar++; if (AKSP.bar % s.every === 0 && AKSP.bpm < s.to) AKSP.bpm = Math.min(s.to, AKSP.bpm + s.step); }
+    }
+    paint && paint();
+    AKSP.timer = setTimeout(tick, 25);
+  })();
+}
+function akSpeedView(box) {
+  var s = akSpeedCfg(), big = h("div", { class: "ak14-big" }, String(AKSP.on ? AKSP.bpm : s.from)), sub = h("div", { class: "muted" }, "bpm");
+  function paint() { big.textContent = String(AKSP.bpm); sub.textContent = "bpm · bar " + (AKSP.bar + 1) + (AKSP.bpm >= s.to ? " · at your goal!" : " · next +" + s.step + " in " + (s.every - AKSP.bar % s.every) + " bar" + (s.every - AKSP.bar % s.every === 1 ? "" : "s")); }
+  function num(lab, k, min, max) { return h("label", { class: "fld" }, lab, h("input", { type: "number", min: String(min), max: String(max), value: String(s[k]), inputmode: "numeric", onChange: function () { s[k] = Math.max(min, Math.min(max, Number(this.value) || s[k])); save(); } })); }
+  var what = h("input", { type: "text", value: s.what, "aria-label": "Exercise", list: "ak14-ex", onChange: function () { s.what = this.value.trim() || "Exercise"; save(); box.textContent = ""; akSpeedView(box); } });
+  var dl = h("datalist", { id: "ak14-ex" }, ["Scale up and down", "Pentatonic box", "Chromatic 1-2-3-4", "Chord changes", "Lick of the day", "Arpeggios", "Strumming pattern"].map(function (x) { return h("option", { value: x }); }));
+  box.appendChild(h("div", { class: "card" }, h("h3", { style: "margin-top:0" }, "⏩ Speed trainer"), h("p", { class: "hint" }, "The click speeds up by itself. Play your exercise clean at every tempo; if it falls apart, stop and start a little lower."),
+    h("label", { class: "fld" }, "Exercise", what), dl,
+    h("div", { class: "row", style: "flex-wrap:wrap;gap:8px" }, num("Start (bpm)", "from", 30, 300), num("Goal (bpm)", "to", 30, 320), num("Faster by", "step", 1, 20), num("Every (bars)", "every", 1, 16), num("Beats a bar", "beats", 1, 16)),
+    h("div", { class: "ak14-speed" }, big, sub),
+    h("div", { class: "row" }, h("button", { class: "primary ak14-sgo" + (AKSP.on ? " on" : ""), onClick: function () { if (AKSP.on) { akSpeedStop(); box.textContent = ""; akSpeedView(box); } else { akSpeedStart(paint); this.textContent = "■ Stop"; this.classList.add("on"); } } }, AKSP.on ? "■ Stop" : "▶ Start")),
+    h("p", { class: "muted" }, s.best[s.what] ? "Your best for “" + s.what + "”: " + s.best[s.what] + " bpm." : "Your best tempo for each exercise is kept here.")));
+}
+(function () { var r0 = render; render = function () { if (AKSP.on && (S.view !== "learn" || S.learnTab !== "speed")) akSpeedStop(); return r0.apply(this, arguments); }; })();
+
+akCss("ak14-b", [
+  ".ak14-lv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 8px}.ak14-lv button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;min-height:56px}",
+  ".ak14-lv button small{font-size:.72rem;opacity:.75;text-align:center}.ak14-lv button.on{background:var(--accent);color:var(--on-accent,var(--bg));border-color:var(--accent)}",
+  ".ak14-all{display:block;margin:-2px 0 8px}.ak14-welcome .chips{flex-wrap:wrap}",
+  ".ak14-step summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}.ak14-step summary::-webkit-details-marker{display:none}",
+  ".ak14-step.done{opacity:.8}.ak14-step .akles-ck{display:inline-flex;width:26px;height:26px;border-radius:50%;align-items:center;justify-content:center;border:2px solid var(--accent);font-size:.85rem}",
+  ".ak14-step.done .akles-ck{background:var(--accent);color:var(--on-accent,var(--bg))}.ak14-sb{margin:8px 0}",
+  ".ak14-glist{display:flex;flex-direction:column;gap:6px;margin:8px 0}.ak14-grow{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:8px 12px}",
+  ".ak14-chords{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}.ak14-ch{border:1px solid var(--line);border-radius:12px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:4px}",
+  ".ak14-ch b{font-size:1.2rem}.ak14-pair{align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line)}",
+  ".ak14-big{font-size:3rem;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}.ak14-pairnow{font-size:1.6rem;font-weight:800;color:var(--accent)}",
+  ".ak14-tap{min-height:72px;width:100%;font-size:1.2rem;margin-top:10px}",
+  ".ak14-bars{display:grid;grid-template-columns:repeat(auto-fill,minmax(70px,1fr));gap:0;border-left:3px solid var(--fg);margin:6px 0}",
+  ".ak14-bar{border-left:0;border-right:2px solid var(--fg);padding:0}.ak14-bar .akws-cells{min-height:48px;display:flex;align-items:center;justify-content:center;font-size:1.15rem}",
+  ".ak14-bar.now{background:var(--accent);color:var(--on-accent,var(--bg))}",
+  ".ak14-hwi{display:flex;gap:6px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)}.ak14-hwi.ok span{text-decoration:line-through;opacity:.7}",
+  ".ak14-speed{text-align:center;margin:10px 0}.ak14-sgo.on{background:#c22;border-color:#c22;color:#fff}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
