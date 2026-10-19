@@ -22940,7 +22940,7 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "14.0.1";
+var AK_VERSION = "14.1";
 var AK_WHATS_NEW = [
   "Your devices find each other for recordings more reliably: devices signed in to the same performer account now share one link code by themselves (before, they only matched after a Sync). If they still can't, the message says exactly why (not signed in, a different account, the Firebase rules) and Recordings shows this device's account and link code to compare.",
   "Sound from a file: share a sound recording from the sound phone, then on the video tap ⋯ › Add its sound from a file, or use Recordings › 📥 Add a recording from a file. The combine uses that sound first.",
@@ -29813,9 +29813,25 @@ function akRrWin() {
   var body = h("div", { class: "akrr-win" }), c = akRrCfg();
   function sel(label, get, set, opts) { return h("label", { class: "fld" }, label, h("select", { onChange: function () { set(this.value); save(); draw(); } }, opts.map(function (o) { return h("option", { value: String(o[0]), selected: String(get()) === String(o[0]) }, o[1]); }))); }
   function ck(label, get, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); save(); draw(); } }), label); }
+  /* 14.1: a phone's status (every few seconds) only redraws the top part, and the open/closed boxes and the scroll stay as they were */
+  var top = h("div", { class: "akrr-top" }), openMem = {};
+  function det(label, def) {
+    var d = h("details", { class: "card", open: Object.prototype.hasOwnProperty.call(openMem, label) ? openMem[label] : def }, h("summary", null, label));
+    d.addEventListener("toggle", function () { openMem[label] = d.open; });
+    return d;
+  }
   function draw() {
+    var sc = []; for (var a = body.parentElement; a; a = a.parentElement) if (a.scrollTop) sc.push([a, a.scrollTop]);
     body.textContent = "";
     if (!c.on) { c.on = true; save(); }
+    body.appendChild(top); drawTop();
+    var have = {}; akRrPhoneRows().forEach(function (p) { have[p.role] = 1; });
+    drawBoxes(!(have.video && have.audio));
+    sc.forEach(function (x) { x[0].scrollTop = x[1]; });
+  }
+  function drawTop() {
+    top.textContent = "";
+    var body = top;
     akRrListen();
     var where = akRrCloud() ? "online (your requests Firebase project)" : "this browser only (for trying it out; turn on online requests to use real phones)";
     body.appendChild(h("p", { class: "muted", style: "margin-top:0" }, "Connected: " + where + "."));
@@ -29838,14 +29854,17 @@ function akRrWin() {
         p.warn ? h("div", { class: "akrr-w" }, "⚠ " + p.warn) : null));
     });
     body.appendChild(box);
+    if (typeof akRr141Top === "function") akRr141Top(body);
+  }
+  function drawBoxes(addOpen) {
     var qr = h("div", { class: "row akrr-qr" });
     [["video", "🎥 Video phone"], ["audio", "🎙 Sound phone"]].forEach(function (r) {
       var url = akRrPhoneUrl(r[0]), q = typeof akQrSvg === "function" ? akQrSvg(url) : null;
       qr.appendChild(h("div", { class: "card center" }, h("b", null, r[1]), q, h("div", { class: "row center" }, h("button", { onClick: function () { try { navigator.clipboard.writeText(url); toast("Link copied."); } catch (e) { toast(url); } } }, "Copy link"))));
     });
-    body.appendChild(h("details", { class: "card", open: !rows.length }, h("summary", null, "Add a phone"), h("p", { class: "hint" }, "Scan with the phone's camera, open the link, tap Get ready and allow the camera or microphone. Leave the page open with the screen on (it can go black)."), qr));
+    var add = det("Add a phone", addOpen); add.appendChild(h("p", { class: "hint" }, "Scan with the phone's camera, open the link, tap Get ready and allow the camera or microphone. Leave the page open with the screen on (it can go black). The codes stay the same, so a phone can keep its link: on the phone's recorder page, tick “Open this phone as the recorder every time”.")); add.appendChild(qr); body.appendChild(add);
     /* how */
-    var how = h("details", { class: "card" }, h("summary", null, "How it records"));
+    var how = det("How it records", false);
     how.appendChild(sel("Files", function () { return c.mode; }, function (v) { c.mode = v; }, [["split", "One file per song"], ["one", "One file for the whole show, with song marks"]]));
     if (c.mode === "split") how.appendChild(ck("End song starts the next song's file right away (nothing between songs is lost)", function () { return c.next; }, function (v) { c.next = v; }));
     how.appendChild(ck("Starting auto-scroll = Start song", function () { return c.autoStart; }, function (v) { c.autoStart = v; }));
@@ -29853,7 +29872,7 @@ function akRrWin() {
     how.appendChild(sel("Remind me to End a song after", function () { return c.maxMin; }, function (v) { c.maxMin = Number(v) || 0; }, [[0, "Never"], [8, "8 minutes"], [10, "10 minutes"], [15, "15 minutes"], [20, "20 minutes"], [30, "30 minutes"]]));
     how.appendChild(ck("Beep at the start of each file (to line up sound and video later)", function () { return c.beep; }, function (v) { c.beep = v; }));
     body.appendChild(how);
-    var snd = h("details", { class: "card" }, h("summary", null, "Sound phone settings"));
+    var snd = det("Sound phone settings", false);
     snd.appendChild(sel("Format", function () { return c.a.fmt; }, function (v) { c.a.fmt = v; }, [["wav", "WAV, uncompressed (best)"], ["aac", "Compressed (much smaller)"]]));
     if (c.a.fmt === "wav") {
       snd.appendChild(sel("Sample rate", function () { return c.a.sr; }, function (v) { c.a.sr = Number(v); }, [[44100, "44.1 kHz"], [48000, "48 kHz"], [96000, "96 kHz (if the phone can)"]]));
@@ -29863,7 +29882,7 @@ function akRrWin() {
     snd.appendChild(ck("Let the phone clean up the sound (echo, noise, auto level). Off is best for music.", function () { return c.a.proc; }, function (v) { c.a.proc = v; }));
     snd.appendChild(h("p", { class: "hint" }, akRrSize(c) + " The phone says what it actually gave."));
     body.appendChild(snd);
-    var vid = h("details", { class: "card" }, h("summary", null, "Video phone settings"));
+    var vid = det("Video phone settings", false);
     vid.appendChild(sel("Resolution", function () { return c.v.res; }, function (v) { c.v.res = v; }, [["720", "720p"], ["1080", "1080p"], ["2160", "4K (if the phone can)"]]));
     vid.appendChild(sel("Frames per second", function () { return c.v.fps; }, function (v) { c.v.fps = Number(v); }, [[24, "24"], [30, "30"], [60, "60"]]));
     vid.appendChild(sel("Quality (bit rate)", function () { return c.v.mbps; }, function (v) { c.v.mbps = Number(v); }, [[4, "4 Mbps (smaller)"], [8, "8 Mbps"], [12, "12 Mbps"], [20, "20 Mbps (best)"]]));
@@ -29872,7 +29891,7 @@ function akRrWin() {
     vid.appendChild(h("p", { class: "hint" }, "About " + Math.round(c.v.mbps * 450) + " MB per hour of video. Changes reach the phones the next time a file starts."));
     body.appendChild(vid);
   }
-  body.akDraw = draw; draw();
+  body.akDraw = drawTop; draw();
   modal("Phone recorders", body, [{ label: "Done", primary: true }], { wide: true });
 }
 function akRrSize(c) {
@@ -32033,6 +32052,7 @@ function akLinkWire(P, dc, onOpen) {
     if (m.t === "list" && !m.recs) akLinkServeList(P, m);
     else if (m.t === "get") akLinkServeGet(P, m);
     else if (m.t === "cancel") { var s = AKLN.serving[m.q]; if (s) s.stop = true; }
+    else if (m.t === "snap" && !m.jpg && !m.msg && typeof akLinkServeSnap === "function") akLinkServeSnap(P, m);
     else akLinkReply(P, m);
   };
 }
@@ -32091,7 +32111,7 @@ function akLinkCall(dev, msg, o) {
 }
 function akLinkReply(P, m) {
   var c = AKLN.calls[m.q]; if (!c) return;
-  if (m.t === "list") { delete AKLN.calls[m.q]; c.res(m); }
+  if (m.t === "list" || m.t === "snap") { delete AKLN.calls[m.q]; c.res(m); }
   else if (m.t === "err") { delete AKLN.calls[m.q]; c.rej(new Error(m.msg || "The other device said no.")); }
   else if (m.t === "meta") { c.rec = m.rec; c.got = 0; c.chain = akRecDelete(m.rec.id).catch(function () {}); P.rx = c; }
   else if (m.t === "ch") { c.cur = { n: m.n, size: m.size, parts: [], got: 0 }; P.rx = c; if (!m.size) akLinkPut(c); }
@@ -33257,6 +33277,172 @@ function akRcFileChosen(f, redraw) {
 function akRcFileBtn(redraw) {
   return h("button", { class: "sm", title: "A sound or video file shared from your other phone (⋯ › Share there, then save it here)", onClick: function () { akRcPickFile(function (f) { akRcFileChosen(f, redraw); }); } }, "📥 Add a recording from a file");
 }
+
+/* ================= Akashic Chords: version 14.1, two-phone recording made easier =================
+   - Fix (ak13_c.js akRrWin): the Phone recorders window redrew everything each time a phone reported (every few seconds), so its
+     boxes (Add a phone, How it records...) snapped shut right after the first phone connected. Now a report only redraws the top part,
+     and a full redraw keeps which boxes are open and the scroll.
+   - Keep a phone's role: the recorder page remembers its link (localStorage "akrr:link"). "Open this phone as the recorder every time"
+     ("akrr:auto" = "1") makes the app go straight to that page when it opens on that phone (same address only; ?app=1 skips it once).
+     The page can switch the phone to the other role, and Settings > Songs and shows > This phone as a recorder has both buttons.
+   - Camera view: a ● Recording tab at the top right of the playing screen (when phone recorders or Record my show is on) opens a window
+     (akFloat "rec16": dock, minimise, ⤢ bigger) with the camera picture and the recording buttons. With phone recorders, the picture comes
+     from the video phone over the device link: {t:"snap", q, w} -> {t:"snap", q, jpg} or {t:"snap", q, msg} (akLinkServeSnap), about once
+     a second while the window is open on the Camera tab. Recording on this device shows its own camera.
+   - After the show: the video phone's 🎬 button already copies every matching sound file from the sound phone and puts it on its video in
+     one go; the sound phone's page and the tablet's window now say so. */
+
+var AK16F = { t: 0, busy: false, pv: null, pvStream: null, msg: "", big: false };
+
+/* ---------------------------------------------------------------- keep a phone's role */
+(function () {
+  try {
+    var q = new URLSearchParams(location.search);
+    if (q.get("rr") === "video" || q.get("rr") === "audio") { localStorage.setItem("akrr:link", location.href); return; }
+    if (q.get("app") || localStorage.getItem("akrr:auto") !== "1") return;
+    var l = localStorage.getItem("akrr:link");
+    if (l && l.split(/[?#]/)[0] === location.href.split(/[?#]/)[0]) location.replace(l);
+  } catch (e) {}
+})();
+function akRr141Link(role) {
+  var l = ""; try { l = localStorage.getItem("akrr:link") || ""; } catch (e) {}
+  return l ? l.replace(/([?&]rr=)(video|audio)/, "$1" + role) : "";
+}
+function akRr141Auto(v) { try { if (v === undefined) return localStorage.getItem("akrr:auto") === "1"; if (v) localStorage.setItem("akrr:auto", "1"); else localStorage.removeItem("akrr:auto"); } catch (e) {} return !!v; }
+(function () {
+  var dr = akRpDraw;
+  akRpDraw = function () {
+    var out = dr.apply(this, arguments);
+    try { if (AKRP.el) akRp141Card(); } catch (e) {}
+    return out;
+  };
+})();
+function akRp141Card() {
+  var inn = AKRP.el.querySelector(".akrp-in"); if (!inn) return;
+  var other = AKRP.role === "video" ? "audio" : "video", name = AKRP.role === "video" ? "video" : "sound";
+  var card = h("div", { class: "akrp-cb card ak16f-keep" }, h("b", null, "📌 This phone"),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: akRr141Auto(), onChange: function () { akRr141Auto(this.checked); toast(this.checked ? "This phone opens as the " + name + " recorder from now on." : "This phone opens the normal app again."); } }),
+      "Open this phone as the " + name + " recorder every time the app opens (no QR code needed)"),
+    h("div", { class: "row" },
+      h("button", { disabled: !!AKRP.cur, onClick: function () { var l = akRr141Link(other); if (l) location.href = l; } }, other === "video" ? "Switch to 🎥 video phone" : "Switch to 🎙 sound phone"),
+      h("button", { disabled: !!AKRP.cur, onClick: function () { location.href = location.href.split(/[?#]/)[0] + "?app=1"; } }, "Open the normal app")));
+  if (AKRP.role === "audio") card.appendChild(h("p", { class: "hint" }, "After the show, keep this page open. On the video phone, one tap on 🎬 “Put the sound phone's sound on these videos” copies every sound file from here and puts each one on its video."));
+  inn.appendChild(card);
+}
+function akSettingsExtra25(c) {
+  if (akRr141Link("video")) {
+    c.again("songs-and-shows");
+    c.section("This phone as a recorder", "Open the two-phone recorder page without scanning");
+    c.out.appendChild(h("div", { class: "row" },
+      h("button", { onClick: function () { location.href = akRr141Link("video"); } }, "🎥 Open as the video phone"),
+      h("button", { onClick: function () { location.href = akRr141Link("audio"); } }, "🎙 Open as the sound phone")));
+    c.check("Open this phone as the recorder every time the app opens", function () { return akRr141Auto(); }, function (v) { akRr141Auto(v); });
+  }
+  if (typeof akSettingsExtra26 === "function") akSettingsExtra26(c);
+}
+/* a line in the tablet's Phone recorders window */
+function akRr141Top(box) {
+  box.appendChild(h("p", { class: "hint" }, "Camera view: the ● Recording tab at the top right of the playing screen. After the show: on the video phone, tap 🎬 “Put the sound phone's sound on these videos” (one tap does them all)."));
+}
+
+/* ---------------------------------------------------------------- camera picture over the link (the video phone answers) */
+function akLinkServeSnap(P, m) {
+  function send(o) { o.t = "snap"; o.q = m.q; try { P.dc.send(JSON.stringify(o)); } catch (e) {} }
+  var st = akRcIsRecorder() ? AKRP.stream : AKREC.stream;
+  if (!st || !st.getVideoTracks().length) { send({ msg: akRcIsRecorder() && !AKRP.ready ? "The video phone isn't ready yet: tap Get ready on it." : "The camera isn't on." }); return; }
+  if (AK16F.pvStream !== st) {
+    AK16F.pv = document.createElement("video"); AK16F.pv.muted = true; AK16F.pv.playsInline = true; AK16F.pv.srcObject = st; AK16F.pvStream = st;
+    AK16F.pv.play().catch(function () {});
+  }
+  var v = AK16F.pv;
+  if (!v.videoWidth) { v.play().catch(function () {}); send({ msg: "Starting the camera picture…" }); return; }
+  var w = Math.min(Number(m.w) || 480, 1280, v.videoWidth), hh = Math.round(w * v.videoHeight / v.videoWidth), cv = document.createElement("canvas");
+  cv.width = w; cv.height = hh; cv.getContext("2d").drawImage(v, 0, 0, w, hh);
+  send({ jpg: cv.toDataURL("image/jpeg", 0.6) });
+}
+
+/* ---------------------------------------------------------------- the ● Recording tab and window (playing screen) */
+function akRec141On() {
+  try { var r = akRrCfg().on, m = (settings().rec || {}).mode; return settings().recTab !== false && (r || (m && m !== "off")); } catch (e) { return false; }
+}
+(function () {
+  var pt = akPlayTabs;
+  akPlayTabs = function (root) {
+    var out = pt.apply(this, arguments);
+    var wrap = root.querySelector(".ptopwrap");
+    if (wrap && !S.layout && akRec141On() && !wrap.querySelector(".ak16f-rtabs"))
+      wrap.appendChild(h("div", { class: "ak8-tabs ak16f-rtabs" }, h("button", { class: "ak8-tab ak16f-rtab" + (akFloatOpen("rec16") ? " on" : ""), "aria-label": "Recording: camera view and recording buttons", onClick: function () { akRec141Win(); this.classList.toggle("on", akFloatOpen("rec16")); } }, "● Recording")));
+    return out;
+  };
+})();
+function akRec141VideoDev() {
+  var d = akLinkDevs().filter(function (p) { return /-video$/.test(p.dev); });
+  return d.length ? d[0].dev : "";
+}
+function akRec141Win(tab) {
+  if (tab) akFloatCfg("rec16").tab = tab;
+  akFloat("rec16", { title: "Recording", tabs: [["cam", "Camera"], ["ctl", "Buttons"]], w: 380, h: 320, key: function () { return "rec16"; },
+    onClose: function () { clearInterval(AK16F.t); AK16F.t = 0; var t = document.querySelector(".ak16f-rtab"); if (t) t.classList.remove("on"); },
+    body: function (tab, el) {
+      var fl = AK_FLOATS.rec16 && AK_FLOATS.rec16.el;
+      if (fl) fl.classList.toggle("ak16f-big", AK16F.big);
+      if (tab === "ctl") { akRec141Buttons(el); return; }
+      var own = AKREC.stream && AKREC.stream.getVideoTracks().length && !akRrCfg().on;
+      var pic = own ? h("video", { class: "ak16f-pic", muted: true, playsinline: true, autoplay: true }) : h("img", { class: "ak16f-pic", alt: "Camera picture from the video phone" });
+      var msg = h("div", { class: "muted ak16f-msg" }, own ? "This device's camera." : AK16F.msg || "Looking for the video phone…");
+      el.appendChild(h("div", { class: "ak16f-cam" }, pic, h("button", { class: "akf-b ak16f-bigb", "aria-label": AK16F.big ? "Smaller" : "Bigger", onClick: function () {
+        AK16F.big = !AK16F.big; if (fl) fl.classList.toggle("ak16f-big", AK16F.big); this.textContent = AK16F.big ? "⤡" : "⤢"; } }, AK16F.big ? "⤡" : "⤢")));
+      el.appendChild(msg);
+      if (own) { pic.srcObject = AKREC.stream; pic.play().catch(function () {}); return; }
+      akLinkStart();
+      if (!AK16F.t) AK16F.t = setInterval(akRec141Snap, 1000);
+      akRec141Snap();
+    } });
+}
+function akRec141Snap() {
+  var f = AK_FLOATS.rec16; if (!f || !f.el.isConnected) { clearInterval(AK16F.t); AK16F.t = 0; return; }
+  var c = akFloatCfg("rec16");
+  if (AK16F.busy || c.min || (c.tab && c.tab !== "cam") || document.hidden) return;
+  function say(t) { AK16F.msg = t; var m = f.el.querySelector(".ak16f-msg"); if (m) m.textContent = t; }
+  var dev = akRec141VideoDev();
+  if (!dev) { var why = typeof akLinkProblem === "function" ? akLinkProblem() : ""; say(why || "The video phone isn't reachable. Keep its recorder page open with the screen on."); return; }
+  AK16F.busy = true;
+  var to = new Promise(function (res, rej) { setTimeout(function () { rej(new Error("The video phone didn't answer.")); }, 8000); });
+  Promise.race([akLinkCall(dev, { t: "snap", w: AK16F.big ? 960 : 480 }), to]).then(function (m) {
+    AK16F.busy = false;
+    if (m.jpg) { var img = f.el.querySelector("img.ak16f-pic"); if (img) img.src = m.jpg; say("Live from the video phone (about once a second)."); }
+    else say(m.msg || "No picture yet.");
+  }, function (e) { AK16F.busy = false; say((e && e.message) || "The video phone didn't answer."); });
+}
+function akRec141Buttons(el) {
+  var r = akRrCfg(), row = h("div", { class: "row ak16f-btns" });
+  if (r.on) {
+    row.appendChild(h("button", { class: "primary", onClick: function () { akRrStartSong(); akFloatFill("rec16"); } }, "▶ Start song"));
+    row.appendChild(h("button", { disabled: !AKRR.songOn, onClick: function () { akRrEndSong(); akFloatFill("rec16"); } }, "■ End song"));
+    row.appendChild(h("button", { class: "danger", disabled: !AKRR.rec, onClick: function () { akRrStopAll(); akFloatFill("rec16"); } }, "Stop the phones"));
+    row.appendChild(h("button", { onClick: function () { akRrWin(); } }, "Phones…"));
+  }
+  if (typeof akRecFloat === "function" && ((settings().rec || {}).mode || "off") !== "off") row.appendChild(h("button", { onClick: function () { akRecFloat(); } }, "Recorder…"));
+  row.appendChild(h("button", { onClick: function () { go("recs"); } }, "My recordings"));
+  el.appendChild(h("div", { class: "akrr-state" + (AKRR.rec ? " rec" : "") }, AKRR.rec ? "● Recording: " + (AKRR.title || "") : "Not recording"));
+  el.appendChild(row);
+}
+(function () {
+  var rp = akRrPaint;
+  akRrPaint = function () { var out = rp.apply(this, arguments); var c = akFloatCfg("rec16"); if (akFloatOpen("rec16") && c.tab === "ctl") akFloatFill("rec16"); return out; };
+})();
+
+akCss("ak16-f", [
+  ".ak16f-rtabs{left:auto;right:8px}",
+  ".ak16f-rtab.on{color:var(--accent);opacity:1}",
+  ".ak16f-cam{position:relative;background:#000;border-radius:8px;overflow:hidden;min-height:120px;display:flex;align-items:center;justify-content:center}",
+  ".ak16f-pic{display:block;width:100%;max-height:100%;object-fit:contain}",
+  ".ak16f-bigb{position:absolute;right:6px;top:6px;background:rgba(0,0,0,.55);color:#fff}",
+  ".ak16f-msg{font-size:.85em;margin-top:4px}",
+  ".ak16f-btns{flex-wrap:wrap;gap:6px}",
+  "html body .akfloat.ak16f-big:not(.min){left:3vw !important;top:5vh !important;right:auto !important;bottom:auto !important;width:94vw !important;height:88vh !important;max-width:none !important;z-index:99999}",
+  ".akfloat.ak16f-big .ak16f-cam{height:calc(88vh - 90px)}",
+  ".ak16f-keep .row{flex-wrap:wrap}"].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
