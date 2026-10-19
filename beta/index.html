@@ -10878,6 +10878,7 @@ function calSettingsUI(out, check, mark) {
     h("button", { onClick: function () { openCalendar(); } }, "Open Next shows"),
     h("button", { onClick: calHelp }, "How do I set this up?")));
   out.appendChild(res);
+  check("Make a show on the Shows screen for each event, and keep it up to date (name, date, times, venue, notes)", function () { return c.makeShows !== false; }, function (v) { c.makeShows = v; if (v && typeof akGcalSync === "function") akGcalSync(); });
   check("Show a 📅 Next shows button on the playing screen", function () { var s = settings(), t = s.toolbar.items.find(function (i) { return i.id === "calendar"; }), f = s.fab.items.find(function (i) { return i.id === "calendar"; }); return !!((t && t.on) || (f && f.on)); },
     function (v) { var s = settings(); s.toolbar.items.forEach(function (i) { if (i.id === "calendar") i.on = v; }); s.fab.items.forEach(function (i) { if (i.id === "calendar") i.on = false; }); });
 }
@@ -22910,8 +22911,10 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "13.1";
+var AK_VERSION = "13.1.1";
 var AK_WHATS_NEW = [
+  "Shows from your Google Calendar: each event on your calendar becomes a show on the Shows screen, with its name, date, times, venue and notes, and stays up to date when the event changes (your own changes to a show are kept). It checks by itself when you open the app. Set up in Settings, Calendar.",
+  "The Shows button on the playing screen opens your shows as a list or a month calendar (the same choice as on the Shows screen), with Google Calendar one tap away. The month calendar now lives on the 🎤 Shows tab (it moved from the Set lists tab).",
   "🎸 Chords now play with your own recorded guitar, built into the app (1.1 MB, loaded the first time it plays, then kept offline). Pick another sound, your own recordings or the synthetic one, in Settings > Songs and shows > Chord sound.",
   "The info window no longer pops up when you open a song. Chords, banter, about the song and history now live under ⓘ Info at the top left of the playing screen, next to Buttons ▾. To have it as a window you can move or dock, tap ▾ next to ⓘ Info and pick a window; ⇩ in the window puts it back.",
   "Recordings belong to their song and show: tap 🎥 in the Info bar on the playing screen, or a song's menu in the set list, or the Recordings card on a show, to watch, save or delete what was recorded of it. The phone recorders now tag every file with its song too.",
@@ -32639,6 +32642,209 @@ akCss("ak15-d", [
   ".akinfo-strip .ak15-ib{font-size:.9rem}",
   /* docked at the bottom: the app (with its tab bar) above, the window below it, nothing empty */
   "body.akdock-bottom .akfloat.dock-bottom{bottom:0}"
+].join("\n"));
+
+/* ================= Akashic Chords: version 13.1.1, items 70 and 71 (shows on the playing screen, shows from Google Calendar) =================
+   70. The playing screen's Shows button (toolbar id "calendar") opens your shows as ☰ List or ▦ Calendar (a month grid), the same
+       choice as the Shows screen (settings().showsView). 📅 Google calendar opens the old Next shows window. The 🎤 Shows tab
+       gets the List / Calendar switch, which moves there from the ☰ Set lists tab. The grid holds shows (lib().gigs) and dated set lists that no show uses.
+   71. Shows from Google Calendar: after each calendar load (calFetch: the public calendar, API key and Calendar ID in Settings,
+       Calendar), every event (after the Only / Hide words) gets a show with its name, date, times, venue, address and notes.
+       g.calId = the event id, so a show is made once; g.calFrom = what the calendar said last time, so a field the calendar changes
+       is updated unless you changed it yourself. A hand-made show alone on the same day is linked instead of copied. An event that
+       goes away removes its show if nothing was added to it (set lists, pay, tips, photos, plays), else marks it (g.calGone).
+       It loads by itself when the app opens and when you come back to it (at most every 30 minutes). settings().cal.makeShows. */
+
+var AK_GCAL_KEYS = ["name", "date", "start", "end", "venue", "address", "notes"];
+function akGcalOn() { return calConfigured() && calSet().makeShows !== false; }
+function akGcalPlain(s) {
+  return (s || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function akGcalHM(d) { return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+/* the show's fields from a calendar event: "The Wine Cellar, 12 Main St, Town" = venue The Wine Cellar, address all of it */
+function akGcalFields(e) {
+  var d = new Date(e.start), en = new Date(e.end), where = (e.where || "").replace(/\s+/g, " ").trim(), cut = where.indexOf(",");
+  return { name: (e.title || "").trim(), date: ymd(d), start: e.allDay ? "" : akGcalHM(d), end: e.allDay || !(e.end > e.start) ? "" : akGcalHM(en),
+    venue: cut > 0 ? where.slice(0, cut).trim() : where, address: cut > 0 ? where : "", notes: akGcalPlain(e.note) };
+}
+/* something was added to the show by hand, so it's never removed by the calendar */
+function akGcalUsed(g) {
+  return (g.setlists || []).length || (g.used || []).length || (g.tips || []).length || (g.costs || []).length || (g.photos || []).length || akNum(g.pay) ||
+    (lib().log || []).some(function (e) { return e.g === g.id; });
+}
+function akGcalSync() {
+  var out = { made: 0, changed: 0, gone: 0 }, c = calSet();
+  if (!akGcalOn() || !c.cache || !c.cache.events) return out;
+  var gigs = akGigs(), today = akTodayKey(), evs = calEvents(), seen = {}, by = {};
+  /* the same event made on two devices before they synced: keep one */
+  gigs.slice().forEach(function (g) {
+    if (!g.calId) return;
+    var k = by[g.calId]; if (!k) { by[g.calId] = g; return; }
+    var drop = akGcalUsed(g) && !akGcalUsed(k) ? k : g; if (drop === k) by[g.calId] = g;
+    if (!akGcalUsed(drop)) gigs.splice(gigs.indexOf(drop), 1);
+  });
+  evs.forEach(function (e) {
+    if (!e.id) return;
+    var f = akGcalFields(e), g = by[e.id]; seen[e.id] = 1;
+    if (!g) {
+      if (f.date < today) return;   // only shows from today on are made
+      var same = gigs.filter(function (x) { return !x.calId && x.date === f.date; });
+      if (same.length === 1) {
+        g = same[0]; g.calId = e.id;
+        AK_GCAL_KEYS.forEach(function (k) { if (!g[k] && f[k]) g[k] = f[k]; });
+        out.changed++;
+      } else {
+        g = akNewGig(Object.assign({}, f, { calId: e.id })); gigs.push(g); out.made++;
+      }
+      g.calFrom = Object.assign({}, f); g.calLink = e.link || "";
+      var v = !g.venueId && akVenueByName(g.venue); if (v) g.venueId = v.id;
+      by[e.id] = g; return;
+    }
+    var from = g.calFrom || {}, ch = false;
+    AK_GCAL_KEYS.forEach(function (k) {
+      if ((f[k] || "") === (from[k] || "")) return;
+      if ((g[k] || "") === (from[k] || "")) { g[k] = f[k]; ch = true; if (k === "venue") { var v2 = akVenueByName(g.venue); g.venueId = v2 ? v2.id : ""; } }
+      from[k] = f[k];
+    });
+    g.calFrom = from; if (g.calGone) { delete g.calGone; ch = true; }
+    if (ch) out.changed++;
+  });
+  /* taken off the calendar (only upcoming ones, and only when the calendar loaded with events) */
+  if (evs.length) gigs.slice().forEach(function (g) {
+    if (!g.calId || seen[g.calId] || !g.date || g.date < today) return;
+    if (!akGcalUsed(g)) { gigs.splice(gigs.indexOf(g), 1); out.gone++; }
+    else if (!g.calGone) { g.calGone = true; out.gone++; }
+  });
+  if (out.made || out.changed || out.gone) {
+    save();
+    if (/^(shows|gig)$/.test(S.view)) render();
+    toast("Shows from your calendar: " + [out.made ? out.made + " new" : "", out.changed ? out.changed + " updated" : "", out.gone ? out.gone + " taken off" : ""].filter(Boolean).join(", ") + ".");
+  }
+  return out;
+}
+(function () {
+  var cf = calFetch;
+  calFetch = function () { return cf.apply(this, arguments).then(function (ev) { try { akGcalSync(); } catch (e) {} return ev; }); };
+})();
+/* by itself: when the app opens and when you come back to it */
+function akGcalAuto() {
+  if (!akGcalOn() || S.akGcalBusy || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+  var c = calSet(); if (c.cache && Date.now() - c.cache.at < 30 * 60000) return;
+  S.akGcalBusy = true;
+  calFetch().then(function () { S.akGcalBusy = false; }, function () { S.akGcalBusy = false; });
+}
+setTimeout(akGcalAuto, 4000);
+document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") setTimeout(akGcalAuto, 1500); });
+
+/* ---------------------------------------------------------------- the month grid of shows */
+function akShowsCalItems() {
+  var inGig = {}, out = {};
+  akGigs().forEach(function (g) { (g.setlists || []).forEach(function (id) { inGig[id] = 1; }); if (g.date) (out[g.date] = out[g.date] || []).push({ gig: g }); });
+  lib().shows.forEach(function (sh) { if (sh.date && !inGig[sh.id]) (out[sh.date] = out[sh.date] || []).push({ set: sh }); });
+  Object.keys(out).forEach(function (k) { out[k].sort(function (a, b) { return ((a.gig ? a.gig.start : a.set.startTime) || "").localeCompare((b.gig ? b.gig.start : b.set.startTime) || ""); }); });
+  return out;
+}
+function akShowsCalOpen(it) { if (it.gig) go("gig", { gigId: it.gig.id }); else go("show", { showId: it.set.id }); }
+function akShowsCalName(it) { return it.gig ? (it.gig.calGone ? "⚠ " : "") + akGigTitle(it.gig) : "☰ " + (it.set.name || "Untitled"); }
+function akShowsCal(refill) {
+  var today = new Date(), cur = S.calMonth && /^\d{4}-\d{2}$/.test(S.calMonth) ? S.calMonth : ymd(today).slice(0, 7);
+  var y = Number(cur.slice(0, 4)), m = Number(cur.slice(5, 7)) - 1, byDay = akShowsCalItems();
+  function shift(n) { S.calMonth = ymd(new Date(y, m + n, 1)).slice(0, 7); refill(); }
+  var monthName = new Date(y, m, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  var head = h("div", { class: "mcal-head" },
+    h("button", { class: "icon", "aria-label": "Previous month", onClick: function () { shift(-1); } }, "◀"),
+    h("div", { class: "mcal-title", "aria-live": "polite" }, monthName),
+    h("button", { class: "icon", "aria-label": "Next month", onClick: function () { shift(1); } }, "▶"),
+    cur !== ymd(today).slice(0, 7) ? h("button", { class: "sm", onClick: function () { S.calMonth = ""; refill(); } }, "Today") : null);
+  var grid = h("div", { class: "mcal-grid", role: "grid", "aria-label": monthName });
+  var first = new Date(y, m, 1), start = new Date(y, m, 1 - first.getDay()), tkey = ymd(today), weeks = Math.ceil((first.getDay() + new Date(y, m + 1, 0).getDate()) / 7);
+  for (var k = 0; k < 7; k++) grid.appendChild(h("div", { class: "mcal-dow", "aria-hidden": "true" }, new Date(2026, 1, 1 + k).toLocaleDateString(undefined, { weekday: "short" })));
+  for (var i = 0; i < weeks * 7; i++) (function (d) {
+    var key = ymd(d), list = byDay[key] || [], out = d.getMonth() !== m;
+    grid.appendChild(h("div", { class: "mcal-day" + (out ? " out" : "") + (key === tkey ? " today" : "") + (list.length ? " has" : ""), role: "gridcell" },
+      h("button", { class: "mcal-num sm", "aria-label": d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) + (list.length ? ", " + list.length + (list.length === 1 ? " show" : " shows") : ", nothing. Tap to add a show"), onClick: function () {
+        if (list.length === 1) { akShowsCalOpen(list[0]); return; }
+        var items = list.map(function (it) { return { label: akShowsCalName(it), onClick: function () { akShowsCalOpen(it); } }; });
+        if (items.length) items.push({ sep: true });
+        items.push({ label: "+ New show on " + d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), onClick: function () { akGigNewDialog({ date: key }); } });
+        menu(this, items);
+      } }, String(d.getDate())),
+      list.slice(0, 3).map(function (it) { var col = it.gig ? it.gig.color : it.set.color; return h("button", { class: "mcal-ev sm" + (it.set ? " ak15-set" : ""), title: akShowsCalName(it), style: col ? "background:" + tint(col, 0.55) + ";border-color:" + col : null, onClick: function () { akShowsCalOpen(it); } }, akShowsCalName(it)); }),
+      list.length > 3 ? h("div", { class: "mcal-more" }, "+" + (list.length - 3)) : null));
+  })(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
+  var below = h("div", { class: "list mcal-list" }), inMonth = akGigs().filter(function (g) { return g.date && g.date.slice(0, 7) === cur; }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); });
+  if (inMonth.length) inMonth.forEach(function (g) { below.appendChild(akGigRow(g)); });
+  else below.appendChild(h("div", { class: "empty small" }, "No shows in " + monthName + ". Tap a day to add one."));
+  return h("div", { class: "mcal" }, head, grid, h("div", { class: "mcal-sub" }, "This month"), below);
+}
+function akShowsViewTog(redraw) {
+  return h("div", { class: "chips svtog", role: "tablist", "aria-label": "Show the shows as" },
+    [["list", "☰ List"], ["cal", "▦ Calendar"]].map(function (o) { var on = showsViewMode() === o[0]; return h("button", { class: "chip" + (on ? " on" : ""), role: "tab", "aria-selected": on ? "true" : "false", onClick: function () { if (showsViewMode() === o[0]) return; settings().showsView = o[0]; save(); redraw(); } }, o[1]); }));
+}
+/* the 🎤 Shows screen: the same List / Calendar switch */
+(function () {
+  var vg = viewGigs;
+  viewGigs = function () {
+    var el = vg.apply(this, arguments), tabs = el.querySelector(".akshtabs"), list = tabs && tabs.nextElementSibling;
+    if (!tabs || !list) return el;
+    tabs.after(akShowsViewTog(render));
+    if (showsViewMode() === "cal") { var cal = h("div", { class: "ak15-gcal" }); (function fill() { cal.textContent = ""; cal.appendChild(akShowsCal(fill)); })(); list.replaceWith(cal); }
+    return el;
+  };
+})();
+
+/* the calendar belongs to the 🎤 Shows tab: the ☰ Set lists tab is always a list (dated set lists show on the Shows calendar) */
+showsViewMode = function () { return settings().showsView === "cal" && !(S.view === "shows" && akShowsTab() === "sets") ? "cal" : "list"; };
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
+    var el = vs.apply(this, arguments);
+    if (akShowsTab() === "sets") { var tg = el.querySelector('.svtog[data-bk="showview"]'); if (tg) tg.remove(); }
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- the playing screen's Shows button */
+function akPlayShows() {
+  var body = h("div", { class: "ak15-pshows" }), close = null;
+  function draw() {
+    body.textContent = "";
+    var bar = akShowsViewTog(draw);
+    if (calConfigured()) bar.appendChild(h("button", { class: "chip", onClick: function () { if (close) close(); akOpenNextShows(); } }, "📅 Google calendar"));
+    body.appendChild(bar);
+    if (showsViewMode() === "cal") { body.appendChild(akShowsCal(draw)); return; }
+    var today = akTodayKey(), up = akGigs().filter(function (g) { return !g.date || g.date >= today; }).sort(function (a, b) { return (a.date || "9999").localeCompare(b.date || "9999") || (a.start || "").localeCompare(b.start || ""); });
+    var list = h("div", { class: "list" });
+    list.appendChild(h("div", { class: "akgig-sub" }, "Coming up"));
+    if (up.length) up.slice(0, 25).forEach(function (g) { list.appendChild(akGigRow(g)); });
+    else list.appendChild(h("div", { class: "empty small" }, "No shows coming up."));
+    if (lib().shows.length) {
+      list.appendChild(h("div", { class: "akgig-sub" }, "Set lists"));
+      lib().shows.forEach(function (sh) {
+        list.appendChild(h("div", { class: "item" },
+          h("button", { class: "main-btn", onClick: function () { go("show", { showId: sh.id }); } }, h("div", { class: "t" }, sh.name || "Untitled"), h("div", { class: "s" }, showCounts(sh))),
+          h("button", { class: "icon", "aria-label": "Play " + (sh.name || "this set list"), onClick: function () { playShow(sh, 0, function () { go("shows"); }); } }, "▶")));
+      });
+    }
+    body.appendChild(list);
+  }
+  /* going to a show, or playing another set list, closes this window (a "Which set list?" question stays) */
+  body.addEventListener("click", function () {
+    var v0 = S.view, s0 = S.play && curItem() ? curItem().songId : "";
+    setTimeout(function () { var s1 = S.play && curItem() ? curItem().songId : ""; if (S.view !== v0 || s1 !== s0) { if (close) close(); } }, 0);
+  }, true);
+  draw();
+  close = modal("Shows", body, [{ label: "+ New show", onClick: function () { akGigNewDialog(); } }, { label: "Close", primary: true }], { wide: true });
+}
+var akOpenNextShows = openCalendar;
+openCalendar = function () { if (S.view === "play") return akPlayShows(); return akOpenNextShows.apply(this, arguments); };
+TB_ITEMS.forEach(function (x) { if (x[0] === "calendar") x[1] = "Shows: a list or a month calendar (and Google Calendar)"; });
+
+akCss("ak15-e", [
+  ".ak15-pshows .svtog{display:flex;flex-wrap:wrap;gap:6px}",
+  ".mcal .mcal-ev.ak15-set{border-style:dashed}",
+  ".ak15-pshows .mcal-day{min-height:64px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
