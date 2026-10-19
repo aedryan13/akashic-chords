@@ -22940,8 +22940,10 @@ akCss("ak8-banter", [
    - Store: the PDF maker is bundled (works offline), Claude-only features are left out of the Public edition,
      and there is a version number with a "What's new" card after each update. */
 
-var AK_VERSION = "14.0";
+var AK_VERSION = "14.0.1";
 var AK_WHATS_NEW = [
+  "Your devices find each other for recordings more reliably: devices signed in to the same performer account now share one link code by themselves (before, they only matched after a Sync). If they still can't, the message says exactly why (not signed in, a different account, the Firebase rules) and Recordings shows this device's account and link code to compare.",
+  "Sound from a file: share a sound recording from the sound phone, then on the video tap ⋯ › Add its sound from a file, or use Recordings › 📥 Add a recording from a file. The combine uses that sound first.",
   "Words are the same everywhere now: a show is a whole performance, a setlist is a list of songs you can play at a show, and a set is a part of a setlist. Making a setlist from songs says “Create setlist”.",
   "A setlist's page is for trying songs: no Play show button, no show timer and no played ticks there. Tap a song to try it; nothing is logged. Plays count when you play the setlist in a show (🎤 Shows). To get the old way back: Settings › Songs and shows › Logging plays and practice mode.",
   "Hide the Shows, Learn or Write tab if you don't use it: Settings › Look › Tabs and usage modes.",
@@ -28376,8 +28378,10 @@ function akMediaSendDialog() {
     } }]);
 }
 function akMediaInput() {
-  return h("input", { type: "file", accept: ".zip,application/zip", "aria-label": "Choose the audio and photos file", onChange: function () {
+  return h("input", { type: "file", accept: ".zip,application/zip,audio/*,video/*", "aria-label": "Choose the audio and photos file", onChange: function () {
     var f = this.files && this.files[0], input = this; if (!f) return;
+    /* a plain sound or video file (a recording shared from the other phone) goes to Recordings, not here */
+    if (!/zip/i.test(f.type || "") && !/\.zip$/i.test(f.name || "") && typeof akRcFileChosen === "function") { input.value = ""; akRcFileChosen(f, null); return; }
     toast("Reading " + f.name + "…");
     akMediaImport(f).then(function (r) {
       var bits = []; if (r.audio) bits.push(r.audio + " audio"); if (r.photos) bits.push(r.photos + " photos"); if (r.artist) bits.push(r.artist + " artist photos");
@@ -28403,6 +28407,7 @@ function akSyncPanel(out, mark) {
   out.appendChild(st);
   out.appendChild(h("p", { class: "hint", style: "margin-top:10px" }, "Audio recordings on songs don't travel in sync (too big). Send them, with song pictures, show photos and artist photos, as one file:"));
   out.appendChild(h("div", { class: "row" }, h("button", { onClick: akMediaSendDialog }, "Send audio and photos…"), fileBtn("Receive audio and photos", akMediaInput())));
+  out.appendChild(h("p", { class: "hint" }, "Show recordings (the 🎙 sound phone's and 🎥 video phone's files) aren't in this file. Your devices copy them by themselves while both apps are open and signed in to the same performer account. By hand: Share the recording from the other phone, then on this device open Recordings › 📥 Add a recording from a file (choosing it here works too)."));
 }
 function akSettingsExtra18(c) {
   c.again("data-and-extras");
@@ -31690,6 +31695,7 @@ function akRcMenu(btn, g, redraw) {
     items.push({ label: "↗ Share… (Photos, Files, Drive)", onClick: function () { akRecBlob(r).then(function (b) { var f = new File([b], akRecFileName(r), { type: b.type }); if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f], title: e.title }).catch(function () {}); else { toast("This browser can't share files; saving it instead."); akRecDownload(b, f.name); } }); } });
     if (r.combined && r.from && typeof akCombineRedo === "function") items.push({ label: "↔ Sound early or late? Shift it…", onClick: function () { akCombineRedo(g, redraw); } });
     if (e.video && !e.combined && typeof akCombineOne === "function") items.push({ label: "🎬 Put the sound phone's sound on this video…", onClick: function () { akCombineOne(g, redraw); } });
+    if (e.video && !e.combined && typeof akRcSoundFile === "function") items.push({ label: "📥 Add its sound from a file… (one shared from the sound phone)", onClick: function () { akRcSoundFile(r, redraw); } });
     var song = e.songId ? findSong(e.songId) : null;
     if (song && !e.video && (e.bytes || 0) < 60e6) items.push({ label: "🎵 Add to the song's audio (plays in the song)", onClick: function () { akRecBlob(r).then(function (b) { akAddAudio(song, b, e.secs, "Live " + new Date(e.at).toLocaleDateString() + (e.gig ? " · " + e.gig : "")); toast("Added to “" + song.title + "”."); }); } });
   } else items.push({ label: "⬇ Get it from " + (g.all[0].devName || "the other device"), onClick: function () { akRcGet(g, redraw); } });
@@ -31752,6 +31758,7 @@ viewRecs = function () {
     var gs = akRcGroups(want), here = gs.filter(function (g) { return g.local; }), bytes = here.reduce(function (a, g) { return a + (g.local.bytes || 0); }, 0);
     listEl.appendChild(h("p", { class: "hint" }, gs.length + (gs.length === 1 ? " recording" : " recordings") + (here.length ? ", " + akRecSize(bytes) + " of them on this device (" + akDevName() + ")" : "") + ". Each one belongs to the song and show it was recorded in. The list is the same on every device after Sync; the files stay where they were recorded until you get them."));
     if (typeof akCombineAllBtn === "function") { var cb = akCombineAllBtn(draw); if (cb) act.appendChild(cb); }
+    if (typeof akRcFileBtn === "function") act.appendChild(akRcFileBtn(draw));
     act.appendChild(h("button", { class: "sm", onClick: function () { akDevRename(draw); } }, "✎ Name this device (" + akDevName() + ")"));
     if (typeof akLinkLine === "function") listEl.appendChild(akLinkLine(draw));
     listEl.appendChild(akRcRows(gs, { redraw: draw, empty: "No recordings yet. Turn on recording above, then press auto-scroll on the playing screen, or use the phone recorders." }));
@@ -31951,7 +31958,7 @@ function akLinkStart() {
   var tr = akLinkPick(); if (!tr) return false;
   if (AKLN.unsub) { try { AKLN.unsub(); } catch (e) {} }
   AKLN.tr = tr; AKLN.trKey = tr.key; AKLN.err = ""; AKLN.online = {};
-  AKLN.unsub = tr.start(akLinkSig, akLinkGotDev, function () { AKLN.err = "rules"; akLinkChanged(); });
+  AKLN.unsub = tr.start(akLinkSig, akLinkGotDev, function (e) { AKLN.err = "rules"; AKLN.errCode = (e && e.code) || ""; akLinkChanged(); });
   akLinkPresence(true);
   return true;
 }
@@ -31960,7 +31967,7 @@ function akLinkPresence(now) {
   if (!now && Date.now() - (AKLN.presAt || 0) < 38000) return; AKLN.presAt = Date.now();
   var p = { dev: AKLN.me, name: akLinkMyName(), role: akRcIsRecorder() ? AKRP.role : akDevKind(), at: Date.now(), n: Object.keys(AKRC.local || {}).length };
   if (tr.kind === "test") { window.akLinkTestBus({ t: "dev", p: p }); return; }
-  if (tr.presence) tr.presence(p).catch(function () { AKLN.err = "rules"; akLinkChanged(); });
+  if (tr.presence) tr.presence(p).catch(function (e) { AKLN.err = "rules"; AKLN.errCode = (e && e.code) || ""; akLinkChanged(); });
 }
 function akLinkGotDev(p) { if (!p || !p.dev || p.dev === AKLN.me) return; var was = AKLN.online[p.dev]; p.seen = Date.now(); AKLN.online[p.dev] = p; if (!was) akLinkChanged(); }
 function akLinkDevs() { var now = Date.now(); return Object.keys(AKLN.online).map(function (k) { return AKLN.online[k]; }).filter(function (p) { return now - (p.at || p.seen) < 100000 || now - p.seen < 60000; }); }
@@ -32149,14 +32156,13 @@ function akLinkFetchGroup(g) {
   }).then(function (r) { close(); toast("“" + (e.title || "Recording") + "” is on this device now."); return r; }, function (err) { close(); throw err; });
 }
 
-/* a line on the recordings screens: who is reachable */
+/* a line on the recordings screens: who is reachable, or what is wrong (14.0.1: akLinkProblem, and the link code to compare) */
 function akLinkLine(redraw) {
-  akLinkStart();
-  var devs = akLinkDevs(), tr = AKLN.tr;
-  if (!tr) return h("div", { class: "ak15-link" }, "To get recordings from your other devices, turn on online requests (Settings > Requests and tips), the same on each device.");
-  if (AKLN.err === "rules") return h("div", { class: "ak15-link" }, "⚠ Your Firebase rules need one more block for devices to find each other: Settings > Requests and tips > Setup steps > Copy the rules, then paste them in Firebase (Firestore Database > Rules > Publish).");
-  return h("div", { class: "ak15-link" }, devs.length ? "Reachable now: " + devs.map(function (p) { return p.name; }).join(", ") + "." : "No other device is reachable right now. Open the app on the other device to get its recordings.",
-    tr.kind === "this browser" ? h("span", { class: "muted" }, " (This browser only: online requests are off.)") : null);
+  akLinkStart(); if (typeof akLinkRoomSoon === "function") akLinkRoomSoon(redraw);
+  var devs = akLinkDevs(), why = typeof akLinkProblem === "function" ? akLinkProblem() : "";
+  if (why) return h("div", { class: "ak15-link" }, "⚠ " + why);
+  return h("div", { class: "ak15-link" }, devs.length ? "Reachable now: " + devs.map(function (p) { return p.name; }).join(", ") + "." : "No other device is reachable right now. Open the app on the other device to get its recordings, or by hand: Share the recording from that device, then tap 📥 Add a recording from a file here.",
+    typeof akLinkWhoAmI === "function" ? h("span", { class: "muted" }, " This device: " + akLinkWhoAmI() + ". The others need the same account and code.") : null);
 }
 
 /* ================= Akashic Chords: version 13.0, item 63 (put the sound phone's sound on the video phone's video) =================
@@ -32351,12 +32357,21 @@ function akCbMatch(v, cands) {
 /* find the sound: on this device, else on a reachable device (and copy it here) */
 function akCbFindSound(v, say) {
   return akRecList().then(function (all) {
-    var here = akCbMatch(v, all.filter(function (r) { return r.done; }));
+    var done = all.filter(function (r) { return r.done; });
+    /* a sound added by hand from a file for this video comes first */
+    var mine = done.filter(function (r) { return r.forVid === v.id && !r.video; })[0]; if (mine) return mine;
+    var here = akCbMatch(v, done);
     if (here) return here;
     akLinkStart();
-    var wait = akLinkDevs().length ? Promise.resolve() : new Promise(function (res) { setTimeout(res, 3000); });
+    var t0 = Date.now(), why = function () { return typeof akLinkProblem === "function" ? akLinkProblem() : ""; };
+    var room = typeof akLinkRoomSync === "function" ? akLinkRoomSync().catch(function () {}) : Promise.resolve();
+    /* wait up to 8 s for another device to check in (they do every 40 s, and the list loads when the link starts) */
+    var wait = room.then(function () { return new Promise(function (res) { (function tick() { if (akLinkDevs().length || why() || Date.now() - t0 > 8000) res(); else setTimeout(tick, 400); })(); }); });
     return wait.then(function () {
-      var devs = akLinkDevs(); if (!devs.length) throw new Error("No sound recording for “" + (v.title || "this video") + "” on this device, and no other device is reachable. Open the app on the sound phone and try again.");
+      var devs = akLinkDevs();
+      if (!devs.length) throw new Error("No sound recording for “" + (v.title || "this video") + "” on this device, and no other device is reachable. " +
+        (why() || "This device is " + (typeof akLinkWhoAmI === "function" ? akLinkWhoAmI() : "online") + ", and no other device has checked in. On the sound phone, open the app, keep its screen on, and check that Settings › Requests and tips says “Online as” the same email, and that its Recordings screen shows the same link code.") +
+        " Or add the sound by hand: on the sound phone tap ⋯ on the sound recording › Share and send it here, then on this video tap ⋯ › Add its sound from a file.");
       devs.sort(function (a, b) { return (b.role === "audio") - (a.role === "audio"); });
       function ask(i) {
         if (i >= devs.length) throw new Error("Couldn't find the sound recording that goes with “" + (v.title || "this video") + "” on " + devs.map(function (d) { return d.name; }).join(", ") + ".");
@@ -33118,6 +33133,129 @@ function akSettingsExtra24(c) {
     h("a", { class: "btnlink", href: akPrivacyUrl(), target: "_blank", rel: "noopener" }, "Privacy policy"),
     h("a", { class: "btnlink", href: "https://aedryangantt.com", target: "_blank", rel: "noopener" }, "Help and contact")));
   if (typeof akSettingsExtra25 === "function") akSettingsExtra25(c);
+}
+
+/* ================= Akashic Chords: version 14.0.1, the device link finds the other devices, and sound from a file =================
+   - One link code per performer account. Before, each device made its own random code (settings().recLink.room) and only a Sync made
+     them the same, so devices that hadn't synced never saw each other. Now the first signed-in device keeps its code in the account
+     (Firebase sign-in display name "akroom:<code>", only visible to that account) and every other device signed in to it takes that code.
+     No new Firebase rules needed. Phone recorders still get the code in their link (&lr=).
+   - akLinkProblem(): what is actually wrong, in plain words (requests off, this device only, not signed in, the rules), for the combine
+     message and the Recordings screen; akLinkWhoAmI() shows the account and the first 4 letters of the code to compare between devices.
+   - Sound from a file: a sound recording shared from the sound phone can be added on this device (a video's ⋯ > Add its sound from a file,
+     or Recordings > 📥 Add a recording from a file). It is saved as a recording here; rec.forVid ties it to its video and the combine
+     uses it first. Import > Receive audio and photos sends a plain sound file here too. */
+
+/* ---------------------------------------------------------------- one link code per account */
+function akLinkRoomSync() {
+  if (akRcIsRecorder() || typeof akRrCloud !== "function" || !akRrCloud() || !AKL.fb) return Promise.resolve(false);
+  var u = AKL.fb.auth().currentUser; if (!u || u.isAnonymous) return Promise.resolve(false);
+  AKLN.roomAt = Date.now();
+  return u.reload().catch(function () {}).then(function () {
+    u = AKL.fb.auth().currentUser || u;
+    var m = /akroom:([0-9a-f]{20,})/.exec(u.displayName || ""), s = settings();
+    if (!s.recLink || typeof s.recLink !== "object") s.recLink = {};
+    if (!m) return u.updateProfile({ displayName: "akroom:" + akLinkRoom() }).then(function () { return false; }, function () { return false; });
+    if (s.recLink.room === m[1]) return false;
+    s.recLink.room = m[1]; save(); AKLN.trKey = ""; try { akLinkStart(); akLinkChanged(); } catch (e) {}
+    return true;
+  }).catch(function () { return false; });
+}
+/* from a screen: at most once a minute */
+function akLinkRoomSoon(redraw) {
+  if (Date.now() - (AKLN.roomAt || 0) < 60000) return;
+  akLinkRoomSync().then(function (ch) { if (ch && redraw) try { redraw(); } catch (e) {} });
+}
+(function () {
+  var cl = akCloudListen;
+  akCloudListen = function () { var out = cl.apply(this, arguments); setTimeout(function () { akLinkRoomSync(); }, 0); return out; };
+})();
+
+/* ---------------------------------------------------------------- what is wrong, in words */
+function akLinkProblem() {
+  if (typeof window.akLinkTestBus === "function") return "";
+  if (akRcIsRecorder()) {
+    if (AKRP.local) return "This phone recorder was opened from a “this device only” code (the tablet wasn't signed in when it showed the code), so other devices can't reach it. Sign in on the tablet (Settings › Requests and tips), then scan the phone code again.";
+    if (!AKRP.db) return "This phone recorder isn't online yet. Check the phone's internet and reload the page.";
+  } else {
+    var L = akLive();
+    if (!L.on) return "Live requests are off on this device, so it can't look for your other devices. Turn them on, online, in Settings › Requests and tips (the same on every device).";
+    if (L.mode !== "cloud") return "Live requests on this device are set to “this device only”. Switch them to online in Settings › Requests and tips (the same on every device).";
+    if (AKL.conn !== "cloud" || !AKL.uid) return "This device isn't signed in to your performer account" + (AKL.err ? " (" + AKL.err + ")" : "") + ". Sign in under Settings › Requests and tips, with the same email on every device.";
+  }
+  if (AKLN.err === "rules") return "Firebase refused the device link" + (AKLN.errCode ? " (" + AKLN.errCode + ")" : "") + ". Copy the rules again (Settings › Requests and tips › Setup steps › Copy the rules), paste them in Firebase (Firestore Database › Rules) and press Publish.";
+  return "";
+}
+function akLinkWhoAmI() {
+  var code = "link code " + String(akLinkRoom() || "").slice(0, 4).toUpperCase();
+  return (akRcIsRecorder() ? "phone recorder" : "signed in as " + (akLive().email || "your account")) + ", " + code;
+}
+
+/* ---------------------------------------------------------------- sound from a file */
+function akRcMimeOf(f) {
+  if (f.type) return f.type;
+  var e = (String(f.name || "").match(/\.([a-z0-9]+)$/i) || [])[1] || "";
+  return { m4a: "audio/mp4", mp4: "video/mp4", mov: "video/quicktime", wav: "audio/wav", webm: "audio/webm", ogg: "audio/ogg", mp3: "audio/mpeg", aac: "audio/aac" }[e.toLowerCase()] || "audio/mp4";
+}
+function akRcFileSecs(f) {
+  return new Promise(function (res) {
+    var u = URL.createObjectURL(f), a = document.createElement("audio"), done = function (s) { clearTimeout(t); URL.revokeObjectURL(u); res(s); };
+    var t = setTimeout(function () { done(0); }, 5000);
+    a.preload = "metadata"; a.onloadedmetadata = function () { done(isFinite(a.duration) ? Math.round(a.duration) : 0); }; a.onerror = function () { done(0); }; a.src = u;
+  });
+}
+/* save a file as a recording on this device; vid = the video it goes with (or null) -> Promise<rec> */
+function akRcAddFile(f, vid) {
+  var id = "rec" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), PIECE = 4 * 1048576;
+  return akRcFileSecs(f).then(function (secs) {
+    var r = { id: id, at: vid ? vid.at : (f.lastModified || Date.now()), end: vid ? vid.end || 0 : 0, kind: "media", video: false, mime: akRcMimeOf(f), bytes: f.size, n: 0,
+      secs: secs || (vid ? vid.secs || 0 : 0), done: true, what: vid ? vid.what || "song" : "song", songId: vid ? vid.songId || "" : "",
+      title: vid ? vid.title || "Sound" : String(f.name || "Sound").replace(/\.[^.]+$/, ""), gigId: vid ? vid.gigId || "" : "", gig: vid ? vid.gig || "" : "",
+      showId: vid ? vid.showId || "" : "", set: vid ? vid.set || "" : "", marks: [], forVid: vid ? vid.id : "", fromFile: true };
+    var chain = Promise.resolve();
+    for (var off = 0, n = 0; off < f.size; off += PIECE, n++) (function (o, k) { chain = chain.then(function () { return akRecPutChunk(id, k, f.slice(o, o + PIECE)); }); })(off, n);
+    r.n = n;
+    return chain.then(function () { return akRecPutMeta(r); }).then(function () { try { akRcRefresh(); } catch (e) {} return r; });
+  });
+}
+function akRcPickFile(cb) {
+  var inp = h("input", { type: "file", accept: "audio/*,video/*,.m4a,.wav,.webm,.ogg,.mp3,.aac", style: "position:absolute;left:-9999px", onChange: function () { var f = this.files && this.files[0]; inp.remove(); if (f) cb(f); } });
+  document.body.appendChild(inp); inp.click();
+}
+/* after it is saved: put it on the video now? */
+function akRcAfterFile(r, vid, redraw) {
+  if (redraw) try { redraw(); } catch (e) {}
+  if (!vid) { toast("Added “" + r.title + "” to Recordings on this device."); return; }
+  if (typeof akCombineOk === "function" && akCombineOk()) akCombineDialog([vid], redraw || function () {});
+  else toast("Sound added to “" + (vid.title || "the video") + "”. This browser can't combine; Chrome on Android or a computer can.");
+}
+/* a video's ⋯ > Add its sound from a file */
+function akRcSoundFile(vid, redraw) {
+  akRcPickFile(function (f) {
+    toast("Adding " + f.name + "…");
+    akRcAddFile(f, vid).then(function (r) { akRcAfterFile(r, vid, redraw); }, function () { toast("Couldn't save that file (storage full?)."); });
+  });
+}
+/* a file from anywhere: ask which video it goes with */
+function akRcFileChosen(f, redraw) {
+  akRecList().then(function (all) {
+    var vids = all.filter(function (r) { return r.done && r.video && !r.combined; });
+    var sel = h("select", { "aria-label": "Which video" }, [h("option", { value: "" }, "None: just keep the sound")].concat(vids.map(function (v) {
+      return h("option", { value: v.id }, (v.title || "Video") + " · " + new Date(v.at).toLocaleString());
+    })));
+    if (vids.length) sel.value = vids[0].id;
+    modal("Add “" + f.name + "”", h("div", null,
+      h("p", null, "Which video is this sound for? It is saved in Recordings on this device, and the video gets this sound when you combine."), sel),
+      [{ label: "Cancel" }, { label: "Add", primary: true, onClick: function () {
+        var vid = vids.filter(function (v) { return v.id === sel.value; })[0] || null;
+        toast("Adding " + f.name + "…");
+        akRcAddFile(f, vid).then(function (r) { if (S.view !== "recs" && !redraw) go("recs"); akRcAfterFile(r, vid, redraw); }, function () { toast("Couldn't save that file (storage full?)."); });
+      } }]);
+  });
+}
+/* Recordings screen: the button and how-to */
+function akRcFileBtn(redraw) {
+  return h("button", { class: "sm", title: "A sound or video file shared from your other phone (⋯ › Share there, then save it here)", onClick: function () { akRcPickFile(function (f) { akRcFileChosen(f, redraw); }); } }, "📥 Add a recording from a file");
 }
 
 /* ---------- turning pasted charts into bracket form ---------- */
