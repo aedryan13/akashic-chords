@@ -23478,7 +23478,7 @@ function akListSearch(sheet) {
 /* ---------------------------------------------------------------- settings */
 function akSettingsExtra13(c) {
   c.again("playing-screen");
-  c.section("Info bar corner buttons", "A few key buttons in one corner of the Info bar");
+  c.section("Song header: button order", "Which corner of the Song header (the bar with the title) and the order of the buttons kept there");
   var cc = akCorner();
   c.check("Show key buttons in a corner of the Info bar", function () { return cc.on; }, function (v) { cc.on = v; });
   c.select("Corner", function () { return cc.side; }, function (v) { cc.side = v; }, [["right", "Right"], ["left", "Left"]]);
@@ -34430,6 +34430,80 @@ var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
       }
     } catch (e) {}
     return w;
+  };
+})();
+
+/* ================================================================ ak17_d: the Song header's ⋯ menu (version 14.6)
+   The Song header is the playing screen's bar with the title, writer and key (.pbottom, called the Info bar in older code).
+   Its corner buttons (akCorner().ids) now start empty: everything they did is in a ⋯ menu at the end of the Song header,
+   with Edit song first. Buttons ticked under Settings › Playing screen › Song header buttons stay on the bar (pinned). */
+AK_VERSION = "14.6";
+AK_WHATS_NEW = [
+  "Playing screen: the extra buttons on the Song header (the bar with the title and writer) are gone. A ⋯ at its end has Edit song, Next, Scroll, Requests and the rest. Want some back? Settings › Playing screen › Song header buttons pins the ones you always want."
+].concat(AK_WHATS_NEW);
+(function () {
+  var ac = akCorner;
+  /* once per copy of the corner settings: the old default buttons come off the bar (kept in oldIds17) */
+  akCorner = function () { var c = ac.apply(this, arguments); if (!c.v17) { c.oldIds17 = c.ids; c.ids = []; c.on = true; c.v17 = 1; } return c; };
+})();
+function akHdr17Menu(btn, root) {
+  var c = akCorner(), items = [];
+  var song = curSong();
+  if (song) items.push({ label: "✎ Edit song", onClick: function () { stopAuto(); releaseWake(); S.play = null; go("song", { songId: song.id }); } });
+  AK_CORNER.forEach(function (x) {
+    if (x[0] === "edit" || c.ids.indexOf(x[0]) >= 0) return;
+    var b = null; try { b = akCornerBtn(x[0], root); } catch (e) {}
+    if (!b || b.disabled) return;
+    var icon = (b.firstChild && b.firstChild.nodeType === 3 ? b.firstChild.textContent : "") || "";
+    items.push({ label: (icon ? icon + " " : "") + (b.getAttribute("aria-label") || x[1]), onClick: function () { b.click(); } });
+  });
+  items.push({ sep: true }, { label: "📌 Choose buttons to keep on this bar…", onClick: function () { akScreenCustomize("play", "song-header-buttons"); } });
+  menu(btn, items);
+}
+(function () {
+  var ce = akCornerEl;
+  akCornerEl = function (root) {
+    var box = null; try { box = ce.apply(this, arguments); } catch (e) {}
+    if (settings().hdrMenu17 === false || S.layout) return box;
+    var c = akCorner();
+    if (!box) box = h("div", { class: "ak9-corner " + (c.side === "left" ? "left" : "right") });
+    box.appendChild(h("button", { class: "ak9-cb ak17-more", "aria-label": "More: edit song and other actions", title: "More", onClick: function () { akHdr17Menu(this, root || document.querySelector(".play")); } }, "⋯"));
+    return box;
+  };
+})();
+(function () {
+  var prev = typeof akSettingsExtra27 === "function" ? akSettingsExtra27 : null;
+  akSettingsExtra27 = function (c) {
+    if (prev) prev(c);
+    c.again("playing-screen");
+    c.section("Song header buttons", "The bar with the title and writer: its ⋯ menu and the buttons that stay on it");
+    c.check("Show ⋯ (Edit song and more) at the end of the Song header", function () { return settings().hdrMenu17 !== false; }, function (v) { settings().hdrMenu17 = v; });
+    var cc = akCorner(), box = h("div", { class: "card ak17-pins" });
+    box.appendChild(h("strong", null, "Keep these on the bar"));
+    box.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "None by default. Ticked ones always show on the Song header; the rest are in ⋯. Change their order under Song header: button order."));
+    AK_CORNER.forEach(function (x) {
+      box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: cc.ids.indexOf(x[0]) >= 0, onChange: function () {
+        if (this.checked) { if (cc.ids.indexOf(x[0]) < 0) cc.ids.push(x[0]); } else cc.ids = cc.ids.filter(function (y) { return y !== x[0]; });
+        save(); try { akCornerPaint(); } catch (e) {} } }), x[1]));
+    });
+    c.out.appendChild(box);
+  };
+})();
+
+/* ---------------------------------------------------------------- song numbers in a setlist (14.6): the 1, 2, 3… beside each song were
+   hidden on phones (max-width 480px). They now show everywhere; Shows ⚙ › Setlist song numbers turns them off (settings().slNums). */
+akCss("ak17-nums", "@media (max-width: 480px) { html:not(.ak17-nonum) .srow .num { display: block; min-width: 1.3em; font-size: .85em; text-align: right; } }" +
+  " html.ak17-nonum .srow .num { display: none !important; }");
+function akNum17Apply() { document.documentElement.classList.toggle("ak17-nonum", settings().slNums === false); }
+(function () { var r = render; render = function () { var x = r.apply(this, arguments); try { akNum17Apply(); } catch (e) {} return x; }; })();
+AK_SCR_OPTS.shows.bks.push("songs-and-shows/setlist-song-numbers");
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("songs-and-shows");
+    c.section("Setlist song numbers", "1, 2, 3… beside each song on a setlist's page");
+    c.check("Number the songs in each set", function () { return settings().slNums !== false; }, function (v) { settings().slNums = v; akNum17Apply(); });
   };
 })();
 
