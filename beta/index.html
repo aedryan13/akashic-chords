@@ -33787,9 +33787,10 @@ akCss("ak16-g", [
 
 /* ================================================================ ak17_a: gig-ready update, phase 1 (version 14.3)
    Save button on edit screens (94), Change key on the song page (91), show / setlist words (89). */
-AK_VERSION = "14.3.1";
+AK_VERSION = "14.3.2";
 AK_WHATS_NEW = [
   "Save button on the song page, a setlist's page and a show's page: it saves, closes the page and takes you back to where you were. (Everything still saves by itself as you type.)",
+  "Setlists: after you change the order or add or take away songs, ✓ Save lights up. It asks whether to save the changes or save them as a copy (“Name (2)”), which leaves the original as it was.",
   "Change key on the song page, right above the lyrics and chords box: ♭ −1 and ♯ +1 move every chord a semitone and stay where you stop. Pick sharps or flats. “Back to original key” undoes it, and “Make this the permanent key” rewrites the chords in the new key. The original key is always remembered and shown, like “Original key G, now +2 up (A)”.",
   "Clearer words: the Shows tab's button says + New show, the Setlists tab's says + New setlist, and Import › Send a setlist / Receive a setlist say they send one setlist with its sets and songs."
 ].concat(AK_WHATS_NEW);
@@ -33806,14 +33807,40 @@ var AK17_SAVE_VIEWS = { song: 1, show: 1, gig: 1 };
         var tb = w.querySelector(".topbar"), t = tb && tb.querySelector(":scope > h1, :scope > .ttl");
         var b = h("button", { class: "ak17-save", "aria-label": "Save and go back", title: "Save and go back", onClick: function () {
           var ae = document.activeElement; if (ae && ae.blur) ae.blur();
+          if (S.view === "show" && akSl17Changed()) { akSl17SaveAsk(o); return; }
           saveNow(); toast("Saved."); o.back();
         } }, "✓", h("span", { class: "ak17-sw" }, " Save"));
+        if (S.view === "show") { akSl17Snap(); if (akSl17Changed()) b.classList.add("primary"); }
         if (t && t.nextSibling) tb.insertBefore(b, t.nextSibling); else if (tb) tb.appendChild(b);
       }
+      if (!AK17_SL_KEEP[S.view]) S.ak17Sl = null;
     } catch (e) {}
     return w;
   };
 })();
+/* setlist page: remember the setlist as it was when the page opened (kept while visiting its songs or playing), so Save can offer
+   "Save changes" or "Save as a copy" (the copy gets the changes, the original goes back to how it was) */
+var AK17_SL_KEEP = { show: 1, song: 1, play: 1 };
+function akSl17Json(sh) { return JSON.stringify({ name: sh.name, sets: (sh.sets || []).map(function (st) { return [st.name, st.songIds]; }) }); }
+function akSl17Snap() { var sh = findShow(S.showId); if (sh && (!S.ak17Sl || S.ak17Sl.id !== sh.id)) S.ak17Sl = { id: sh.id, data: clone(sh), json: akSl17Json(sh) }; }
+function akSl17Changed() { var sh = findShow(S.showId); return !!(sh && S.ak17Sl && S.ak17Sl.id === sh.id && akSl17Json(sh) !== S.ak17Sl.json); }
+function akSl17SaveAsk(o) {
+  var sh = findShow(S.showId), snap0 = S.ak17Sl;
+  var copyName = akBunUniq(snap0.data.name || "Setlist", function (x) { return lib().shows.some(function (s) { return normTitle(s.name) === normTitle(x); }); });
+  modal("Save this setlist", h("p", null, "You changed “" + (sh.name || "Setlist") + "”. Save the changes to it, or save them as a new setlist called “" + copyName + "” and leave the original as it was?"), [
+    { label: "Cancel" },
+    { label: "Save as a copy", onClick: function () {
+      snap("save setlist as a copy");
+      var c = clone(sh); c.id = uid(); c.name = copyName; c.sets.forEach(function (st) { st.id = uid(); }); c.announce = [];
+      c.played = {}; c.counted = {}; c.runs = [];
+      var i = lib().shows.indexOf(sh); Object.keys(sh).forEach(function (k) { delete sh[k]; }); Object.assign(sh, snap0.data);
+      lib().shows.splice(i < 0 ? 0 : i, 0, c); S.ak17Sl = null; saveNow();
+      toast("Saved as “" + copyName + "”. The original is unchanged."); o.back();
+    } },
+    { label: "Save changes", primary: true, onClick: function () { S.ak17Sl = null; saveNow(); toast("Saved."); o.back(); } }]);
+}
+document.addEventListener("click", function () { if (S.view === "show") setTimeout(function () { var b = document.querySelector(".topbar .ak17-save"); if (b) b.classList.toggle("primary", akSl17Changed()); }, 120); }, true);
+document.addEventListener("pointerup", function () { if (S.view === "show") setTimeout(function () { var b = document.querySelector(".topbar .ak17-save"); if (b) b.classList.toggle("primary", akSl17Changed()); }, 400); }, true);
 
 /* ---------------------------------------------------------------- Change key on the song page (91) */
 /* s.transpose = shown shift (the playing screen and preview use it, the text keeps its chords);
