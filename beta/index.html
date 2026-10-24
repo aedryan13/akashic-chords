@@ -2836,7 +2836,7 @@ function viewSong() {
       h("div", { class: "row" },
         h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word"),
         h("button", { onClick: function () { pushHist(); var r = normalizeChart(lyrArea.value, snapChk.checked); lyrArea.value = r.text; s.lyrics = r.text; if (r.title && !s.title) s.title = r.title; pushHist(); save(); toast("Converted."); } }, "Convert chords-above")),
-      h("div", { class: "row", style: "margin-bottom:0" }, h("button", { onClick: function () { makeChordFrom(chordsFld.querySelector("textarea"), "chords", "chords"); } }, "♪ Make chord"), h("span", { class: "hint", style: "margin:0" }, "Select text that isn't showing as a chord, then tap Make chord.")),
+      h("div", { class: "row", style: "margin-bottom:0" }, h("button", { class: "ak17-cvall", onClick: function () { akCv17Run(chordsFld.querySelector("textarea"), s, function () { pushHist(); save(); drawPrev(); }); } }, "♪ Make all chords"), h("button", { onClick: function () { makeChordFrom(chordsFld.querySelector("textarea"), "chords", "chords"); } }, "♪ Make chord"), h("span", { class: "hint", style: "margin:0" }, "Make all chords fixes every chord in this box that isn't showing as one. Make chord does just the text you select.")),
       chordsFld,
       versionsCard(s, function (swapped) { pushHist(); save(); if (swapped === true) build(); }),
       fld("Stage note (a short reminder that shows on the playing screen)", "stage", { area: true, rows: 2 }),
@@ -34437,7 +34437,7 @@ var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
    The Song header is the playing screen's bar with the title, writer and key (.pbottom, called the Info bar in older code).
    Its corner buttons (akCorner().ids) now start empty: everything they did is in a ⋯ menu at the end of the Song header,
    with Edit song first. Buttons ticked under Settings › Playing screen › Song header buttons stay on the bar (pinned). */
-AK_VERSION = "14.6";
+AK_VERSION = "14.6.1";
 AK_WHATS_NEW = [
   "Playing screen: the extra buttons on the Song header (the bar with the title and writer) are gone. A ⋯ at its end has Edit song, Next, Scroll, Requests and the rest. Want some back? Settings › Playing screen › Song header buttons pins the ones you always want."
 ].concat(AK_WHATS_NEW);
@@ -34446,10 +34446,33 @@ AK_WHATS_NEW = [
   /* once per copy of the corner settings: the old default buttons come off the bar (kept in oldIds17) */
   akCorner = function () { var c = ac.apply(this, arguments); if (!c.v17) { c.oldIds17 = c.ids; c.ids = []; c.on = true; c.v17 = 1; } return c; };
 })();
+/* 14.6.1: the pills on the Song header (My shapes, break countdown, timers, time left, waiting requests, 🎥 count) also leave the bar
+   by default (once, flag in settings().bottom.v17h, which is per device kind); the song info (title, writer, year, key, capo) stays.
+   Each one can be kept on the bar under Song header buttons; what they do is in ⋯. */
+function akHdr17F() { var b = settings().bottom = settings().bottom || {}; b.fields = b.fields || {}; return b.fields; }
+var AK_HDR17 = [
+  ["key", "Key (Key A · sounds G)", function () { var f = akHdr17F(); return !!(f.key || f.sounding); }, function (v) { var f = akHdr17F(); f.key = v; f.sounding = v; }],
+  ["capo", "Capo and tuning changes", function () { return settings().capoInfo !== false; }, function (v) { settings().capoInfo = v; }],
+  ["snd", "✋ My shapes / ♪ Sounding key", function () { return akSndCfg().on; }, function (v) { akSndCfg().on = v; }, 1],
+  ["brk", "☕ Countdown to the next break", function () { return akHdr17F().nextbreak !== false; }, function (v) { akHdr17F().nextbreak = v; }, 1],
+  ["timer", "⏱ Timers", function () { return !!akHdr17F().timer; }, function (v) { akHdr17F().timer = v; }, 1],
+  ["left", "Time and songs left", function () { return !!akHdr17F().left; }, function (v) { akHdr17F().left = v; }, 1],
+  ["reqline", "🙋 Waiting requests line", function () { return !!akStageCfg().bar; }, function (v) { akStageCfg().bar = v; }, 1],
+  ["recs", "🎥 Recordings count", function () { return settings().recPill !== false; }, function (v) { settings().recPill = v; }, 1]
+];
+function akHdr17Mig() { var b = settings().bottom; if (!b || b.v17h) return; akHdr17F(); AK_HDR17.forEach(function (x) { if (x[4]) x[3](false); }); b.v17h = 1; }
+(function () { var rp = renderPlay; renderPlay = function () { try { akHdr17Mig(); } catch (e) {} return rp.apply(this, arguments); }; })();
+function akHdr17Extra(items, root) {
+  var song = curSong(), on = function (id) { return AK_HDR17.filter(function (x) { return x[0] === id; })[0][2](); };
+  try { if (song && !on("snd") && soundShift(song)) items.push({ label: song.view === "sounding" ? "✋ Show my shapes (now: sounding key)" : "♪ Show the sounding key (now: my shapes)", onClick: function () { song.view = song.view === "sounding" ? "shapes" : "sounding"; save(); fillCharts(); } }); } catch (e) {}
+  try { if (!on("brk") && typeof akBreakPlanDialog === "function") { var bt = akBrkText(Date.now()); items.push({ label: "☕ Next break" + (bt ? ": " + bt : ""), onClick: function () { akBreakPlanDialog(); } }); } } catch (e) {}
+  try { if (!on("recs") && song) { var n = akRcCount(akRcForSong(song.id)); if (n) items.push({ label: "🎥 Recordings of this song (" + n + ")", onClick: function () { akRecsForSong(song); } }); } } catch (e) {}
+}
 function akHdr17Menu(btn, root) {
   var c = akCorner(), items = [];
   var song = curSong();
   if (song) items.push({ label: "✎ Edit song", onClick: function () { stopAuto(); releaseWake(); S.play = null; go("song", { songId: song.id }); } });
+  akHdr17Extra(items, root);
   AK_CORNER.forEach(function (x) {
     if (x[0] === "edit" || c.ids.indexOf(x[0]) >= 0) return;
     var b = null; try { b = akCornerBtn(x[0], root); } catch (e) {}
@@ -34468,6 +34491,7 @@ function akHdr17Menu(btn, root) {
     var c = akCorner();
     if (!box) box = h("div", { class: "ak9-corner " + (c.side === "left" ? "left" : "right") });
     box.appendChild(h("button", { class: "ak9-cb ak17-more", "aria-label": "More: edit song and other actions", title: "More", onClick: function () { akHdr17Menu(this, root || document.querySelector(".play")); } }, "⋯"));
+    try { var n = akReqWaiting(); if (n && !akStageCfg().bar && c.ids.indexOf("request") < 0) box.lastChild.appendChild(h("span", { class: "ak9-badge" }, String(n))); } catch (e) {}
     return box;
   };
 })();
@@ -34480,11 +34504,15 @@ function akHdr17Menu(btn, root) {
     c.check("Show ⋯ (Edit song and more) at the end of the Song header", function () { return settings().hdrMenu17 !== false; }, function (v) { settings().hdrMenu17 = v; });
     var cc = akCorner(), box = h("div", { class: "card ak17-pins" });
     box.appendChild(h("strong", null, "Keep these on the bar"));
-    box.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "None by default. Ticked ones always show on the Song header; the rest are in ⋯. Change their order under Song header: button order."));
+    box.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "None by default. Ticked ones always show on the Song header; the rest are in ⋯ (a number on ⋯ means requests are waiting). Change their order under Song header: button order."));
     AK_CORNER.forEach(function (x) {
       box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: cc.ids.indexOf(x[0]) >= 0, onChange: function () {
         if (this.checked) { if (cc.ids.indexOf(x[0]) < 0) cc.ids.push(x[0]); } else cc.ids = cc.ids.filter(function (y) { return y !== x[0]; });
         save(); try { akCornerPaint(); } catch (e) {} } }), x[1]));
+    });
+    box.appendChild(h("strong", { style: "display:block;margin-top:10px" }, "Song info and status on the bar"));
+    AK_HDR17.forEach(function (x) {
+      box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: x[2](), onChange: function () { x[3](this.checked); save(); try { if (S.view === "play") keepAutoRender(); } catch (e) {} } }), x[1]));
     });
     c.out.appendChild(box);
   };
@@ -34506,6 +34534,48 @@ AK_SCR_OPTS.shows.bks.push("songs-and-shows/setlist-song-numbers");
     c.check("Number the songs in each set", function () { return settings().slNums !== false; }, function (v) { settings().slNums = v; akNum17Apply(); });
   };
 })();
+
+/* ---------------------------------------------------------------- ♪ Make all chords (14.6.1): right above the chord chart box on the song page.
+   Every token in the chord box that isn't showing as a chord: ♯/♭ become #/b, "Fm#" style becomes "F#m"; anything else that
+   starts with A-G on a line that is mostly chords is offered as a custom chord (settings().customChords, like Make chord). */
+function akCv17Fix(t) {
+  var n = t.replace(/♯/g, "#").replace(/♭/g, "b");
+  if (isChordTok(n)) return n;
+  var m = /^([A-G])(m|min|maj|M)([#b])(.*)$/.exec(n);
+  if (m && isChordTok(m[1] + m[3] + m[2] + m[4])) return m[1] + m[3] + m[2] + m[4];
+  return null;
+}
+function akCv17Scan(text) {
+  var fixed = [], odd = [];
+  var out = String(text || "").replace(/\r\n?/g, "\n").split("\n").map(function (ln) {
+    if (/^\s*[\[{]/.test(ln) || (typeof isTabLine === "function" && isTabLine(ln)) || !ln.trim()) return ln;
+    var toks = ln.split(/\s+/).filter(Boolean), good = 0, cand = [];
+    var nl = ln.replace(/\S+/g, function (t) {
+      if (isChordTok(t) || EXTRA_TOKENS[t]) { good++; return t; }
+      var f = akCv17Fix(t); if (f) { good++; fixed.push(t + " → " + f); return f; }
+      if (/^[A-G]/.test(t) && t.length <= 10) cand.push(t);
+      return t;
+    });
+    if (cand.length && good + cand.length >= toks.length && good >= cand.length) cand.forEach(function (t) { if (odd.indexOf(t) < 0) odd.push(t); });
+    return nl;
+  }).join("\n");
+  return { text: out, fixed: fixed, odd: odd };
+}
+function akCv17Run(ta, song, done) {
+  if (!ta) return;
+  var r = akCv17Scan(ta.value);
+  if (!r.fixed.length && !r.odd.length) { toast("Everything in the chord box already shows as a chord."); return; }
+  function go() {
+    var l = settings().customChords = settings().customChords || [];
+    r.odd.forEach(function (n) { if (l.indexOf(n) < 0) l.push(n); });
+    syncCustomChords();
+    ta.value = r.text; song.chords = r.text; done();
+    toast("Made " + (r.fixed.length + r.odd.length) + (r.fixed.length + r.odd.length === 1 ? " chord." : " chords."));
+  }
+  var msg = (r.fixed.length ? "Fix the spelling: " + r.fixed.slice(0, 12).join(",  ") + (r.fixed.length > 12 ? " …" : "") + ". " : "") +
+    (r.odd.length ? "Treat these as chords too (remembered for every song): " + r.odd.join("  ") + "." : "");
+  modal("Make all chords", h("p", null, msg), [{ label: "Cancel" }, { label: "Make chords", primary: true, onClick: go }]);
+}
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
