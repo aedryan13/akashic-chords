@@ -34443,9 +34443,10 @@ var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
    The Song header is the playing screen's bar with the title, writer and key (.pbottom, called the Info bar in older code).
    Its corner buttons (akCorner().ids) now start empty: everything they did is in a ⋯ menu at the end of the Song header,
    with Edit song first. Buttons ticked under Settings › Playing screen › Song header buttons stay on the bar (pinned). */
-AK_VERSION = "14.6.3";
+AK_VERSION = "14.6.4";
 AK_WHATS_NEW = [
   "Playing screen: the extra buttons on the Song header (the bar with the title and writer) are gone. A ⋯ at its end has Edit song, Next, Scroll, Requests and the rest. Want some back? Settings › Playing screen › Song header buttons pins the ones you always want."
+  , "☕ Start break / End break: one button that lights up during the break. Add it to the Button bar, the side buttons or the Song header (⋯ › Choose buttons). Going to the next song ends the break too."
   , "History: each night now shows your breaks between the songs, with the time each started and how long it lasted (songs already show their order and time)."
   , "Recording: Phone recorders › How many phones › One phone: sound only. On the phone, 🎚 Sound input picks the microphone or a plugged-in audio interface.",
   "Song page: ♪ Make all chords, right above the chord chart box, fixes every chord there that isn't showing as one."
@@ -34636,6 +34637,68 @@ function akBrk17Emit(card, brks, before) {
     card.appendChild(h("div", { class: "hline ak17-brk" }, h("span", { class: "bldn" }, "☕"), h("div", { class: "grow" }, h("div", { class: "t" }, "Break"), h("div", { class: "muted", style: "font-size:13px" }, histTime(b.s) + " · " + m + " min" + (b.now ? " so far" : "")))));
   }
 }
+
+/* ---------------------------------------------------------------- ☕ Start break / End break button (14.6.4): one button (Button bar
+   "brkbtn", side buttons, or kept on the Song header) that starts the break timer and stays lit while the break is on; tap again to end
+   it. Going to another song also ends a running break (settings().brkEndOnSong, on by default). Same break log as the Timers. */
+AK_IC.brkbtn = "M4 8h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z M16 10h2a2 2 0 0 1 0 4h-2 M7 3v2 M11 3v2";
+TB_ITEMS.push(["brkbtn", "☕ Start break / End break"]); TB_SHORT.brkbtn = "Start break";
+FAB_ITEMS.push(["brkbtn", "☕ Start break / End break"]); FAB_OFF.brkbtn = 1; FAB_SHORT.brkbtn = "Break";
+AK_CORNER.push(["brkbtn", "☕ Start break / End break"]);
+function akBrk17Btn(cls) {
+  var on = !!TM.brk.on;
+  var b = h("button", { class: (cls || "") + (on ? " on ak17-brkon" : ""), "aria-pressed": on ? "true" : "false", "aria-label": on ? "End break" : "Start break", title: on ? "End break" : "Start break", onClick: function () { tmBreakToggle(); this.blur && this.blur(); } }, akIcon("brkbtn"));
+  b.setAttribute("data-brk17", "1");
+  return b;
+}
+function akBrk17Paint() {
+  var on = !!TM.brk.on;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-brk17]"), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("ak17-brkon", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.setAttribute("aria-label", on ? "End break" : "Start break"); b.title = on ? "End break" : "Start break";
+    if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", on ? "End break" : "Start break");
+    var cl = b.querySelector(".ak9-cl"); if (cl) cl.textContent = on ? "End break" : "Break";
+  });
+}
+function akExtraTb25(id, song, root) { if (id === "brkbtn") return akBrk17Btn(""); return null; }
+function akExtraFab12(song, root) { return { brkbtn: function () { return akBrk17Btn("fb"); } }; }
+(function () {
+  var cb = akCornerBtn;
+  akCornerBtn = function (id, root) {
+    if (id !== "brkbtn") return cb.apply(this, arguments);
+    var on = !!TM.brk.on, b = h("button", { class: "ak9-cb" + (on ? " live" : ""), "aria-label": on ? "End break" : "Start break", onClick: function () { tmBreakToggle(); } }, "☕", h("span", { class: "ak9-cl" }, on ? "End break" : "Break"));
+    b.setAttribute("data-ak9c", "brkbtn"); b.setAttribute("data-brk17", "1");
+    return b;
+  };
+  var tr = tmRefresh;
+  tmRefresh = function () { var r = tr.apply(this, arguments); try { akBrk17Paint(); var hb = document.querySelectorAll('.pbottom [data-ak9c="brkbtn"]'); Array.prototype.forEach.call(hb, function (x) { x.classList.toggle("live", !!TM.brk.on); }); } catch (e) {} return r; };
+  /* another song ends the break */
+  var rp = renderPlay;
+  renderPlay = function () {
+    try {
+      var it = S.play && S.play.list[S.play.idx], key = it ? it.songId + "@" + S.play.idx : "";
+      if (S.akBrkKey17 === "none" && key) S.akBrkKey17 = key;
+      if (TM.brk.on && settings().brkEndOnSong !== false && S.akBrkKey17 && key && key !== S.akBrkKey17) { S.akBrkKey17 = ""; tmBreakStop(); }
+      else if (!TM.brk.on) S.akBrkKey17 = "";
+      if (TM.brk.on && !S.akBrkKey17) S.akBrkKey17 = key || "none";
+    } catch (e) {}
+    var root = rp.apply(this, arguments);
+    try { var lb = root.querySelector('[data-tb="brkbtn"]'); if (lb) lb.setAttribute("data-lbl", TM.brk.on ? "End break" : "Start break"); } catch (e) {}
+    return root;
+  };
+  var bs = tmBreakStart;
+  tmBreakStart = function () { var r = bs.apply(this, arguments); try { var it = S.view === "play" && S.play && S.play.list[S.play.idx]; S.akBrkKey17 = it ? it.songId + "@" + S.play.idx : "none"; } catch (e) {} return r; };
+})();
+akCss("ak17-brk", "[data-brk17].ak17-brkon{background:#E5B800 !important;color:#000 !important;border-color:#E5B800 !important;box-shadow:0 0 0 3px rgba(229,184,0,.35)}");
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("playing-screen");
+    c.section("Break button", "☕ Start break / End break: add it to the Button bar, the side buttons or the Song header");
+    c.check("Going to another song ends the break", function () { return settings().brkEndOnSong !== false; }, function (v) { settings().brkEndOnSong = v; });
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
