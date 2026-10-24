@@ -33787,9 +33787,11 @@ akCss("ak16-g", [
 
 /* ================================================================ ak17_a: gig-ready update, phase 1 (version 14.3)
    Save button on edit screens (94), Change key on the song page (91), show / setlist words (89). */
-AK_VERSION = "14.3.3";
+AK_VERSION = "14.3.4";
 AK_WHATS_NEW = [
   "Save button on the song page, a setlist's page and a show's page: it saves, closes the page and takes you back to where you were. (Everything still saves by itself as you type.)",
+  "The little message at the bottom is smaller and goes away after about a second, and it no longer has an Undo button (use ↶ at the top). Anything you grab by its handle to move (songs, sets, setlists, groups and other lists) lights up right away so you can see it is picked up.",
+  "Every new setlist goes into a group called “New setlists” at the top of your setlists, so you can fold it away or move them from there.",
   "Setlists: after you change the order or add or take away songs, ✓ Save lights up. It asks whether to save the changes or save them as a copy (“Name (2)”), which leaves the original as it was. Leaving a changed setlist without saving asks the same question, with Undo my changes too.",
   "Change key on the song page, right above the lyrics and chords box: ♭ −1 and ♯ +1 move every chord a semitone and stay where you stop. Pick sharps or flats. “Back to original key” undoes it, and “Make this the permanent key” rewrites the chords in the new key. The original key is always remembered and shown, like “Original key G, now +2 up (A)”.",
   "Clearer words: the Shows tab's button says + New show, the Setlists tab's says + New setlist, and Import › Send a setlist / Receive a setlist say they send one setlist with its sets and songs."
@@ -33929,6 +33931,54 @@ function akTr17Card(s, onText, onShift) {
   };
 })();
 
+/* ---------------------------------------------------------------- quick pop-ups, and a clear "picked up" look (14.3.4) */
+/* the bottom pop-up: smaller, about a second (longer only for long messages), no Undo button (↶ is in the top bar);
+   other buttons (Open it, Share now...) stay and keep the pop-up a little longer */
+toast = function (msg, action) {
+  var box = $("toastbox");
+  Array.prototype.slice.call(box.querySelectorAll(".toast")).forEach(function (t) { t.remove(); });
+  if (action && /^undo$/i.test(String(action.label || "").trim())) action = null;
+  var t = h("div", { class: "toast ak17-toast", role: "status" }, h("span", null, msg));
+  if (action) t.appendChild(h("button", { class: "toastbtn", onClick: function () { t.remove(); action.fn(); } }, action.label));
+  box.appendChild(t);
+  var len = String(msg || "").length, ms = action ? 4000 : len <= 40 ? 1000 : Math.min(3500, 1000 + (len - 40) * 35);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.add("ak17-out"); setTimeout(function () { t.remove(); }, 180); }, ms);
+};
+/* anything grabbed by its handle lights up at once (dragSort and rowDrag add .dragging; other handles get .ak17-grab) */
+(function () {
+  var st = document.createElement("style");
+  st.textContent = ".toast.ak17-toast{padding:6px 12px;font-size:.88em;border-radius:10px;transition:opacity .18s}.toast.ak17-out{opacity:0}" +
+    ".dragging,.ak17-grab{opacity:1 !important;outline:2px solid var(--accent);outline-offset:1px;background:color-mix(in srgb,var(--accent) 18%,var(--panel)) !important;" +
+    "box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 30%,transparent),0 8px 20px rgba(0,0,0,.45) !important;border-radius:10px;position:relative;z-index:30}";
+  document.head.appendChild(st);
+  var grabbed = null;
+  function drop() { if (grabbed) grabbed.classList.remove("ak17-grab"); grabbed = null; }
+  document.addEventListener("pointerdown", function (e) {
+    var hd = e.target.closest && e.target.closest(".handle, .draghandle, [data-drag-handle]");
+    if (!hd) return;
+    var row = hd.closest(".item, .srow, .showrow, .setblock, .grouphead, .tmcard, li, [data-bk], .card") || hd.parentElement;
+    if (!row) return; drop(); grabbed = row; row.classList.add("ak17-grab");
+  }, true);
+  ["pointerup", "pointercancel"].forEach(function (ev) { document.addEventListener(ev, drop, true); });
+})();
+
+/* ---------------------------------------------------------------- new setlists go into a "New setlists" group (item 78, 14.3.4) */
+function akSl17NewGroup() {
+  var L = lib(); L.groups = L.groups || [];
+  var g = L.groups.filter(function (x) { return x.auto17 || /^new setlists$/i.test(x.name || ""); })[0];
+  if (!g) { g = { id: uid(), name: "New setlists", color: "", collapsed: false, auto17: true }; L.groups.unshift(g); }
+  return g;
+}
+(function () {
+  var ns = newShow;
+  newShow = function (name) {
+    var sh = ns.apply(this, arguments);
+    try { if (settings().newSlGroup !== false && !S.akNoGroup17 && name !== "Sample show" && typeof lib === "function" && lib()) sh.group = akSl17NewGroup().id; } catch (e) {}
+    return sh;
+  };
+})();
+
 /* ================================================================ ak17_b: gig-ready update, phase 2 (version 14.3)
    Send and receive a show, a setlist or a whole library (88/90). A file carries everything it needs (a show brings its setlists,
    a setlist brings its songs). Receiving never overwrites unless asked: songs you have are reused, names that clash get " (2)". */
@@ -34043,7 +34093,7 @@ function akBunApply(d, o) {
     var have = L.shows.filter(function (s) { return normTitle(s.name) === normTitle(name); })[0];
     var sh;
     if (have && o.names === "replace") { sh = have; sh.name = name; }
-    else { sh = newShow(have ? akBunUniq(name, function (t) { return L.shows.some(function (s) { return normTitle(s.name) === normTitle(t); }); }) : name); L.shows.unshift(sh); }
+    else { S.akNoGroup17 = L !== lib(); sh = newShow(have ? akBunUniq(name, function (t) { return L.shows.some(function (s) { return normTitle(s.name) === normTitle(t); }); }) : name); L.shows.unshift(sh); S.akNoGroup17 = false; }
     fillSetlist(sh, x); r.setlists.push(sh.id); return sh.id;
   });
   (d.shows || []).forEach(function (x) {
