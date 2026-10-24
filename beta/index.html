@@ -8213,16 +8213,18 @@ function viewHistory() {
       var nm0 = typeof akNightMeta === "function" ? akNightMeta(n.key) : null;
       if (open && nm0 && (nm0.notes || nm0.pay)) card.appendChild(h("div", { class: "hint", style: "margin:6px 0 0;white-space:pre-wrap" }, [nm0.pay ? "Pay $" + nm0.pay : "", nm0.notes || ""].filter(Boolean).join(" · ")));
       if (open) {
-        var no = 0;
+        var no = 0, brks = typeof akBrk17Night === "function" ? akBrk17Night(n) : [];
         order.forEach(function (nm) {
           if (order.length > 1 || nm) card.appendChild(h("div", { class: "hset" }, nm || "Other songs"));
           sets[nm].forEach(function (e) {
+            if (brks.length) akBrk17Emit(card, brks, e.at);
             no++; var s = histResolve(e);
             card.appendChild(h("div", { class: "hline" }, h("span", { class: "bldn" }, String(no)), h("div", { class: "grow" }, h("div", { class: "t" }, e.t), h("div", { class: "muted", style: "font-size:13px" }, (e.a ? e.a + " · " : "") + histTime(e.at) + (e.old ? " · from older counts" : e.man ? " · added by hand" : ""))),
               s ? h("button", { class: "icon sm", "aria-label": "Open " + e.t, onClick: function () { saveNow(); go("song", { songId: s.id }); } }, "↗") : null,
               h("button", { class: "icon sm", "aria-label": "Remove " + e.t + " from this night", onClick: function () { snap("remove history entry"); histRemove(e); save(); draw(); toastUndo("Removed."); } }, "✕")));
           });
         });
+        if (brks.length) akBrk17Emit(card, brks, Infinity);
         card.appendChild(h("div", { class: "row", style: "flex-wrap:wrap;margin-top:8px" },
           h("button", { class: "primary", onClick: function () { akNightEdit(n, draw); } }, "✎ Edit this night"),
           h("button", { onClick: function () { histNightToShow(n); } }, "Make a setlist from this night"),
@@ -10285,7 +10287,8 @@ function tmEndRun(keep, at) {
     var sh = findShow(TM.show);
     if (sh) {
       var brs = TM.brk.log.map(function (b) { return b.e - b.s; }); if (TM.brk.on) brs.push(Math.max(0, now - TM.brk.since));
-      sh.runs = sh.runs || []; sh.runs.push({ at: p.began, play: ms, wall: now - p.began, breaks: brs });
+      var brAt = TM.brk.log.map(function (b) { return b.s; }); if (TM.brk.on) brAt.push(TM.brk.since);
+      sh.runs = sh.runs || []; sh.runs.push({ at: p.began, play: ms, wall: now - p.began, breaks: brs, brAt: brAt });
       if (sh.runs.length > 30) sh.runs.shift();
       save();
     }
@@ -14712,7 +14715,7 @@ function akRunResume(quiet) {
     var r = sh.runs.pop(), t = r.at;
     TM.show = sh.id;
     TM.play = { on: false, since: 0, acc: r.play || 0, began: r.at, byBreak: false };
-    TM.brk = { on: false, since: 0, last: 0, log: (r.breaks || []).map(function (ms) { var b = { s: t, e: t + ms }; t += ms; return b; }) };
+    TM.brk = { on: false, since: 0, last: 0, log: (r.breaks || []).map(function (ms, i) { var s0 = r.brAt && r.brAt[i] ? r.brAt[i] : t, b = { s: s0, e: s0 + ms }; t += ms; return b; }) };
     tmSave();
   }
   if (sh && TM.show !== sh.id && !TM.play.began) TM.show = sh.id;
@@ -34440,9 +34443,12 @@ var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
    The Song header is the playing screen's bar with the title, writer and key (.pbottom, called the Info bar in older code).
    Its corner buttons (akCorner().ids) now start empty: everything they did is in a ⋯ menu at the end of the Song header,
    with Edit song first. Buttons ticked under Settings › Playing screen › Song header buttons stay on the bar (pinned). */
-AK_VERSION = "14.6.2";
+AK_VERSION = "14.6.5";
 AK_WHATS_NEW = [
   "Playing screen: the extra buttons on the Song header (the bar with the title and writer) are gone. A ⋯ at its end has Edit song, Next, Scroll, Requests and the rest. Want some back? Settings › Playing screen › Song header buttons pins the ones you always want."
+  , "Setlists: sets named Set 1, Set 2… keep the number of their place. Delete Set 2 of 3 and Set 3 becomes Set 2. Names you typed stay."
+  , "☕ Start break / End break: one button that lights up during the break. Add it to the Button bar, the side buttons or the Song header (⋯ › Choose buttons). Going to the next song ends the break too."
+  , "History: each night now shows your breaks between the songs, with the time each started and how long it lasted (songs already show their order and time)."
   , "Recording: Phone recorders › How many phones › One phone: sound only. On the phone, 🎚 Sound input picks the microphone or a plugged-in audio interface.",
   "Song page: ♪ Make all chords, right above the chord chart box, fixes every chord there that isn't showing as one."
 ].concat(AK_WHATS_NEW);
@@ -34610,6 +34616,106 @@ function akMic17Card(inn) {
   var cb = inn.querySelector(".ak16g-after"); if (cb) inn.insertBefore(card, cb); else inn.appendChild(card);
 }
 (function () { var rd = akRpDraw; akRpDraw = function () { var r = rd.apply(this, arguments); try { var inn = AKRP.el && AKRP.el.querySelector(".akrp-in"); if (inn) akMic17Card(inn); } catch (e) {} return r; }; })();
+
+/* ---------------------------------------------------------------- breaks in the play history (14.6.3): each run of a show now keeps when
+   each break started (run.brAt, beside run.breaks = lengths). History › a night shows "☕ Break · 9:42 PM · 15 min" rows where they
+   happened, between the songs (each song already shows its time and the order played). */
+function akBrk17Night(n) {
+  var es = n.entries || []; if (!es.length) return [];
+  var lo = es[0].at - 4 * 36e5, hi = es[es.length - 1].at + 4 * 36e5, ids = {}, out = [];
+  es.forEach(function (e) { if (e.sh) ids[e.sh] = 1; });
+  Object.keys(ids).forEach(function (id) {
+    var sh = findShow(id); if (!sh) return;
+    (sh.runs || []).forEach(function (r) { (r.brAt || []).forEach(function (at, i) { if (at >= lo && at <= hi) out.push({ s: at, ms: (r.breaks || [])[i] || 0 }); }); });
+    if (TM && TM.show === id) { (TM.brk.log || []).forEach(function (b) { if (b.s >= lo && b.s <= hi) out.push({ s: b.s, ms: b.e - b.s }); }); if (TM.brk.on && TM.brk.since >= lo) out.push({ s: TM.brk.since, ms: Date.now() - TM.brk.since, now: 1 }); }
+  });
+  var seen = {}; out = out.filter(function (b) { var k = Math.round(b.s / 1000); if (seen[k]) return false; seen[k] = 1; return true; });
+  return out.sort(function (a, b) { return a.s - b.s; });
+}
+function akBrk17Emit(card, brks, before) {
+  while (brks.length && brks[0].s < before) {
+    var b = brks.shift(), m = Math.max(1, Math.round(b.ms / 60000));
+    card.appendChild(h("div", { class: "hline ak17-brk" }, h("span", { class: "bldn" }, "☕"), h("div", { class: "grow" }, h("div", { class: "t" }, "Break"), h("div", { class: "muted", style: "font-size:13px" }, histTime(b.s) + " · " + m + " min" + (b.now ? " so far" : "")))));
+  }
+}
+
+/* ---------------------------------------------------------------- ☕ Start break / End break button (14.6.4): one button (Button bar
+   "brkbtn", side buttons, or kept on the Song header) that starts the break timer and stays lit while the break is on; tap again to end
+   it. Going to another song also ends a running break (settings().brkEndOnSong, on by default). Same break log as the Timers. */
+AK_IC.brkbtn = "M4 8h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z M16 10h2a2 2 0 0 1 0 4h-2 M7 3v2 M11 3v2";
+TB_ITEMS.push(["brkbtn", "☕ Start break / End break"]); TB_SHORT.brkbtn = "Start break";
+FAB_ITEMS.push(["brkbtn", "☕ Start break / End break"]); FAB_OFF.brkbtn = 1; FAB_SHORT.brkbtn = "Break";
+AK_CORNER.push(["brkbtn", "☕ Start break / End break"]);
+function akBrk17Btn(cls) {
+  var on = !!TM.brk.on;
+  var b = h("button", { class: (cls || "") + (on ? " on ak17-brkon" : ""), "aria-pressed": on ? "true" : "false", "aria-label": on ? "End break" : "Start break", title: on ? "End break" : "Start break", onClick: function () { tmBreakToggle(); this.blur && this.blur(); } }, akIcon("brkbtn"));
+  b.setAttribute("data-brk17", "1");
+  return b;
+}
+function akBrk17Paint() {
+  var on = !!TM.brk.on;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-brk17]"), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("ak17-brkon", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.setAttribute("aria-label", on ? "End break" : "Start break"); b.title = on ? "End break" : "Start break";
+    if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", on ? "End break" : "Start break");
+    var cl = b.querySelector(".ak9-cl"); if (cl) cl.textContent = on ? "End break" : "Break";
+  });
+}
+function akExtraTb25(id, song, root) { if (id === "brkbtn") return akBrk17Btn(""); return null; }
+function akExtraFab12(song, root) { return { brkbtn: function () { return akBrk17Btn("fb"); } }; }
+(function () {
+  var cb = akCornerBtn;
+  akCornerBtn = function (id, root) {
+    if (id !== "brkbtn") return cb.apply(this, arguments);
+    var on = !!TM.brk.on, b = h("button", { class: "ak9-cb" + (on ? " live" : ""), "aria-label": on ? "End break" : "Start break", onClick: function () { tmBreakToggle(); } }, "☕", h("span", { class: "ak9-cl" }, on ? "End break" : "Break"));
+    b.setAttribute("data-ak9c", "brkbtn"); b.setAttribute("data-brk17", "1");
+    return b;
+  };
+  var tr = tmRefresh;
+  tmRefresh = function () { var r = tr.apply(this, arguments); try { akBrk17Paint(); var hb = document.querySelectorAll('.pbottom [data-ak9c="brkbtn"]'); Array.prototype.forEach.call(hb, function (x) { x.classList.toggle("live", !!TM.brk.on); }); } catch (e) {} return r; };
+  /* another song ends the break */
+  var rp = renderPlay;
+  renderPlay = function () {
+    try {
+      var it = S.play && S.play.list[S.play.idx], key = it ? it.songId + "@" + S.play.idx : "";
+      if (S.akBrkKey17 === "none" && key) S.akBrkKey17 = key;
+      if (TM.brk.on && settings().brkEndOnSong !== false && S.akBrkKey17 && key && key !== S.akBrkKey17) { S.akBrkKey17 = ""; tmBreakStop(); }
+      else if (!TM.brk.on) S.akBrkKey17 = "";
+      if (TM.brk.on && !S.akBrkKey17) S.akBrkKey17 = key || "none";
+    } catch (e) {}
+    var root = rp.apply(this, arguments);
+    try { var lb = root.querySelector('[data-tb="brkbtn"]'); if (lb) lb.setAttribute("data-lbl", TM.brk.on ? "End break" : "Start break"); } catch (e) {}
+    return root;
+  };
+  var bs = tmBreakStart;
+  tmBreakStart = function () { var r = bs.apply(this, arguments); try { var it = S.view === "play" && S.play && S.play.list[S.play.idx]; S.akBrkKey17 = it ? it.songId + "@" + S.play.idx : "none"; } catch (e) {} return r; };
+})();
+akCss("ak17-brk", "[data-brk17].ak17-brkon{background:#E5B800 !important;color:#000 !important;border-color:#E5B800 !important;box-shadow:0 0 0 3px rgba(229,184,0,.35)}");
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("playing-screen");
+    c.section("Break button", "☕ Start break / End break: add it to the Button bar, the side buttons or the Song header");
+    c.check("Going to another song ends the break", function () { return settings().brkEndOnSong !== false; }, function (v) { settings().brkEndOnSong = v; });
+  };
+})();
+
+/* ---------------------------------------------------------------- set numbers follow their position (14.6.5): whenever a setlist's page is drawn,
+   sets still named "Set N" are renamed to their place (delete Set 2 of 3 and Set 3 becomes Set 2; moving sets renumbers too). Names typed
+   by hand (anything else) never change. Same rule as splitting a set (ak16_c). */
+function akSet17Renum(sh) {
+  var ch = false;
+  (sh && sh.sets || []).forEach(function (x, i) { if (/^set\s*\d+$/i.test((x.name || "").trim()) && x.name !== "Set " + (i + 1)) { x.name = "Set " + (i + 1); ch = true; } });
+  return ch;
+}
+(function () {
+  var r = render;
+  render = function () {
+    try { if (S.view === "show" && S.showId) { var sh = findShow(S.showId); if (sh && akSet17Renum(sh)) save(); } } catch (e) {}
+    return r.apply(this, arguments);
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
