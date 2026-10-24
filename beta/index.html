@@ -4995,6 +4995,7 @@ function viewImport() {
   isub("Receive a setlist", "Open a setlist file someone sent you");
   out.appendChild(h("p", { class: "hint" }, "Choose a setlist file (it ends in .setlist.json). You pick whether to reuse songs you already have, and the setlist is added to your setlists (Shows tab › Setlists)."));
   out.appendChild(fileBtn("Choose setlist file", anyFileInput()));
+  if (typeof akBunImportUI === "function") akBunImportUI(out, isec, isub);
 
   isec("Library and backup", "Save everything to a file, restore it, and keep it safe");
   isub("Save a backup file", "Everything, or just the open library");
@@ -11484,6 +11485,7 @@ function anyFileInput() {
     readFileAs(f, "text").then(function (t) {
       var d; try { d = JSON.parse(String(t).replace(/^﻿/, "")); } catch (e) { throw new Error("That isn't a Akashic Chords file. If someone sent you a PDF or text, use “Add a song from text” instead."); }
       if (d && d.chordbook === "setlist") return openSetListImport(d);
+      if (d && d.chordbook === "bundle" && typeof akBunImport === "function") return akBunImport(d);
       if (d && d.chordbook === "songs") return openSharedImport(parseSharedSongs(t));
       if (d && (Array.isArray(d.libs) || Array.isArray(d.songs))) return offerRestore(t);
       throw new Error("That isn't a Akashic Chords file.");
@@ -33889,6 +33891,241 @@ function akTr17Card(s, onText, onShift) {
     var el = vs.apply(this, arguments);
     try { var nb = el.querySelector(".topbar button.primary"); if (nb && /^\+\s*New$/.test(nb.textContent.trim())) nb.textContent = akShowsTab() === "gigs" ? "+ New show" : "+ New setlist"; } catch (e) {}
     return el;
+  };
+})();
+
+/* ================================================================ ak17_b: gig-ready update, phase 2 (version 14.3)
+   Send and receive a show, a setlist or a whole library (88/90). A file carries everything it needs (a show brings its setlists,
+   a setlist brings its songs). Receiving never overwrites unless asked: songs you have are reused, names that clash get " (2)". */
+AK_WHATS_NEW.splice(3, 0, "Send a show (with its setlists and songs), a setlist, or your whole library: Import › Send and receive. Receiving never overwrites anything unless you choose to: songs you already have are reused, a setlist or show with the same name is added as “Name (2)”, and you can rename it, replace on purpose, or put it all in a new library.");
+["origKey", "keyShift", "accPref"].forEach(function (k) { if (SHARE_FIELDS.indexOf(k) < 0) SHARE_FIELDS.push(k); });
+
+/* ---------------------------------------------------------------- packing */
+function akBunCtx(o) {
+  var c = { o: o || {}, songs: [], sIdx: {}, setlists: [], lIdx: {} };
+  c.song = function (id) { if (c.sIdx[id] === undefined) { var s = findSong(id); if (!s) return undefined; c.sIdx[id] = c.songs.length; c.songs.push(songForShare(s, c.o)); } return c.sIdx[id]; };
+  c.setlist = function (sh) {
+    if (c.lIdx[sh.id] !== undefined) return c.lIdx[sh.id];
+    var setIx = {}, x = { name: sh.name || "Setlist", date: sh.date || "", notes: c.o.notes ? (sh.notes || "") : "", color: sh.color || "", target: sh.target || 0, startTime: sh.startTime || "", endTime: sh.endTime || "" };
+    x.sets = (sh.sets || []).map(function (st, ti) { setIx[st.id] = ti; return { name: st.name, color: st.color || "", songs: (st.songIds || []).map(c.song).filter(function (i) { return i !== undefined; }) }; });
+    x.announce = (sh.announce || []).map(function (a) { var r = { text: a.text || "", when: a.when || "before", time: a.time || "", note: !!a.note }; if (a.setId != null) r.ti = setIx[a.setId]; if (a.songId) r.si = c.song(a.songId); return r; });
+    c.lIdx[sh.id] = c.setlists.length; c.setlists.push(x); return c.lIdx[sh.id];
+  };
+  c.show = function (g) {
+    return { name: g.name || "", date: g.date || "", start: g.start || "", end: g.end || "", venue: g.venue || "", address: g.address || "", color: g.color || "",
+      notes: c.o.notes ? (g.notes || "") : "", setlists: (g.setlists || []).map(findShow).filter(Boolean).map(c.setlist) };
+  };
+  return c;
+}
+/* kind: "show" (gigs), "setlist" (setlists) or "library" */
+function akBunPack(kind, items, o) {
+  var c = akBunCtx(o), shows = [];
+  if (kind === "library") {
+    lib().songs.forEach(function (s) { c.song(s.id); });
+    lib().shows.forEach(c.setlist);
+    shows = akGigs().map(c.show);
+  } else if (kind === "show") shows = items.map(c.show);
+  else items.forEach(c.setlist);
+  return { chordbook: "bundle", v: 1, kind: kind, from: lib().name || "", at: new Date().toISOString(), songs: c.songs, setlists: c.setlists, shows: shows };
+}
+function akBunFileName(kind, items) {
+  var base = kind === "library" ? (lib().name || "library") : items.length === 1 ? (kind === "show" ? akGigTitle(items[0]) + (items[0].date ? " " + items[0].date : "") : items[0].name || "setlist") : kind + "s";
+  return (String(base).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase() || kind) + "." + kind + ".json";
+}
+function akBunSend(kind, items, o, status) {
+  var name = akBunFileName(kind, items), data = JSON.stringify(akBunPack(kind, items, o));
+  return { save: function () { saveFile(name, data, "application/json"); }, share: function () {
+    var file; try { file = new File([new Blob([data], { type: "application/json" })], name, { type: "application/json" }); } catch (e) { file = null; }
+    if (!file || !navigator.canShare || !navigator.canShare({ files: [file] })) { if (status) status.textContent = "This device can't send a file from here. Use Save file instead."; return; }
+    navigator.share({ files: [file], title: name }).catch(function (e) { if ((!e || e.name !== "AbortError") && status) status.textContent = "Couldn't open sharing. Use Save file instead."; });
+  } };
+}
+function akBunSendRow(out, kind, getItems, notes) {
+  var status = h("div", { class: "hint", role: "status" });
+  function go(how) { var it = getItems(); if (!it || !it.length) { toast("Pick something to send first."); return; } akBunSend(kind, it, { notes: notes ? notes.checked : true }, status)[how](); }
+  var row = h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { go("save"); } }, "Save file"));
+  if (navigator.share) row.appendChild(h("button", { onClick: function () { go("share"); } }, "Send…"));
+  out.appendChild(row); out.appendChild(status);
+}
+/* Import tab: Send a show, Send my whole library, Receive (called from viewImport after the setlist part) */
+function akBunImportUI(out, isec, isub) {
+  isec("Shows and libraries", "Send a show or a whole library, or receive one");
+  isub("Send a show", "One show, its setlists and all their songs in one file");
+  var gigs = akGigs().slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  if (!gigs.length) out.appendChild(h("p", { class: "hint" }, "You have no shows yet. Make one on the Shows tab, then come back to send it."));
+  else {
+    var sel = h("select", { "aria-label": "Which show" }, gigs.map(function (g) { return h("option", { value: g.id }, akGigTitle(g) + (g.date ? " (" + g.date + ")" : "")); }));
+    var notes = h("input", { type: "checkbox", checked: true });
+    out.appendChild(h("p", { class: "hint" }, "Packs the show (name, date, times, venue), its setlists and every song in them. Pay, tips and photos stay on this device."));
+    out.appendChild(h("label", { class: "fld" }, "Show to send", sel));
+    out.appendChild(h("label", { class: "chk" }, notes, "Include my notes"));
+    akBunSendRow(out, "show", function () { var g = akGig(sel.value); return g ? [g] : []; }, notes);
+  }
+  isub("Send my whole library", "Every song, setlist and show in “" + (lib().name || "this library") + "”");
+  var n2 = h("input", { type: "checkbox", checked: true });
+  out.appendChild(h("p", { class: "hint" }, lib().songs.length + " songs, " + lib().shows.length + " setlists and " + akGigs().length + " shows. This is for sharing a library with another device or person; it doesn't carry your settings (use a backup file for that)."));
+  out.appendChild(h("label", { class: "chk" }, n2, "Include my notes"));
+  akBunSendRow(out, "library", function () { return [lib()]; }, n2);
+  isub("Receive a show, setlist or library", "Open a file someone sent you");
+  out.appendChild(h("p", { class: "hint" }, "Choose the file (it ends in .show.json, .setlist.json or .library.json). Nothing you have is replaced unless you choose that."));
+  out.appendChild(fileBtn("Choose file", anyFileInput()));
+}
+
+/* ---------------------------------------------------------------- receiving */
+function akBunUniq(name, taken) {
+  var root = String(name || "").replace(/\s*\(\d+\)\s*$/, "").trim() || "Untitled", n = 2, t = root + " (" + n + ")";
+  if (!taken(name)) return name;
+  while (taken(t)) { n++; t = root + " (" + n + ")"; }
+  return t;
+}
+function akBunSongMatch(L, f) {
+  return L.songs.filter(function (s) { return !s.trashed && normTitle(s.title) === normTitle(f.title) && (!f.artist || !s.artist || normTitle(s.artist) === normTitle(f.artist)); })[0] || null;
+}
+/* the old setlist file becomes a bundle */
+function akBunFromSetlist(d) { return { chordbook: "bundle", v: 1, kind: "setlist", from: d.from || "", songs: d.songs || [], setlists: [Object.assign({}, d.show, { announce: d.show.announce || [] })], shows: [] }; }
+/* o: { lib, songs: "mine" | "copy" | "theirs", names: "number" | "replace", rename } -> { songsAdded, songsReplaced, setlists: [ids], shows: [ids] } */
+function akBunApply(d, o) {
+  var L = o.lib, r = { songsAdded: 0, songsReplaced: 0, songsReused: 0, setlists: [], shows: [] };
+  L.gigs = Array.isArray(L.gigs) ? L.gigs : [];
+  var songIds = (d.songs || []).map(function (f) {
+    var dup = akBunSongMatch(L, f);
+    if (dup && o.songs === "mine") { r.songsReused++; return dup.id; }
+    if (dup && o.songs === "theirs") { applySharedFields(dup, f); dup.title = f.title || dup.title; r.songsReplaced++; return dup.id; }
+    var s = newSong({ title: f.title || "Untitled", artist: f.artist || "" }); applySharedFields(s, f);
+    s.title = dup ? akBunUniq(f.title || "Untitled", function (x) { return L.songs.some(function (z) { return normTitle(z.title) === normTitle(x); }); }) : (f.title || "Untitled");
+    s.artist = f.artist || ""; s.tags = (f.tags || []).slice();
+    L.songs.push(s); r.songsAdded++; return s.id;
+  });
+  var single = (d.kind === "setlist" && (d.setlists || []).length === 1) ? "setlist" : (d.kind === "show" && (d.shows || []).length === 1) ? "show" : "";
+  function fillSetlist(sh, x) {
+    sh.date = x.date || ""; sh.notes = x.notes || ""; sh.color = x.color || ""; sh.target = x.target || 0; sh.startTime = x.startTime || ""; sh.endTime = x.endTime || "";
+    sh.sets = (x.sets || []).map(function (y) { var st = newSet(y.name || "Set"); st.color = y.color || ""; st.songIds = (y.songs || []).map(function (i) { return songIds[i]; }).filter(Boolean); return st; });
+    if (!sh.sets.length) sh.sets = [newSet("Set 1")];
+    sh.announce = (x.announce || []).map(function (a) { var z = { id: uid(), text: a.text || "", when: a.when || "before" }; if (a.time) z.time = a.time; if (a.note) z.note = true; if (a.ti != null && sh.sets[a.ti]) z.setId = sh.sets[a.ti].id; if (a.si != null && songIds[a.si]) z.songId = songIds[a.si]; return z; });
+  }
+  var listIds = (d.setlists || []).map(function (x) {
+    var name = (single === "setlist" && o.rename) || x.name || "Setlist";
+    var have = L.shows.filter(function (s) { return normTitle(s.name) === normTitle(name); })[0];
+    var sh;
+    if (have && o.names === "replace") { sh = have; sh.name = name; }
+    else { sh = newShow(have ? akBunUniq(name, function (t) { return L.shows.some(function (s) { return normTitle(s.name) === normTitle(t); }); }) : name); L.shows.unshift(sh); }
+    fillSetlist(sh, x); r.setlists.push(sh.id); return sh.id;
+  });
+  (d.shows || []).forEach(function (x) {
+    var name = (single === "show" && o.rename) || x.name || "";
+    var key = function (g) { return normTitle((g.name || g.venue) || "") + "|" + (g.date || ""); }, want = normTitle(name || x.venue || "") + "|" + (x.date || "");
+    var have = L.gigs.filter(function (g) { return key(g) === want; })[0], g;
+    var fields = { date: x.date || "", start: x.start || "", end: x.end || "", venue: x.venue || "", address: x.address || "", color: x.color || "", notes: x.notes || "",
+      setlists: (x.setlists || []).map(function (i) { return listIds[i]; }).filter(Boolean) };
+    if (have && o.names === "replace") { g = have; Object.assign(g, fields); g.name = name; }
+    else {
+      g = akNewGig(fields);
+      g.name = have ? akBunUniq(name || x.venue || "Show", function (t) { return L.gigs.some(function (z) { return key(z) === normTitle(t) + "|" + (x.date || ""); }); }) : name;
+      L.gigs.push(g);
+    }
+    r.shows.push(g.id);
+  });
+  return r;
+}
+function akBunImport(d) {
+  if (d && d.chordbook === "setlist") d = akBunFromSetlist(d);
+  if (!d || d.chordbook !== "bundle" || !Array.isArray(d.songs)) throw new Error("That isn't a show, setlist or library file.");
+  var nS = d.songs.length, nL = (d.setlists || []).length, nG = (d.shows || []).length;
+  var what = d.kind === "show" ? (nG === 1 ? "A show" : nG + " shows") : d.kind === "library" ? "A library" : (nL === 1 ? "A setlist" : nL + " setlists");
+  var parts = []; if (nG) parts.push(nG + (nG === 1 ? " show" : " shows")); if (nL) parts.push(nL + (nL === 1 ? " setlist" : " setlists")); parts.push(nS + (nS === 1 ? " song" : " songs"));
+  var single = d.kind === "setlist" && nL === 1 ? d.setlists[0].name || "Setlist" : d.kind === "show" && nG === 1 ? (d.shows[0].name || d.shows[0].venue || "Show") : "";
+  var dest = h("select", { "aria-label": "Where to put it" }, store.libs.map(function (l) { return h("option", { value: l.id }, "This library: " + (l.name || "My songs")); }).concat([h("option", { value: "__new" }, "A new library")]));
+  dest.value = d.kind === "library" ? "__new" : store.cur;
+  var libName = h("input", { type: "text", autocapitalize: "words", "aria-label": "Name for the new library", value: akBunUniq(d.from || "Library from a file", function (t) { return store.libs.some(function (l) { return normTitle(l.name) === normTitle(t); }); }) });
+  var songsSel = h("select", { "aria-label": "Songs you already have" }, h("option", { value: "mine" }, "Use the ones I already have"), h("option", { value: "copy" }, "Add theirs as new songs, numbered"), h("option", { value: "theirs" }, "Replace mine with theirs"));
+  var namesSel = h("select", { "aria-label": "Same name" }, h("option", { value: "number" }, "Add it as new, numbered like “Name (2)”"), h("option", { value: "replace" }, "Replace the one I have with the same name"));
+  var rename = single ? h("input", { type: "text", autocapitalize: "words", "aria-label": "Name", value: single }) : null;
+  var info = h("div", { class: "hint" }), nameBox = h("div"), songsBox = h("div"), namesBox = h("div");
+  function target() { return dest.value === "__new" ? null : store.libs.filter(function (l) { return l.id === dest.value; })[0]; }
+  function draw() {
+    var L = target(), have = L ? d.songs.filter(function (f) { return akBunSongMatch(L, f); }).length : 0;
+    var clash = L ? (d.setlists || []).filter(function (x) { return L.shows.some(function (s) { return normTitle(s.name) === normTitle(x.name); }); }).length +
+      (d.shows || []).filter(function (x) { return (L.gigs || []).some(function (g) { return normTitle(g.name || g.venue || "") === normTitle(x.name || x.venue || "") && (g.date || "") === (x.date || ""); }); }).length : 0;
+    nameBox.style.display = L ? "none" : "";
+    songsBox.style.display = have ? "" : "none";
+    namesBox.style.display = clash ? "" : "none";
+    info.textContent = !L ? "Everything goes into a new library. Nothing you have changes." : (have ? have + (have === 1 ? " song is" : " songs are") + " already in that library. " : "None of the songs are in that library yet. ") + (clash ? (clash === 1 ? "One setlist or show there has the same name." : clash + " setlists or shows there have the same names.") : "");
+  }
+  nameBox.appendChild(h("label", { class: "fld" }, "Name for the new library", libName));
+  songsBox.appendChild(h("label", { class: "fld" }, "Songs I already have", songsSel));
+  namesBox.appendChild(h("label", { class: "fld" }, "Same name as one I have", namesSel));
+  songsSel.addEventListener("change", function () { if (this.value === "theirs") toast("Their chords, lyrics, key and info will replace yours for those songs. Your play counts stay."); });
+  dest.addEventListener("change", draw); draw();
+  modal(what + " someone sent you", h("div", null,
+    h("p", null, parts.join(", ") + (d.from ? " (from the library “" + d.from + "”)" : "") + "."),
+    rename ? h("label", { class: "fld" }, d.kind === "show" ? "Name for the show" : "Name for the setlist", rename) : null,
+    h("label", { class: "fld" }, "Put it in", dest), nameBox, info, songsBox, namesBox),
+    [{ label: "Cancel" }, { label: "Add it", primary: true, onClick: function () {
+      snap("receive " + (d.kind || "file"));
+      var L = target(); if (!L) { L = newLib(String(libName.value || "").trim() || "Library from a file"); store.libs.push(L); }
+      var r = akBunApply(d, { lib: L, songs: songsSel.value, names: namesSel.value, rename: rename ? String(rename.value || "").trim() : "" });
+      save(); saveNow();
+      var msg = "Added " + [r.shows.length ? r.shows.length + (r.shows.length === 1 ? " show" : " shows") : "", r.setlists.length ? r.setlists.length + (r.setlists.length === 1 ? " setlist" : " setlists") : "", r.songsAdded ? r.songsAdded + (r.songsAdded === 1 ? " new song" : " new songs") : ""].filter(Boolean).join(", ") + (r.songsReplaced ? "; replaced " + r.songsReplaced + " songs" : "") + ".";
+      if (L.id === store.cur) {
+        if (r.shows.length === 1) go("gig", { gigId: r.shows[0] }); else if (r.setlists.length === 1 && !r.shows.length) go("show", { showId: r.setlists[0] }); else go("shows");
+        toast(msg);
+      } else toast(msg + " It's in the library “" + L.name + "”.", { label: "Open it", fn: function () { store.cur = L.id; save(); go("songs"); } });
+    } }]);
+}
+/* every received setlist file goes the new way too (never overwrites, numbered names) */
+openSetListImport = function (d) { if (!d || !d.show || !Array.isArray(d.songs)) throw new Error("That isn't a setlist file."); return akBunImport(d); };
+
+/* ================================================================ ak17_c: gig-ready update, phase 3, the small part (version 14.3)
+   ↶ in the top bar: undo / redo the app's saved changes (snap() undo stack: deletes, setlist and show edits, imports...),
+   with a list of recent changes; going back past several asks first. The full per-screen history (item 93) is not built. */
+AK_WHATS_NEW.splice(4, 0, "↶ Undo in the top bar (next to backup and sync): tap it to see your recent changes, undo the last one, redo it, or go back further (it says first what else that undoes). Covers deleting songs, setlists and shows, setlist edits and receiving files.");
+var akRedoStack = [];
+(function () {
+  var sn = snap, ul = undoLast;
+  snap = function () { akRedoStack = []; return sn.apply(this, arguments); };
+  undoLast = function () {
+    var u = undoStack[undoStack.length - 1];
+    if (u) try { akRedoStack.push({ label: u.label, data: JSON.stringify({ libs: store.libs, cur: store.cur, banter: store.banter, fingerings: store.fingerings }) }); } catch (e) {}
+    if (akRedoStack.length > 15) akRedoStack.shift();
+    return ul.apply(this, arguments);
+  };
+})();
+function akRedo() {
+  var r = akRedoStack.pop();
+  if (!r) { toast("Nothing to redo."); return; }
+  try { undoStack.push({ label: r.label, data: JSON.stringify({ libs: store.libs, cur: store.cur, banter: store.banter, fingerings: store.fingerings }) }); } catch (e) {}
+  var d = JSON.parse(r.data);
+  store.libs = d.libs; store.cur = d.cur; store.banter = d.banter; store.fingerings = d.fingerings;
+  normalizeStore(); saveNow(); store.changes++; render(); toast("Redid: " + r.label + ".");
+}
+/* undo the last n changes (n > 1 asks first) */
+function akUndoN(n) {
+  function go() { for (var i = 0; i < n && undoStack.length; i++) undoLast(); }
+  if (n <= 1) { go(); return; }
+  confirmBox("Going back to before “" + undoStack[undoStack.length - n].label + "” also undoes the " + (n - 1) + (n === 2 ? " change" : " changes") + " made after it. You can redo them right after.", "Undo " + n + " changes", go);
+}
+function akUndoMenu(btn) {
+  var items = [];
+  if (undoStack.length) items.push({ label: "↶ Undo: " + undoStack[undoStack.length - 1].label, onClick: function () { akUndoN(1); } });
+  if (akRedoStack.length) items.push({ label: "↷ Redo: " + akRedoStack[akRedoStack.length - 1].label, onClick: akRedo });
+  for (var i = undoStack.length - 2, k = 2; i >= 0; i--, k++) (function (n, u) { items.push({ label: "Back to before: " + u.label + " (" + n + " changes)", onClick: function () { akUndoN(n); } }); })(k, undoStack[i]);
+  if (!items.length) items.push({ label: "Nothing to undo yet", onClick: function () {} });
+  menu(btn, items);
+}
+var AK17_NO_UNDO = { song: 1, play: 1 };
+(function () {
+  var sh = shell;
+  shell = function () {
+    var w = sh.apply(this, arguments);
+    try {
+      if (!AK17_NO_UNDO[S.view] && settings().undoBtn !== false) {
+        var tb = w.querySelector(".topbar"), at = tb && (tb.querySelector(".akbhead") || null);
+        var b = h("button", { class: "icon ak17-undo", "aria-label": "Undo or redo recent changes", title: "Undo", onClick: function () { akUndoMenu(this); } }, "↶");
+        if (!undoStack.length && !akRedoStack.length) b.style.opacity = "0.55";
+        if (at) tb.insertBefore(b, at); else if (tb) tb.appendChild(b);
+      }
+    } catch (e) {}
+    return w;
   };
 })();
 
