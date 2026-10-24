@@ -33869,9 +33869,12 @@ function akRec17Folder(list) {
 
 /* ================================================================ ak17_a: gig-ready update, phase 1 (version 14.3)
    Save button on edit screens (94), Change key on the song page (91), show / setlist words (89). */
-AK_VERSION = "14.4.1";
+AK_VERSION = "14.5";
 AK_WHATS_NEW = [
   "Save button on the song page, a setlist's page and a show's page: it saves, closes the page and takes you back to where you were. (Everything still saves by itself as you type.)",
+  "Settings › Look › Size of the app: a slider makes text and buttons smaller or bigger on every screen (the playing screen keeps its own text size).",
+  "Settings › Look › Simple mode: just the basics. It hides tips, the song shelves, a song's info and practice parts, setlist announcements and reminders, and the customize buttons. Hiding the Write tab now also hides a song's practice and songwriting part.",
+  "Settings: Effects is now inside Look. In Arrange mode (⇅) on the Settings page you can move or hide single controls inside a section, not just whole sections, and save it as your default.",
   "Phones: the buttons at the top no longer cover the page title. They are a little smaller, and when they still don't fit, the title moves onto its own line above them.",
   "📦 Send sounds (sound phone): send all, only the new ones, or pick songs, grouped by show and day. Sounds stay on the phone, so you can send other songs from a show another day. The .zip is named “Akashic Chords - Show Recordings - show - date” and holds a folder with the same name; every recording file now starts with “Akashic Chords - ”.",
   "Recordings › 📁 Save recordings as one folder (.zip): tick videos and sounds from a show, get one zip that unzips into a folder named for the show and date.",
@@ -34103,6 +34106,98 @@ function akTb17Fit() {
   var t = null; window.addEventListener("resize", function () { clearTimeout(t); t = setTimeout(akTb17Fit, 150); });
 })();
 
+/* ---------------------------------------------------------------- Settings: Effects is a part of Look (item 105, 14.5) */
+(function () {
+  var mg = akSet16Merge;
+  akSet16Merge = function (root) {
+    var r = mg.apply(this, arguments);
+    try {
+      var fx = root.querySelector('details.setsec[data-bk="effects"]'), look = root.querySelector('details.setsec[data-bk="look"] > .secbody');
+      if (fx && look) { fx.classList.remove("setsec"); fx.classList.add("subsec", "ak17-fxsub"); look.appendChild(fx); }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- Size of the app (item 104, 14.5): settings().uiScale 0.8..1.3 scales every
+   screen except the playing screen (its text has its own size). Done with CSS zoom on <html>; 1 = unchanged. */
+function akUi17Scale() { var v = Number(settings().uiScale) || 1; return Math.min(1.3, Math.max(0.8, v)); }
+function akUi17Apply() {
+  var z = akUi17Scale(), off = S.view === "play" || z === 1;
+  var de = document.documentElement;
+  de.style.zoom = off ? "" : String(z);
+  /* zoomed, 100% height would no longer fill the screen: size the page in unzoomed screen units */
+  if (document.body) document.body.style.height = off ? "" : (innerHeight / z) + "px";
+}
+(function () {
+  var sh = shell;
+  shell = function () { var w = sh.apply(this, arguments); setTimeout(akUi17Apply, 0); return w; };
+  var rd = render; render = function () { var r = rd.apply(this, arguments); akUi17Apply(); return r; };
+  window.addEventListener("resize", function () { setTimeout(akUi17Apply, 200); });
+  var t = setInterval(function () { if (S && S.view) { akUi17Apply(); clearInterval(t); } }, 300);
+})();
+(function () {
+  var ns = typeof akSettingsExtra26 === "function" ? akSettingsExtra26 : null;
+  akSettingsExtra26 = function (c) {
+    c.again("look");
+    c.section("Size of the app", "Make text and buttons smaller or bigger on every screen");
+    var out = h("output", { style: "min-width:4ch;font-weight:800" }, Math.round(akUi17Scale() * 100) + "%");
+    var rg = h("input", { type: "range", min: 80, max: 130, step: 5, value: Math.round(akUi17Scale() * 100), "aria-label": "Size of the app", style: "flex:1" });
+    rg.addEventListener("input", function () { out.textContent = this.value + "%"; });
+    rg.addEventListener("change", function () { settings().uiScale = Number(this.value) / 100; save(); akUi17Apply(); akTb17Fit(); });
+    c.out.appendChild(h("div", { class: "row", style: "align-items:center" }, h("span", null, "Smaller"), rg, h("span", null, "Bigger"), out));
+    c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { settings().uiScale = 1; save(); akUi17Apply(); render(); } }, "Back to 100%")));
+    c.out.appendChild(h("p", { class: "hint" }, "The playing screen keeps its own text size (Playing screen options)."));
+    if (typeof akSettingsExtra27 === "function") akSettingsExtra27(c);
+    if (ns) ns(c);
+  };
+})();
+
+/* ---------------------------------------------------------------- Arrange Settings down to single controls (item 110, 14.5): on the Settings
+   page every control, row and note inside a section becomes an arrangeable item (data-bk from its words), so Arrange mode can move,
+   hide or reorder them, saved like any other layout (and in "Save my whole setup as the default"). */
+function akLay17Tag(root) {
+  Array.prototype.forEach.call(root.querySelectorAll(".secbody[data-blocks]"), function (c) {
+    var seen = {};
+    Array.prototype.forEach.call(c.children, function (el) {
+      if (el.hasAttribute("data-bk") || el.tagName === "SUMMARY" || el.tagName === "SCRIPT" || el.tagName === "STYLE") return;
+      var base = "p17-" + (el.textContent || el.tagName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 28) || "p17-" + el.tagName.toLowerCase();
+      var k = base, n = 2; while (seen[k] || c.querySelector(':scope > [data-bk="' + k + '"]')) k = base + "-" + n++;
+      seen[k] = 1; el.setAttribute("data-bk", k);
+    });
+  });
+}
+(function () {
+  var lr = layRun;
+  layRun = function (root) { try { if (root && S.view === "settings" && settings().arrangeParts !== false) akLay17Tag(root); } catch (e) {} return lr.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- Simple mode (item 96, 14.5): settings().simple hides the extras and keeps the
+   basics, mostly on the song list, a song's page and a setlist's page. A hidden Write tab also hides a song's practice and songwriting part. */
+(function () {
+  var st = document.createElement("style");
+  st.textContent = "html.ak17-simple .tipbar, html.ak17-simple [data-bk=\"library\"].akshelf, html.ak17-simple [data-bk=\"practice-and-songwriting\"], html.ak17-simple [data-bk=\"song-info-and-trivia\"]," +
+    " html.ak17-simple [data-bk=\"announce\"].akann-card, html.ak17-simple [data-bk=\"reminders\"].akann-card, html.ak17-simple .ak10-cust, html.ak17-simple .ak8-custbtn { display: none !important; }" +
+    " html.ak17-nowrite [data-bk=\"practice-and-songwriting\"] { display: none !important; }";
+  document.head.appendChild(st);
+})();
+function akSimple17Apply() {
+  var de = document.documentElement, s = settings();
+  de.classList.toggle("ak17-simple", !!s.simple);
+  de.classList.toggle("ak17-nowrite", typeof akTab16 === "function" && !akTab16("write"));
+}
+(function () {
+  var rd = render; render = function () { var r = rd.apply(this, arguments); try { akSimple17Apply(); } catch (e) {} return r; };
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    c.again("look");
+    c.section("Simple mode", "Just the basics: fewer buttons and options");
+    c.check("Simple mode: hide tips, shelves, song info and practice parts, setlist announcements and reminders, and the customize buttons", function () { return !!settings().simple; }, function (v) { settings().simple = v; akSimple17Apply(); });
+    c.out.appendChild(h("p", { class: "hint" }, "Everything is still there; turn this off to see it again. To hide whole tabs (Shows, Learn, Write), use Tabs and usage modes above."));
+    ns(c);
+  };
+})();
+
 /* ================================================================ ak17_b: gig-ready update, phase 2 (version 14.3)
    Send and receive a show, a setlist or a whole library (88/90). A file carries everything it needs (a show brings its setlists,
    a setlist brings its songs). Receiving never overwrites unless asked: songs you have are reused, names that clash get " (2)". */
@@ -34321,7 +34416,7 @@ function akUndoMenu(btn) {
   if (!items.length) items.push({ label: "Nothing to undo yet", onClick: function () {} });
   menu(btn, items);
 }
-var AK17_NO_UNDO = { song: 1, play: 1 };
+var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
 (function () {
   var sh = shell;
   shell = function () {
