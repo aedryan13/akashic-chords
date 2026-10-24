@@ -8213,16 +8213,18 @@ function viewHistory() {
       var nm0 = typeof akNightMeta === "function" ? akNightMeta(n.key) : null;
       if (open && nm0 && (nm0.notes || nm0.pay)) card.appendChild(h("div", { class: "hint", style: "margin:6px 0 0;white-space:pre-wrap" }, [nm0.pay ? "Pay $" + nm0.pay : "", nm0.notes || ""].filter(Boolean).join(" · ")));
       if (open) {
-        var no = 0;
+        var no = 0, brks = typeof akBrk17Night === "function" ? akBrk17Night(n) : [];
         order.forEach(function (nm) {
           if (order.length > 1 || nm) card.appendChild(h("div", { class: "hset" }, nm || "Other songs"));
           sets[nm].forEach(function (e) {
+            if (brks.length) akBrk17Emit(card, brks, e.at);
             no++; var s = histResolve(e);
             card.appendChild(h("div", { class: "hline" }, h("span", { class: "bldn" }, String(no)), h("div", { class: "grow" }, h("div", { class: "t" }, e.t), h("div", { class: "muted", style: "font-size:13px" }, (e.a ? e.a + " · " : "") + histTime(e.at) + (e.old ? " · from older counts" : e.man ? " · added by hand" : ""))),
               s ? h("button", { class: "icon sm", "aria-label": "Open " + e.t, onClick: function () { saveNow(); go("song", { songId: s.id }); } }, "↗") : null,
               h("button", { class: "icon sm", "aria-label": "Remove " + e.t + " from this night", onClick: function () { snap("remove history entry"); histRemove(e); save(); draw(); toastUndo("Removed."); } }, "✕")));
           });
         });
+        if (brks.length) akBrk17Emit(card, brks, Infinity);
         card.appendChild(h("div", { class: "row", style: "flex-wrap:wrap;margin-top:8px" },
           h("button", { class: "primary", onClick: function () { akNightEdit(n, draw); } }, "✎ Edit this night"),
           h("button", { onClick: function () { histNightToShow(n); } }, "Make a setlist from this night"),
@@ -10285,7 +10287,8 @@ function tmEndRun(keep, at) {
     var sh = findShow(TM.show);
     if (sh) {
       var brs = TM.brk.log.map(function (b) { return b.e - b.s; }); if (TM.brk.on) brs.push(Math.max(0, now - TM.brk.since));
-      sh.runs = sh.runs || []; sh.runs.push({ at: p.began, play: ms, wall: now - p.began, breaks: brs });
+      var brAt = TM.brk.log.map(function (b) { return b.s; }); if (TM.brk.on) brAt.push(TM.brk.since);
+      sh.runs = sh.runs || []; sh.runs.push({ at: p.began, play: ms, wall: now - p.began, breaks: brs, brAt: brAt });
       if (sh.runs.length > 30) sh.runs.shift();
       save();
     }
@@ -14712,7 +14715,7 @@ function akRunResume(quiet) {
     var r = sh.runs.pop(), t = r.at;
     TM.show = sh.id;
     TM.play = { on: false, since: 0, acc: r.play || 0, began: r.at, byBreak: false };
-    TM.brk = { on: false, since: 0, last: 0, log: (r.breaks || []).map(function (ms) { var b = { s: t, e: t + ms }; t += ms; return b; }) };
+    TM.brk = { on: false, since: 0, last: 0, log: (r.breaks || []).map(function (ms, i) { var s0 = r.brAt && r.brAt[i] ? r.brAt[i] : t, b = { s: s0, e: s0 + ms }; t += ms; return b; }) };
     tmSave();
   }
   if (sh && TM.show !== sh.id && !TM.play.began) TM.show = sh.id;
@@ -34440,9 +34443,10 @@ var AK17_NO_UNDO = { song: 1, play: 1, settings: 1 };
    The Song header is the playing screen's bar with the title, writer and key (.pbottom, called the Info bar in older code).
    Its corner buttons (akCorner().ids) now start empty: everything they did is in a ⋯ menu at the end of the Song header,
    with Edit song first. Buttons ticked under Settings › Playing screen › Song header buttons stay on the bar (pinned). */
-AK_VERSION = "14.6.2";
+AK_VERSION = "14.6.3";
 AK_WHATS_NEW = [
   "Playing screen: the extra buttons on the Song header (the bar with the title and writer) are gone. A ⋯ at its end has Edit song, Next, Scroll, Requests and the rest. Want some back? Settings › Playing screen › Song header buttons pins the ones you always want."
+  , "History: each night now shows your breaks between the songs, with the time each started and how long it lasted (songs already show their order and time)."
   , "Recording: Phone recorders › How many phones › One phone: sound only. On the phone, 🎚 Sound input picks the microphone or a plugged-in audio interface.",
   "Song page: ♪ Make all chords, right above the chord chart box, fixes every chord there that isn't showing as one."
 ].concat(AK_WHATS_NEW);
@@ -34610,6 +34614,28 @@ function akMic17Card(inn) {
   var cb = inn.querySelector(".ak16g-after"); if (cb) inn.insertBefore(card, cb); else inn.appendChild(card);
 }
 (function () { var rd = akRpDraw; akRpDraw = function () { var r = rd.apply(this, arguments); try { var inn = AKRP.el && AKRP.el.querySelector(".akrp-in"); if (inn) akMic17Card(inn); } catch (e) {} return r; }; })();
+
+/* ---------------------------------------------------------------- breaks in the play history (14.6.3): each run of a show now keeps when
+   each break started (run.brAt, beside run.breaks = lengths). History › a night shows "☕ Break · 9:42 PM · 15 min" rows where they
+   happened, between the songs (each song already shows its time and the order played). */
+function akBrk17Night(n) {
+  var es = n.entries || []; if (!es.length) return [];
+  var lo = es[0].at - 4 * 36e5, hi = es[es.length - 1].at + 4 * 36e5, ids = {}, out = [];
+  es.forEach(function (e) { if (e.sh) ids[e.sh] = 1; });
+  Object.keys(ids).forEach(function (id) {
+    var sh = findShow(id); if (!sh) return;
+    (sh.runs || []).forEach(function (r) { (r.brAt || []).forEach(function (at, i) { if (at >= lo && at <= hi) out.push({ s: at, ms: (r.breaks || [])[i] || 0 }); }); });
+    if (TM && TM.show === id) { (TM.brk.log || []).forEach(function (b) { if (b.s >= lo && b.s <= hi) out.push({ s: b.s, ms: b.e - b.s }); }); if (TM.brk.on && TM.brk.since >= lo) out.push({ s: TM.brk.since, ms: Date.now() - TM.brk.since, now: 1 }); }
+  });
+  var seen = {}; out = out.filter(function (b) { var k = Math.round(b.s / 1000); if (seen[k]) return false; seen[k] = 1; return true; });
+  return out.sort(function (a, b) { return a.s - b.s; });
+}
+function akBrk17Emit(card, brks, before) {
+  while (brks.length && brks[0].s < before) {
+    var b = brks.shift(), m = Math.max(1, Math.round(b.ms / 60000));
+    card.appendChild(h("div", { class: "hline ak17-brk" }, h("span", { class: "bldn" }, "☕"), h("div", { class: "grow" }, h("div", { class: "t" }, "Break"), h("div", { class: "muted", style: "font-size:13px" }, histTime(b.s) + " · " + m + " min" + (b.now ? " so far" : "")))));
+  }
+}
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
