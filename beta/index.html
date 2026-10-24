@@ -29688,7 +29688,7 @@ akCss("ak13b", [
 var AKRR = { sess: "", seq: 0, cmd: null, rec: false, file: 0, n: 0, title: "", songOn: false, songAt: 0, markN: 0, mark: null, phones: {}, stErr: "", stUnsub: null, stKey: "", bc: null, warned: 0, lastSong: "" };
 function akRrCfg() {
   var s = settings(), d = { on: false, mode: "split", next: true, autoStart: false, autoEnd: true, maxMin: 15, beep: true,
-    a: { sr: 48000, bits: 24, ch: 2, fmt: "wav", kbps: 256, proc: false }, v: { res: "1080", fps: 30, mbps: 8, facing: "environment", audio: true } };
+    a: { sr: 48000, bits: 24, ch: 2, fmt: "wav", kbps: 256, proc: false }, v: { res: "1080", fps: 30, mbps: 8, facing: "environment", audio: true, one: false } };
   if (!s.rr || typeof s.rr !== "object") s.rr = {};
   Object.keys(d).forEach(function (k) { if (s.rr[k] === undefined) s.rr[k] = clone(d[k]); else if (typeof d[k] === "object") Object.keys(d[k]).forEach(function (j) { if (s.rr[k][j] === undefined) s.rr[k][j] = d[k][j]; }); });
   return s.rr;
@@ -29829,7 +29829,7 @@ function akRrWin() {
     if (!c.on) { c.on = true; save(); }
     body.appendChild(top); drawTop();
     var have = {}; akRrPhoneRows().forEach(function (p) { have[p.role] = 1; });
-    drawBoxes(!(have.video && have.audio));
+    drawBoxes(c.v.one ? !have.video : !(have.video && have.audio));
     sc.forEach(function (x) { x[0].scrollTop = x[1]; });
   }
   function drawTop() {
@@ -29851,7 +29851,7 @@ function akRrWin() {
     rows.forEach(function (p) {
       var old = Date.now() - p.seen > 15000;
       box.appendChild(h("div", { class: "akrr-ph" + (old ? " old" : "") + (p.warn ? " warn" : "") },
-        h("b", null, (p.role === "video" ? "🎥 Video phone" : "🎙 Sound phone") + (old ? " (not heard from for " + Math.round((Date.now() - p.seen) / 1000) + " s)" : "")),
+        h("b", null, (p.role === "video" ? (c.v.one ? "📱 Recording phone" : "🎥 Video phone") : "🎙 Sound phone") + (old ? " (not heard from for " + Math.round((Date.now() - p.seen) / 1000) + " s)" : "")),
         h("div", null, p.rec ? "● " + (p.title || "") + " · " + fmtTime(p.secs || 0) + " · " + akRecSize(p.bytes || 0) : p.ready ? "Ready" : "Waiting for a tap on the phone"),
         h("div", { class: "muted" }, [p.got || "", p.free ? akRecSize(p.free) + " free" : "", p.files ? p.files + " files" : "", p.wake === false ? "screen may sleep" : ""].filter(Boolean).join(" · ")),
         p.warn ? h("div", { class: "akrr-w" }, "⚠ " + p.warn) : null));
@@ -29861,7 +29861,10 @@ function akRrWin() {
   }
   function drawBoxes(addOpen) {
     var qr = h("div", { class: "row akrr-qr" });
-    [["video", "🎥 Video phone"], ["audio", "🎙 Sound phone"]].forEach(function (r) {
+    /* 14.4: one phone (video with its own sound) or two (a video phone and a sound phone) */
+    body.appendChild(h("div", { class: "card ak17-phones" }, sel("How many phones", function () { return c.v.one ? "one" : "two"; }, function (v) { c.v.one = v === "one"; if (c.v.one) c.v.audio = true; }, [["one", "One phone: video with its own sound"], ["two", "Two phones: a video phone and a sound phone"]]),
+      h("p", { class: "hint", style: "margin:4px 0 0" }, c.v.one ? "Scan the one code below with the phone. It films and records the sound in the same file, so there's nothing to combine after the show. Start and end songs from the playing screen as usual." : "Scan one code with each phone. After the show, the video phone puts the two together (🎬).")));
+    (c.v.one ? [["video", "📱 Recording phone (video and sound)"]] : [["video", "🎥 Video phone"], ["audio", "🎙 Sound phone"]]).forEach(function (r) {
       var url = akRrPhoneUrl(r[0]), q = typeof akQrSvg === "function" ? akQrSvg(url) : null;
       qr.appendChild(h("div", { class: "card center" }, h("b", null, r[1]), q, h("div", { class: "row center" }, h("button", { onClick: function () { try { navigator.clipboard.writeText(url); toast("Link copied."); } catch (e) { toast(url); } } }, "Copy link"))));
     });
@@ -29875,7 +29878,12 @@ function akRrWin() {
     how.appendChild(sel("Remind me to End a song after", function () { return c.maxMin; }, function (v) { c.maxMin = Number(v) || 0; }, [[0, "Never"], [8, "8 minutes"], [10, "10 minutes"], [15, "15 minutes"], [20, "20 minutes"], [30, "30 minutes"]]));
     how.appendChild(ck("Beep at the start of each file (to line up sound and video later)", function () { return c.beep; }, function (v) { c.beep = v; }));
     body.appendChild(how);
-    var snd = det("Sound phone settings", false);
+    var snd = det(c.v.one ? "Sound settings" : "Sound phone settings", false);
+    if (c.v.one) {
+      snd.appendChild(sel("Sound quality (in the video file)", function () { return c.a.kbps; }, function (v) { c.a.kbps = Number(v); }, [[128, "128 kbps"], [192, "192 kbps"], [256, "256 kbps"], [320, "320 kbps (best)"]]));
+      snd.appendChild(h("p", { class: "hint" }, "The phone's own sound clean-up (echo, noise, auto level) stays off, which is best for music."));
+      body.appendChild(snd);
+    } else {
     snd.appendChild(sel("Format", function () { return c.a.fmt; }, function (v) { c.a.fmt = v; }, [["wav", "WAV, uncompressed (best)"], ["aac", "Compressed (much smaller)"]]));
     if (c.a.fmt === "wav") {
       snd.appendChild(sel("Sample rate", function () { return c.a.sr; }, function (v) { c.a.sr = Number(v); }, [[44100, "44.1 kHz"], [48000, "48 kHz"], [96000, "96 kHz (if the phone can)"]]));
@@ -29885,12 +29893,13 @@ function akRrWin() {
     snd.appendChild(ck("Let the phone clean up the sound (echo, noise, auto level). Off is best for music.", function () { return c.a.proc; }, function (v) { c.a.proc = v; }));
     snd.appendChild(h("p", { class: "hint" }, akRrSize(c) + " The phone says what it actually gave."));
     body.appendChild(snd);
-    var vid = det("Video phone settings", false);
+    }
+    var vid = det(c.v.one ? "Video settings" : "Video phone settings", false);
     vid.appendChild(sel("Resolution", function () { return c.v.res; }, function (v) { c.v.res = v; }, [["720", "720p"], ["1080", "1080p"], ["2160", "4K (if the phone can)"]]));
     vid.appendChild(sel("Frames per second", function () { return c.v.fps; }, function (v) { c.v.fps = Number(v); }, [[24, "24"], [30, "30"], [60, "60"]]));
     vid.appendChild(sel("Quality (bit rate)", function () { return c.v.mbps; }, function (v) { c.v.mbps = Number(v); }, [[4, "4 Mbps (smaller)"], [8, "8 Mbps"], [12, "12 Mbps"], [20, "20 Mbps (best)"]]));
     vid.appendChild(sel("Camera", function () { return c.v.facing; }, function (v) { c.v.facing = v; }, [["environment", "Back camera"], ["user", "Front camera"]]));
-    vid.appendChild(ck("Record the video phone's sound too (a guide track for lining up)", function () { return c.v.audio; }, function (v) { c.v.audio = v; }));
+    if (!c.v.one) vid.appendChild(ck("Record the video phone's sound too (a guide track for lining up)", function () { return c.v.audio; }, function (v) { c.v.audio = v; }));
     vid.appendChild(h("p", { class: "hint" }, "About " + Math.round(c.v.mbps * 450) + " MB per hour of video. Changes reach the phones the next time a file starts."));
     body.appendChild(vid);
   }
@@ -29994,7 +30003,7 @@ function akRpStream() {
   if (AKRP.role === "video") {
     var hgt = Number(V.res) || 1080, wid = Math.round(hgt * 16 / 9);
     vid = { facingMode: { ideal: V.facing || "environment" }, width: { ideal: wid }, height: { ideal: hgt }, frameRate: { ideal: V.fps || 30 } };
-    if (V.audio === false) aud = false; else aud = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    if (V.audio === false && !V.one) aud = false; else aud = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     if (typeof akCam142Vid === "function") vid = akCam142Vid(vid);
   }
   AKRP.asked = AKRP.role === "video" ? (Number(V.res) || 1080) + "p at " + (V.fps || 30) + " fps" : (A.fmt === "aac" ? "compressed " + (A.kbps || 256) + " kbps" : ((A.sr || 48000) / 1000) + " kHz " + (A.bits === 32 ? "32-bit float" : (A.bits || 24) + "-bit")) + ", " + ((A.ch || 2) === 1 ? "mono" : "stereo");
@@ -30048,7 +30057,7 @@ function akRpStartFile(w, cut) {
 function akRpStartMedia(r, old) {
   var c = AKRP.cfg || {}, video = AKRP.role === "video", mime = akRecMime(video), opt = {};
   if (mime) opt.mimeType = mime;
-  if (video) { opt.videoBitsPerSecond = ((c.v || {}).mbps || 8) * 1e6; opt.audioBitsPerSecond = 192000; } else opt.audioBitsPerSecond = ((c.a || {}).kbps || 256) * 1000;
+  if (video) { opt.videoBitsPerSecond = ((c.v || {}).mbps || 8) * 1e6; opt.audioBitsPerSecond = (c.v || {}).one ? ((c.a || {}).kbps || 256) * 1000 : 192000; } else opt.audioBitsPerSecond = ((c.a || {}).kbps || 256) * 1000;
   var tracks = video ? AKRP.stream.getTracks() : AKRP.stream.getAudioTracks(), mr = new MediaRecorder(new MediaStream(tracks), opt);
   r.mime = mr.mimeType || mime || (video ? "video/webm" : "audio/webm");
   mr.ondataavailable = function (e) { if (e.data && e.data.size) akRpSave(r, e.data); };
@@ -30148,7 +30157,7 @@ function akRpPaintLive() {
 }
 function akRpDraw() {
   var el = AKRP.el; if (!el) return;
-  var r = AKRP.cur, w = AKRP.want, role = AKRP.role === "video" ? "🎥 Video recorder" : "🎙 Sound recorder";
+  var r = AKRP.cur, w = AKRP.want, role = AKRP.role === "video" ? (((AKRP.cfg || {}).v || {}).one ? "📱 Recorder (video and sound)" : "🎥 Video recorder") : "🎙 Sound recorder";
   el.textContent = "";
   var black = h("div", { class: "akrp-black" + (AKRP.black ? " on" : ""), onDblclick: function () { AKRP.black = false; akRpDraw(); } }, h("span", null, r ? "● REC " : "Ready ", h("span", { class: "akrp-time" })), h("small", null, "Double-tap to light the screen"));
   el.appendChild(black);
@@ -33480,6 +33489,7 @@ function akRr142Go() {
   if (!v) { modal("Record with this phone", h("p", null, "This phone doesn't know the way to the recorder page yet. Do this once: on the tablet open Phone recorders (Settings > Songs and shows > Recording) and scan the code with this phone. After that this button takes you straight there."), [{ label: "OK", primary: true }]); return; }
   var last = ""; try { last = (/[?&]rr=(video|audio)/.exec(localStorage.getItem("akrr:link") || "") || [])[1] || ""; } catch (e) {}
   function to(role) { location.href = akRr142Url(role) + "&go=1"; }
+  if (akRrCfg().v.one) { to("video"); return; }
   var vb = { label: "🎥 Video phone", primary: last !== "audio", onClick: function () { to("video"); } }, ab = { label: "🎙 Sound phone", primary: last === "audio", onClick: function () { to("audio"); } };
   modal("Record with this phone", h("p", null, "Which one is this phone? It opens the recorder page and gets ready. Keep it open with the screen on."), last === "audio" ? [ab, vb, { label: "Cancel" }] : [vb, ab, { label: "Cancel" }]);
 }
@@ -33643,7 +33653,7 @@ function akSnd142Send(btn) {
     function go(list) {
       var total = list.reduce(function (a, r) { return a + (r.bytes || 0); }, 0), done = 0;
       var bar = h("progress", { max: total || 1, value: 0, style: "width:100%" }), msg = h("p", { class: "muted" }, "Packing " + list.length + " sounds (" + akRecSize(total) + ")…"), out = h("div", { class: "row" });
-      modal("📦 Send all sounds", h("div", null, msg, bar, out, h("p", { class: "hint" }, "Then pick Quick Share (or Nearby Share) and the video phone. Keep both screens on until it's sent.")), [{ label: "Close" }]);
+      modal("📦 Send sounds", h("div", null, msg, bar, out, h("p", { class: "hint" }, "Then pick Quick Share (or Nearby Share) and the video phone. Keep both screens on until it's sent.")), [{ label: "Close" }]);
       akRpOwnModal();
       /* parts under 3.5 GB (a plain .zip can't hold more than 4 GB) */
       var groups = [[]], gs = 0;
@@ -33651,12 +33661,12 @@ function akSnd142Send(btn) {
       var day = new Date(list[0].at), stamp = day.getFullYear() + "-" + ("0" + (day.getMonth() + 1)).slice(-2) + "-" + ("0" + day.getDate()).slice(-2);
       groups.reduce(function (p, g, gi) {
         return p.then(function () {
-          return Promise.all(g.map(function (r) { return akRecBlob(r).then(function (b) { return { name: akZipName(akRecFileName(r)), blob: b, r: r }; }); })).then(function (fs) {
+          return Promise.all(g.map(function (r) { return akRecBlob(r).then(function (b) { return { name: akSnd17ZipName(list, stamp) + "/" + akZipName(akRecFileName(r)), blob: b, r: r }; }); })).then(function (fs) {
             var meta = { app: "akashic-chords", kind: "sounds", v: 1, recs: fs.map(function (f) { var m = akLinkMeta(f.r); m.file = f.name; return m; }) };
             fs.unshift({ name: "akashic.json", blob: new Blob([JSON.stringify(meta)], { type: "application/json" }) });
             return akZipMake(fs, function (n) { done += n; bar.value = done; msg.textContent = "Packing: " + akRecSize(done) + " of " + akRecSize(total); });
           }).then(function (zip) {
-            var f = new File([zip], "Sounds " + stamp + (groups.length > 1 ? " part " + (gi + 1) : "") + ".zip", { type: "application/zip" });
+            var f = new File([zip], akSnd17ZipName(list, stamp) + (groups.length > 1 ? " part " + (gi + 1) : "") + ".zip", { type: "application/zip" });
             var b = h("button", { class: "primary" }, "Share " + (groups.length > 1 ? "part " + (gi + 1) : "now"));
             b.onclick = function () { navigator.share ? navigator.share({ files: [f], title: f.name }).then(function () { g.forEach(function (r) { r.sentAt = Date.now(); akRecPutMeta(r).catch(function () {}); }); }, function (er) { if (er && er.name !== "AbortError") akRecDownload(f, f.name); }) : akRecDownload(f, f.name); };
             var sv = h("button", { onClick: function () { akRecDownload(f, f.name); } }, "Save to Downloads");
@@ -33667,7 +33677,10 @@ function akSnd142Send(btn) {
       }, Promise.resolve()).then(function () { msg.textContent = "✓ Ready: " + list.length + " sounds. Tap Share now, then pick Quick Share and the video phone."; bar.value = total; },
         function (e) { msg.textContent = "Couldn't pack the sounds: " + ((e && e.message) || "storage error"); });
     }
-    if (fresh.length && fresh.length < mine.length) modal("📦 Send all sounds", h("p", null, fresh.length + " sounds haven't been sent yet (" + mine.length + " on this phone)."), [{ label: "Send the " + fresh.length + " new ones", primary: true, onClick: function () { setTimeout(function () { go(fresh); }, 0); } }, { label: "Send all " + mine.length, onClick: function () { setTimeout(function () { go(mine); }, 0); } }, { label: "Cancel" }]);
+    /* 14.4: send the new ones, all, or pick songs (any show, any day: the sounds stay on this phone until you delete them) */
+    var pickB = { label: "Pick songs…", onClick: function () { setTimeout(function () { akSnd17Pick(mine, go); }, 0); } };
+    if (fresh.length && fresh.length < mine.length) modal("📦 Send sounds", h("p", null, fresh.length + " sounds haven't been sent yet (" + mine.length + " on this phone)."), [{ label: "Send the " + fresh.length + " new ones", primary: true, onClick: function () { setTimeout(function () { go(fresh); }, 0); } }, { label: "Send all " + mine.length, onClick: function () { setTimeout(function () { go(mine); }, 0); } }, pickB, { label: "Cancel" }]);
+    else if (mine.length > 1) modal("📦 Send sounds", h("p", null, mine.length + " sounds on this phone."), [{ label: "Send all " + mine.length, primary: true, onClick: function () { setTimeout(function () { go(mine); }, 0); } }, pickB, { label: "Cancel" }]);
     else go(mine);
     akRpOwnModal();
   });
@@ -33678,7 +33691,7 @@ function akSnd142Pick(after) {
   var inp = h("input", { type: "file", multiple: true, accept: ".zip,application/zip,audio/*,.wav,.m4a,.webm,.ogg,.mp3", style: "position:absolute;left:-9999px", onChange: function () { var fs = Array.prototype.slice.call(this.files || []); inp.remove(); if (fs.length) akSnd142Add(fs, after); } });
   document.body.appendChild(inp); inp.click();
 }
-function akSnd142Title(s) { return String(s || "").toLowerCase().replace(/\.[a-z0-9]+$/, "").replace(/^\d{4}-\d\d-\d\d\s*/, "").replace(/\((sound|video|audio)\)/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
+function akSnd142Title(s) { return String(s || "").toLowerCase().replace(/^akashic chords - /, "").replace(/\.[a-z0-9]+$/, "").replace(/^\d{4}-\d\d-\d\d\s*/, "").replace(/\((sound|video|audio)\)/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
 /* -> Promise<{added, matched, skipped, vids}> */
 function akSnd142Add(files, after) {
   var msg = h("p", { class: "muted" }, "Reading…"), close = modal("📥 Adding the sounds", h("div", null, msg), false); if (akRcIsRecorder()) akRpOwnModal();
@@ -33736,8 +33749,8 @@ akRpCombineCard = function () {
   card.textContent = "";
   card.appendChild(h("b", null, "After the show"));
   if (AKRP.role === "audio") {
-    card.appendChild(h("ol", { class: "ak16g-steps" }, h("li", null, "Tap 📦 Send all sounds."), h("li", null, "Tap Share now, pick Quick Share, then the video phone.")));
-    card.appendChild(h("div", { class: "row" }, h("button", { class: "primary", disabled: !!AKRP.cur, onClick: function () { akSnd142Send(this); } }, "📦 Send all sounds")));
+    card.appendChild(h("ol", { class: "ak16g-steps" }, h("li", null, "Tap 📦 Send sounds (all, the new ones, or pick songs; you can send more another day)."), h("li", null, "Tap Share now, pick Quick Share, then the video phone.")));
+    card.appendChild(h("div", { class: "row" }, h("button", { class: "primary", disabled: !!AKRP.cur, onClick: function () { akSnd142Send(this); } }, "📦 Send sounds")));
     inn.appendChild(card); return;
   }
   var st = AKRP.cb || (AKRP.cb = { msg: "", f: 0, run: false, stop: false });
@@ -33785,11 +33798,83 @@ akCss("ak16-g", [
   ".ak16g-now{animation:ak16gp 1s ease-in-out 3}",
   "@keyframes ak16gp{50%{transform:scale(1.06)}}"].join("\n"));
 
+/* 14.4: pick which sounds to send, grouped by show and day; ones already sent are marked */
+function akSnd17Pick(list, go, o) {
+  o = o || {};
+  var picked = {}, box = h("div", { class: "ak17-pick" }), groups = {}, order = [];
+  list.slice().sort(function (a, b) { return b.at - a.at; }).forEach(function (r) {
+    var d = new Date(r.at), k = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }) + (r.gig ? " · " + r.gig : "");
+    if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r);
+  });
+  order.forEach(function (k) {
+    var rows = groups[k].slice().sort(function (a, b) { return a.at - b.at; });
+    var all = h("input", { type: "checkbox", onChange: function () { var on = this.checked; rows.forEach(function (r) { picked[r.id] = on; }); box.querySelectorAll("[data-g=\"" + order.indexOf(k) + "\"]").forEach(function (c) { c.checked = on; }); } });
+    box.appendChild(h("label", { class: "chk", style: "font-weight:800;margin-top:8px" }, all, k));
+    rows.forEach(function (r) {
+      box.appendChild(h("label", { class: "chk", style: "margin-left:22px" }, h("input", { type: "checkbox", "data-g": String(order.indexOf(k)), "data-id": r.id, onChange: function () { picked[r.id] = this.checked; } }),
+        (r.title || "Recording") + "  ", h("span", { class: "muted" }, fmtTime(Math.round(r.secs || 0)) + (r.sentAt ? " · sent " + new Date(r.sentAt).toLocaleDateString() : ""))));
+    });
+  });
+  modal(o.title || "Pick songs to send", h("div", null, h("p", { class: "hint" }, o.hint || "Tick the songs to send now. The rest stay on this phone, so you can send them another day."), box), [
+    { label: "Cancel" },
+    { label: o.button || "Send the ticked songs", primary: true, onClick: function () { var sel = list.filter(function (r) { return picked[r.id]; }); if (!sel.length) { toast("Tick at least one song."); return false; } setTimeout(function () { go(sel); }, 0); } }]);
+  if (typeof akRpOwnModal === "function" && AKRP.role) akRpOwnModal();
+}
+/* "Akashic Chords - Show Recordings - <show> - <date>" (the show when all the sounds are from one) */
+function akSnd17ZipName(list, stamp) {
+  var g = list[0] && list[0].gig, same = g && list.every(function (r) { return r.gig === g; });
+  return akZipName("Akashic Chords - Show Recordings - " + (same ? g + " - " : "") + stamp);
+}
+/* every recording's file name says it came from Akashic Chords */
+(function () {
+  var fn = akRecFileName;
+  akRecFileName = function () { var n = fn.apply(this, arguments); return /^Akashic Chords - /.test(n) ? n : "Akashic Chords - " + n; };
+})();
+
+/* 14.4: save recordings (videos, sounds, combined) as one folder inside a .zip: unzipping it gives the folder
+   "Akashic Chords - Show Recordings - <show> - <date>" (a web app can't make a folder on the phone by itself) */
+function akRec17Folder(list) {
+  var total = list.reduce(function (a, r) { return a + (r.bytes || 0); }, 0);
+  if (total > 3.5e9) { toast("That's more than a zip file can hold (about 3.5 GB). Pick fewer recordings."); return; }
+  var day = new Date(list[0].at), p = function (n) { return ("0" + n).slice(-2); }, stamp = day.getFullYear() + "-" + p(day.getMonth() + 1) + "-" + p(day.getDate()), folder = akSnd17ZipName(list, stamp);
+  var bar = h("progress", { max: total || 1, value: 0, style: "width:100%" }), msg = h("p", { class: "muted" }, "Packing " + list.length + " recordings (" + akRecSize(total) + ")…"), out = h("div", { class: "row" }), done = 0;
+  modal("📁 One folder", h("div", null, msg, bar, out), [{ label: "Close" }]);
+  Promise.all(list.map(function (r) { return akRecBlob(r).then(function (b) { return { name: folder + "/" + akZipName(akRecFileName(r)), blob: b }; }); }))
+    .then(function (fs) { return akZipMake(fs, function (n) { done += n; bar.value = done; msg.textContent = "Packing: " + akRecSize(done) + " of " + akRecSize(total); }); })
+    .then(function (zip) {
+      var f = new File([zip], folder + ".zip", { type: "application/zip" });
+      msg.textContent = "✓ Ready: " + f.name + ". Unzip it to get the folder."; bar.value = total;
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [f] })) out.appendChild(h("button", { class: "primary", onClick: function () { navigator.share({ files: [f], title: f.name }).catch(function () {}); } }, "Share now"));
+      out.appendChild(h("button", { onClick: function () { akRecDownload(f, f.name); } }, "Save to Downloads"));
+    }, function (e) { msg.textContent = "Couldn't pack them: " + ((e && e.message) || "storage error"); });
+}
+(function () {
+  var vr = viewRecs;
+  viewRecs = function () {
+    var el = vr.apply(this, arguments);
+    try {
+      var host = el.querySelector(".ak11-recs");
+      if (host) host.insertBefore(h("div", { class: "row" }, h("button", { onClick: function () {
+        akRecList().then(function (all) {
+          var list = all.filter(function (r) { return r.done !== false && (r.bytes || 0) > 0; });
+          if (!list.length) { toast("No recordings on this device yet."); return; }
+          akSnd17Pick(list, akRec17Folder, { title: "Save as one folder", hint: "Tick the recordings (videos and sounds) to put in one folder. You get a .zip named for the show and date; unzip it to get the folder.", button: "Make the folder" });
+        });
+      } }, "📁 Save recordings as one folder (.zip)…")), host.children[1] || null);
+    } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.recs = viewRecs;
+})();
+
 /* ================================================================ ak17_a: gig-ready update, phase 1 (version 14.3)
    Save button on edit screens (94), Change key on the song page (91), show / setlist words (89). */
-AK_VERSION = "14.3.4";
+AK_VERSION = "14.4";
 AK_WHATS_NEW = [
   "Save button on the song page, a setlist's page and a show's page: it saves, closes the page and takes you back to where you were. (Everything still saves by itself as you type.)",
+  "📦 Send sounds (sound phone): send all, only the new ones, or pick songs, grouped by show and day. Sounds stay on the phone, so you can send other songs from a show another day. The .zip is named “Akashic Chords - Show Recordings - show - date” and holds a folder with the same name; every recording file now starts with “Akashic Chords - ”.",
+  "Recordings › 📁 Save recordings as one folder (.zip): tick videos and sounds from a show, get one zip that unzips into a folder named for the show and date.",
+  "Record with just one phone: Phone recorders › How many phones › One phone. That phone films and records the sound in the same file (choose the sound quality), you start and end songs from the playing screen as before, and there is nothing to combine after the show. 🎙 Recorder on that phone goes straight to recording.",
   "The little message at the bottom is smaller and goes away after about a second, and it no longer has an Undo button (use ↶ at the top). Anything you grab by its handle to move (songs, sets, setlists, groups and other lists) lights up right away so you can see it is picked up.",
   "Every new setlist goes into a group called “New setlists” at the top of your setlists, so you can fold it away or move them from there.",
   "Setlists: after you change the order or add or take away songs, ✓ Save lights up. It asks whether to save the changes or save them as a copy (“Name (2)”), which leaves the original as it was. Leaving a changed setlist without saving asks the same question, with Undo my changes too.",
