@@ -34717,6 +34717,307 @@ function akSet17Renum(sh) {
   };
 })();
 
+/* ================================================================ ak18_a: Write tab layouts (version 14.7, items 72 + 97)
+   Layout switch on the Write tab (akW9().lay): classic (as before), split (chords above, lyrics below, drag the handle),
+   strip (each lyric line with its own chord strip above it, typed in place), side (chords and lyrics side by side).
+   Landscape (screen orientation, 560px and wider) uses side unless akW9().layLand is "same".
+   The chord pane shows the lyrics' [chords] as Chords over words, Bars, Rhythm or Jazz chart (akW9().cview), built from the
+   lyrics as you type (akMGuess) unless the song's chart was set by hand (song.measure.auto false: "Refill from the lyrics").
+   Tap a chord to slide it by a letter or a word (rewrites the [chord] in the lyrics); in Rhythm tap a word to move it a slot (bar.wa). */
+AK_VERSION = "14.7";
+AK_WHATS_NEW = [
+  "Write: new layouts to try. Split (chords above, lyrics below, drag the bar between them), Chord strip (every line has its own chords right above it), and Side by side (used when the phone or tablet is turned sideways). Pick one with the Layout buttons at the top of the pad; Classic is the old one.",
+  "Write: the chords show as Chords over words, Bars, Rhythm or Jazz chart, filled with your lyrics as you type. Tap a chord to slide it a letter or a word; in Rhythm tap a word to move it to another beat."
+].concat(AK_WHATS_NEW);
+
+var AK18_LAYS = [["classic", "Classic"], ["split", "Split"], ["strip", "Chord strip"], ["side", "Side by side"]];
+var AK18_VIEWS = [["words", "Chords over words"], ["bars", "Bars"], ["rhythm", "Rhythm"], ["jazz", "Jazz chart"]];
+var AK18_QUICK = ["G", "C", "D", "Em", "Am", "F", "A", "E"];
+function akW18() { var c = akW9(); if (!c.lay) c.lay = "split"; if (!c.layLand) c.layLand = "side"; if (!c.cview) c.cview = "words"; if (!c.splitH) c.splitH = 34; return c; }
+function akW18Land() {
+  var o = window.screen && screen.orientation && screen.orientation.type;
+  var land = o ? /landscape/.test(o) : (window.screen ? screen.width > screen.height : false);
+  return land && window.innerWidth >= 560;
+}
+function akW18Lay() { var c = akW18(); return akW18Land() && c.layLand !== "same" ? "side" : c.lay; }
+
+/* one lyric line <-> its plain words and the chords on it (at = letter position in the words) */
+function akW18Parse(line) {
+  var t = "", ch = [];
+  String(line || "").split(/(\[[^\]]*\])/).forEach(function (p) {
+    var m = /^\[([^\]]*)\]$/.exec(p);
+    if (m && m[1].trim() && isChordLike(m[1].trim())) ch.push({ c: m[1].trim(), at: t.length }); else t += p;
+  });
+  return { t: t, ch: ch };
+}
+function akW18Join(o) {
+  var t = o.t;
+  o.ch.map(function (x, i) { return { c: x.c, at: Math.max(0, Math.min(t.length, x.at)), i: i }; })
+    .sort(function (a, b) { return b.at - a.at || b.i - a.i; })
+    .forEach(function (x) { t = t.slice(0, x.at) + "[" + x.c + "]" + t.slice(x.at); });
+  return t;
+}
+function akW18IsHead(line) { var m = /^\s*\[([^\]]+)\]\s*$/.exec(line || ""); return !!(m && !isChordLike(m[1].trim())); }
+function akW18Starts(t) { var out = []; for (var i = 0; i < t.length; i++) if (!/\s/.test(t[i]) && (i === 0 || /\s/.test(t[i - 1]))) out.push(i); out.push(t.length); return out; }
+/* move chord k on a line: by letters (d = ±1) or to the next/previous word start (word = true); never past its neighbours */
+function akW18Move(line, k, d, word) {
+  var o = akW18Parse(line), x = o.ch[k]; if (!x) return line;
+  var to = x.at + d;
+  if (word) { var st = akW18Starts(o.t); to = d > 0 ? (st.filter(function (s) { return s > x.at; })[0]) : (st.filter(function (s) { return s < x.at; }).pop()); if (to == null) return line; }
+  var lo = k > 0 ? o.ch[k - 1].at : 0, hi = k < o.ch.length - 1 ? o.ch[k + 1].at : o.t.length;
+  x.at = Math.max(lo, Math.min(hi, to));
+  return akW18Join(o);
+}
+/* the bars the pane shows: the hand-set chart, else a fresh guess from the lyrics */
+function akW18M(song, text) {
+  if (song && song.measure && song.measure.sections && song.measure.auto === false) { akMFit(song.measure, akMBeats(song)); return { m: song.measure, hand: true }; }
+  var tmp = { lyrics: text, chords: song ? song.chords : "", timeSig: song ? song.timeSig : "" }, m = akMGuess(tmp);
+  akMFit(m, akMBeats(tmp));
+  return { m: m, hand: false };
+}
+function akW18Beat(k, sub) { return "beat " + (Math.floor(k / sub) + 1) + (k % sub ? " &" : ""); }
+
+/* chord chips over one line, pushed right when they would overlap */
+function akW18Strip(o, li, sel, pick) {
+  var row = h("div", { class: "ak18-strip" }), col = -1;
+  o.ch.forEach(function (x, k) {
+    var at = Math.max(x.at, col + 1); col = at + x.c.length;
+    row.appendChild(h("span", { class: "ak18-at", style: "left:" + at + "ch" }, h("button", { class: "ak18-chip" + (sel && sel.li === li && sel.k === k ? " on" : ""), "aria-label": "Chord " + x.c + ", tap to move it", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { pick({ kind: "chord", li: li, k: k }); } }, x.c)));
+  });
+  return row;
+}
+
+/* the chord pane (split / side) and the line editor (strip) */
+function akW18Pane(ctx) {
+  var c = akW18(), sel = null, snapped = null, last = ctx.ta.value, focusLine = -1, focusAt = 0;
+  var box = h("div", { class: "ak18-pane" + (ctx.strip ? " ak18-edit" : "") });
+  var views = h("div", { class: "chips ak18-views", role: "group", "aria-label": "Show the chords as" });
+  var body = h("div", { class: "ak18-body" }), nudge = h("div", { class: "ak18-nudge", "aria-live": "polite" }), quick = h("div", { class: "ak18-quick" });
+  function song() { return akW9Song(); }
+  function lines() { return ctx.ta.value.split("\n"); }
+  function setText(v, li, at) {
+    ctx.ta.value = v; last = v;
+    if (li != null) { var ls = lines(), p = 0; for (var i = 0; i < li && i < ls.length; i++) p += ls[i].length + 1; p += (at == null ? (ls[li] || "").length : at); try { ctx.ta.selectionStart = ctx.ta.selectionEnd = p; } catch (e) {} }
+    ctx.changed();
+  }
+  function once(label) { if (snapped !== label + JSON.stringify(sel)) { snapped = label + JSON.stringify(sel); snap(label); } }
+  function pick(s) { sel = sel && JSON.stringify(sel) === JSON.stringify(s) ? null : s; draw(); }
+  function viewChips() {
+    views.textContent = "";
+    if (ctx.strip) return;
+    AK18_VIEWS.forEach(function (v) { views.appendChild(h("button", { class: "chip" + (c.cview === v[0] ? " on" : ""), onClick: function () { c.cview = v[0]; sel = null; save(); draw(); } }, v[1])); });
+  }
+  function moveChord(d, word) {
+    var ls = lines(); if (!sel || !ls[sel.li]) return;
+    once("move a chord"); ls[sel.li] = akW18Move(ls[sel.li], sel.k, d, word); setText(ls.join("\n"), sel.li); draw();
+  }
+  function dropChord() { var ls = lines(), o = akW18Parse(ls[sel.li]); snap("remove a chord"); o.ch.splice(sel.k, 1); ls[sel.li] = akW18Join(o); var li = sel.li; sel = null; setText(ls.join("\n"), li); draw(); }
+  function moveWord(d) {
+    var s = song(), r = s && akW18M(s, ctx.ta.value), b = r && r.m.sections[sel.si] && r.m.sections[sel.si].bars[sel.bi]; if (!b) return;
+    var wa = akR9Wa(b), k = wa[sel.wi] + d, lo = sel.wi > 0 ? wa[sel.wi - 1] : 0, hi = sel.wi < wa.length - 1 ? wa[sel.wi + 1] : b.s.length - 1;
+    k = Math.max(lo, Math.min(hi, k)); if (k === wa[sel.wi]) return;
+    once("move a word"); wa[sel.wi] = k; b.wa = wa; akMKeep(s, r.m); draw();
+  }
+  function drawNudge() {
+    nudge.textContent = "";
+    if (!sel) { nudge.appendChild(h("span", { class: "hint" }, ctx.strip || c.cview === "words" ? "Tap a chord to slide it." : c.cview === "rhythm" ? "Tap a word to move it to another beat." : "Chords follow the words. Slide them in Chords over words.")); return; }
+    if (sel.kind === "chord") {
+      var o = akW18Parse(lines()[sel.li]), x = o.ch[sel.k]; if (!x) { sel = null; drawNudge(); return; }
+      var w = (/\S+/.exec(o.t.slice(x.at)) || [""])[0];
+      nudge.append(
+        h("button", { class: "sm", "aria-label": "One word earlier", onClick: function () { moveChord(-1, true); } }, "⏮"),
+        h("button", { class: "sm", "aria-label": "One letter earlier", onClick: function () { moveChord(-1); } }, "◀"),
+        h("span", { class: "ak18-what" }, h("b", null, x.c), w ? " on “" + w + "”" : " at the end"),
+        h("button", { class: "sm", "aria-label": "One letter later", onClick: function () { moveChord(1); } }, "▶"),
+        h("button", { class: "sm", "aria-label": "One word later", onClick: function () { moveChord(1, true); } }, "⏭"),
+        h("button", { class: "sm", "aria-label": "Remove this chord", onClick: dropChord }, "✕"));
+    } else {
+      nudge.append(
+        h("button", { class: "sm", "aria-label": "Move the word earlier", onClick: function () { moveWord(-1); } }, "◀"),
+        h("span", { class: "ak18-what" }, "“" + sel.w + "” on ", h("b", null, sel.beat), " of bar " + (sel.bi + 1)),
+        h("button", { class: "sm", "aria-label": "Move the word later", onClick: function () { moveWord(1); } }, "▶"),
+        h("button", { class: "sm", onClick: function () { var s = song(), r = s && akW18M(s, ctx.ta.value), b = r && r.m.sections[sel.si].bars[sel.bi]; if (!b) return; snap("spread words"); delete b.wa; akMKeep(s, r.m); draw(); } }, "Spread evenly"));
+    }
+  }
+  function drawQuick() {
+    quick.textContent = "";
+    if (!(ctx.strip || c.cview === "words")) return;
+    var seen = {}, list = [];
+    (ctx.ta.value.match(/\[([^\]]+)\]/g) || []).map(function (x) { return x.slice(1, -1).trim(); }).concat(AK18_QUICK).forEach(function (x) { if (x && isChordLike(x) && !seen[x] && list.length < 12) { seen[x] = 1; list.push(x); } });
+    quick.appendChild(h("span", { class: "muted" }, "Add a chord"));
+    list.forEach(function (x) { quick.appendChild(h("button", { class: "chip", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { addChord(x); } }, x)); });
+    quick.appendChild(h("button", { class: "chip", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { askText("Add a chord", "", "Add", function (v) { v = String(v || "").trim(); if (v) addChord(v); }, "Like F#m7"); } }, "Other…"));
+  }
+  function addChord(x) {
+    snap("add a chord");
+    if (ctx.strip) {
+      var ae = document.activeElement; if (ae && ae.classList && ae.classList.contains("ak18-in")) { focusLine = +ae.getAttribute("data-li"); focusAt = ae.selectionStart || 0; }
+      var ls = lines(), li = focusLine >= 0 && focusLine < ls.length ? focusLine : ls.length - 1, o = akW18Parse(ls[li]);
+      o.ch.push({ c: x, at: focusAt }); o.ch.sort(function (a, b) { return a.at - b.at; }); ls[li] = akW18Join(o); setText(ls.join("\n"), li); draw();
+      var inp = body.querySelector('.ak18-in[data-li="' + li + '"]'); if (inp) { inp.focus(); try { inp.setSelectionRange(focusAt, focusAt); } catch (e) {} }
+      return;
+    }
+    var ta = ctx.ta, p = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+    setText(ta.value.slice(0, p) + "[" + x + "]" + ta.value.slice(p)); try { ta.selectionStart = ta.selectionEnd = p + x.length + 2; } catch (e) {}
+    draw();
+  }
+  /* strip: each line is an input; chords keep their place in the words as you type */
+  function lineInput(o, li) {
+    var inp = h("input", { type: "text", class: "ak18-in", value: o.t, style: "width:" + (o.t.length + 4) + "ch", "data-li": String(li), "aria-label": "Line " + (li + 1), spellcheck: "true", autocapitalize: "sentences" }), was = o.t;
+    function mark() { focusLine = li; focusAt = inp.selectionStart || 0; }
+    inp.addEventListener("focus", mark); inp.addEventListener("click", mark); inp.addEventListener("keyup", mark);
+    inp.addEventListener("input", function () {
+      var ls = lines(), cur = akW18Parse(ls[li]), v = inp.value, d = v.length - was.length, p = inp.selectionStart || 0, at = d > 0 ? p - d : p;
+      cur.ch.forEach(function (x) { if (d > 0 && x.at >= at) x.at += d; else if (d < 0 && x.at > at) x.at = Math.max(at, x.at + d); });
+      cur.t = v; was = v; inp.style.width = (v.length + 4) + "ch"; ls[li] = akW18Join(cur); setText(ls.join("\n"), li, null); mark();
+      var strip = inp.previousSibling; if (strip) strip.parentNode.replaceChild(akW18Strip(cur, li, sel, pick), strip);
+    });
+    inp.addEventListener("keydown", function (e) {
+      var ls = lines(), p = inp.selectionStart || 0;
+      if (e.key === "Enter") {
+        e.preventDefault(); var o2 = akW18Parse(ls[li]), a = { t: o2.t.slice(0, p), ch: [] }, b = { t: o2.t.slice(p), ch: [] };
+        o2.ch.forEach(function (x) { if (x.at < p || (x.at === p && p === o2.t.length)) a.ch.push(x); else b.ch.push({ c: x.c, at: x.at - p }); });
+        ls.splice(li, 1, akW18Join(a), akW18Join(b)); setText(ls.join("\n"), li + 1, 0); focusLine = li + 1; focusAt = 0; draw(true);
+      } else if (e.key === "Backspace" && p === 0 && inp.selectionEnd === 0 && li > 0) {
+        e.preventDefault(); var pr = akW18Parse(ls[li - 1]), me = akW18Parse(ls[li]), n = pr.t.length;
+        me.ch.forEach(function (x) { pr.ch.push({ c: x.c, at: x.at + n }); }); pr.t += me.t;
+        ls.splice(li - 1, 2, akW18Join(pr)); setText(ls.join("\n"), li - 1); focusLine = li - 1; focusAt = n; draw(true);
+      } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey) {
+        var to = body.querySelector('.ak18-in[data-li="' + (li + (e.key === "ArrowUp" ? -1 : 1)) + '"]'); if (to) { e.preventDefault(); to.focus(); try { to.setSelectionRange(Math.min(p, to.value.length), Math.min(p, to.value.length)); } catch (x) {} }
+      }
+    });
+    return inp;
+  }
+  function drawWords() {
+    var ls = lines();
+    ls.forEach(function (line, li) {
+      if (akW18IsHead(line)) { body.appendChild(h("div", { class: "ak18-head" }, line.trim().slice(1, -1))); if (!ctx.strip) return; }
+      var o = akW18Parse(akW18IsHead(line) ? "" : line);
+      if (!ctx.strip && !o.t.trim() && !o.ch.length) { body.appendChild(h("div", { class: "ak18-gap" })); return; }
+      if (ctx.strip && akW18IsHead(line)) return;
+      body.appendChild(h("div", { class: "ak18-ln" }, akW18Strip(o, li, sel, pick), ctx.strip ? lineInput(o, li) : h("div", { class: "ak18-tx" }, o.t || " ")));
+    });
+    if (!ls.join("").trim() && !ctx.strip) body.appendChild(h("p", { class: "hint" }, "Your lyrics and their [chords] show here as you write."));
+  }
+  function drawBars(kind) {
+    var s = song(), r = akW18M(s, ctx.ta.value), m = r.m, sub = m.sub || 2;
+    if (r.hand) body.appendChild(h("div", { class: "ak18-hand" }, h("span", { class: "hint" }, "This chart was set by hand, so new lyrics don't flow in by themselves."),
+      h("button", { class: "sm", onClick: function () { if (!s) return; snap("refill the chart"); delete s.measure; save(); sel = null; draw(); } }, "Refill from the lyrics")));
+    if (!m.sections.length) { body.appendChild(h("p", { class: "hint" }, "Put chords in the lyrics, like [G]Headlights [Em]low, and the bars fill in.")); return; }
+    m.sections.forEach(function (sc, si) {
+      if (sc.name) body.appendChild(h("div", { class: "ak18-head" }, sc.name));
+      var grid = h("div", { class: "ak18-bars ak18-" + kind });
+      sc.bars.forEach(function (b, bi) {
+        var chs = b.s.filter(Boolean);
+        if (kind === "bars") grid.appendChild(h("div", { class: "ak18-bar" }, h("b", null, chs.join("  ") || "·"), h("span", null, b.w || "")));
+        else if (kind === "jazz") { var prev = bi > 0 ? sc.bars[bi - 1].s.filter(Boolean).join(" ") : null; grid.appendChild(h("div", { class: "ak18-jz" }, chs.length && chs.join(" ") === prev ? "%" : chs.join("  ") || "")); }
+        else {
+          var n = b.s.length, wa = akR9Wa(b), words = akR9Words(b), cell = h("div", { class: "ak18-rb", style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
+          b.s.forEach(function (x) { cell.appendChild(h("b", null, x || "")); });
+          for (var k = 0; k < n; k++) cell.appendChild(h("i", { "aria-hidden": "true" }, k % sub ? "↑" : "↓"));
+          for (var k2 = 0; k2 < n; k2++) {
+            var here = h("span");
+            words.forEach(function (w, wi) {
+              if (wa[wi] !== k2) return;
+              here.appendChild(h("button", { class: "ak18-wd" + (sel && sel.kind === "word" && sel.si === si && sel.bi === bi && sel.wi === wi ? " on" : ""), onClick: function () { pick({ kind: "word", si: si, bi: bi, wi: wi, w: w, beat: akW18Beat(wa[wi], sub) }); } }, w));
+            });
+            cell.appendChild(here);
+          }
+          grid.appendChild(cell);
+        }
+      });
+      body.appendChild(grid);
+    });
+    if (kind === "jazz" && s) body.appendChild(h("button", { class: "sm", onClick: function () { s.lyrics = ctx.ta.value; save(); akJzOpen(s); } }, "🎼 Open the full jazz chart"));
+  }
+  function draw(keepFocus) {
+    var ae = document.activeElement, fl = ae && ae.classList && ae.classList.contains("ak18-in") ? +ae.getAttribute("data-li") : -1, fp = fl >= 0 ? ae.selectionStart : 0;
+    if (sel && sel.kind === "word") { var s = song(), r = s && akW18M(s, ctx.ta.value), b = r && r.m.sections[sel.si] && r.m.sections[sel.si].bars[sel.bi]; if (b) sel.beat = akW18Beat(akR9Wa(b)[sel.wi], r.m.sub || 2); else sel = null; }
+    viewChips(); body.textContent = "";
+    var v = ctx.strip ? "words" : c.cview;
+    if (v === "words") drawWords(); else drawBars(v);
+    drawNudge(); drawQuick(); last = ctx.ta.value;
+    if (keepFocus === true) fl = focusLine, fp = focusAt;
+    if (fl >= 0) { var inp = body.querySelector('.ak18-in[data-li="' + fl + '"]'); if (inp) { inp.focus(); try { inp.setSelectionRange(fp, fp); } catch (e) {} } }
+  }
+  var t = 0;
+  ctx.ta.addEventListener("input", function () { clearTimeout(t); t = setTimeout(function () { if (ctx.ta.value !== last) draw(); }, 200); });
+  box._sync = function () { if (ctx.ta.value !== last) draw(); };
+  box.append(views, body, nudge, quick);
+  draw();
+  return box;
+}
+
+/* the layout switch, wrapped around the Write tab */
+(function () {
+  var vw = viewWrite;
+  viewWrite = function () {
+    var el = vw.apply(this, arguments);
+    try {
+      var c = akW18(), lay = akW18Lay(), card = el.querySelector(".akw9-card"), ta = el.querySelector(".akw9-pad"), padRow = el.querySelector(".akw9-padrow");
+      if (!card || !ta || !padRow) return el;
+      S.akW18Lay = lay;
+      var land = akW18Land();
+      var sw = h("div", { class: "chips ak18-lays", role: "group", "aria-label": "Write layout" }, h("span", { class: "muted" }, "Layout"),
+        AK18_LAYS.map(function (x) { return h("button", { class: "chip" + (lay === x[0] ? " on" : ""), "aria-pressed": lay === x[0] ? "true" : "false", onClick: function () { if (land && x[0] === "side") c.layLand = "side"; else { if (land) c.layLand = "same"; c.lay = x[0]; } save(); rerenderKeepScroll(); } }, x[1]); }),
+        land ? h("span", { class: "muted ak18-landnote" }, c.layLand !== "same" ? "· sideways: side by side" : "· sideways: same as upright") : null);
+      card.insertBefore(sw, card.firstChild);
+      if (lay === "classic") return el;
+      var ctx = { ta: ta, strip: lay === "strip", changed: function () { ta.dispatchEvent(new Event("input")); } };
+      var pane = akW18Pane(ctx);
+      card.addEventListener("click", function () { setTimeout(pane._sync, 0); });
+      card.classList.add("ak18-L-" + lay);
+      if (lay === "strip") { ta.classList.add("ak18-hide"); ta.parentNode.insertBefore(pane, ta); return el; }
+      if (lay === "side") { var wrap = h("div", { class: "ak18-sidewrap" }); padRow.parentNode.insertBefore(wrap, padRow); wrap.append(pane, padRow); return el; }
+      /* split: chords above, a handle, lyrics below */
+      pane.style.height = c.splitH + "vh";
+      var grip = h("div", { class: "ak18-grip", role: "separator", "aria-label": "Drag to make the chords bigger or smaller", tabindex: "0" });
+      grip.addEventListener("pointerdown", function (e) {
+        e.preventDefault(); var y0 = e.clientY, h0 = pane.getBoundingClientRect().height;
+        function mv(ev) { var v = Math.max(12, Math.min(75, (h0 + ev.clientY - y0) / window.innerHeight * 100)); pane.style.height = v + "vh"; c.splitH = Math.round(v); }
+        function up() { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); save(); }
+        window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+      });
+      grip.addEventListener("keydown", function (e) { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); c.splitH = Math.max(12, Math.min(75, c.splitH + (e.key === "ArrowUp" ? -4 : 4))); pane.style.height = c.splitH + "vh"; save(); } });
+      padRow.parentNode.insertBefore(pane, padRow); padRow.parentNode.insertBefore(grip, padRow);
+    } catch (e) { if (window.console) console.warn("ak18 write layout", e); }
+    return el;
+  };
+  AK_VIEWS.write = viewWrite;
+  function turned() { if (S.view === "write" && S.akW18Lay && akW18Lay() !== S.akW18Lay) rerenderKeepScroll(); }
+  if (window.screen && screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener("change", turned);
+  window.addEventListener("orientationchange", function () { setTimeout(turned, 300); });
+})();
+
+akCss("ak18-a", [
+  ".ak18-lays{margin:0 0 8px;align-items:center;flex-wrap:wrap}.ak18-lays>.muted{font-size:12px;margin-right:2px}.ak18-landnote{font-size:11px}",
+  ".ak18-pane{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line,#8884);border-radius:12px;padding:8px;margin:6px 0;min-height:0;overflow:auto;background:var(--card2,transparent)}",
+  ".ak18-L-split .ak18-pane{overflow:auto}.ak18-views{flex-wrap:nowrap;overflow-x:auto}.ak18-views .chip{white-space:nowrap}",
+  ".ak18-body{min-height:0;overflow-x:auto;font-size:min(calc(var(--lyric-size,20px) * .8),17px)}",
+  ".ak18-ln{position:relative;margin:2px 0;min-width:max-content;font-family:ui-monospace,Menlo,Consolas,'Courier New',monospace}",
+  ".ak18-strip{position:relative;height:1.9em;font-size:inherit}",
+  ".ak18-at{position:absolute;top:.1em;white-space:nowrap}.ak18-pane>*{flex-shrink:0}",
+  ".ak18-chip{margin:0 0 0 -.2em;padding:0 .2em;min-width:0;min-height:1.6em;border-radius:6px;border:1px solid transparent;background:color-mix(in srgb,var(--accent,#c90) 18%,transparent);color:var(--chord,var(--accent,#c90));font:inherit;font-weight:700;cursor:pointer;line-height:1.5}",
+  ".ak18-chip.on{border-color:var(--accent,#c90);outline:2px solid var(--accent,#c90)}",
+  ".ak18-tx{white-space:pre;line-height:1.4}",
+  ".ak18-in{min-width:100%;box-sizing:border-box;font:inherit!important;padding:2px 0!important;margin:0!important;border:0!important;border-bottom:1px dashed var(--line,#8886)!important;border-radius:0!important;background:transparent!important;color:inherit;letter-spacing:0;outline-offset:0}",
+  ".ak18-edit .ak18-strip{height:1.9em}.ak18-hide{display:none!important}",
+  ".ak18-head{font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.8;margin:8px 0 2px;font-weight:700}.ak18-gap{height:.6em}",
+  ".ak18-bars{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}",
+  ".ak18-bar{border:1px solid var(--line,#8886);border-radius:8px;padding:6px;min-height:3.2em;display:flex;flex-direction:column;justify-content:space-between;gap:2px}.ak18-bar b{color:var(--chord,var(--accent,#c90))}.ak18-bar span{font-size:.7em;opacity:.85;line-height:1.2}",
+  ".ak18-jazz{border-left:2px solid currentColor;gap:0}.ak18-jz{border-right:2px solid currentColor;padding:8px 6px;font-family:Georgia,serif;font-style:italic;font-size:1.1em;min-height:1.6em}",
+  ".ak18-rhythm{grid-template-columns:minmax(0,1fr)}",
+  ".ak18-rb{display:grid;border:1px solid var(--line,#8886);border-radius:8px;padding:6px 4px;text-align:center;row-gap:2px;font-size:.85em}.ak18-rb b{color:var(--chord,var(--accent,#c90));min-height:1.2em}.ak18-rb i{font-style:normal;opacity:.6}.ak18-rb span{display:flex;flex-direction:column;align-items:flex-start;min-width:0;overflow:visible}",
+  ".ak18-wd{font:inherit;font-size:.8em;padding:1px 2px;border:1px solid transparent;border-radius:5px;background:none;color:inherit;cursor:pointer;white-space:nowrap;position:relative}.ak18-wd.on{border-color:var(--accent,#c90);background:color-mix(in srgb,var(--accent,#c90) 20%,transparent)}",
+  ".ak18-nudge{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:36px}.ak18-nudge button.sm{min-width:40px;min-height:38px}.ak18-what{flex:1 1 auto;text-align:center;font-size:13px}",
+  ".ak18-quick{display:flex;gap:6px;align-items:center;overflow-x:auto;flex-wrap:nowrap}.ak18-quick .chip{font-weight:700;white-space:nowrap}.ak18-quick .muted{font-size:12px;white-space:nowrap}",
+  ".ak18-hand{display:flex;gap:8px;align-items:center;flex-wrap:wrap}",
+  ".ak18-grip{height:14px;margin:0 auto 6px;width:90px;border-radius:7px;cursor:row-resize;touch-action:none;background:linear-gradient(var(--line,#8888),var(--line,#8888)) center/60px 5px no-repeat}",
+  ".ak18-L-split .akw9-pad{min-height:24vh}",
+  ".ak18-sidewrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}.ak18-sidewrap>*{min-width:0}",
+  ".ak18-L-side .ak18-pane{position:sticky;top:0;max-height:78vh;margin:0}.ak18-L-side .akw9-padrow.with-rhy{grid-template-columns:minmax(0,1fr)}.ak18-L-side .akw9-pad{min-height:60vh}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
