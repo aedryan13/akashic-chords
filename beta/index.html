@@ -35334,7 +35334,7 @@ function akSetShapeShow(sh, done) {
 /* ---------------------------------------------------------------- 6. the setlist helper, now with genres, years and shape */
 akSetHelper = function (o) {
   o = o || {};
-  var g = o.gig || null, cfg = akSetCfg();
+  var g = o.gig || (o.show ? akSetGigOf(o.show) : null), cfg = akSetCfg();
   var q = { event: cfg.event || "bar", ages: (cfg.ages || ["mid"]).slice(), minutes: akShMinutes(g) || cfg.minutes || 120, sets: cfg.sets || 2, vibe: cfg.vibe || "mixed", orig: cfg.orig || "few",
     noSad: !!cfg.noSad, noLoud: !!cfg.noLoud, ready: cfg.ready !== false, gen: Object.assign({}, cfg.gen || {}), era: Object.assign({}, cfg.era || {}), shape: cfg.shape || "arc" };
   var step = 0, plan = null, body = h("div", { class: "aksh" }), close = null;
@@ -35453,22 +35453,26 @@ akSetHelper = function (o) {
         });
         body.appendChild(card);
       });
+      var tsh = o.show && findShow(o.show.id) ? o.show : null, has = tsh && tsh.sets.some(function (st) { return st.songIds.length; });
       var name = h("input", { type: "text", value: g ? akGigTitle(g) + " set" : (ev ? ev[1] : "New") + " setlist", "aria-label": "Setlist name", autocapitalize: "words" });
-      body.appendChild(h("label", { class: "fld" }, "Name", name));
+      if (!tsh) body.appendChild(h("label", { class: "fld" }, "Name", name));
+      function make(into) {
+        snap("setlist helper");
+        var sh = into || newShow(name.value.trim() || "New setlist"), note = "Made with the setlist helper: " + (ev ? ev[1].toLowerCase() : "") + ", " + crowdName() + ", " + shapeName() + ".";
+        sh.target = q.minutes; sh.notes = into && sh.notes && sh.notes.indexOf("Made with the setlist helper") < 0 ? sh.notes + "\n" + note : note;
+        sh.sets = plan.sets.filter(function (st) { return st.length; }).map(function (st, i) { var ns = newSet("Set " + (i + 1)); ns.songIds = st.map(function (x) { return x.s.id; }); return ns; });
+        if (!sh.sets.length) sh.sets = [newSet("Set 1")];
+        if (!into) { lib().shows.unshift(sh); if (g) { g.setlists = g.setlists || []; g.setlists.push(sh.id); } }
+        save(); if (close) close();
+        if (into && S.view === "show" && S.showId === sh.id) render(); else go("show", { showId: sh.id });
+        toastUndo((into ? "Filled “" : "Made “") + sh.name + "”" + (g ? " for " + akGigTitle(g) : "") + ".");
+      }
       body.appendChild(h("div", { class: "row aksh-nav" }, h("button", { onClick: function () { step = 0; draw(); } }, "‹ Change answers"), h("button", { onClick: function () { plan = akShBuild(q); draw(); } }, "↻ Start over"), h("span", { class: "grow" }),
-        h("button", { class: "primary", disabled: !tot, onClick: function () {
-          snap("setlist helper");
-          var sh = newShow(name.value.trim() || "New setlist");
-          sh.target = q.minutes; sh.notes = "Made with the setlist helper: " + (ev ? ev[1].toLowerCase() : "") + ", " + crowdName() + ", " + shapeName() + ".";
-          sh.sets = plan.sets.filter(function (st) { return st.length; }).map(function (st, i) { var ns = newSet("Set " + (i + 1)); ns.songIds = st.map(function (x) { return x.s.id; }); return ns; });
-          if (!sh.sets.length) sh.sets = [newSet("Set 1")];
-          lib().shows.unshift(sh);
-          if (g) { g.setlists = g.setlists || []; g.setlists.push(sh.id); }
-          save(); if (close) close();
-          go("show", { showId: sh.id }); toastUndo("Made “" + sh.name + "”" + (g ? " for " + akGigTitle(g) : "") + ".");
-        } }, "Make the setlist")));
+        tsh && has ? h("button", { disabled: !tot, onClick: function () { make(null); } }, "Make a new setlist") : null,
+        h("button", { class: "primary", disabled: !tot, onClick: function () { make(tsh); } }, tsh ? (has ? "Replace the songs in “" + tsh.name + "”" : "Put them in “" + tsh.name + "”") : "Make the setlist")));
     }
   }
+  if (o.quick) { q.sets = 3; q.shape = "arc"; keep(); plan = akShBuild(q); step = STEPS.length; }
   draw();
   close = modal("Setlist helper", body, [{ label: "Close" }], { wide: true });
 };
@@ -35486,6 +35490,55 @@ akCss("akset", [
   ".akset-trow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,rgba(127,127,127,.25))}.akset-tt{min-width:0}.akset-tt>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
   "@media (max-width:480px){.akset-trow{flex-wrap:wrap}.akset-trow .akset-lvchips{width:100%}}",
   ".akset-tagger input[type=search]{width:100%;margin:6px 0}.akset-small{font-size:.85rem;margin-top:4px}.akset-encard .akset-lvchips{margin-top:4px}"
+].join("\n"));
+
+/* ================================================================ akset_b: the setlist helper on the setlist page (version 14.8.1)
+   A bar (.akset-bar) on every setlist page, under the Details panel: ✦ Setlist helper, ⚡ My usual night, ⚡ Shape by energy.
+   The helper opened here fills this setlist (akSetHelper({ show })): "Put them in" when it is empty, else "Replace the songs" or
+   "Make a new setlist". The Add songs picker (modal "Add songs") gets "✦ Let the helper pick". viewShow redraws its body on its own,
+   so a MutationObserver puts the bar and the picker button back after each draw. settings().setHelperBar === false hides the bar. Test ak_t141. */
+AK_VERSION = "14.8.1";
+AK_WHATS_NEW = [
+  "The setlist helper is now right on each setlist's page: ✦ Setlist helper, ⚡ My usual night and ⚡ Shape by energy, and “✦ Let the helper pick” in Add songs. From a setlist, the helper fills that setlist."
+].concat(AK_WHATS_NEW);
+
+function akSetGigOf(sh) {
+  if (typeof akGigs !== "function" || !sh) return null;
+  return akGigs().filter(function (g) { return (g.setlists || []).indexOf(sh.id) >= 0; })[0] || null;
+}
+function akSetBar(sh) {
+  var has = sh.sets.some(function (st) { return st.songIds.some(findSong); });
+  return h("div", { class: "akset-bar" + (has ? "" : " akset-empty") },
+    has ? null : h("div", { class: "akset-bartxt" }, "Let the helper pick songs for this setlist:"),
+    h("button", { onClick: function () { akSetHelper({ show: sh }); } }, "✦ Setlist helper"),
+    h("button", { class: has ? "" : "primary", onClick: function () { akSetHelper({ show: sh, quick: true }); } }, "⚡ My usual night"),
+    has ? h("button", { onClick: function () { akSetShapeShow(sh, function () { render(); }); } }, "⚡ Shape by energy") : null);
+}
+function akSetBarFix() {
+  if (S.view !== "show" || settings().setHelperBar === false || S.selSongMode) return;
+  var sh = findShow(S.showId), panel = document.querySelector(".main .showpanel");
+  if (!sh || !panel || (panel.parentNode && panel.parentNode.querySelector(":scope > .akset-bar"))) return;
+  panel.parentNode.insertBefore(akSetBar(sh), panel.nextSibling);
+}
+function akSetPickFix() {
+  if (S.view !== "show") return;
+  document.querySelectorAll(".modal .sheet").forEach(function (sheet) {
+    var t = sheet.querySelector(":scope > h2"), b = sheet.querySelector(":scope > .body");
+    if (!t || t.textContent !== "Add songs" || !b || b.querySelector(".akset-pick")) return;
+    var sh = findShow(S.showId); if (!sh) return;
+    b.insertBefore(h("div", { class: "row akset-pick", style: "margin:0 0 6px" }, h("button", { onClick: function () {
+      var m = sheet.parentNode; if (m && m.parentNode) m.parentNode.removeChild(m); akSetHelper({ show: sh });
+    } }, "✦ Let the helper pick")), b.firstChild);
+  });
+}
+(function () {
+  var busy = false;
+  function run() { busy = false; try { akSetBarFix(); akSetPickFix(); } catch (e) {} }
+  new MutationObserver(function () { if (!busy) { busy = true; setTimeout(run, 0); } }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+akCss("akset-b", [
+  ".akset-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.akset-bar button{flex:0 1 auto}",
+  ".akset-bar.akset-empty{padding:10px;border:2px dashed var(--accent);border-radius:12px}.akset-bartxt{width:100%;font-weight:600}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
