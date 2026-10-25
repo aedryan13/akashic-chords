@@ -35018,6 +35018,476 @@ akCss("ak18-a", [
   ".ak18-L-side .ak18-pane{position:sticky;top:0;max-height:78vh;margin:0}.ak18-L-side .akw9-padrow.with-rhy{grid-template-columns:minmax(0,1fr)}.ak18-L-side .akw9-pad{min-height:60vh}"
 ].join("\n"));
 
+/* ================================================================ akset_a: setlist helper 2 (version 14.8, items 73 + 113)
+   Energy: a song's level is song.energy ("mellow" | "mid" | "up", set here) or else its tags (Upbeat Energy, Mid-Tempo, Mellow / Slow /
+   Ballad ...; "Slow Dance" counts as slow), else a guess from the catalog or tempo. Setting a level also swaps the matching tag (AKSET_TAG)
+   so tags and smart lists agree. bldTrait is wrapped, so the setlist helper, Build a setlist, wedding and encore helpers use the same energy.
+   Setlist helper (akSetHelper replaced, akShBuild wrapped): new steps "Genres and years" (tap once = only these, again = leave out,
+   again = off; q.gen / q.era) and "Shape of the night" (q.shape arc | mix | steady). arc = mellow first set, building middle, high-energy
+   last set ending on its highest song; each set's start/end energy in settings().setHelper.arc[n] (akSetArcEditor), the mood nudges it.
+   "⚡ My usual night" builds 3 arc sets from the last answers. Setlist ⋯ "⚡ Shape by energy…" (menu wrap) reorders an existing setlist.
+   akSetTagger() goes through songs quickly; the song editor gets Energy chips after Tags (layGroupH2 wrap). Test ak_t140. */
+AK_VERSION = "14.8";
+AK_WHATS_NEW = [
+  "Setlist helper: new “Genres and years” step. Tap a genre or decade once to use only those, tap again to leave it out.",
+  "Setlist helper: “Shape of the night”. Your usual night is the default: a mellow first set, a building middle set, and a high-energy last set that ends on a high. Drag the sliders to change how each set starts and ends.",
+  "⚡ My usual night at the top of the setlist helper builds the three sets in one tap from your last answers.",
+  "Song energy: Mellow, Mid-tempo or Upbeat on every song's edit page (it uses your Mellow, Mid-Tempo and Upbeat Energy tags). “⚡ Tag song energy” goes through songs quickly, and tapping the colored dot in the helper's results changes it too.",
+  "Setlist ⋯ › ⚡ Shape by energy reorders a setlist you already have the same way."
+].concat(AK_WHATS_NEW);
+
+SONG_FIELDS.push("energy");
+if (SHARE_FIELDS.indexOf("energy") < 0) SHARE_FIELDS.push("energy");
+
+/* ---------------------------------------------------------------- 1. energy levels */
+var AKSET_LV = [["mellow", "Mellow", 0.24], ["mid", "Mid-tempo", 0.55], ["up", "Upbeat", 0.86]];
+var AKSET_LVK = {}; AKSET_LV.forEach(function (x) { AKSET_LVK[x[0]] = x; });
+var AKSET_TAG = { mellow: "Mellow", mid: "Mid-Tempo", up: AK_EDITION === "public" ? "Upbeat" : "Upbeat Energy" };
+var AKSET_RX = {
+  up: /\b(upbeat|fast|party|dance|dancing|energetic|high energy|rocker|banger)\b/,
+  mid: /\b(mid-? ?tempo|medium|building|groove)\b/,
+  mellow: /\b(mellow|slow|ballad|quiet|calm|soft|chill|sad|lullaby|dinner)\b/
+};
+function akSetTagText(s) { return (s.tags || []).join(" | ").toLowerCase().replace(/slow dance/g, "slow"); }
+function akSetTagLevel(s) { var t = akSetTagText(s); return AKSET_RX.up.test(t) ? "up" : AKSET_RX.mid.test(t) ? "mid" : AKSET_RX.mellow.test(t) ? "mellow" : ""; }
+function akSetLevel(s) { return s && AKSET_LVK[s.energy] ? s.energy : s ? akSetTagLevel(s) : ""; }
+function akSetGuessLevel(e) { return e >= 0.7 ? "up" : e <= 0.38 ? "mellow" : "mid"; }
+function akSetLvName(lv) { return (AKSET_LVK[lv] || AKSET_LVK.mid)[1]; }
+/* a number inside the level, so a ballad sits below a mellow song and a loud singalong ends the night */
+function akSetE(s, lv) {
+  var t = akSetTagText(s), e = AKSET_LVK[lv][2];
+  if (lv === "mellow") { if (/\b(ballad|slow|lullaby)\b/.test(t)) e -= 0.06; if (/\b(soft|quiet)\b/.test(t)) e -= 0.03; }
+  if (lv === "mid" && /\b(groove|dance)\b/.test(t)) e += 0.04;
+  if (lv === "up") { if (/\b(loud|heavy|rocker|banger)\b/.test(t)) e += 0.06; if (/sing ?along/.test(t)) e += 0.03; }
+  return e;
+}
+var akSetBt0 = bldTrait;
+bldTrait = function (s) {
+  var tr = akSetBt0(s), lv = akSetLevel(s);
+  if (lv) { tr.e = akSetE(s, lv); tr.src = s.energy ? "mine" : "tag"; tr.lv = lv; } else tr.lv = akSetGuessLevel(tr.e);
+  tr.lvSet = !!lv;
+  return tr;
+};
+function akSetSetLevel(s, lv) {
+  var mine = [AKSET_TAG.mellow, AKSET_TAG.mid, AKSET_TAG.up, "Upbeat", "Upbeat Energy"].map(function (t) { return t.toLowerCase(); });
+  var tags = (s.tags || []).filter(function (t) { return mine.indexOf(String(t).toLowerCase()) < 0; });
+  if (lv && AKSET_LVK[lv]) { s.energy = lv; tags.push(AKSET_TAG[lv]); } else delete s.energy;
+  s.tags = tags; save();
+}
+function akSetNextLv(lv) { return lv === "mellow" ? "mid" : lv === "mid" ? "up" : "mellow"; }
+function akSetColor(e) { return "hsl(" + Math.round(200 - e * 200) + ",70%,50%)"; }
+
+/* ---------------------------------------------------------------- 2. genres and years */
+var AKSET_GENRES = ["Pop", "Rock", "Soul", "R&B", "Jazz", "Folk", "Folk rock", "Alternative", "Country", "Reggae", "Blues", "Funk", "Grunge", "Gospel", "Latin",
+  "Hip hop", "Disco", "Motown", "Rock and roll", "Classical", "Christmas", "Broadway", "Indie", "Punk", "Metal", "Bluegrass", "Swing", "Standards",
+  "Singer-songwriter", "Yacht rock", "Oldies", "Doo-wop", "Ska", "Electronic", "Americana", "Celtic", "Bossa nova", "Worship", "Soundtrack", "Kids"];
+var AKSET_GLC = {}; AKSET_GENRES.forEach(function (g) { AKSET_GLC[g.toLowerCase()] = g; });
+var AKSET_GALIAS = { "rnb": "r&b", "rhythm and blues": "r&b", "hip-hop": "hip hop", "rap": "hip hop", "rock & roll": "rock and roll", "rock n roll": "rock and roll",
+  "rock 'n' roll": "rock and roll", "holiday": "christmas", "xmas": "christmas", "musical": "broadway", "show tunes": "broadway", "children": "kids",
+  "disney": "kids", "hymn": "worship", "edm": "electronic", "doo wop": "doo-wop", "jazz standards": "jazz" };
+var AKSET_GCAT = { "Modern Pop and Singer-Songwriter": "pop", "Alternative and Singer-Songwriter": "alternative", "Jazz and Standards": "jazz", "Reggae and Island": "reggae",
+  "Latin and World": "latin", "Gospel and Spiritual": "gospel", "Rock and Roll": "rock and roll", "Holiday": "christmas" };
+function akSetGKey(t) { var k = String(t || "").trim().toLowerCase(); k = AKSET_GALIAS[k] || k; return AKSET_GLC[k] ? k : ""; }
+/* your genre tags win; a song with none gets the catalog's genre */
+function akSetGenresOf(s, tr) {
+  var out = {};
+  (s.tags || []).forEach(function (t) { var k = akSetGKey(t); if (k) out[k] = 1; });
+  if (!Object.keys(out).length && tr && tr.c && tr.c.g) { var k = AKSET_GCAT[tr.c.g] || tr.c.g.toLowerCase(); if (AKSET_GLC[k]) out[k] = 1; }
+  if (tr && tr.g === "Holiday") out.christmas = 1;
+  return Object.keys(out);
+}
+function akSetDecade(s, tr) { var y = akShYear(s, tr); return y ? Math.floor(y / 10) * 10 : 0; }
+function akSetBase(q) {
+  return lib().songs.filter(function (s) { return s.active !== false && (s.title || "").trim() && (!q.ready || (s.lyrics || "").trim() || (s.chords || "").trim()); });
+}
+function akSetPass(s, tr, q) {
+  var gi = q.gen || {}, ei = q.era || {}, gs = akSetGenresOf(s, tr), dk = String(akSetDecade(s, tr) || "none");
+  if (gs.some(function (k) { return gi[k] === -1; })) return false;
+  if (Object.keys(gi).some(function (k) { return gi[k] === 1; }) && !gs.some(function (k) { return gi[k] === 1; })) return false;
+  if (ei[dk] === -1) return false;
+  if (Object.keys(ei).some(function (k) { return ei[k] === 1; }) && ei[dk] !== 1) return false;
+  return true;
+}
+function akSetCounts(q) {
+  var gen = {}, era = {}, n = 0, t = 0, tagged = 0, all = 0;
+  akSetBase(q).forEach(function (s) {
+    var tr = bldTrait(s); all++; if (tr.lvSet) tagged++;
+    akSetGenresOf(s, tr).forEach(function (k) { gen[k] = (gen[k] || 0) + 1; });
+    var d = String(akSetDecade(s, tr) || "none"); era[d] = (era[d] || 0) + 1;
+    if (akSetPass(s, tr, q)) { n++; t += tr.dur; }
+  });
+  return { gen: gen, era: era, n: n, t: t, tagged: tagged, all: all };
+}
+function akSetVibe(id) { return (AK_SH_VIBES.filter(function (v) { return v[0] === id; })[0] || AK_SH_VIBES[1])[2]; }
+/* scored songs that pass the filters; base = the score without its energy part (the shape decides energy) */
+function akSetPool(q) {
+  var maxPlays = 0, vibe = akSetVibe(q.vibe); lib().songs.forEach(function (s) { if ((s.plays || 0) > maxPlays) maxPlays = s.plays; });
+  return akSetBase(q).filter(function (s) { return akSetPass(s, bldTrait(s), q); }).map(function (s) {
+    var x = akShScore(s, q, maxPlays); x.base = x.sc - (1.2 - Math.abs(x.e - vibe) * 2.4); x.lv = x.tr.lv;
+    var gs = akSetGenresOf(s, x.tr); if (gs.length && Object.keys(q.gen || {}).length) x.why.unshift(AKSET_GLC[gs[0]]);
+    return x;
+  });
+}
+
+/* ---------------------------------------------------------------- 3. the shape of the night */
+function akSetCfg() { var c = settings().setHelper = settings().setHelper || {}; return c; }
+function akSetArcDef(n) {
+  var d = { 1: [[0.3, 0.92]], 2: [[0.22, 0.5], [0.55, 0.96]], 3: [[0.2, 0.38], [0.42, 0.7], [0.72, 0.97]], 4: [[0.2, 0.34], [0.38, 0.55], [0.58, 0.78], [0.78, 0.97]] }[n];
+  if (d) return d;
+  var out = []; for (var i = 0; i < n; i++) out.push([0.2 + 0.77 * i / n, 0.2 + 0.77 * (i + 0.85) / n]); return out;
+}
+function akSetArcRaw(n) { var c = akSetCfg(), a = c.arc && c.arc[n]; return (a && a.length === n ? a : akSetArcDef(n)).map(function (p) { return [p[0], p[1]]; }); }
+function akSetArc(n, vibeId) {
+  var off = vibeId === "chill" ? -0.1 : vibeId === "party" ? 0.08 : 0;
+  return akSetArcRaw(n).map(function (p) { return [bldClamp(p[0] + off, 0.1, 1), bldClamp(p[1] + off, 0.1, 1)]; });
+}
+/* order one set from energy a to energy b; endHigh puts its most energetic song last */
+function akSetOrder(list, a, b, endHigh) {
+  var left = list.slice(), out = [], n = list.length;
+  for (var i = 0; i < n; i++) {
+    var x = n > 1 ? i / (n - 1) : 1, t = a + (b - a) * x, bi = 0, bd = 1e9, p = out[out.length - 1];
+    left.forEach(function (c, j) { var d = Math.abs(c.e - t) + (p && p.s.artist && p.s.artist === c.s.artist ? 0.3 : 0) - (c.base || 0) * 0.01; if (d < bd) { bd = d; bi = j; } });
+    out.push(left.splice(bi, 1)[0]);
+  }
+  if (endHigh && n > 1) {
+    var mi = 0; out.forEach(function (c, j) { if (c.e + (c.base || 0) * 0.01 > out[mi].e + (out[mi].base || 0) * 0.01) mi = j; });
+    out.push(out.splice(mi, 1)[0]);
+  }
+  return out;
+}
+function akSetArcBuild(q) {
+  var pool = akSetPool(q).sort(function (a, b) { return b.base - a.base; }), n = Math.max(1, q.sets || 1), arc = akSetArc(n, q.vibe), need = q.minutes * 60 / n;
+  var sets = [], tm = [], used = {}, origN = 0, maxOrig = q.orig === "few" ? Math.max(1, Math.round(q.minutes / 30)) : 999, more = true;
+  for (var i = 0; i < n; i++) { sets.push([]); tm.push(0); }
+  /* take turns, so the best songs spread over the night, each set picking what fits its energy */
+  while (more) {
+    more = false;
+    for (var si = 0; si < n; si++) {
+      if (tm[si] >= need - 60) continue;
+      var lo = Math.min(arc[si][0], arc[si][1]) - 0.07, hi = Math.max(arc[si][0], arc[si][1]) + 0.07, best = null, bf = -1e9;
+      pool.forEach(function (c) {
+        if (used[c.s.id] || c.base < -1 || (c.orig && origN >= maxOrig)) return;
+        var d = c.e < lo ? lo - c.e : c.e > hi ? c.e - hi : 0, f = c.base - d * 5;
+        if (f > bf) { bf = f; best = c; }
+      });
+      if (!best) continue;
+      used[best.s.id] = 1; if (best.orig) origN++; sets[si].push(best); tm[si] += best.dur; more = true;
+    }
+  }
+  pool.forEach(function (c) { c.sc = c.base; });
+  return { q: q, pool: pool, arc: arc, sets: sets.map(function (l, k) { return akSetOrder(l, arc[k][0], arc[k][1], k === n - 1); }) };
+}
+var akSetShB0 = akShBuild;
+akShBuild = function (q) {
+  if ((q.shape || "arc") === "arc") return akSetArcBuild(q);
+  var pool = akSetPool(q).sort(function (a, b) { return b.sc - a.sc; });
+  var need = q.minutes * 60, picked = [], t = 0, origN = 0, maxOrig = q.orig === "few" ? Math.max(1, Math.round(q.minutes / 30)) : 999;
+  for (var i = 0; i < pool.length && t < need - 60; i++) {
+    var x = pool[i]; if (x.sc < -1) break;
+    if (x.orig) { if (origN >= maxOrig) continue; origN++; }
+    picked.push(x); t += x.dur;
+  }
+  var sets = []; for (var k = 0; k < q.sets; k++) sets.push([]);
+  picked.forEach(function (x, j) { var r = Math.floor(j / q.sets), si = r % 2 ? q.sets - 1 - (j % q.sets) : j % q.sets; sets[si].push(x); });
+  var vibe = akSetVibe(q.vibe);
+  sets = sets.map(function (list) { return q.shape === "steady" ? akSetOrder(list, vibe, vibe, false) : akShOrder(list, vibe); });
+  return { q: q, pool: pool, sets: sets };
+};
+/* a small picture of the curve: one line per set */
+function akSetArcSvg(arc, pts) {
+  var W = 300, H = 64, n = arc.length, gap = 10, w = (W - gap * (n - 1)) / n, ns = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(ns, "svg"); svg.setAttribute("viewBox", "0 0 " + W + " " + H); svg.setAttribute("class", "akset-svg"); svg.setAttribute("aria-hidden", "true");
+  function y(e) { return (H - 6 - e * (H - 12)).toFixed(1); }
+  arc.forEach(function (p, i) {
+    var x0 = i * (w + gap), l = document.createElementNS(ns, "line");
+    l.setAttribute("x1", x0); l.setAttribute("x2", x0 + w); l.setAttribute("y1", y(p[0])); l.setAttribute("y2", y(p[1])); l.setAttribute("class", "akset-arcl");
+    svg.appendChild(l);
+    (pts && pts[i] || []).forEach(function (e, j, all) {
+      var c = document.createElementNS(ns, "circle"); c.setAttribute("cx", (x0 + (all.length > 1 ? j / (all.length - 1) : 0.5) * w).toFixed(1)); c.setAttribute("cy", y(e)); c.setAttribute("r", 2.6); c.setAttribute("fill", akSetColor(e));
+      svg.appendChild(c);
+    });
+  });
+  return svg;
+}
+function akSetArcEditor(n, onChange) {
+  var a = akSetArcRaw(n), wrap = h("div", { class: "akset-arc" }), pic = h("div", { class: "akset-pic" });
+  function paint() { pic.textContent = ""; pic.appendChild(akSetArcSvg(a)); }
+  function keepArc() { var c = akSetCfg(); c.arc = c.arc || {}; c.arc[n] = a.map(function (p) { return [p[0], p[1]]; }); save(); paint(); if (onChange) onChange(); }
+  function rows() {
+    wrap.textContent = ""; wrap.appendChild(pic); paint();
+    a.forEach(function (p, i) {
+      function sl(k, label) {
+        var out = h("output", null, akSetLvName(akSetGuessLevel(p[k])));
+        return h("label", { class: "akset-sl" }, label, h("input", { type: "range", min: 10, max: 100, step: 1, value: Math.round(p[k] * 100), "aria-label": "Set " + (i + 1) + " " + label,
+          onInput: function () { p[k] = +this.value / 100; out.textContent = akSetLvName(akSetGuessLevel(p[k])); keepArc(); } }), out);
+      }
+      wrap.appendChild(h("div", { class: "akset-arcrow" }, h("b", null, n > 1 ? "Set " + (i + 1) : "The set"), sl(0, "starts"), sl(1, "ends")));
+    });
+    wrap.appendChild(h("div", { class: "row", style: "margin:4px 0 0" }, h("button", { class: "sm", onClick: function () { var c = akSetCfg(); if (c.arc) delete c.arc[n]; save(); a = akSetArcDef(n); rows(); if (onChange) onChange(); } }, "Back to the usual shape")));
+  }
+  rows();
+  return wrap;
+}
+
+/* ---------------------------------------------------------------- 4. tag song energy quickly */
+function akSetLvChips(s, after) {
+  var lv = akSetLevel(s), tr = bldTrait(s), guess = lv ? "" : tr.lv;
+  return h("div", { class: "chips akset-lvchips" }, AKSET_LV.map(function (x) {
+    var on = lv === x[0];
+    return h("button", { class: "chip" + (on ? " on" : "") + (guess === x[0] ? " akset-guess" : ""), "aria-pressed": on ? "true" : "false", title: guess === x[0] ? "Guess" : "",
+      onClick: function () { akSetSetLevel(s, on ? "" : x[0]); if (after) after(); } }, x[1]);
+  }));
+}
+function akSetTagger(o) {
+  o = o || {};
+  var f = "none", qt = "", lim = 60, body = h("div", { class: "akset-tagger" }), head = h("div"), list = h("div");
+  var search = h("input", { type: "search", placeholder: "Find a song", "aria-label": "Find a song", onInput: function () { qt = this.value.trim().toLowerCase(); lim = 60; paint(); } });
+  function songs() {
+    return lib().songs.filter(function (s) { return s.active !== false && (s.title || "").trim(); })
+      .sort(function (a, b) { return (a.title || "").localeCompare(b.title || ""); });
+  }
+  function paintHead() {
+    var all = songs(), none = all.filter(function (s) { return !akSetLevel(s); }).length;
+    head.textContent = "";
+    head.appendChild(h("p", { class: "hint" }, "Mellow, Mid-tempo or Upbeat for each song. The highlighted outline is the app's guess. Tags " + AKSET_TAG.mellow + ", " + AKSET_TAG.mid + " and " + AKSET_TAG.up + " are set to match."));
+    head.appendChild(h("div", { class: "chips" },
+      h("button", { class: "chip" + (f === "none" ? " on" : ""), onClick: function () { f = "none"; lim = 60; paintHead(); paint(); } }, "Not tagged yet (" + none + ")"),
+      h("button", { class: "chip" + (f === "all" ? " on" : ""), onClick: function () { f = "all"; lim = 60; paintHead(); paint(); } }, "All songs (" + all.length + ")")));
+  }
+  function paint() {
+    var l = songs().filter(function (s) { return (f === "all" || !akSetLevel(s) || s._akset) && (!qt || ((s.title || "") + " " + (s.artist || "")).toLowerCase().indexOf(qt) >= 0); });
+    list.textContent = "";
+    if (!l.length) list.appendChild(h("p", { class: "empty" }, f === "none" && !qt ? "Every song has an energy level." : "No songs found."));
+    l.slice(0, lim).forEach(function (s) {
+      var row = h("div", { class: "akset-trow" });
+      function fill() { row.textContent = ""; row.appendChild(h("div", { class: "grow akset-tt" }, h("div", null, s.title), s.artist ? h("div", { class: "muted" }, s.artist) : null)); row.appendChild(akSetLvChips(s, function () { s._akset = 1; fill(); paintHead(); })); }
+      fill(); list.appendChild(row);
+    });
+    if (l.length > lim) list.appendChild(h("button", { onClick: function () { lim += 80; paint(); } }, "Show more (" + (l.length - lim) + ")"));
+  }
+  body.appendChild(head); body.appendChild(search); body.appendChild(list); paintHead(); paint();
+  modal("⚡ Song energy", body, [{ label: "Done", primary: true, onClick: function () { lib().songs.forEach(function (s) { delete s._akset; }); save(); if (o.done) o.done(); } }], {
+    wide: true, onClose: function () { lib().songs.forEach(function (s) { delete s._akset; }); } });
+}
+/* the song editor: Energy chips right after Tags */
+var akSetLg0 = layGroupH2;
+layGroupH2 = function (body, cid) {
+  if (cid === "song" && S.view === "song" && body && body.children) {
+    var s = findSong(S.songId), at = null;
+    for (var i = 0; i < body.children.length; i++) { var k = body.children[i]; if (k.classList && k.classList.contains("fld") && k.firstChild && k.firstChild.nodeType === 3 && /^Tags$/.test(k.firstChild.textContent)) { at = k; break; } }
+    if (s && at && !body.querySelector(".akset-encard")) at.parentNode.insertBefore(akSetSongCard(s), at.nextSibling);
+  }
+  return akSetLg0.apply(this, arguments);
+};
+function akSetSongCard(s) {
+  var host = h("div", { class: "fld akset-encard" });
+  function fill() {
+    var lv = akSetLevel(s), tr = bldTrait(s);
+    host.textContent = ""; host.appendChild(document.createTextNode("Energy"));
+    host.appendChild(akSetLvChips(s, function () { fill(); setTimeout(render, 0); }));
+    host.appendChild(h("div", { class: "muted akset-small" }, lv ? "Used by the setlist helper to shape your sets." : "Not set. The app guesses " + akSetLvName(tr.lv).toLowerCase() + (tr.src === "catalog" ? " (from the song catalog)." : tr.src === "tempo" ? " (from the tempo)." : "."),
+      " ", h("button", { class: "linkbtn", onClick: function () { akSetTagger({ done: function () { render(); } }); } }, "Tag more songs…")));
+  }
+  fill();
+  return host;
+}
+
+/* ---------------------------------------------------------------- 5. shape a setlist you already have */
+function akSetShapeShow(sh, done) {
+  var full = sh.sets.filter(function (st) { return st.songIds.filter(findSong).length; }), n = full.length;
+  if (!n) { toast("This setlist has no songs yet."); return; }
+  var move = { on: n > 1 }, body = h("div", { class: "aksh" });
+  body.appendChild(h("p", { class: "hint" }, n > 1 ? "Mellow first, building in the middle, high energy last, ending on a high. Each set keeps its number of songs." : "Starts mellow and builds to a high finish."));
+  if (n > 1) body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: true, onChange: function () { move.on = this.checked; } }), "Move songs between sets so each set fits its energy"));
+  body.appendChild(akSetArcEditor(n));
+  var unk = 0; full.forEach(function (st) { st.songIds.forEach(function (id) { var s = findSong(id); if (s && !akSetLevel(s)) unk++; }); });
+  if (unk) body.appendChild(h("p", { class: "hint" }, unk + " of these songs have no energy level yet, so the app guesses. ", h("button", { class: "linkbtn", onClick: function () { akSetTagger({}); } }, "⚡ Tag song energy…")));
+  modal("⚡ Shape by energy", body, [{ label: "Cancel" }, { label: "Shape it", primary: true, onClick: function () {
+    snap("shape by energy");
+    var arc = akSetArc(n, ""), item = function (id) { var s = findSong(id), tr = bldTrait(s); return { s: s, e: tr.e, base: Math.min(1, (s.plays || 0) / 50) }; };
+    var groups = full.map(function (st) { return { st: st, items: st.songIds.filter(findSong).map(item), lost: st.songIds.filter(function (id) { return !findSong(id); }) }; });
+    if (move.on && n > 1) {
+      var all = []; groups.forEach(function (g) { all = all.concat(g.items); });
+      all.sort(function (a, b) { return a.e - b.e; });
+      var order = groups.map(function (g, i) { return i; }).sort(function (a, b) { return (arc[a][0] + arc[a][1]) - (arc[b][0] + arc[b][1]); }), p = 0;
+      var sizes = groups.map(function (g) { return g.items.length; });
+      order.forEach(function (gi) { groups[gi].items = all.slice(p, p + sizes[gi]); p += sizes[gi]; });
+    }
+    groups.forEach(function (g, i) { g.st.songIds = akSetOrder(g.items, arc[i][0], arc[i][1], i === n - 1).map(function (x) { return x.s.id; }).concat(g.lost); });
+    save(); if (done) done(); toastUndo("Shaped “" + sh.name + "” by energy.");
+  } }], { wide: true });
+}
+(function () {
+  var m0 = menu;
+  menu = function (a, items) {
+    if (S.view === "show" && items && items.some(function (it) { return it && it.label === "Wedding helper (songs for each part)…"; })) {
+      var sh = findShow(S.showId);
+      if (sh) {
+        items = items.slice(); var at = 0; items.forEach(function (it, i) { if (it && it.label === "Wedding helper (songs for each part)…") at = i; });
+        items.splice(at + 1, 0, { label: "⚡ Shape by energy…", onClick: function () { akSetShapeShow(sh, function () { render(); }); } }, { label: "⚡ Tag song energy…", onClick: function () { akSetTagger({ done: function () { render(); } }); } });
+      }
+    }
+    return m0.apply(this, [a, items]);
+  };
+})();
+
+/* ---------------------------------------------------------------- 6. the setlist helper, now with genres, years and shape */
+akSetHelper = function (o) {
+  o = o || {};
+  var g = o.gig || null, cfg = akSetCfg();
+  var q = { event: cfg.event || "bar", ages: (cfg.ages || ["mid"]).slice(), minutes: akShMinutes(g) || cfg.minutes || 120, sets: cfg.sets || 2, vibe: cfg.vibe || "mixed", orig: cfg.orig || "few",
+    noSad: !!cfg.noSad, noLoud: !!cfg.noLoud, ready: cfg.ready !== false, gen: Object.assign({}, cfg.gen || {}), era: Object.assign({}, cfg.era || {}), shape: cfg.shape || "arc" };
+  var step = 0, plan = null, body = h("div", { class: "aksh" }), close = null;
+  var STEPS = ["What kind of event is it?", "Who's in the crowd?", "How long do you play?", "What's the mood?", "Genres and years", "Shape of the night", "Anything to leave out?"];
+  var USUAL = AK_EDITION === "public" ? "⚡ A night that builds" : "⚡ My usual night";
+  function chip(on, label, fn) { return h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: fn }, label); }
+  function tri(map, k, label, n) {
+    var v = map[k] || 0;
+    return h("button", { class: "chip" + (v === 1 ? " on" : v === -1 ? " akset-no" : ""), "aria-pressed": v === 1 ? "true" : "false", title: v === 1 ? "Only these" : v === -1 ? "Left out" : "",
+      onClick: function () { if (v === 0) map[k] = 1; else if (v === 1) map[k] = -1; else delete map[k]; draw(); } }, (v === 1 ? "✓ " : v === -1 ? "✕ " : "") + label + " (" + n + ")");
+  }
+  function keep() {
+    Object.assign(cfg, { event: q.event, ages: q.ages.slice(), minutes: q.minutes, sets: q.sets, vibe: q.vibe, orig: q.orig, noSad: q.noSad, noLoud: q.noLoud, ready: q.ready,
+      gen: Object.assign({}, q.gen), era: Object.assign({}, q.era), shape: q.shape });
+    save();
+  }
+  function finish() { keep(); plan = akShBuild(q); step = STEPS.length; draw(); }
+  function nav(nextLabel, onNext) {
+    return h("div", { class: "row aksh-nav" }, step > 0 ? h("button", { onClick: function () { step--; draw(); } }, "‹ Back") : null, h("span", { class: "grow" }),
+      step > 0 && step < STEPS.length - 1 ? h("button", { onClick: function () { if (!q.ages.length) { toast("Pick at least one group."); return; } finish(); } }, "Skip to songs") : null,
+      h("button", { class: "primary", onClick: onNext || function () { step++; draw(); } }, nextLabel || "Next ›"));
+  }
+  function shapeName() { return q.shape === "arc" ? "shaped mellow → high energy" : q.shape === "steady" ? "same energy all night" : "mixed in every set"; }
+  function crowdName() { return q.ages.map(function (a) { return AK_SH_AGES.filter(function (x) { return x[0] === a; })[0][1].toLowerCase(); }).join(", "); }
+  function draw() {
+    body.textContent = "";
+    if (step < STEPS.length) {
+      body.appendChild(h("div", { class: "muted" }, "Question " + (step + 1) + " of " + STEPS.length + (g ? " · for " + akGigTitle(g) : "")));
+      body.appendChild(h("h3", { style: "margin:4px 0 10px" }, STEPS[step]));
+    }
+    if (step === 0) {
+      body.appendChild(h("div", { class: "card akset-quick" }, h("div", { class: "grow" }, h("b", null, USUAL),
+        h("div", { class: "muted" }, "Three sets: mellow first, building in the middle, high energy last, ending on a high. Uses your last answers" + (akShMinutes(g) ? " and this show's times." : "."))),
+        h("button", { class: "primary", onClick: function () { q.sets = 3; q.shape = "arc"; finish(); } }, "Build it")));
+      body.appendChild(h("div", { class: "chips aksh-big" }, AK_SH_EVENTS.map(function (ev) { return chip(q.event === ev[0], ev[1], function () {
+        q.event = ev[0]; q.vibe = ev[2]; q.ages = ev[3].slice(); if (!akShMinutes(g)) { q.minutes = ev[4]; q.sets = ev[5]; } draw();
+      }); })));
+      if (q.event === "wedding" && typeof openWeddingHelper === "function") body.appendChild(h("p", { class: "hint" }, "For ceremony, dinner and first-dance sets, the wedding helper on a setlist's menu sorts songs into each part of the day. This helper makes one list for the crowd."));
+      body.appendChild(nav());
+    } else if (step === 1) {
+      body.appendChild(h("p", { class: "hint" }, "Pick every group that will be there. Songs from the years they grew up with get picked first, and singalongs everyone knows fit any crowd."));
+      body.appendChild(h("div", { class: "chips aksh-big" }, AK_SH_AGES.map(function (a) {
+        var on = q.ages.indexOf(a[0]) >= 0, yr = akShAgeYears(a[0]);
+        return chip(on, a[1] + (a[0] === "kids" ? "" : "  ·  " + yr[0] + "–" + yr[1]), function () { if (on) q.ages.splice(q.ages.indexOf(a[0]), 1); else q.ages.push(a[0]); draw(); });
+      })));
+      body.appendChild(nav(null, function () { if (!q.ages.length) { toast("Pick at least one group."); return; } step++; draw(); }));
+    } else if (step === 2) {
+      var out = h("output", null, bldFmt(q.minutes * 60));
+      body.appendChild(h("label", { class: "fld" }, "Playing time", h("div", { class: "range" }, h("input", { type: "range", min: 15, max: 300, step: 15, value: q.minutes, onInput: function () { q.minutes = +this.value; out.textContent = bldFmt(q.minutes * 60); } }), out)));
+      if (g && akShMinutes(g)) body.appendChild(h("p", { class: "hint" }, "From the show's start and end times. Take off your breaks."));
+      body.appendChild(h("div", { class: "fld" }, "Sets", h("div", { class: "chips" }, [1, 2, 3, 4].map(function (n) { return chip(q.sets === n, String(n), function () { q.sets = n; draw(); }); }))));
+      body.appendChild(nav());
+    } else if (step === 3) {
+      body.appendChild(h("div", { class: "chips aksh-big" }, AK_SH_VIBES.map(function (v) { return chip(q.vibe === v[0], v[1], function () { q.vibe = v[0]; draw(); }); })));
+      body.appendChild(h("div", { class: "fld" }, "Your originals", h("div", { class: "chips" }, [["none", "None"], ["few", "A few"], ["many", "Plenty"]].map(function (x) { return chip(q.orig === x[0], x[1], function () { q.orig = x[0]; draw(); }); }))));
+      body.appendChild(nav());
+    } else if (step === 4) {
+      var ct = akSetCounts(q);
+      body.appendChild(h("p", { class: "hint" }, "Tap once to use only those, tap again to leave them out, once more to clear. Leave everything off to use all your songs."));
+      var gk = Object.keys(ct.gen).sort(function (a, b) { return ct.gen[b] - ct.gen[a]; });
+      body.appendChild(h("div", { class: "fld" }, "Genres", gk.length ? h("div", { class: "chips akset-chips" }, gk.map(function (k) { return tri(q.gen, k, AKSET_GLC[k], ct.gen[k]); }))
+        : h("p", { class: "muted" }, "No genres found. Tag songs with a genre (Rock, Soul, Country…) to filter by it.")));
+      var dk = Object.keys(ct.era).filter(function (k) { return k !== "none"; }).sort();
+      if (ct.era.none) dk.push("none");
+      body.appendChild(h("div", { class: "fld" }, "Years", h("div", { class: "chips akset-chips" }, dk.map(function (k) { return tri(q.era, k, k === "none" ? "No year" : k + "s", ct.era[k]); }))));
+      var short = ct.t < q.minutes * 60 * 0.9;
+      body.appendChild(h("p", { class: "akset-match" + (short ? " akset-short" : "") }, ct.n + " songs match · about " + bldFmt(ct.t) + (short ? ". That's less than " + bldFmt(q.minutes * 60) + ", so the sets will come out short." : ".")));
+      if (Object.keys(q.gen).length || Object.keys(q.era).length) body.appendChild(h("div", { class: "row", style: "margin:0" }, h("button", { class: "sm", onClick: function () { q.gen = {}; q.era = {}; draw(); } }, "Clear genres and years")));
+      body.appendChild(nav());
+    } else if (step === 5) {
+      [["arc", "Mellow → building → high energy", "Your usual: a mellow first set, a building middle, a high-energy last set that ends on a high."],
+        ["mix", "Mixed in every set", "Each set starts bright, eases off in the middle and ends high."],
+        ["steady", "Same energy all night", "Keeps to the mood you picked."]].forEach(function (x) {
+        body.appendChild(h("button", { class: "card akset-shape" + (q.shape === x[0] ? " akset-on" : ""), "aria-pressed": q.shape === x[0] ? "true" : "false", onClick: function () { q.shape = x[0]; draw(); } },
+          h("b", null, (q.shape === x[0] ? "● " : "○ ") + x[1]), h("div", { class: "muted" }, x[2])));
+      });
+      if (q.shape === "arc") {
+        body.appendChild(h("details", { class: "akset-fine" }, h("summary", null, "Fine-tune each set's energy"), akSetArcEditor(q.sets),
+          h("p", { class: "hint" }, "The mood you picked moves the whole curve a little up or down.")));
+      }
+      var c2 = akSetCounts(q);
+      body.appendChild(h("p", { class: "hint" }, c2.tagged + " of " + c2.all + " songs have an energy level; the rest are guessed. ",
+        h("button", { class: "linkbtn", onClick: function () { akSetTagger({ done: draw }); } }, "⚡ Tag song energy…")));
+      body.appendChild(nav());
+    } else if (step === 6) {
+      [["noSad", "Leave out sad songs"], ["noLoud", "Leave out loud and heavy songs"], ["ready", "Only songs that have chords or words in the app"]].forEach(function (x) {
+        body.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!q[x[0]], onChange: function () { q[x[0]] = this.checked; } }), x[1]));
+      });
+      if (q.ages.indexOf("kids") >= 0 || q.event === "family" || q.event === "church" || q.event === "senior") body.appendChild(h("p", { class: "hint" }, "Songs tagged explicit or about drinking are left out for this crowd."));
+      body.appendChild(nav("✦ Suggest songs", finish));
+    } else {
+      var used = {}; plan.sets.forEach(function (st) { st.forEach(function (x) { used[x.s.id] = 1; }); });
+      var tot = 0; plan.sets.forEach(function (st) { st.forEach(function (x) { tot += x.dur; }); });
+      var ev = AK_SH_EVENTS.filter(function (e) { return e[0] === q.event; })[0];
+      body.appendChild(h("p", { class: "hint" }, "About " + bldFmt(tot) + " of songs for " + crowdName() + ", " + shapeName() + ". Tap a colored dot to change that song's energy. ⇄ swaps a song for the next best fit, ✕ takes it out."));
+      if (!tot) body.appendChild(h("p", { class: "empty" }, "No songs fit yet. Try fewer genres or years, fewer things to leave out, or untick “Only songs that have chords or words”."));
+      if (plan.arc && plan.sets.length) body.appendChild(h("div", { class: "akset-pic" }, akSetArcSvg(plan.arc, plan.sets.map(function (st) { return st.map(function (x) { return x.e; }); }))));
+      plan.sets.forEach(function (st, si) {
+        var t = st.reduce(function (a, x) { return a + x.dur; }, 0);
+        var lvs = st.length ? akSetLvName(st[0].lv).toLowerCase() + " → " + akSetLvName(st[st.length - 1].lv).toLowerCase() : "";
+        var card = h("div", { class: "card aksh-set" }, h("div", { class: "row", style: "justify-content:space-between;margin:0" }, h("b", null, plan.sets.length > 1 ? "Set " + (si + 1) : "The set"),
+          h("span", { class: "muted" }, st.length + " songs · " + bldFmt(t) + (lvs ? " · " + lvs : ""))));
+        st.forEach(function (x, i) {
+          var set = x.tr.lvSet;
+          card.appendChild(h("div", { class: "aksh-song" },
+            h("button", { class: "aksh-e akset-dot" + (set ? "" : " akset-ring"), style: (set ? "background:" : "border-color:") + akSetColor(x.e), title: akSetLvName(x.lv) + (set ? "" : " (guess)") + ". Tap to change.",
+              "aria-label": "Energy of " + x.s.title + ": " + akSetLvName(x.lv) + (set ? "" : ", a guess") + ". Tap to change.", onClick: function () {
+                akSetSetLevel(x.s, akSetNextLv(x.lv)); x.tr = bldTrait(x.s); x.e = x.tr.e; x.lv = x.tr.lv; draw();
+              } }),
+            h("div", { class: "grow" }, h("div", null, x.s.title + (x.s.artist ? "  ·  " + x.s.artist : "")), h("div", { class: "muted aksh-why" }, x.why.slice(0, 3).join(" · "))),
+            h("button", { class: "icon", "aria-label": "Swap " + x.s.title, onClick: function () {
+              var alt = plan.pool.filter(function (c) { return !used[c.s.id] && c.sc > -1 && (!c.orig || q.orig !== "none"); }).sort(function (a, b) { return (b.sc - Math.abs(b.e - x.e) * 2) - (a.sc - Math.abs(a.e - x.e) * 2); })[0];
+              if (!alt) { toast("No other song fits."); return; } st[i] = alt; draw();
+            } }, "⇄"),
+            h("button", { class: "icon", "aria-label": "Take out " + x.s.title, onClick: function () { st.splice(i, 1); draw(); } }, "✕")));
+        });
+        body.appendChild(card);
+      });
+      var name = h("input", { type: "text", value: g ? akGigTitle(g) + " set" : (ev ? ev[1] : "New") + " setlist", "aria-label": "Setlist name", autocapitalize: "words" });
+      body.appendChild(h("label", { class: "fld" }, "Name", name));
+      body.appendChild(h("div", { class: "row aksh-nav" }, h("button", { onClick: function () { step = 0; draw(); } }, "‹ Change answers"), h("button", { onClick: function () { plan = akShBuild(q); draw(); } }, "↻ Start over"), h("span", { class: "grow" }),
+        h("button", { class: "primary", disabled: !tot, onClick: function () {
+          snap("setlist helper");
+          var sh = newShow(name.value.trim() || "New setlist");
+          sh.target = q.minutes; sh.notes = "Made with the setlist helper: " + (ev ? ev[1].toLowerCase() : "") + ", " + crowdName() + ", " + shapeName() + ".";
+          sh.sets = plan.sets.filter(function (st) { return st.length; }).map(function (st, i) { var ns = newSet("Set " + (i + 1)); ns.songIds = st.map(function (x) { return x.s.id; }); return ns; });
+          if (!sh.sets.length) sh.sets = [newSet("Set 1")];
+          lib().shows.unshift(sh);
+          if (g) { g.setlists = g.setlists || []; g.setlists.push(sh.id); }
+          save(); if (close) close();
+          go("show", { showId: sh.id }); toastUndo("Made “" + sh.name + "”" + (g ? " for " + akGigTitle(g) : "") + ".");
+        } }, "Make the setlist")));
+    }
+  }
+  draw();
+  close = modal("Setlist helper", body, [{ label: "Close" }], { wide: true });
+};
+
+akCss("akset", [
+  ".akset-quick{display:flex;gap:10px;align-items:center;border:2px solid var(--accent);margin:0 0 10px}",
+  ".akset-chips .chip{font-size:.92rem}.chip.akset-no{text-decoration:line-through;opacity:.75;border-style:dashed}",
+  ".akset-match{font-weight:600;margin:8px 0}.akset-match.akset-short{color:var(--danger,#e66)}",
+  ".akset-shape{display:block;width:100%;text-align:left;margin:0 0 8px;padding:10px 12px}button.akset-shape.akset-on{border:2px solid var(--accent);background:var(--accent)!important;color:var(--on-accent)}.akset-shape.akset-on .muted{color:inherit;opacity:.85}.akset-shape .muted{font-weight:400}",
+  ".akset-pic{margin:4px 0 8px}.akset-svg{width:100%;max-width:420px;height:64px;display:block}.akset-arcl{stroke:var(--accent);stroke-width:4;stroke-linecap:round;opacity:.55}",
+  ".akset-arcrow{display:grid;grid-template-columns:4.5em 1fr 1fr;gap:8px;align-items:center;margin:4px 0}.akset-sl{display:flex;flex-direction:column;font-size:.85rem;gap:2px}.akset-sl input{width:100%}.akset-sl output{opacity:.75}",
+  "@media (max-width:480px){.akset-arcrow{grid-template-columns:1fr 1fr}.akset-arcrow b{grid-column:1/-1}}",
+  "button.akset-dot{width:16px;height:16px;min-width:16px;min-height:16px;padding:0;border-radius:50%;border:2px solid transparent;flex:none;cursor:pointer}button.akset-dot.akset-ring{background:transparent}",
+  ".akset-lvchips{flex-wrap:nowrap}.akset-lvchips .chip{padding:4px 10px}.chip.akset-guess:not(.on){outline:2px dotted var(--accent);outline-offset:-3px}",
+  ".akset-trow{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,rgba(127,127,127,.25))}.akset-tt{min-width:0}.akset-tt>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  "@media (max-width:480px){.akset-trow{flex-wrap:wrap}.akset-trow .akset-lvchips{width:100%}}",
+  ".akset-tagger input[type=search]{width:100%;margin:6px 0}.akset-small{font-size:.85rem;margin-top:4px}.akset-encard .akset-lvchips{margin-top:4px}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
