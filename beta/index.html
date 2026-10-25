@@ -35488,6 +35488,860 @@ akCss("akset", [
   ".akset-tagger input[type=search]{width:100%;margin:6px 0}.akset-small{font-size:.85rem;margin-top:4px}.akset-encard .akset-lvchips{margin-top:4px}"
 ].join("\n"));
 
+/* ================================================================ akyt: YouTube window (version 15.2, item 112)
+   A floating window (akFloat "yt") with a YouTube player on top and four tabs under it: This song (song.ytVids plus the song's
+   Listen link song.ytUrl), Warm-ups (lib().ytWarm, saved vocal warm-up links that play one after another), Find (YouTube search;
+   needs a free YouTube Data API key kept only on this device in localStorage "akyt:key", otherwise opens a YouTube search and you
+   paste the link back), Link (paste any YouTube link). The player (.akyt-player) sits outside .akf-body, so changing tabs or
+   screens never restarts the video; minimising the window hides the picture and keeps the sound playing.
+   Entry: Button bar / side button / Song header "ytwin", the song editor's Listen links card, the Listen window, Learn › Warm-ups,
+   the Tonight page, Settings › Data and extras › YouTube window. */
+AK_VERSION = "15.2";
+AK_WHATS_NEW = [
+  "YouTube window: watch videos inside the app in a window you can move, dock or minimise (minimised keeps the sound). Keep videos with each song, save warm-up videos to play in a row on the way to a show, and search YouTube with a free key (Settings › YouTube window).",
+  "Help: a new Help page. Ask “where is the capo?” or “how do I back up?” and tap Take me there. Also a Quick start, step-by-step guides like “Playing a show”, and “ways to use it” for every feature.",
+  "Chord keyboard: in the Chord chart box a keyboard made for chords opens by itself. Big A–G letters, then ♯ ♭ m 7 maj7 sus4 dim aug; space takes you back to the letters. Phone switches to your own keyboard; ⚙ lets you choose the keys."
+].concat(AK_WHATS_NEW);
+var AKYT = { cur: null, songId: null, queue: null, qi: 0, res: null, q: "", busy: false, msg: "" };
+
+/* a YouTube link -> { v: video id, list: playlist id, t: start seconds } (or null) */
+function akYtParse(u) {
+  u = String(u || "").trim(); if (!u) return null;
+  if (/^[\w-]{11}$/.test(u)) return { v: u, list: "", t: 0 };
+  var m, url; try { url = new URL(/^https?:/i.test(u) ? u : "https://" + u); } catch (e) { return null; }
+  var host = url.hostname.replace(/^www\.|^m\.|^music\./, ""), v = "", list = url.searchParams.get("list") || "";
+  if (host === "youtu.be") v = url.pathname.slice(1).split("/")[0];
+  else if (/(^|\.)youtube(-nocookie)?\.com$/.test(host)) {
+    if (url.pathname === "/watch") v = url.searchParams.get("v") || "";
+    else if ((m = /^\/(shorts|embed|live|v)\/([\w-]{11})/.exec(url.pathname))) v = m[2];
+    else if (url.pathname !== "/playlist") return null;
+  } else return null;
+  if (v && !/^[\w-]{11}$/.test(v)) v = "";
+  if (!v && !list) return null;
+  var t = url.searchParams.get("t") || url.searchParams.get("start") || "", sec = 0;
+  if (/^\d+$/.test(t)) sec = +t; else if (t) { var mm = /(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/.exec(t); if (mm) sec = (+mm[1] || 0) * 3600 + (+mm[2] || 0) * 60 + (+mm[3] || 0); }
+  return { v: v, list: list, t: sec };
+}
+function akYtEmbed(p, auto) {
+  var base = "https://www.youtube-nocookie.com/embed/" + (p.v || "videoseries");
+  var q = ["playsinline=1", "rel=0", "enablejsapi=1", "origin=" + encodeURIComponent(location.origin || "")];
+  if (p.list) q.push("list=" + encodeURIComponent(p.list));
+  if (p.t) q.push("start=" + p.t);
+  if (auto) q.push("autoplay=1");
+  return base + "?" + q.join("&");
+}
+function akYtWatchUrl(u) { var p = akYtParse(u); if (!p) return u; return p.v ? "https://www.youtube.com/watch?v=" + p.v + (p.list ? "&list=" + p.list : "") + (p.t ? "&t=" + p.t + "s" : "") : "https://www.youtube.com/playlist?list=" + p.list; }
+function akYtThumb(u) { var p = akYtParse(u); return p && p.v ? "https://i.ytimg.com/vi/" + p.v + "/mqdefault.jpg" : ""; }
+function akYtCfg() { var s = settings(); if (!s.ytWin || typeof s.ytWin !== "object") s.ytWin = {}; if (s.ytWin.auto === undefined) s.ytWin.auto = true; if (s.ytWin.next === undefined) s.ytWin.next = true; return s.ytWin; }
+function akYtKey(v) { try { if (v !== undefined) { if (v) localStorage.setItem("akyt:key", v); else localStorage.removeItem("akyt:key"); } return localStorage.getItem("akyt:key") || ""; } catch (e) { return ""; } }
+function akYtWarm() { var L = lib(); if (!Array.isArray(L.ytWarm)) L.ytWarm = []; return L.ytWarm; }
+function akYtSongVids(s) { if (!Array.isArray(s.ytVids)) s.ytVids = []; return s.ytVids; }
+function akYtSong() {
+  if (AKYT.songId) { var a = findSong(AKYT.songId); if (a) return a; }
+  if (S.view === "song" && S.songId) return findSong(S.songId);
+  if (S.view === "play" && S.play) { try { return curSong(); } catch (e) {} }
+  return null;
+}
+/* every video a song has: its Listen link first, then the attached ones */
+function akYtSongList(s) {
+  var out = [];
+  if (s.ytUrl && akYtParse(s.ytUrl)) out.push({ u: s.ytUrl, n: "Listen link", listen: true });
+  akYtSongVids(s).forEach(function (x, i) { out.push({ u: x.u, n: x.n || "Video " + (i + 1), i: i }); });
+  return out;
+}
+function akYtSame(a, b) { var p = akYtParse(a), q = akYtParse(b); return !!(p && q && p.v === q.v && p.list === q.list); }
+
+/* ---- the window ---- */
+function akYtOpen(o) {
+  o = o || {};
+  if (o.song) AKYT.songId = o.song.id; else if (o.song === null) AKYT.songId = null;
+  if (o.url) { var p = akYtParse(o.url); if (!p) { toast("That doesn't look like a YouTube link."); return; } AKYT.cur = { u: o.url, n: o.name || "" }; if (!o.queue) AKYT.queue = null; }
+  if (o.queue) { AKYT.queue = o.queue; AKYT.qi = o.qi || 0; }
+  var c = akFloatCfg("yt"); if (o.tab) c.tab = o.tab; c.min = false;
+  if (!akFloatOpen("yt")) {
+    akFloat("yt", { title: "YouTube", tabs: [["song", "This song"], ["warm", "Warm-ups"], ["find", "Find"], ["link", "Link"]], w: 380, h: 520,
+      key: function () { var s = akYtSong(); return (s ? s.id : "") + ":" + (akFloatCfg("yt").tab || ""); },
+      body: akYtBody, onClose: function () { AKYT.cur = null; AKYT.queue = null; } });
+    var f = AK_FLOATS.yt; f.el.classList.add("akyt-win");
+    f.player = h("div", { class: "akyt-player" }); f.el.insertBefore(f.player, f.body);
+  } else akFloatFill("yt");
+  AK_FLOATS.yt.el.classList.remove("min"); save();
+  akYtPaint(!!o.url);
+}
+function akYtPaint(fresh) {
+  var f = AK_FLOATS.yt; if (!f || !f.player) return;
+  var cur = AKYT.cur, p = cur && akYtParse(cur.u), box = f.player;
+  if (!p) { box.textContent = ""; box.classList.remove("on"); return; }
+  if (fresh || !box.querySelector("iframe")) {
+    box.textContent = ""; box.classList.add("on");
+    var fr = h("iframe", { class: "akyt-frame", src: akYtEmbed(p, akYtCfg().auto), title: cur.n || "YouTube video", allow: "autoplay; encrypted-media; picture-in-picture; fullscreen", allowfullscreen: "true", referrerpolicy: "strict-origin-when-cross-origin" });
+    fr.addEventListener("load", function () { try { fr.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "akyt", channel: "widget" }), "*"); } catch (e) {} });
+    box.appendChild(h("div", { class: "akyt-16x9" }, fr));
+    var s = akYtSong(), on = s && akYtSongList(s).some(function (x) { return akYtSame(x.u, cur.u); }), warmOn = akYtWarm().some(function (x) { return akYtSame(x.u, cur.u); });
+    var q = AKYT.queue;
+    box.appendChild(h("div", { class: "akyt-now" },
+      h("span", { class: "grow akyt-nt" }, cur.n || "Now playing", q ? h("span", { class: "muted" }, "  " + (AKYT.qi + 1) + " of " + q.length) : null),
+      q && AKYT.qi < q.length - 1 ? h("button", { class: "sm", "aria-label": "Next video", onClick: function () { akYtNext(); } }, "⏭") : null,
+      s && !on ? h("button", { class: "sm", onClick: function () { akYtAttach(s, cur.u, cur.n); } }, "+ This song") : null,
+      !warmOn ? h("button", { class: "sm", onClick: function () { akYtAddWarm(cur.u, cur.n); } }, "+ Warm-ups") : null,
+      h("a", { class: "btnlink sm", href: akYtWatchUrl(cur.u), target: "_blank", rel: "noopener noreferrer", "aria-label": "Open in YouTube" }, "↗")));
+  }
+}
+function akYtNext() {
+  var q = AKYT.queue; if (!q || AKYT.qi >= q.length - 1) { AKYT.queue = null; akYtPaint(false); return; }
+  AKYT.qi++; AKYT.cur = { u: q[AKYT.qi].u, n: q[AKYT.qi].n }; akYtPaint(true);
+}
+/* the player tells us when a video ends (enablejsapi + "listening"): go on to the next warm-up */
+window.addEventListener("message", function (e) {
+  if (!/youtube(-nocookie)?\.com$/.test(String(e.origin).replace(/^https?:\/\//, ""))) return;
+  var d; try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (x) { return; }
+  if (!d) return;
+  var st = d.event === "onStateChange" ? d.info : d.event === "infoDelivery" && d.info ? d.info.playerState : null;
+  if (st === 0 && AKYT.queue && akYtCfg().next) setTimeout(akYtNext, 600);
+});
+function akYtAttach(s, u, n) {
+  var p = akYtParse(u); if (!p) { toast("That doesn't look like a YouTube link."); return; }
+  if (akYtSongList(s).some(function (x) { return akYtSame(x.u, u); })) { toast("Already on this song."); return; }
+  akYtSongVids(s).push({ u: u, n: n || "" });
+  if (!s.ytUrl) s.ytUrl = u;
+  save(); toast("Added to “" + (s.title || "this song") + "”.");
+  akFloatFill("yt"); akYtPaint(true);
+}
+function akYtAddWarm(u, n) {
+  if (!akYtParse(u)) { toast("That doesn't look like a YouTube link."); return; }
+  if (akYtWarm().some(function (x) { return akYtSame(x.u, u); })) { toast("Already in your warm-ups."); return; }
+  akYtWarm().push({ id: uid(), u: u, n: n || "Warm-up " + (akYtWarm().length + 1) });
+  save(); toast("Saved to Warm-ups."); akFloatFill("yt"); akYtPaint(true);
+}
+function akYtRow(x, acts) {
+  var th = akYtThumb(x.u);
+  return h("div", { class: "akyt-row" + (AKYT.cur && akYtSame(AKYT.cur.u, x.u) ? " on" : "") },
+    th ? h("img", { class: "akyt-th", src: th, alt: "", loading: "lazy" }) : h("span", { class: "akyt-th" }, "▶"),
+    h("button", { class: "grow linkish akyt-play", onClick: acts.play }, h("b", null, x.n || "Video"), x.sub ? h("span", { class: "muted" }, " " + x.sub) : null),
+    (acts.more || []).map(function (a) { return h("button", { class: "sm", "aria-label": a[1], title: a[1], onClick: a[2] }, a[0]); }));
+}
+function akYtPasteRow(label, onAdd) {
+  var inp = h("input", { type: "url", inputmode: "url", autocapitalize: "off", autocorrect: "off", spellcheck: "false", placeholder: "https://youtu.be/…", "aria-label": label });
+  var nm = h("input", { type: "text", placeholder: "Name (optional)", "aria-label": "Name for this video", autocapitalize: "sentences" });
+  function go2() { var v = inp.value.trim(); if (!akYtParse(v)) { toast("Paste a YouTube link first."); return; } onAdd(v, nm.value.trim()); inp.value = ""; nm.value = ""; }
+  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go2(); });
+  var pasteB = navigator.clipboard && navigator.clipboard.readText ? h("button", { class: "sm", onClick: function () { navigator.clipboard.readText().then(function (t) { inp.value = (t || "").trim(); }).catch(function () { toast("Couldn't read the clipboard. Long-press the box and Paste."); }); } }, "📋 Paste") : null;
+  return h("div", { class: "akyt-paste" }, h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, inp), pasteB), h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, nm), h("button", { class: "sm primary", onClick: go2 }, label)));
+}
+function akYtBody(tab, el) {
+  var s = akYtSong();
+  if (tab === "song") {
+    if (!s) { el.appendChild(h("p", { class: "hint" }, "Open a song (or play one) to see its videos here. Warm-ups, Find and Link work anywhere.")); return; }
+    el.appendChild(h("div", { class: "akyt-h" }, h("b", null, s.title || "This song")));
+    var list = akYtSongList(s);
+    if (!list.length) el.appendChild(h("p", { class: "hint" }, "No videos on this song yet. Find one, or paste a link below. A lesson, a live version, a play-along: keep as many as you like."));
+    list.forEach(function (x) {
+      el.appendChild(akYtRow({ u: x.u, n: x.n, sub: x.listen ? "(also the 🎧 button)" : "" }, { play: function () { akYtOpen({ url: x.u, name: (s.title || "") + (x.listen ? "" : " · " + x.n) }); },
+        more: x.listen ? [] : [
+          ["✎", "Rename", function () { askText("Name for this video", x.n, "Save", function (v) { s.ytVids[x.i].n = v; save(); akFloatFill("yt"); }); }],
+          ["★", "Make it the Listen link", function () { s.ytUrl = x.u; save(); toast("Now the song's Listen link."); akFloatFill("yt"); }],
+          ["✕", "Remove from this song", function () { s.ytVids.splice(x.i, 1); save(); akFloatFill("yt"); }]] }));
+    });
+    el.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { AKYT.q = ((s.title || "") + " " + (s.artist || "")).trim(); akFloatCfg("yt").tab = "find"; save(); akFloatFill("yt"); if (akYtKey()) akYtSearch(); } }, "🔎 Find videos for this song")));
+    el.appendChild(akYtPasteRow("Add to song", function (u, n) { akYtAttach(s, u, n); }));
+    return;
+  }
+  if (tab === "warm") {
+    var W = akYtWarm();
+    el.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "Your vocal warm-up videos, for the drive to a show. ▶ All plays them in order. Minimise (—) the window to keep just the sound."));
+    if (W.length) el.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("button", { class: "primary sm", onClick: function () { akYtOpen({ url: W[0].u, name: W[0].n, queue: W.map(function (x) { return { u: x.u, n: x.n }; }), qi: 0 }); } }, "▶ All (" + W.length + ")")));
+    W.forEach(function (x, i) {
+      el.appendChild(akYtRow(x, { play: function () { akYtOpen({ url: x.u, name: x.n, queue: W.map(function (y) { return { u: y.u, n: y.n }; }), qi: i }); },
+        more: [
+          i > 0 ? ["↑", "Move up", function () { W.splice(i - 1, 0, W.splice(i, 1)[0]); save(); akFloatFill("yt"); }] : null,
+          ["✎", "Rename", function () { askText("Name for this warm-up", x.n, "Save", function (v) { x.n = v; save(); akFloatFill("yt"); }); }],
+          ["✕", "Remove", function () { W.splice(i, 1); save(); akFloatFill("yt"); }]].filter(Boolean) }));
+    });
+    if (!W.length) el.appendChild(h("p", { class: "hint" }, "None saved yet. Find some (try “vocal warm up baritone 10 minutes”) or paste a link."));
+    el.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { AKYT.q = "vocal warm up " + (akWarmCfgSafe().voice || "") + " 10 minutes"; akFloatCfg("yt").tab = "find"; save(); akFloatFill("yt"); if (akYtKey()) akYtSearch(); } }, "🔎 Find warm-up videos")));
+    el.appendChild(akYtPasteRow("Save warm-up", function (u, n) { akYtAddWarm(u, n); }));
+    return;
+  }
+  if (tab === "find") {
+    var inp = h("input", { type: "search", value: AKYT.q || "", placeholder: s ? (s.title || "") + " lesson" : "Search YouTube", "aria-label": "Search YouTube", onInput: function () { AKYT.q = this.value; } });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { AKYT.q = inp.value; akYtSearch(); } });
+    el.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, inp), h("button", { class: "primary sm", onClick: function () { AKYT.q = inp.value; akYtSearch(); } }, "Search")));
+    if (!akYtKey()) {
+      el.appendChild(h("p", { class: "hint" }, "Searching inside the app needs a free YouTube key (Settings › YouTube window). Without one, Search opens YouTube: copy the video's link (Share › Copy link), come back and paste it in the Link tab."));
+      return;
+    }
+    if (AKYT.busy) el.appendChild(h("p", { class: "hint" }, "Searching…"));
+    if (AKYT.msg) el.appendChild(h("p", { class: "hint" }, AKYT.msg));
+    (AKYT.res || []).forEach(function (r) {
+      var u = "https://www.youtube.com/watch?v=" + r.v;
+      el.appendChild(akYtRow({ u: u, n: r.t, sub: r.ch }, { play: function () { akYtOpen({ url: u, name: r.t }); },
+        more: [s ? ["+♫", "Add to this song", function () { akYtAttach(s, u, r.t); }] : null, ["+🎤", "Save as a warm-up", function () { akYtAddWarm(u, r.t); }]].filter(Boolean) }));
+    });
+    return;
+  }
+  el.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "Paste any YouTube link (a video, a Short, a playlist, or a link with a start time) to play it here."));
+  el.appendChild(akYtPasteRow("▶ Play", function (u, n) { akYtOpen({ url: u, name: n }); }));
+}
+function akWarmCfgSafe() { try { return akWarmCfg(); } catch (e) { return {}; } }
+function akYtSearch() {
+  var q = (AKYT.q || "").trim(); if (!q) { toast("Type what to search for."); return; }
+  var key = akYtKey();
+  if (!key) { window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank", "noopener"); return; }
+  AKYT.busy = true; AKYT.msg = ""; akFloatFill("yt");
+  fetch("https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=15&q=" + encodeURIComponent(q) + "&key=" + encodeURIComponent(key))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error.message || "error");
+      AKYT.res = (d.items || []).filter(function (it) { return it.id && it.id.videoId; }).map(function (it) {
+        var t = h("textarea"); t.innerHTML = it.snippet.title; var c2 = h("textarea"); c2.innerHTML = it.snippet.channelTitle || "";
+        return { v: it.id.videoId, t: t.value, ch: c2.value };
+      });
+      if (!AKYT.res.length) AKYT.msg = "Nothing found.";
+    })
+    .catch(function (e) { AKYT.res = []; AKYT.msg = "Search didn't work (" + e.message + "). Check the key in Settings › YouTube window, or your connection."; })
+    .then(function () { AKYT.busy = false; akFloatFill("yt"); });
+}
+
+/* ---- Button bar, side button, Song header ---- */
+AK_IC.ytwin = "M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M10 9l5 3-5 3z";
+TB_ITEMS.push(["ytwin", "▶ YouTube window (videos for this song, warm-ups)"]); TB_SHORT.ytwin = "YouTube";
+FAB_ITEMS.push(["ytwin", "▶ YouTube window"]); FAB_OFF.ytwin = 1; FAB_SHORT.ytwin = "Video";
+AK_CORNER.push(["ytwin", "▶ YouTube window"]);
+(function () {
+  var tb = akExtraTb25, fb = akExtraFab12, cb = akCornerBtn;
+  akExtraTb25 = function (id, song, root) { if (id === "ytwin") return h("button", { "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: song || null }); this.blur(); } }, akIcon("ytwin")); return tb.apply(this, arguments); };
+  akExtraFab12 = function (song, root) { var o = fb.apply(this, arguments) || {}; o.ytwin = function () { return h("button", { class: "fb", "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: song || null }); this.blur(); } }, akIcon("ytwin")); }; return o; };
+  akCornerBtn = function (id, root) {
+    if (id !== "ytwin") return cb.apply(this, arguments);
+    var b = h("button", { class: "ak9-cb", "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: null }); } }, "▶", h("span", { class: "ak9-cl" }, "Video"));
+    b.setAttribute("data-ak9c", "ytwin"); return b;
+  };
+})();
+(function () {
+  /* the 🎧 Listen window gets a "watch here" button */
+  var ol = openListen;
+  openListen = function (song) {
+    var r = ol.apply(this, arguments);
+    try {
+      var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1], row = m && m.querySelector(".body .row");
+      if (row) row.insertBefore(h("button", { class: "primary bigl", onClick: function () { closeModals(); var L = akYtSongList(song); akYtOpen(L.length ? { song: song, url: L[0].u, name: song.title || "", tab: "song" } : { song: song, tab: "song" }); } }, "▶ Watch here, in a window"), row.firstChild);
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---- the song editor's Listen links card, Learn › Warm-ups, Tonight ---- */
+function akYtEditorPaint() {
+  if (S.view !== "song" || !S.songId) return;
+  var s = findSong(S.songId); if (!s) return;
+  var det = Array.prototype.filter.call(document.querySelectorAll("#app details.card"), function (d) { var su = d.querySelector("summary"); return su && /^Listen links/.test(su.textContent); })[0];
+  if (!det || det.querySelector(".akyt-ed")) return;
+  var n = akYtSongList(s).length;
+  det.appendChild(h("div", { class: "row akyt-ed" }, h("button", { class: "primary", onClick: function () { var L = akYtSongList(s); akYtOpen(L.length ? { song: s, url: L[0].u, name: s.title || "", tab: "song" } : { song: s, tab: "song" }); } }, "▶ Watch in a window" + (n ? " (" + n + ")" : "")),
+    h("span", { class: "hint", style: "margin:0" }, "Keep lessons, live versions and play-alongs with the song. The window stays open while you edit or play.")));
+}
+(function () { var r = render; render = function () { var x = r.apply(this, arguments); try { akYtEditorPaint(); } catch (e) {} return x; }; })();
+function akYtWarmCard() {
+  var W = akYtWarm();
+  return h("div", { class: "card akyt-warmcard" }, h("strong", null, "🎤 Warm-up videos"),
+    h("p", { class: "hint", style: "margin:4px 0" }, W.length ? W.length + " saved. They play one after another; minimise the window to keep only the sound (handy on the way to a show)." : "Save YouTube warm-up videos you like, and play them in a row on the way to a show."),
+    h("div", { class: "row", style: "margin:0" },
+      W.length ? h("button", { class: "primary", onClick: function () { akYtOpen({ song: null, url: W[0].u, name: W[0].n, queue: W.map(function (x) { return { u: x.u, n: x.n }; }), qi: 0, tab: "warm" }); } }, "▶ Play my warm-ups") : null,
+      h("button", { onClick: function () { akYtOpen({ song: null, tab: "warm" }); } }, W.length ? "Edit the list" : "Add warm-up videos")));
+}
+if (typeof akWarmupsView === "function") (function () { var wv = akWarmupsView; akWarmupsView = function (box) { var r = wv.apply(this, arguments); try { box.insertBefore(akYtWarmCard(), box.firstChild); } catch (e) {} return r; }; })();
+if (typeof viewTonight === "function") (function () {
+  var vt = viewTonight;
+  viewTonight = function () { var el = vt.apply(this, arguments); try { var app = el.querySelector("#mainScroll > div") || el; var c = akYtWarmCard(); c.setAttribute("data-bk", "warm-up-videos"); app.appendChild(c); } catch (e) {} return el; };
+  AK_VIEWS.tonight = viewTonight;
+})();
+
+/* ---- Settings ---- */
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("data-and-extras");
+    c.section("YouTube window", "Watch videos inside the app: per song, warm-ups, search");
+    var yc = akYtCfg();
+    c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akYtOpen({}); } }, "▶ Open the YouTube window")));
+    c.check("Start playing as soon as a video opens", function () { return yc.auto; }, function (v) { yc.auto = v; });
+    c.check("Warm-ups: go on to the next video when one ends", function () { return yc.next; }, function (v) { yc.next = v; });
+    var key = h("input", { type: "text", value: akYtKey(), placeholder: "AIza…", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "YouTube key" });
+    c.out.appendChild(h("label", { class: "fld" }, "YouTube search key (optional, kept only on this device)", key));
+    c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akYtKey(key.value.trim()); toast(key.value.trim() ? "Key saved on this device." : "Key removed."); } }, "Save key"),
+      h("button", { onClick: function () { modal("Get a free YouTube key", h("ol", { class: "akyt-steps" },
+        h("li", null, "On a computer, open console.cloud.google.com and sign in with your Google account."),
+        h("li", null, "Make a project (any name, like “Akashic”)."),
+        h("li", null, "APIs and services › Library › “YouTube Data API v3” › Enable."),
+        h("li", null, "APIs and services › Credentials › Create credentials › API key. Copy it."),
+        h("li", null, "Optional but good: Edit the key › Website restrictions › add aedryan13.github.io/*, and API restrictions › YouTube Data API v3."),
+        h("li", null, "Paste it here and tap Save key. It's free for normal use (about 100 searches a day)."))); } }, "How to get one")));
+    c.out.appendChild(h("p", { class: "hint" }, "Playing a pasted link needs no key. The key is only for searching inside the app. A few videos don't allow playing outside YouTube; ↗ opens those in YouTube. After you tap the video, tap the song once so your pedal works again."));
+  };
+})();
+
+/* ---- feature guide ---- */
+AK_FEAT.push(
+  { id: "ytwin", cat: "Practice", name: "YouTube window", desc: "Watch YouTube inside the app in a window you can move, dock or minimise. Keep videos with each song (lessons, live versions, play-alongs), and search YouTube with a free key.", where: "Button bar button “YouTube window”, or a song's Listen links", modes: "", go: function () { akYtOpen({}); }, sel: null, area: "float", links: ["ytwarm"], tour: false },
+  { id: "ytwarm", cat: "Practice", name: "Warm-up videos", desc: "Save your favourite vocal warm-up videos and play them in a row on the way to a show. Minimise the window to keep only the sound.", where: "Learn › Warm-ups, the Tonight page, or the YouTube window's Warm-ups tab", modes: "", go: function () { akYtOpen({ tab: "warm" }); }, sel: null, area: "float", links: ["ytwin", "warmups"], tour: false });
+
+akCss("akyt", [
+  ".akyt-player{flex:none;background:#000}.akyt-player:not(.on){display:none}",
+  ".akyt-16x9{position:relative;width:100%;padding-top:56.25%}.akyt-frame{position:absolute;inset:0;width:100%;height:100%;border:0}",
+  ".akyt-now{display:flex;gap:4px;align-items:center;padding:4px 6px;background:var(--panel,var(--bg));color:var(--fg);font-size:.85rem}",
+  ".akyt-nt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akfloat.min .akyt-player .akyt-16x9{height:0;padding-top:0;overflow:hidden}.akfloat.min .akyt-now{display:flex}",
+  ".akyt-row{display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#8883)}.akyt-row.on{background:color-mix(in srgb,var(--accent,#c9a227) 18%,transparent)}",
+  ".akyt-th{width:64px;height:36px;object-fit:cover;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background:#0004}",
+  ".akyt-play{text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis}",
+  ".akyt-paste{border-top:1px dashed var(--line,#8885);margin-top:8px;padding-top:4px}",
+  ".akyt-steps li{margin:6px 0}"
+].join("\n"));
+
+/* ================================================================ akckb: chord keyboard (version 15.2, item 92)
+   The on-screen keyboard's ♪ layer (OSK.layer "chords") becomes a chord keyboard in two steps: big root letters A–G, and once a
+   root is typed, the endings (♯ ♭ m 7 maj7 sus4 dim aug /…). The step comes from the letter before the cursor, so after a space
+   (or "/", "(", "|") it is back on the letters by itself. settings().ckb = { box: opens by itself in chord boxes (default on),
+   one: letters and endings on one page, ends: the ending keys in order (editable) }.
+   Chord boxes (akCkbIsBox): the song editor's Chord chart box, the Key box (#akKeyInp), any [data-ckb] box, and boxes labelled
+   "Chord", "Chords" or "Chord name". In a chord box the device keyboard stays down (inputmode none, set on pointerdown) unless
+   "Phone" is tapped, which hands that box back to the device keyboard until the page is redrawn. */
+var AK_CKB_ENDS = ["#", "b", "m", "7", "maj7", "m7", "sus4", "sus2", "add9", "dim", "aug", "6", "9", "m7b5", "dim7", "7sus4", "11", "13", "/"];
+function akCkbCfg() { var s = settings(); if (!s.ckb || typeof s.ckb !== "object") s.ckb = {}; var c = s.ckb; if (c.box === undefined) c.box = true; if (!Array.isArray(c.ends) || !c.ends.length) c.ends = AK_CKB_ENDS.slice(); return c; }
+function akCkbIsBox(el) {
+  if (!el || el.nodeType !== 1 || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
+  if (el.hasAttribute("data-ckb")) return el.getAttribute("data-ckb") !== "0";
+  if (el.id === "akKeyInp") return true;
+  var lab = el.closest && el.closest("label");
+  if (el.tagName === "TEXTAREA" && lab && /^\s*Chord chart/.test(lab.textContent)) return true;
+  return /^(chord|chords|chord name|a chord|chord to add)$/i.test((el.getAttribute("aria-label") || "").trim());
+}
+function akCkbLabel(v) { return v === "#" ? "♯" : v === "b" ? "♭" : v; }
+/* letters or endings, from what is just before the cursor */
+function akCkbStage() {
+  if (akCkbCfg().one) return "one";
+  if (OSK.ckbForce) return OSK.ckbForce;
+  var t = OSK.target; if (!t) return "letters";
+  var r = oskSel(t), prev = t.value.slice(0, r[0]).slice(-1);
+  return !prev || /[\s\/(\[|\-,]/.test(prev) ? "letters" : "ends";
+}
+function akCkbRows() {
+  var c = akCkbCfg(), st = akCkbStage(), rows = [];
+  function k(v, w) { return { t: akCkbLabel(v), v: v, w: w }; }
+  var letters = "CDEFGAB".split("").map(function (x) { return k(x, 1.2); });
+  var ends = c.ends.filter(function (x) { return x && String(x).trim(); }).map(function (x) { return k(String(x).trim(), String(x).length > 3 ? 1.4 : 1); });
+  function chunk(list, n) { for (var i = 0; i < list.length; i += n) rows.push(list.slice(i, i + n)); }
+  if (st === "letters" || st === "one") {
+    rows.push(letters.concat([{ t: "⌫", k: "back", w: 1.3 }]));
+    if (st === "letters") rows.push([k("N.C."), k("|"), k("("), k(")"), k("x2"), k("-"), { t: "♯ ♭ m 7…", k: "ckbEnds", w: 1.6 }]);
+  }
+  if (st === "ends" || st === "one") {
+    var per = Math.max(5, Math.min(8, Math.ceil(ends.length / 3)));
+    chunk(ends, per);
+    if (st === "ends") rows[rows.length - 1] = rows[rows.length - 1].concat([{ t: "⌫", k: "back", w: 1.3 }]);
+  }
+  rows.push([{ t: "abc", k: "abc", w: 1.2 }, st === "ends" ? { t: "A–G", k: "ckbLetters", w: 1.2 } : { t: "123", k: "num", w: 1.2 }, { t: "space", v: " ", w: 3.2 },
+    { t: "⚙", k: "ckbGear", w: 0.9 }, { t: "Phone", k: "ckbPhone", w: 1.4 }, { t: "↵", k: "enter", w: 1.2 }]);
+  return rows;
+}
+(function () {
+  var rowsWas = oskRows, pressWas = oskPress, openWas = oskOpen, drawWas = oskDraw;
+  oskRows = function () { if (OSK.layer === "chords" && !OSK.numeric) return akCkbRows(); return rowsWas.apply(this, arguments); };
+  oskPress = function (k) {
+    if (k.k === "ckbEnds") { OSK.ckbForce = "ends"; oskDraw(); return; }
+    if (k.k === "ckbLetters") { OSK.ckbForce = "letters"; oskDraw(); return; }
+    if (k.k === "ckbGear") { akCkbSetup(); return; }
+    if (k.k === "ckbPhone") { akCkbPhone(); return; }
+    OSK.ckbForce = null;
+    return pressWas.apply(this, arguments);
+  };
+  oskOpen = function (t) {
+    var r = openWas.apply(this, arguments);
+    OSK.ckbForce = null;
+    if (t && akCkbIsBox(t) && akCkbCfg().box && !t.hasAttribute("data-ckb-off")) { OSK.layer = "chords"; drawWas(); }
+    return r;
+  };
+  oskDraw = function () { var r = drawWas.apply(this, arguments); try { if (OSK.el) OSK.el.classList.toggle("akckb-on", OSK.layer === "chords"); } catch (e) {} return r; };
+})();
+/* the device keyboard for this box instead */
+function akCkbPhone() {
+  var t = OSK.target; if (!t) { oskClose(); return; }
+  t.setAttribute("data-ckb-off", "1");
+  OSK.saved = null; t.removeAttribute("inputmode");
+  oskClose();
+  setTimeout(function () { try { t.focus(); } catch (e) {} }, 30);
+  toast("Device keyboard for this box. Tap ♪ on the app keyboard (⌨) to get chords back.");
+}
+/* in a chord box: keep the device keyboard down and open the chord keyboard */
+document.addEventListener("pointerdown", function (e) {
+  var t = e.target; if (!akCkbIsBox(t) || !akCkbCfg().box || t.hasAttribute("data-ckb-off")) return;
+  t.setAttribute("inputmode", "none");
+}, true);
+document.addEventListener("focusin", function (e) {
+  var t = e.target; if (!akCkbIsBox(t) || !akCkbCfg().box || t.hasAttribute("data-ckb-off") || t.readOnly || t.disabled) return;
+  OSK.last = t;
+  if (!oskOpenNow() || OSK.target !== t) oskOpen(t); else if (OSK.layer !== "chords") { OSK.layer = "chords"; oskDraw(); }
+});
+
+/* customise: from ⚙ on the keyboard and from Settings */
+function akCkbEditor(after) {
+  var c = akCkbCfg(), box = h("div", { class: "akckb-ed" });
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "The ending keys, in order. Tap ✕ to take one off, ◀ to move it earlier, or add your own (like m9, 7#9, 5, add2)."));
+    var chips = h("div", { class: "akckb-chips" });
+    c.ends.forEach(function (x, i) {
+      chips.appendChild(h("span", { class: "akckb-chip" },
+        i > 0 ? h("button", { class: "sm", "aria-label": "Move " + x + " earlier", onClick: function () { c.ends.splice(i - 1, 0, c.ends.splice(i, 1)[0]); save(); draw(); if (after) after(); } }, "◀") : null,
+        h("b", null, akCkbLabel(x)),
+        h("button", { class: "sm", "aria-label": "Remove " + x, onClick: function () { c.ends.splice(i, 1); if (!c.ends.length) c.ends = AK_CKB_ENDS.slice(); save(); draw(); if (after) after(); } }, "✕")));
+    });
+    box.appendChild(chips);
+    var inp = h("input", { type: "text", placeholder: "New key, like m9", "aria-label": "New ending key", autocapitalize: "off", "data-ckb": "0" });
+    function add() { var v = inp.value.trim(); if (!v) return; v.split(/[,\s]+/).forEach(function (x) { if (x && c.ends.indexOf(x) < 0) c.ends.push(x); }); save(); draw(); if (after) after(); }
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") add(); });
+    box.appendChild(h("div", { class: "row" }, h("div", { class: "grow" }, inp), h("button", { onClick: add }, "Add"), h("button", { onClick: function () { c.ends = AK_CKB_ENDS.slice(); save(); draw(); if (after) after(); } }, "Reset")));
+  }
+  draw();
+  return box;
+}
+function akCkbSetup() {
+  var c = akCkbCfg(), t = OSK.target;
+  var body = h("div", null,
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: c.box, onChange: function () { c.box = this.checked; save(); } }), "Open the chord keyboard by itself in chord boxes"),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.one, onChange: function () { c.one = this.checked; save(); oskDraw(); } }), "Letters and endings on one page (otherwise endings show after you tap a letter)"),
+    akCkbEditor(function () { oskDraw(); }));
+  modal("Chord keyboard", body, [{ label: "Done", onClick: function () { if (t && t.isConnected) setTimeout(function () { try { t.focus({ preventScroll: true }); } catch (e) {} }, 30); } }]);
+}
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("data-and-extras");
+    c.section("Chord keyboard", "Big chord letters and endings for chord boxes");
+    var k = akCkbCfg();
+    c.check("Open the chord keyboard by itself in chord boxes (Chord chart, Key, chord names)", function () { return k.box; }, function (v) { k.box = v; });
+    c.check("Letters and endings on one page", function () { return !!k.one; }, function (v) { k.one = v; });
+    c.out.appendChild(h("p", { class: "hint" }, "Tap a letter, then its ending (♯ ♭ m 7 maj7 sus4 dim aug…). Space or / takes you back to the letters. Phone on the chord keyboard switches that box to your device's keyboard. In any other box, the ♪ key on the app keyboard gives you the same chord keys."));
+    c.out.appendChild(akCkbEditor());
+    c.out.appendChild(h("label", { class: "fld" }, "Try it", h("input", { type: "text", "data-ckb": "1", placeholder: "Tap here: G  D/F#  Em7  Cadd9", "aria-label": "Chord keyboard test box" })));
+  };
+})();
+AK_FEAT.push({ id: "ckb", cat: "Songs", name: "Chord keyboard", desc: "A keyboard made for chords: big A–G letters, then ♯ ♭ m 7 maj7 sus4 dim aug and your own endings. It opens by itself in chord boxes; Phone switches back to the device keyboard.", where: "Song editor, Chord chart box; Settings › Chord keyboard", modes: "", go: "settings", sel: '[data-bk="chord-keyboard"]', area: "editor", links: ["editor"], tour: false });
+
+akCss("akckb", [
+  ".osk.akckb-on button.k{font-weight:600}",
+  ".akckb-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}",
+  ".akckb-chip{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line,#8886);border-radius:16px;padding:2px 4px}",
+  ".akckb-chip b{padding:0 4px}.akckb-chip button.sm{min-height:26px;padding:0 6px;font-size:.8rem}"
+].join("\n"));
+
+/* ================================================================ akhelp: Help page (version 15.2, items 106–109)
+   AK_VIEWS.help ("Help and how-to"): a "Where is…?" box (akHelpSearch: offline word matching with stop words, simple stems and
+   synonym groups AK_HELP_SYN, over the hand-written answers AK_HELP_WHERE, the feature guide incl. its ways to use it, every
+   Settings section from akSetIndex, the guided flows and the quick start), the Quick start (AK_HELP_QS, also a card at the top of
+   Songs until finished or hidden), and Guided flows (AK_HELP_FLOWS, steps with Take me there and a tick).
+   Ways to use it (107): AK_FEAT_WAYS[id] shows under each feature in the feature guide (akViewFeatures is redrawn here).
+   State: settings().akHelp = { qs: { done: {id: 1}, hide }, flows: { flowId: { stepIndex: 1 } } }.
+   Hooks other updates can fill: akFlyerOpen(gig) (flyers) and akTipSignOpen() (tip signs) light up their flow steps. */
+function akHelpCfg() { var s = settings(); if (!s.akHelp || typeof s.akHelp !== "object") s.akHelp = {}; var c = s.akHelp; if (!c.qs) c.qs = { done: {} }; if (!c.qs.done) c.qs.done = {}; if (!c.flows) c.flows = {}; return c; }
+function akHelpFn(n) { return typeof window[n] === "function" ? window[n] : null; }
+
+/* ---- going to a Settings section by its title ---- */
+function akHelpSetFind(title) {
+  var idx = []; try { idx = akSetIndex(); } catch (e) {}
+  var t = String(title).toLowerCase();
+  return idx.filter(function (x) { return (x.title || "").toLowerCase() === t; })[0] || idx.filter(function (x) { return (x.title || "").toLowerCase().indexOf(t) >= 0; })[0] || null;
+}
+function akHelpSetGo(x) {
+  if (!x) { go("settings"); return; }
+  var scr = settings().allInSettings ? "" : (typeof akScrOf === "function" ? akScrOf(x.id) : "");
+  if (scr) { akScreenCustomize(scr, x.bk); return; }
+  go("settings");
+  setTimeout(function () { var el = document.querySelector('[data-blocks="settings/' + x.id.split("/")[0] + '"] > [data-bk="' + x.bk + '"]') || document.querySelector('[data-bk="' + x.bk + '"]'); if (el) akPulse(el); }, 250);
+}
+function akHelpSet(title) { return function () { akHelpSetGo(akHelpSetFind(title)); }; }
+function akHelpSetWhere(title) { var x = akHelpSetFind(title); return x ? "Settings › " + (x.group ? x.group + " › " : "") + x.title : "Settings"; }
+function akHelpView(v, extra) { return function () { go(v, extra); }; }
+function akHelpFirstSong() { var l = lib().songs.filter(function (s) { return !s.trashed; }); return l[0] || null; }
+function akHelpEditSong() { var s = (S.songId && findSong(S.songId)) || akHelpFirstSong(); if (s) go("song", { songId: s.id }); else { go("songs"); toast("Add a song first."); } }
+function akHelpPlay() { try { var l = filteredSongs(); if (l.length) playFromSongs(l, 0); else toast("Add a song first."); } catch (e) { go("songs"); } }
+
+/* ---- 109: hand-written answers. t = the question, a = where (a function of nothing, or text), k = extra words, go ---- */
+var AK_HELP_WHERE = [
+  { t: "Change the key (transpose)", a: "Song editor: the key change buttons right above the Chord chart box. Your original key is kept so you can go back.", k: "transpose key up down semitone original", go: akHelpEditSong },
+  { t: "Capo", a: "Song editor › Playing › Capo fret. Sounding key shows what the audience hears.", k: "capo fret sounding", go: akHelpEditSong },
+  { t: "Auto-scroll speed", a: function () { return "Each song: song editor › scroll speed. Defaults: " + akHelpSetWhere("Auto-scroll") + "."; }, k: "scroll speed autoscroll faster slower", go: akHelpSet("Auto-scroll") },
+  { t: "Bluetooth foot pedal", a: function () { return akHelpSetWhere("Pedal") + ": teach it your pedal's keys."; }, k: "pedal foot bluetooth page turner", go: akHelpSet("Pedal") },
+  { t: "Bigger or smaller text", a: function () { return akHelpSetWhere("Text size and style") + ". Each song can have its own size in the song editor."; }, k: "text size font bigger smaller", go: akHelpSet("Text size and style") },
+  { t: "Make the whole app bigger or smaller", a: function () { return akHelpSetWhere("Size of the app") + "."; }, k: "size zoom scale small big app", go: akHelpSet("Size of the app") },
+  { t: "Themes, colors and background pictures", a: function () { return akHelpSetWhere("Themes and Atmosphere") + ", and Theme art."; }, k: "theme color dark light background picture look", go: akHelpSet("Themes and Atmosphere") },
+  { t: "Buttons on the playing screen", a: function () { return akHelpSetWhere("Button bar") + " and Side buttons. On the playing screen, Buttons ▾ has quick on/off."; }, k: "button toolbar side bar add remove playing", go: akHelpSet("Button bar") },
+  { t: "Back up my songs", a: function () { return akHelpSetWhere("Backups") + ": Save backup now, or GitHub backup."; }, k: "backup save copy safe github", go: akHelpSet("Backups") },
+  { t: "Restore a backup", a: "Import tab › open the backup file. “Replace everything” overwrites; adding keeps what you have.", k: "restore backup load file", go: akHelpView("import") },
+  { t: "Move to a new phone or tablet", a: function () { return "Save a backup file (" + akHelpSetWhere("Backups") + "), open it on the new device's Import tab. Or " + akHelpSetWhere("Sync between my devices") + "."; }, k: "new device phone tablet move transfer sync", go: akHelpSet("Sync between my devices") },
+  { t: "Make a setlist", a: "Shows tab › + New › New setlist. Or ✦ Build a setlist from your songs.", k: "setlist set list new", go: akHelpView("shows") },
+  { t: "Add a show (a gig)", a: "Shows tab › + New › New show: date, venue, address, pay and its setlists.", k: "show gig venue date new", go: function () { go("shows"); var f = akHelpFn("akGigNewDialog"); if (f) setTimeout(f, 60); } },
+  { t: "Song requests and tips QR code", a: function () { return akHelpSetWhere("Live requests") + " › Show my QR code."; }, k: "request tip tips qr code audience money", go: akHelpSet("Live requests") },
+  { t: "Breaks and the break countdown", a: "☕ Start break button (Button bar or Song header ⋯), and Timers.", k: "break pause timer countdown rest", go: akHelpSet("Break button") },
+  { t: "What I played last night", a: "Shows › Play history › Nights: songs in order with times and breaks.", k: "history played night log last", go: akHelpView("history") },
+  { t: "Record my show", a: function () { return "The 🎙 Recorder button, and " + akHelpSetWhere("Record my show") + "."; }, k: "record recording video audio phone", go: akHelpSet("Record my show") },
+  { t: "Watch a YouTube video in the app", a: "Button bar › YouTube window, or a song's Listen links › ▶ Watch in a window.", k: "youtube video watch lesson", go: function () { if (typeof akYtOpen === "function") akYtOpen({}); } },
+  { t: "Vocal warm-ups", a: "Learn › Warm-ups (exercises with guide tones), and Warm-up videos to play on the way to a show.", k: "warm warmup vocal voice sing", go: function () { go("learn", { learnTab: "warmups" }); } },
+  { t: "Metronome and tuner", a: "Buttons for the Button bar (Settings › Playing screen › Button bar), also in Learn.", k: "metronome tuner tune click tempo bpm", go: akHelpSet("Button bar") },
+  { t: "Instrument, tuning and chord diagrams", a: function () { return akHelpSetWhere("Instrument and tuning") + ": guitar, ukulele, piano, Drop D…"; }, k: "instrument tuning guitar ukulele piano diagram drop", go: akHelpSet("Instrument and tuning") },
+  { t: "Share a song", a: "Song editor › ⋯ › Share this song (a .chordbook.json file). The other person opens it with Import › Songs.", k: "share send song file", go: akHelpEditSong },
+  { t: "Add songs (paste, file, photos)", a: "Songs › + New: blank, paste, a file, or 📷 photos of a chord sheet. Import tab for many at once.", k: "add new song paste photo import file", go: akHelpView("songs") },
+  { t: "Deleted a song by mistake", a: function () { return akHelpSetWhere("Libraries and reset") + " › Recently deleted (kept 30 days)."; }, k: "delete deleted trash undo recover", go: akHelpSet("Libraries and reset") },
+  { t: "Type chords quickly", a: "The chord keyboard opens in the Chord chart box. Elsewhere, ⌨ then ♪.", k: "chord keyboard type typing", go: akHelpSet("Chord keyboard") },
+  { t: "Keyboard won't show with the pedal", a: function () { return "Use the app's keyboard: tap the box, then ⌨. " + akHelpSetWhere("On-screen keyboard") + "."; }, k: "keyboard type typing pedal missing", go: akHelpSet("On-screen keyboard") },
+  { t: "Write a song", a: "Write tab: lyric pad, chords, rhymes, layouts. Quick idea makes a work in progress with a voice memo.", k: "write songwriting lyric rhyme idea original", go: akHelpView("write") },
+  { t: "Banter and jokes", a: "The Banter screen, and the banter window on the playing screen.", k: "banter joke talk story crowd", go: akHelpView("banter") },
+  { t: "Learn, lessons and scales", a: "Learn tab: lessons, scales, chord library, trainer, licks, warm-ups, plans.", k: "learn lesson scale practice theory", go: akHelpView("learn") },
+  { t: "Calendar", a: function () { return akHelpSetWhere("Calendar") + ": your next shows from Google Calendar."; }, k: "calendar date schedule google", go: akHelpSet("Calendar") },
+  { t: "Move things around on a page", a: "The ⇅ button at the top of a page: drag by ⠿, snap, hide, save as default.", k: "arrange move layout drag order", go: akHelpView("songs") },
+  { t: "Fewer buttons (simpler)", a: function () { return akHelpSetWhere("Simple mode") + ", and Usage modes."; }, k: "simple easy less fewer hide clutter", go: akHelpSet("Simple mode") },
+  { t: "Find duplicate songs and tidy up", a: "More › Tidy my library: empty songs, duplicates, songs with no chords.", k: "duplicate tidy clean empty", go: akHelpView("tidy") },
+  { t: "Pay, tips and stats", a: "A show's page › money (pay, tips, costs); Logs and stats for totals and charts.", k: "pay tips money stats earnings invoice", go: akHelpView("stats") },
+  { t: "Take the tour again", a: function () { return akHelpSetWhere("Help, tour and tips") + "."; }, k: "tour tutorial welcome intro", go: function () { openTour(); } }
+];
+
+/* ---- 107: ways to use each feature ---- */
+var AK_FEAT_WAYS = {
+  search: ["Type a word you remember from the chorus to find a song fast.", "Filter by “not played in a while” to freshen a set."],
+  smart: ["Tag songs “capo 2”, “Drop D” or “upbeat” and save each as a smart list.", "Make a smart list of requests you still need to learn."],
+  shelves: ["Keep half-finished originals off your stage list.", "Move a song to Originals the night you first play it live."],
+  editor: ["Paste a chart from the web and let it convert chords-above to [C]chords.", "Keep a stage note (“count in 4”, “key of A for duet”) that shows while you play."],
+  findchords: ["Paste a messy chord sheet with ♭/♯ and let it turn into real chords."],
+  sheet: ["Paste only the chord sheet from a website onto lyrics you already typed."],
+  lucky: ["Have a chord list but no placement? Spread it and nudge the dashed guesses."],
+  placer: ["From the playing screen, fix a chord in the right spot without losing your place.", "Tap a word, then the chord: fastest way to chord new lyrics."],
+  shape: ["Found a voicing you like? Tap its frets and the app names it and keeps it."],
+  bv: ["Mark harmony lines for a duo gig.", "Show only one singer's part on their tablet."],
+  degrees: ["Use numbers to play in any key a singer asks for.", "Show both to learn the theory as you play."],
+  versions: ["Rewrote a verse and miss the old one? Restore it from song history."],
+  play: ["Fit to screen for short songs; auto-scroll for long ones.", "Touch lock so a stray tap doesn't jump songs mid-set."],
+  toolbar: ["Keep only the buttons you use at gigs on the Button bar.", "Make a “practice” button set and a “stage” set and swap with Buttons ▾."],
+  infoflip: ["Flip to banter between songs, then back to your buttons."],
+  infowin: ["Dock the Info window to the side on a tablet to see the next song coming."],
+  notepad: ["Jot a line idea mid-song without leaving the playing screen."],
+  pedal: ["Left pedal = previous, right = next; a double press starts auto-scroll.", "Turn pages hands-free while you keep strumming."],
+  solo: ["Add a Solo block so auto-scroll waits while you take the solo."],
+  loop: ["Loop the bridge until it's in your hands, then play the whole song."],
+  practice: ["Slow the scroll and metronome to 80% for a new song, then build up."],
+  needswork: ["Flag shaky songs during a gig, then practice them the next morning."],
+  learn: ["Pick your level and instrument; everything on Learn follows it."],
+  lessons: ["Read one short lesson a day before practice."],
+  scales: ["See the scale for a song's key in your tuning before writing a solo."],
+  levels: ["Set Beginner to hide advanced chords while you learn."],
+  trainer: ["Two minutes of note naming a day to learn the neck."],
+  licks: ["Learn one lick in the key of tonight's set and drop it into a solo."],
+  warmups: ["Run the pre-show routine in the car (sound only).", "Set your voice type so the guide tones fit your range."],
+  plans: ["Pick a goal (“learn songs faster”) and follow the daily plan."],
+  piano: ["Switch to piano to show a keyboard player the voicings."],
+  soloscales: ["Let it pop up just before a solo with the chord you're on lit up."],
+  words: ["Stuck on a rhyme? Put the cursor on the word and look at Rhymes.", "Use Same meaning to avoid repeating a word in a verse."],
+  syllables: ["Match syllable counts so verse 2 sings like verse 1."],
+  audio: ["Record a rough take on each new song idea.", "Link the original recording to learn it by ear."],
+  sharein: ["Hum an idea into your voice recorder app, then Share it into the song."],
+  strum: ["Show the strum under the chords while you teach the song to a friend."],
+  exports: ["Print a lead sheet for a sit-in player.", "Export ChordPro to use your songs in another app."],
+  stats: ["See which songs you really play most, and which you never play."],
+  emaillist: ["Grow your mailing list from the request page, export it for your newsletter."],
+  idea: ["Driving and a melody hits? One tap, sing it, done."],
+  sendto: ["Send a song to a show straight from the editor."],
+  shows: ["Tick songs off as you play them; timers keep each set on length."],
+  breaks: ["Glance at the countdown to know if there's time for one more."],
+  retune: ["Get a heads-up before the Drop D song, and a reminder to tune back."],
+  requests: ["Put the QR sign on the tip jar so people request and tip from their phones."],
+  history: ["Look back at what worked at a venue before you play there again.", "Make a setlist from a great night."],
+  build: ["Pick “wine bar, 3 sets” and get a ready setlist from your own songs."],
+  backup: ["Put the backup button on the bar and tap it after every edit session."],
+  import: ["Bring a whole folder of chord files in at once."],
+  modes: ["Turn off Songwrite on your stage tablet to keep it clean."],
+  themes: ["A dark theme for dim bars, a light one for daytime patios."],
+  arrange: ["Put the search box where your thumb reaches on the phone."],
+  ytwin: ["Keep a lesson video with a song you're learning.", "Watch the original live version before a gig, right next to your chart."],
+  ytwarm: ["Play your warm-up videos in a row on the drive; minimise to keep only the sound."],
+  ckb: ["Type “G  D/F#  Em7  C” in the chord box with big keys, no hunting for #.", "Add your own endings (m9, 7#9) so they're one tap."],
+  help: ["Ask “where is the capo” or “how do I back up” and tap Take me there."],
+  flows: ["Follow “Playing a show” the week of a gig so nothing is forgotten."]
+};
+
+/* ---- 106: quick start ---- */
+var AK_HELP_QS = [
+  { id: "inst", t: "Pick your instrument and tuning", d: "Guitar, ukulele or piano, and your tuning, so chord shapes are right.", go: akHelpSet("Instrument and tuning") },
+  { id: "song", t: "Add your first song", d: "Songs › + New: paste a chart from the web, type one, or take photos of a chord sheet.", go: function () { go("songs"); var f = akHelpFn("akQuickAdd"), b = document.querySelector('[aria-label="New"],[aria-label="+ New"]'); if (f) setTimeout(function () { try { f(b || document.body); } catch (e) {} }, 80); }, auto: function () { try { return songCount() > 0 && !akOnlySamples(); } catch (e) { return false; } } },
+  { id: "play", t: "Play it", d: "Tap ▶ on a song. Auto-scroll moves the words; the pedal or a tap turns songs.", go: akHelpPlay, auto: function () { return (lib().log || []).length > 0; } },
+  { id: "set", t: "Make a setlist", d: "Shows › + New, or ✦ Build a setlist to get one made from your songs.", go: akHelpView("shows"), auto: function () { return (lib().shows || []).some(function (s) { return (s.items || []).length > 0; }); } },
+  { id: "pedal", t: "Connect your pedal (if you have one)", d: "Teach the app your pedal's keys once.", go: akHelpSet("Pedal") },
+  { id: "look", t: "Choose your look", d: "A theme, text size and the buttons you want on the playing screen.", go: akHelpSet("Themes and Atmosphere") },
+  { id: "backup", t: "Save a backup", d: "One file with everything. Keep it somewhere safe.", go: function () { saveBackupFile(null); }, auto: function () { return !!store.lastBackup; } }
+];
+function akHelpQsDone(st) { var c = akHelpCfg(); return !!(c.qs.done[st.id] || (st.auto && st.auto())); }
+function akHelpQsCount() { return AK_HELP_QS.filter(akHelpQsDone).length; }
+function akHelpQsList(compact) {
+  var c = akHelpCfg(), box = h("div", { class: "akhelp-steps" });
+  AK_HELP_QS.forEach(function (st, i) {
+    var done = akHelpQsDone(st);
+    box.appendChild(h("div", { class: "akhelp-step" + (done ? " done" : "") },
+      h("button", { class: "akhelp-tick", "aria-pressed": done ? "true" : "false", "aria-label": (done ? "Not done: " : "Done: ") + st.t, onClick: function () { c.qs.done[st.id] = !c.qs.done[st.id] ? 1 : 0; save(); render(); } }, done ? "✓" : String(i + 1)),
+      h("div", { class: "grow" }, h("b", null, st.t), compact ? null : h("div", { class: "muted" }, st.d)),
+      h("button", { class: "sm", onClick: function () { c.qs.done[st.id] = 1; save(); st.go(); } }, "Show me")));
+  });
+  return box;
+}
+function akHelpQsCard() {
+  var c = akHelpCfg(), n = akHelpQsCount(), all = AK_HELP_QS.length;
+  if (c.qs.hide || n >= all) return null;
+  var det = h("details", { class: "card akhelp-qs", "data-bk": "quick-start" }, h("summary", null, h("b", null, "Quick start"), h("span", { class: "muted" }, "  " + n + " of " + all + " done")));
+  if (!c.qs.closed) det.open = true;
+  det.addEventListener("toggle", function () { if (!!c.qs.closed === !det.open) return; c.qs.closed = !det.open; save(); });
+  det.appendChild(akHelpQsList(true));
+  det.appendChild(h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "sm", onClick: function () { go("help"); } }, "❓ Help and how-to"), h("button", { class: "sm", onClick: function () { c.qs.hide = true; save(); render(); toast("Hidden. It's on the Help page any time."); } }, "Hide")));
+  return det;
+}
+(function () {
+  var vs = viewSongs;
+  viewSongs = function () {
+    var el = vs.apply(this, arguments);
+    try { if (!S.q) { var card = akHelpQsCard(), host = el.querySelector('[data-blocks="songs"]'); if (card && host) host.insertBefore(card, host.firstChild); } } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---- 108: guided flows ---- */
+var AK_HELP_FLOWS = [
+  { id: "show", t: "Playing a show", d: "From booking to the drive home.", steps: [
+    { t: "Add the show", d: "Date, time, venue and address (the address becomes a map link).", go: function () { go("shows"); var f = akHelpFn("akGigNewDialog"); if (f) setTimeout(f, 60); } },
+    { t: "Put it on your calendar", d: "Connect Google Calendar so your shows appear on Tonight.", go: akHelpSet("Calendar") },
+    { t: "Make a flyer", d: "A post or poster for the show.", go: function () { var f = akHelpFn("akFlyerOpen"); if (f) f(); else toast("Flyers are coming in the graphics update."); }, need: "akFlyerOpen" },
+    { t: "Build the setlist", d: "Pick the kind of gig and length, or start from a past night.", go: function () { var f = akHelpFn("akSetHelper"); if (f) f({}); else go("build"); } },
+    { t: "Tip and request sign", d: "Your QR page for requests and tips; print the sign for the tip jar.", go: function () { var f = akHelpFn("akTipSignOpen"); if (f) f(); else akHelpSetGo(akHelpSetFind("Live requests")); } },
+    { t: "Pack and remind", d: "Reminders pop up at the right set (capo, water, mention the mailing list).", go: akHelpSet("Reminders") },
+    { t: "Warm up on the way", d: "Your warm-up videos in a row, sound only if you minimise.", go: function () { if (typeof akYtOpen === "function") akYtOpen({ tab: "warm" }); else go("learn", { learnTab: "warmups" }); } },
+    { t: "Play the show", d: "Open the show and tap Play show. Breaks, timers and requests are on the playing screen.", go: akHelpView("shows") },
+    { t: "After the show", d: "Pay and tips on the show's page, then a backup.", go: akHelpView("history") }] },
+  { id: "learn", t: "Learning a new song", d: "From finding it to playing it on stage.", steps: [
+    { t: "Find it", d: "Discover has about 1,500 well-known songs; or paste a chart.", go: akHelpView("discover") },
+    { t: "Add the chart", d: "Songs › + New › paste. Chords above the words convert by themselves.", go: akHelpView("songs") },
+    { t: "Keep a video with it", d: "A lesson or the original, in the YouTube window.", go: akHelpEditSong },
+    { t: "Practice the hard part", d: "Loop a section and slow it down (Button bar: Loop, Practice).", go: akHelpPlay },
+    { t: "Flag it until it's ready", d: "Needs work keeps it on your practice list.", go: akHelpEditSong },
+    { t: "Put it in a set", d: "Add it to a setlist when it's ready.", go: akHelpView("shows") }] },
+  { id: "write", t: "Writing a song", d: "Idea to finished original.", steps: [
+    { t: "Catch the idea", d: "Quick idea: a new work in progress with a voice memo.", go: akHelpView("write") },
+    { t: "Write the words", d: "Write tab: rhymes, same-meaning words and syllable counts as you type.", go: akHelpView("write") },
+    { t: "Add chords", d: "Pick a layout (split, chord strip, side by side) and tap chords onto the words.", go: akHelpView("write") },
+    { t: "Record takes", d: "Takes and memos stay with the song.", go: akHelpEditSong },
+    { t: "Call it finished", d: "Move it to Originals and into a setlist.", go: akHelpView("songs") }] },
+  { id: "stage", t: "Setting up for the stage", d: "One time, before your first gig with the app.", steps: [
+    { t: "Instrument and tuning", d: "So the chord shapes match what you play.", go: akHelpSet("Instrument and tuning") },
+    { t: "Pedal", d: "Teach it your pedal's keys.", go: akHelpSet("Pedal") },
+    { t: "Buttons", d: "Only the buttons you use live.", go: akHelpSet("Button bar") },
+    { t: "Text size", d: "Readable from where the tablet sits.", go: akHelpSet("Text size and style") },
+    { t: "Theme", d: "Dark for night gigs, light for daytime.", go: akHelpSet("Themes and Atmosphere") },
+    { t: "Try a full run", d: "Play a setlist at home, start to end, with the pedal.", go: akHelpView("shows") }] },
+  { id: "device", t: "Moving to a new device", d: "Bring everything across safely.", steps: [
+    { t: "Save a backup file", d: "On the old device.", go: function () { saveBackupFile(null); } },
+    { t: "Open it on the new device", d: "Import tab › the backup file. Songs, setlists, shows, settings come across.", go: akHelpView("import") },
+    { t: "Things that stay per device", d: "Your GitHub key, recorded guitar, show recordings and YouTube key: set them up again.", go: akHelpSet("Backups") },
+    { t: "Keep them in step", d: "Sync between my devices, if you use both.", go: akHelpSet("Sync between my devices") }] }
+];
+function akHelpFlowEl(f, open) {
+  var c = akHelpCfg(), st = c.flows[f.id] = c.flows[f.id] || {}, n = f.steps.filter(function (x, i) { return st[i]; }).length;
+  var det = h("details", { class: "card akhelp-flow", "data-flow": f.id }, h("summary", null, h("b", null, f.t), h("span", { class: "muted" }, "  " + n + " of " + f.steps.length)));
+  if (open) det.open = true;
+  det.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, f.d));
+  var box = h("div", { class: "akhelp-steps" });
+  f.steps.forEach(function (x, i) {
+    var soon = x.need && !akHelpFn(x.need);
+    box.appendChild(h("div", { class: "akhelp-step" + (st[i] ? " done" : "") },
+      h("button", { class: "akhelp-tick", "aria-pressed": st[i] ? "true" : "false", "aria-label": (st[i] ? "Not done: " : "Done: ") + x.t, onClick: function () { st[i] = st[i] ? 0 : 1; save(); var p = det.parentNode; if (p) p.replaceChild(akHelpFlowEl(f, true), det); } }, st[i] ? "✓" : String(i + 1)),
+      h("div", { class: "grow" }, h("b", null, x.t), h("div", { class: "muted" }, x.d + (soon ? " (coming soon)" : ""))),
+      soon ? null : h("button", { class: "sm", onClick: function () { x.go(); } }, "Take me there")));
+  });
+  det.appendChild(box);
+  det.appendChild(h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "sm", onClick: function () { c.flows[f.id] = {}; save(); var p = det.parentNode; if (p) p.replaceChild(akHelpFlowEl(f, true), det); } }, "Start over")));
+  return det;
+}
+
+/* ---- 109: "Where is…?" matching (no internet needed) ---- */
+var AK_HELP_STOP = "where is are was the a an how do does did i can could to my me of in on for what whats it its this that which there with and or at from get got go find put use using make turn set want need please show into be up out you your change changing adjust".split(" ");
+var AK_HELP_SYN = [
+  ["transpose", "key", "semitone"], ["scroll", "autoscroll", "scrolling", "speed"], ["pedal", "foot", "footswitch", "bluetooth", "page turner"],
+  ["backup", "back up", "save", "copy", "restore"], ["font", "text", "size", "bigger", "smaller", "zoom", "larger"], ["theme", "color", "colour", "dark", "light", "look", "background", "picture"],
+  ["setlist", "set list", "sets", "list"], ["show", "gig", "night", "venue", "concert"], ["tip", "tips", "money", "pay", "qr", "request", "requests", "jar"],
+  ["video", "youtube", "watch", "clip"], ["warm", "warmup", "warm-up", "vocal", "voice", "sing", "singing"], ["record", "recording", "recorder", "audio", "take", "memo"],
+  ["chord", "chords", "shape", "diagram", "fingering"], ["lyric", "lyrics", "words"], ["metronome", "tempo", "bpm", "click", "beat"], ["tuner", "tune", "tuning", "drop d"],
+  ["keyboard", "type", "typing", "keys"], ["calendar", "date", "schedule", "booking"], ["flyer", "poster", "post", "graphic"], ["help", "tour", "tutorial", "guide", "start", "begin", "new here"],
+  ["delete", "remove", "trash", "lost", "undo", "recover"], ["share", "send", "export", "print", "pdf", "printout"], ["volume", "louder", "quieter", "loud", "sound", "audio"], ["import", "add", "paste", "photo"], ["banter", "joke", "jokes", "talk", "story"],
+  ["practice", "learn", "lesson", "lessons", "scale", "scales"], ["break", "pause", "rest", "intermission"], ["write", "writing", "songwriting", "rhyme", "rhymes", "idea", "original"],
+  ["button", "buttons", "toolbar", "bar"], ["history", "played", "log", "stats", "statistics"], ["simple", "easy", "clutter", "fewer"], ["device", "phone", "tablet", "sync", "transfer"]
+];
+function akHelpNorm(t) { return String(t || "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9#♯♭\- ]+/g, " ").replace(/\s+/g, " ").trim(); }
+function akHelpStem(w) { return w.length > 4 ? w.replace(/(ings|ing|ed|es|s)$/, "") : w; }
+function akHelpTerms(q) {
+  var words = akHelpNorm(q).split(" ").filter(function (w) { return w && AK_HELP_STOP.indexOf(w) < 0; });
+  return words.map(function (w) {
+    var set = [w, akHelpStem(w)];
+    AK_HELP_SYN.forEach(function (g) { if (g.indexOf(w) >= 0 || g.indexOf(akHelpStem(w)) >= 0) set = set.concat(g); });
+    return set.filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+  });
+}
+/* each term counts by how rare it is (a word in every item, like "song", counts little) */
+function akHelpScore(terms, text, title, idf) {
+  var T = " " + akHelpNorm(text) + " ", Ti = " " + akHelpNorm(title) + " ", sc = 0, hit = 0;
+  terms.forEach(function (set, i) {
+    var best = 0;
+    set.forEach(function (x, j) {
+      var w = j < 2 ? 1 : 0.6;
+      if (Ti.indexOf(" " + x) >= 0) best = Math.max(best, 2 * w); else if (T.indexOf(" " + x) >= 0) best = Math.max(best, w);
+    });
+    if (best) { hit++; sc += best * (idf ? idf[i] : 1); }
+  });
+  if (!hit) return 0;
+  return sc * (hit / terms.length);
+}
+function akHelpItems() {
+  var out = [];
+  AK_HELP_WHERE.forEach(function (x) { out.push({ kind: "❓", title: x.t, text: x.t + " " + x.k, sub: typeof x.a === "function" ? x.a : function () { return x.a; }, go: x.go, w: 1.5 }); });
+  try { akFeatAll().forEach(function (f) { out.push({ kind: "✦", title: f.name, text: f.name + " " + f.desc + " " + f.where + " " + (AK_FEAT_WAYS[f.id] || []).join(" "), sub: function () { return f.where; }, go: function () { akFeatGo(f); }, w: 1 }); }); } catch (e) {}
+  AK_HELP_FLOWS.forEach(function (f) { out.push({ kind: "➜", title: "Guide: " + f.t, text: f.t + " " + f.d + " " + f.steps.map(function (s) { return s.t + " " + s.d; }).join(" "), sub: function () { return f.d; }, go: function () { S.akHelpFlow = f.id; go("help"); }, w: 1.1 }); });
+  try { akSetIndex().forEach(function (x) { out.push({ kind: "⚙", title: x.title, text: x.title + " " + x.group + " " + x.bits.join(" "), sub: function () { return "Settings › " + (x.group || ""); }, go: function () { akHelpSetGo(x); }, w: 0.8 }); }); } catch (e) {}
+  return out;
+}
+function akHelpSearch(q, max) {
+  var terms = akHelpTerms(q); if (!terms.length) return [];
+  var items = akHelpItems(), seen = {}, N = items.length;
+  var idf = terms.map(function (set) { var df = 0; items.forEach(function (it) { var T = " " + akHelpNorm(it.text) + " "; if (set.some(function (x) { return T.indexOf(" " + x) >= 0; })) df++; }); return Math.log(1 + N / (1 + df)); });
+  return items.map(function (it) { return { it: it, s: akHelpScore(terms, it.text, it.title, idf) * it.w }; })
+    .filter(function (r) { return r.s > 0; }).sort(function (a, b) { return b.s - a.s; })
+    .filter(function (r) { var k = r.it.title.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; })
+    .slice(0, max || 8).map(function (r) { return r.it; });
+}
+function akHelpResultsEl(q, max) {
+  var box = h("div", { class: "akhelp-res" }), list = akHelpSearch(q, max);
+  if (!list.length) { box.appendChild(h("p", { class: "hint" }, "Nothing found for “" + q.trim() + "”. Try one word, like capo, pedal, backup, setlist.")); return box; }
+  list.forEach(function (it) {
+    var sub = ""; try { sub = it.sub(); } catch (e) {}
+    box.appendChild(h("div", { class: "akhelp-hit" }, h("span", { class: "akhelp-k", "aria-hidden": "true" }, it.kind),
+      h("div", { class: "grow" }, h("b", null, it.title), sub ? h("div", { class: "muted" }, sub) : null),
+      it.go ? h("button", { class: "sm", onClick: function () { it.go(); } }, "Take me there") : null));
+  });
+  return box;
+}
+
+/* ---- the Help page ---- */
+function viewHelp() {
+  var res = h("div");
+  var inp = h("input", { type: "search", class: "akhelp-q", placeholder: "Where is…?  How do I…?  (capo, pedal, backup…)", "aria-label": "Where is…? Ask a question", value: S.akHelpQ || "", onInput: function () { S.akHelpQ = this.value; draw(); } });
+  function draw() { res.textContent = ""; var q = (S.akHelpQ || "").trim(); if (q.length >= 2) res.appendChild(akHelpResultsEl(q, 8)); }
+  draw();
+  var c = akHelpCfg(), n = akHelpQsCount();
+  var qs = h("details", { class: "card", "data-bk": "quick-start" }, h("summary", null, h("b", null, "Quick start"), h("span", { class: "muted" }, "  " + n + " of " + AK_HELP_QS.length + " done")), akHelpQsList(false),
+    c.qs.hide ? h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { c.qs.hide = false; save(); toast("The Quick start card is back on Songs."); render(); } }, "Show it on Songs again")) : null);
+  if (n < AK_HELP_QS.length) qs.open = true;
+  var flows = h("div", { "data-bk": "guided-flows" }, h("h2", null, "Step by step"));
+  AK_HELP_FLOWS.forEach(function (f) { flows.appendChild(akHelpFlowEl(f, S.akHelpFlow === f.id)); });
+  var more = h("div", { class: "card", "data-bk": "more-help" }, h("strong", null, "More help"),
+    h("div", { class: "row", style: "margin:6px 0 0" },
+      h("button", { onClick: function () { openTour(); } }, "Take the tour"),
+      h("button", { onClick: function () { go("guide"); } }, "All features and ways to use them"),
+      typeof welcomeOpen === "function" ? h("button", { onClick: function () { welcomeOpen(); } }, "Welcome screen") : null));
+  var body = h("div", { "data-blocks": "help" }, h("div", { class: "akhelp-search", "data-bk": "where-is" }, inp, res), qs, flows, more);
+  if (S.akHelpFlow) setTimeout(function () { var el = document.querySelector('[data-flow="' + S.akHelpFlow + '"]'); S.akHelpFlow = null; if (el) el.scrollIntoView({ block: "start" }); }, 60);
+  return shell("Help and how-to", body, {});
+}
+AK_VIEWS.help = viewHelp; AK_VIEW_TAB.help = "settings";
+
+/* ---- 107: the feature guide shows the ways to use each feature ---- */
+akViewFeatures = function () {
+  var list = h("div");
+  var search = h("input", { type: "search", placeholder: "Search features", "aria-label": "Search features", value: S.featQ || "", onInput: function () { S.featQ = this.value; draw(); } });
+  function draw() {
+    list.textContent = "";
+    var all = akFeatAll(), qq = (S.featQ || "").trim().toLowerCase(), cats = AK_FEAT_CATS.concat(["Toolbar buttons"]);
+    cats.forEach(function (cat, ci) {
+      var items = all.filter(function (f) { return f.cat === cat && (!qq || (f.name + " " + f.desc + " " + f.where + " " + (AK_FEAT_WAYS[f.id] || []).join(" ")).toLowerCase().indexOf(qq) >= 0); });
+      if (!items.length) return;
+      var det = h("details", { class: "card akfeatcat", "data-bk": laySlug(cat) }, h("summary", null, h("b", null, cat), h("span", { class: "muted" }, " " + items.length)));
+      if (qq || ci === 0) det.open = true;
+      items.forEach(function (f) {
+        var off = !akModesOk(f.modes), ways = AK_FEAT_WAYS[f.id] || [];
+        var it = h("details", { class: "akfeat" + (off ? " off" : ""), "data-feat": f.id }, h("summary", null, h("span", { class: "gt" }, f.name), off ? h("span", { class: "muted" }, " (mode off)") : null));
+        var links = (f.links || []).map(akFeat).filter(Boolean);
+        it.appendChild(h("div", { class: "akfeat-b" }, akFeatPic(f.area), h("div", { class: "grow" },
+          h("div", { class: "gd" }, f.desc), h("div", { class: "muted gd" }, "Where: " + f.where),
+          ways.length ? h("div", { class: "gd akhelp-ways" }, h("b", null, "Ways to use it"), h("ul", null, ways.map(function (w) { return h("li", null, w); }))) : null,
+          links.length ? h("div", { class: "muted gd" }, "Works with: ", links.map(function (l, i) { return h("button", { class: "linkish", onClick: function () { S.featQ = l.name; search.value = l.name; draw(); } }, l.name + (i < links.length - 1 ? "," : "")); })) : null,
+          f.go ? h("button", { class: "sm", onClick: function () { akFeatGo(f); } }, "Take me there") : null)));
+        det.appendChild(it);
+      });
+      list.appendChild(det);
+    });
+    if (!list.firstChild) list.appendChild(h("p", { class: "empty" }, "Nothing matches."));
+  }
+  draw();
+  var body = h("div", { "data-blocks": "guide" },
+    h("div", { class: "card", "data-bk": "tour" }, h("strong", null, "New here?"), h("p", { class: "hint", style: "margin:6px 0" }, "A short walk through the main features, or ask the Help page “where is…?”."),
+      h("div", { class: "row", style: "margin:0" }, h("button", { class: "primary", onClick: function () { openTour(); } }, "Take the tour"), h("button", { onClick: function () { go("help"); } }, "❓ Help and how-to"))),
+    h("div", { class: "row" }, h("div", { class: "grow" }, search)), list);
+  return shell("All features", body, {});
+};
+AK_FEAT.push(
+  { id: "help", cat: "Look and feel", name: "Help: Where is…?", desc: "Ask in your own words (“where is the capo?”, “how do I back up?”) and get the place with a Take me there button. Works with no internet.", where: "Help and how-to (Songs ⋯, More, or Settings › Help)", modes: "", go: "help", sel: ".akhelp-q", area: "list", links: ["flows"], tour: false },
+  { id: "flows", cat: "Look and feel", name: "Quick start and step-by-step guides", desc: "A short Quick start for new users, and guides like “Playing a show” that walk you through each step and tick them off.", where: "Help and how-to; the Quick start card on Songs", modes: "", go: "help", sel: '[data-bk="guided-flows"]', area: "list", links: ["help"], tour: false });
+
+/* ---- ways in: Songs ⋯ and More menus, Settings › Help, the Settings search ---- */
+(function () {
+  var m0 = menu;
+  menu = function (anchor, items) {
+    try {
+      var item = { label: "❓ Help: Where is…? and how-to", onClick: function () { go("help"); } };
+      var at = -1; (items || []).forEach(function (it, i) { if (it && /^Tour and feature guide/.test(it.label || "")) at = i; });
+      if (at >= 0) { items = items.slice(); items.splice(at, 0, item); }
+      else if (anchor && anchor.classList && anchor.classList.contains("ak8-more")) { items = items.slice(); var sp = -1; items.forEach(function (it, i) { if (it && it.sep && sp < 0) sp = i; }); items.splice(sp >= 0 ? sp : items.length, 0, item); }
+    } catch (e) {}
+    return m0.call(this, anchor, items);
+  };
+})();
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("data-and-extras");
+    c.section("Help and how-to", "Where is…? search, Quick start and step-by-step guides");
+    c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { go("help"); } }, "❓ Open Help"),
+      h("button", { onClick: function () { akHelpCfg().qs.hide = false; save(); toast("The Quick start card is back on Songs."); } }, "Show Quick start on Songs")));
+  };
+})();
+(function () {
+  var se = akSetSearchEl;
+  akSetSearchEl = function () {
+    var box = se.apply(this, arguments);
+    try {
+      var inp = box.querySelector("input"), res = box.querySelector(".ak8-sres"), mine = h("div", { class: "akhelp-sres" });
+      box.insertBefore(mine, res);
+      var draw = function () { mine.textContent = ""; var q = (inp.value || "").trim(); if (q.length < 3 || !/\s/.test(q)) return; var l = akHelpSearch(q, 3); if (!l.length) return; mine.appendChild(h("div", { class: "ak8-shead" }, "Help")); l.forEach(function (it) { var sub = ""; try { sub = it.sub(); } catch (e) {} mine.appendChild(h("button", { class: "item ak8-shit", onClick: function () { it.go(); } }, h("span", { class: "ak8-sk" }, it.kind), h("span", { class: "grow" }, h("b", null, it.title), sub ? h("span", { class: "muted" }, "  " + sub) : null))); }); };
+      inp.addEventListener("input", draw); setTimeout(draw, 0);
+    } catch (e) {}
+    return box;
+  };
+})();
+
+akCss("akhelp", [
+  ".akhelp-search{position:sticky;top:0;z-index:5;background:var(--bg);padding:2px 0 8px}",
+  ".akhelp-q{width:100%;font-size:1.05rem;padding:10px 12px;border-radius:12px}",
+  ".akhelp-hit{display:flex;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line,#8883)}.akhelp-k{width:1.4em;text-align:center;flex:none}",
+  ".akhelp-steps{display:flex;flex-direction:column;gap:2px;margin-top:6px}",
+  ".akhelp-step{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#8882)}.akhelp-step.done b{opacity:.65;text-decoration:line-through}",
+  ".akhelp-tick{flex:none;width:30px;height:30px;min-height:0;padding:0;border-radius:50%;font-weight:700}.akhelp-step.done .akhelp-tick{background:var(--accent,#2aa198);color:#fff;border-color:transparent}",
+  ".akhelp-ways ul{margin:2px 0 4px 1.1em;padding:0}.akhelp-ways li{margin:2px 0}",
+  ".akhelp-qs summary{cursor:pointer}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
