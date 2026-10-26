@@ -2344,7 +2344,7 @@ function songInfoLine(s, o) {
   if (o.length && s.duration) out.push(fmtTime(s.duration));
   if (o.tempo && s.tempo) out.push(s.tempo + " bpm");
   if (o.timeSig && s.timeSig) out.push(s.timeSig);
-  if (o.capo && Number(s.capo)) out.push("capo " + s.capo);
+  if (o.capo) { var cpn = typeof akCapoNum === "function" ? akCapoNum(s) : Number(s.capo) || 0; if (cpn) out.push("capo " + cpn); }
   if (o.retune && typeof akRetuneOf === "function" && akRetuneOf(s)) out.push("⚠ " + akRetuneOf(s));
   if (o.year && s.year) out.push(String(s.year));
   if (o.origArtist && s.origArtist) out.push("orig. " + s.origArtist);
@@ -12152,7 +12152,7 @@ function nextUpEl(p, song) {
   var nx = p.list[p.idx + 1]; if (!nx) return null;
   var ns = findSong(nx.songId); if (!ns) return null;
   var bits = [ns.title || "Untitled"]; if (ns.key) bits.push(ns.key);
-  var c1 = Number(song.capo) || 0, c2 = Number(ns.capo) || 0, warn = c1 !== c2;
+  var c1 = typeof akCapoNum === "function" ? akCapoNum(song) : Number(song.capo) || 0, c2 = typeof akCapoNum === "function" ? akCapoNum(ns) : Number(ns.capo) || 0, warn = c1 !== c2;
   if (c2) bits.push("capo " + c2); else if (warn) bits.push("no capo");
   var r1 = typeof akRetuneOf === "function" ? akRetuneOf(song) : "", r2 = typeof akRetuneOf === "function" ? akRetuneOf(ns) : "";
   if (r1 !== r2) { warn = true; bits.push(r2 ? r2 : "back to " + akBaseTuningName()); } else if (r2) bits.push(r2);
@@ -17111,7 +17111,7 @@ function akNextItems() {
   try { suggestCandidates("like", false, []).slice(0, 3).forEach(function (x) { if (!out.some(function (o) { return o.s === x.s; })) out.push({ s: x.s, why: (x.why || []).slice(0, 1).join("") }); }); } catch (e) {}
   return out;
 }
-function akSongBits(s) { return [s.key ? "Key " + s.key : "", Number(s.capo) ? "Capo " + s.capo : "", typeof akRetuneOf === "function" && akRetuneOf(s) ? "⚠ " + akRetuneOf(s) : ""].filter(Boolean).join(" · "); }
+function akSongBits(s) { return [s.key ? "Key " + s.key : "", (typeof akCapoNum === "function" ? akCapoNum(s) : Number(s.capo)) ? "Capo " + (typeof akCapoNum === "function" ? akCapoNum(s) : s.capo) : "", typeof akRetuneOf === "function" && akRetuneOf(s) ? "⚠ " + akRetuneOf(s) : ""].filter(Boolean).join(" · "); }
 /* one kind of info as an element (short = for the top bar) */
 function akInfoBody(kind, song, short) {
   var box = h("div", { class: "akinfo-b" });
@@ -37781,6 +37781,212 @@ openSuggest = function () {
   draw();
   close = modal("What fits next", body, [{ label: "Close" }], { wide: true });
 };
+
+/* ================================================================ akcapo: capo badge (version 15.6)
+   - Most songs keep their capo as text ("Capo 8" as the first line of the chord chart), not in the Capo fret field, so the
+     Song header (which only read the field) showed nothing. akCapoOf(song) reads the field first, else the first lines of the
+     chord chart, then of the lyrics ("Capo 4", "Capo4w Heart", "capo on 4th fret", "Capo 2?"). akCapoNum(song) is just the fret.
+     Text capos are shown only: the sounding key and Hear it still use the field until "Use capo N as this song's capo fret".
+   - Playing screen: a CAPO badge at the start of the Song header (switch: settings().capoInfo, as before) and one pinned in the
+     top corner of the song words (or the chord pane). Tap it: change the capo, keep a text capo as the field, badge settings.
+   - Song editor: a Capo box right above Change key (top of the lyrics box), with − / + and the text it found.
+   - Settings › Playing screen › Capo badge: where, stays while scrolling, side, size, color, "No capo" badge, editor box, and
+     fill in the capo fret from the chord text for every song at once.
+   settings().capoBadge = { pane: "words" | "chords" | "off", stick, side: "right" | "left", size: "s" | "m" | "l", color, none, edit } */
+AK_VERSION = "15.6";
+AK_WHATS_NEW = [
+  "Capo badge: the capo is now easy to see. A CAPO badge sits at the start of the Song header and in the top corner of the song words on the playing screen, and a Capo box is right above Change key in the song editor. It also reads a capo written in the chord text (like “Capo 8” on the first line). Tap the badge to change it or to choose its place, size and color (Settings › Playing screen › Capo badge)."
+].concat(AK_WHATS_NEW);
+
+var AKCAPO_RX = /\bcapo\s*(?:on\s*(?:the\s*)?)?(?:fret\s*)?(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:\s*fret\b)?/i;
+var AKCAPO_COLORS = [["accent", "Theme color"], ["gold", "Gold"], ["red", "Red"], ["green", "Green"], ["plain", "Plain"]];
+
+function akCapoCfg() {
+  var st = settings(), c = st.capoBadge;
+  if (!c || typeof c !== "object") c = st.capoBadge = {};
+  if (!c.pane) c.pane = "words"; if (c.stick === undefined) c.stick = true; if (!c.side) c.side = "right";
+  if (!c.size) c.size = "m"; if (!c.color) c.color = "accent"; if (c.none === undefined) c.none = false; if (c.edit === undefined) c.edit = true;
+  return c;
+}
+/* the capo written in the first few lines of a text: { n, note, line } or null */
+function akCapoInText(text) {
+  var lines = String(text || "").split(/\r?\n/).filter(function (l) { return l.trim(); }).slice(0, 6);
+  for (var i = 0; i < lines.length; i++) {
+    var m = AKCAPO_RX.exec(lines[i]); if (!m) continue;
+    var n = Number(m[1]); if (!(n > 0 && n <= 12)) continue;
+    var note = lines[i].slice(m.index + m[0].length).replace(/^[\s,.;:\-–—]+/, "").trim();
+    if (note.length > 28 || /[\[\]:]|^(intro|verse|chorus|bridge|outro)/i.test(note)) note = "";
+    return { n: n, note: note, line: lines[i].trim() };
+  }
+  return null;
+}
+/* { n, from: "field" | "text", note, line } or null */
+function akCapoOf(song) {
+  if (!song) return null;
+  var t = akCapoInText(song.chords) || akCapoInText(song.lyrics), f = Number(song.capo) || 0;
+  if (f > 0) return { n: f, from: "field", note: t && t.n === f ? t.note : "", line: t ? t.line : "" };
+  return t ? { n: t.n, from: "text", note: t.note, line: t.line } : null;
+}
+function akCapoNum(song) { var c = akCapoOf(song); return c ? c.n : 0; }
+
+function akCapoBadge(song, where) {
+  var c = akCapoCfg(), cp = akCapoOf(song);
+  if (!cp && !c.none) return null;
+  var b = h("button", { type: "button", class: "akcapob akcapob-" + c.size + " akcapob-c-" + c.color + (cp ? "" : " none") + (cp && cp.from === "text" ? " fromtext" : ""),
+    "data-capo-where": where, "aria-label": cp ? "Capo " + cp.n + (cp.note ? " " + cp.note : "") + ". Tap to change" : "No capo. Tap to change",
+    onClick: function (e) { e.stopPropagation(); akCapoMenu(b, song); } },
+    cp ? [h("span", { class: "akcapob-k" }, "CAPO"), h("b", null, String(cp.n)), cp.note ? h("span", { class: "akcapob-n" }, cp.note) : null] : h("span", { class: "akcapob-k" }, "NO CAPO"));
+  b.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+  return b;
+}
+function akCapoRedraw() { if (S.view === "play" && typeof keepAutoRender === "function") keepAutoRender(); else render(); }
+function akCapoSet(song, n) { n = Math.max(0, Math.min(12, Number(n) || 0)); song.capo = n; song.updated = Date.now(); save(); }
+function akCapoMenu(btn, song) {
+  var cp = akCapoOf(song), items = [];
+  items.push({ head: cp ? "Capo " + cp.n + (cp.from === "text" ? " (written in the song: “" + cp.line.slice(0, 40) + "”)" : " (this song's capo fret)") : "No capo on this song" });
+  if (cp && cp.from === "text") items.push({ label: "✓ Use capo " + cp.n + " as this song's capo fret (sounding key and ▶ Hear it count it)", onClick: function () { akCapoSet(song, cp.n); akCapoRedraw(); toast("Capo " + cp.n + " saved for this song."); } });
+  items.push({ label: "✎ Change the capo…", onClick: function () {
+    askText("Capo fret (0 = no capo)", String(cp ? cp.n : 0), "Save", function (v) { var n = parseInt(v, 10); if (isNaN(n) || n < 0 || n > 12) { toast("Type a fret from 0 to 12."); return; } akCapoSet(song, n); akCapoRedraw(); toast(n ? "Capo " + n + "." : "No capo."); });
+  } });
+  if (cp && cp.from === "field") items.push({ label: "Take the capo off this song", onClick: function () { akCapoSet(song, 0); akCapoRedraw(); } });
+  items.push({ sep: true }, { label: "⚙ Capo badge: place, size, color…", onClick: akCapoSettingsBox });
+  menu(btn, items);
+}
+
+/* songs whose capo is only written in the text */
+function akCapoTextOnly() { return (lib().songs || []).filter(function (s) { var cp = akCapoOf(s); return cp && cp.from === "text"; }); }
+function akCapoFillAll(done) {
+  var list = akCapoTextOnly();
+  if (!list.length) { toast("Every song with a capo in its text already has its capo fret."); return; }
+  confirmBox("Fill in the capo fret of " + list.length + " song" + (list.length === 1 ? "" : "s") + " from the capo written in their chords or lyrics? Their sounding key and ▶ Hear it will then count the capo. You can change any of them in the song editor.", "Fill in " + list.length, function () {
+    list.forEach(function (s) { akCapoSet(s, akCapoOf(s).n); }); toast("Capo fret filled in for " + list.length + " songs."); if (done) done();
+  });
+}
+function akCapoControls(out, redraw) {
+  var c = akCapoCfg();
+  function sel(label, key, opts) {
+    var s = h("select", { "aria-label": label, onChange: function () { c[key] = this.value; save(); redraw(); } }, opts.map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+    s.value = c[key]; out.appendChild(h("label", { class: "fld" }, label, s));
+  }
+  function chk(label, get, set) {
+    var i = h("input", { type: "checkbox" }); i.checked = !!get();
+    i.addEventListener("change", function () { set(i.checked); save(); redraw(); });
+    out.appendChild(h("label", { class: "chk" }, i, label));
+  }
+  chk("Show it at the start of the Song header", function () { return settings().capoInfo !== false; }, function (v) { settings().capoInfo = v; });
+  sel("Badge on the song", "pane", [["words", "Top corner of the song words"], ["chords", "Top corner of the chord pane"], ["off", "Not on the song"]]);
+  chk("Stays in the corner while the song scrolls", function () { return c.stick; }, function (v) { c.stick = v; });
+  sel("Side", "side", [["right", "Right"], ["left", "Left"]]);
+  sel("Size", "size", [["s", "Small"], ["m", "Medium"], ["l", "Large"]]);
+  sel("Color", "color", AKCAPO_COLORS);
+  chk("Show “No capo” on songs without one", function () { return c.none; }, function (v) { c.none = v; });
+  chk("Capo box above Change key in the song editor", function () { return c.edit; }, function (v) { c.edit = v; });
+  var n = akCapoTextOnly().length;
+  out.appendChild(h("p", { class: "hint" }, "The badge reads the song's Capo fret, or else a capo written in the first lines of its chords or lyrics (like “Capo 8”). A written capo is only shown: tap the badge to keep it as the capo fret so the sounding key counts it."));
+  if (n) out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akCapoFillAll(redraw); } }, "Fill in the capo fret from the text (" + n + " song" + (n === 1 ? "" : "s") + ")")));
+}
+function akCapoSettingsBox() {
+  var body = h("div", { class: "akcapo-set" });
+  function draw() { body.textContent = ""; akCapoControls(body, function () { draw(); if (S.view === "play") akCapoPaint(); }); }
+  draw();
+  modal("Capo badge", body, [{ label: "Done", primary: true, onClick: function () { akCapoRedraw(); } }]);
+}
+
+/* playing screen */
+function akCapoPaint(root) {
+  root = root || document.querySelector(".play"); if (!root || !S.play) return;
+  var song = curSong(); if (!song) return;
+  var c = akCapoCfg();
+  /* Song header: the old "Capo N" text goes; the tuning warning stays */
+  var old = root.querySelector(".pbottom .akcapo");
+  if (old) { old.textContent = old.textContent.split(" · ").filter(function (x) { return !/^Capo \d/.test(x); }).join(" · "); if (!old.textContent) old.remove(); }
+  Array.prototype.forEach.call(root.querySelectorAll(".akcapob"), function (x) { if (!x.closest(".akcapo-pin")) x.remove(); });
+  var tt = root.querySelector(".pbottom .tt > div");
+  if (tt && settings().capoInfo !== false) { var hb = akCapoBadge(song, "header"); if (hb) tt.insertBefore(hb, tt.firstChild); }
+  akCapoPin();
+}
+function akCapoPin() {
+  var c = akCapoCfg(), old = document.querySelector(".play .akcapo-pin"); if (old) old.remove();
+  if (c.pane === "off" || !S.play) return;
+  var pane = c.pane === "chords" ? $("chPane") || $("lyrPane") : $("lyrPane") || $("chPane"); if (!pane) return;
+  var b = akCapoBadge(curSong(), "pane"); if (!b) return;
+  pane.insertBefore(h("div", { class: "akcapo-pin " + (c.stick ? "stick" : "") + " " + c.side }, b), pane.firstChild);
+}
+(function () {
+  var rp = renderPlay;
+  renderPlay = function () { var root = rp.apply(this, arguments); try { akCapoPaint(root); } catch (e) {} return root; };
+  var fc = fillCharts;
+  fillCharts = function () { var r = fc.apply(this, arguments); try { akCapoPin(); } catch (e) {} return r; };
+})();
+
+/* song editor: the Capo box above Change key */
+function akCapoEditCard(s, changed) {
+  var cp = akCapoOf(s), f = Number(s.capo) || 0;
+  function set(n) { akCapoSet(s, n); changed(); }
+  var row = h("div", { class: "row", style: "margin:0;align-items:center;flex-wrap:wrap" },
+    h("span", { class: "akcapob akcapob-m akcapob-c-" + akCapoCfg().color + (cp ? "" : " none") + " static" }, h("span", { class: "akcapob-k" }, cp ? "CAPO" : "NO CAPO"), cp ? h("b", null, String(cp.n)) : null),
+    h("span", { class: "grow" }),
+    h("button", { "aria-label": "Capo down one fret", disabled: !cp, onClick: function () { set((cp ? cp.n : 0) - 1); } }, "−"),
+    h("button", { "aria-label": "Capo up one fret", onClick: function () { set((cp ? cp.n : 0) + 1); } }, "+"),
+    h("button", { "aria-label": "Capo badge settings", onClick: akCapoSettingsBox }, "⚙"));
+  var card = h("div", { class: "card akcapo-ed" }, row);
+  if (cp && cp.from === "text") card.appendChild(h("p", { class: "hint", style: "margin:6px 0 0" }, "Written in the song: “" + cp.line.slice(0, 60) + "”. ",
+    h("button", { class: "sm", onClick: function () { set(cp.n); toast("Capo " + cp.n + " saved for this song."); } }, "Use it as the capo fret")));
+  else if (cp && cp.note) card.appendChild(h("p", { class: "hint", style: "margin:6px 0 0" }, cp.note));
+  return card;
+}
+(function () {
+  if (typeof akTr17Card !== "function") return;
+  var kc = akTr17Card;
+  akTr17Card = function (s, onText, onShift) {
+    var card = kc.apply(this, arguments);
+    if (!akCapoCfg().edit) return card;
+    return h("div", { class: "akcapo-edwrap" }, akCapoEditCard(s, onText), card);
+  };
+})();
+
+/* song editor: the badge next to the title in the top bar too */
+function akCapoEdTitle() {
+  if (S.view !== "song" || !akCapoCfg().edit || settings().capoInfo === false) return;
+  var s = findSong(S.songId), h1 = document.querySelector(".shell > .topbar > h1"); if (!s || !h1 || h1.parentNode.querySelector(".akcapob")) return;
+  var b = akCapoBadge(s, "editor"); if (b) h1.parentNode.insertBefore(b, h1.nextSibling);
+}
+(function () {
+  var ar = typeof akAfterRender2 === "function" ? akAfterRender2 : null;
+  akAfterRender2 = function () { if (ar) ar.apply(this, arguments); try { akCapoEdTitle(); } catch (e) {} };
+})();
+
+/* Settings › Playing screen */
+(function () {
+  var prev = typeof akSettingsExtra27 === "function" ? akSettingsExtra27 : null;
+  akSettingsExtra27 = function (c) {
+    if (prev) prev(c);
+    c.again("playing-screen");
+    c.section("Capo badge", "Where and how the capo shows on the playing screen and in the song editor");
+    akCapoControls(c.out, function () {});
+  };
+})();
+
+akCss("akcapo", [
+  ".akcapob{display:inline-flex;align-items:baseline;gap:.3em;padding:.12em .55em;border-radius:.5em;border:2px solid var(--accent);background:var(--accent);color:var(--bg,#111);font-weight:800;line-height:1.2;white-space:nowrap;min-height:0;cursor:pointer;vertical-align:middle;margin-right:.5em;box-shadow:0 1px 4px rgba(0,0,0,.35)}",
+  ".akcapob .akcapob-k{font-size:.7em;letter-spacing:.08em;font-weight:800}",
+  ".akcapob b{font-size:1.25em;font-weight:900}",
+  ".akcapob .akcapob-n{font-size:.75em;font-weight:600;opacity:.9}",
+  ".akcapob-s{font-size:.8rem}.akcapob-m{font-size:1rem}.akcapob-l{font-size:1.45rem}",
+  ".akcapob-c-gold{background:#E5B800;border-color:#E5B800;color:#1a1400}",
+  ".akcapob-c-red{background:#E5484D;border-color:#E5484D;color:#fff}",
+  ".akcapob-c-green{background:#30A46C;border-color:#30A46C;color:#fff}",
+  ".akcapob-c-plain{background:var(--panel);border-color:var(--fg);color:var(--fg)}",
+  ".akcapob.none{background:var(--panel);border-color:var(--line);color:var(--muted);box-shadow:none}",
+  ".akcapob.static{cursor:default}",
+  ".pbottom .tt .akcapob{font-size:max(.85em,.85rem)}",
+  ".akcapo-pin{position:relative;height:0;z-index:6;overflow:visible}",
+  ".akcapo-pin.stick{position:sticky;top:0}",
+  ".akcapo-pin .akcapob{position:absolute;top:6px;margin:0}",
+  ".akcapo-pin.right .akcapob{right:6px}.akcapo-pin.left .akcapob{left:6px}",
+  ".shell > .topbar > .akcapob{flex:none;margin:0 6px;align-self:center}",
+  ".akcapo-ed{display:block}.akcapo-ed .row button{min-width:2.6em}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
