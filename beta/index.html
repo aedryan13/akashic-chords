@@ -37498,6 +37498,290 @@ akCss("akset-b", [
   ".akset-bar.akset-empty{padding:10px;border:2px dashed var(--accent);border-radius:12px}.akset-bartxt{width:100%;font-weight:600}"
 ].join("\n"));
 
+/* ================================================================ akcol_a: collapse anything (version 15.3, item 114)
+   - One helper folds a section: tap its title (or the slim ▾ bar above it) to fold it to one line, tap again to open it.
+     Folded or open is remembered per section in settings().akCol {key: true = folded}.
+     Rules (AKCOL_RULES) say what folds; a MutationObserver (and a direct call after the Write tab and the recorder page draw)
+     applies them again whenever a screen redraws, so it keeps working when a box rebuilds itself.
+     Modes: "head" (the section's first child is its title), "inner" (a bar is put in as the first child), "bar" (a bar is put
+     just before the section, for rows that have no box of their own).
+   - Phone recorder page: the 📌 This phone box (switch to the other phone, open the normal app) is now at the top, and every box
+     folds: Picture and level, Files and screen, Sound input, Camera, After the show, This phone.
+     The tablet's Phone recorders window: Phones and How many phones fold too, and its other boxes remember open or closed.
+   - Write tab: Layout, Tempo, the chord pane, Song parts (+ Verse...), Rhymes and Tools each fold.
+   - Tags in Add songs and What fits next: one folded 🏷 Tags line (picked tags stay visible), grouped into Kind, Mood and energy,
+     Genre, Decade, Length and voice, Occasion and Other. Each group folds; ✎ Change the groups moves a tag (settings().tagCats). */
+AK_VERSION = "15.3";
+AK_WHATS_NEW = [
+  "Fold away anything: on the recorder phone page the 📌 This phone box (switch phones, open the normal app) is at the top, and every box there folds. On the Write tab, Layout, Tempo, the chords, Song parts, Rhymes and Tools fold too. Tap a title or a ▾ bar; the app remembers.",
+  "Add songs: the tags are folded into one 🏷 Tags line, so the songs are right under the search. Open it to see the tags in groups (Mood and energy, Genre, Decade...); each group folds, and ✎ Change the groups moves a tag."
+].concat(AK_WHATS_NEW);
+
+function akColMap() { var st = settings(); if (!st.akCol || typeof st.akCol !== "object") st.akCol = {}; return st.akCol; }
+function akColShut(key, def) { var m = akColMap(); return Object.prototype.hasOwnProperty.call(m, key) ? !!m[key] : !!def; }
+/* a fold is not a change to the songs: saved, but not counted toward the "save a backup file" reminder */
+function akColSet(key, shut) { var m = akColMap(); if (m[key] === !!shut) return; m[key] = !!shut; save(); store.changes = Math.max(0, (store.changes || 1) - 1); }
+
+var AKCOL_RULES = [
+  /* phone recorder page */
+  { sel: ".akrp-in > .akrp-cb", mode: "head", key: function (el) { var k = [].slice.call(el.classList).filter(function (c) { return c !== "akrp-cb" && c !== "card"; })[0]; return "rp:" + (k || "box"); } },
+  /* the tablet's Phone recorders window */
+  { sel: ".akrr-win .akrr-top > .card", mode: "head", key: "rrw:phones" },
+  { sel: ".akrr-win > .ak17-phones", mode: "inner", key: "rrw:howmany", title: "How many phones" },
+  /* Write tab */
+  { sel: ".akw9-card > .ak18-lays", mode: "head", key: "w:layout" },
+  { sel: ".akw9-card .akw9-tempo", mode: "bar", key: "w:tempo", title: "Tempo and click" },
+  { sel: ".akw9-card:not(.ak18-L-strip) .ak18-pane", mode: "inner", key: "w:pane", title: "Chords" },
+  { sel: ".akw9-card .akw9-secs", mode: "bar", key: "w:secs", title: "Song parts" },
+  { sel: ".akw9-card .akw9-rhy", mode: "inner", key: "w:rhy", title: "Rhyme helper" },
+  { sel: ".akw9-card .akw9-tools", mode: "bar", key: "w:tools", title: "Tools" }
+];
+
+function akColBar(title, key) { return h("button", { type: "button", class: "akfold-bar", "data-akcolk": key }, h("span", { class: "akfold-arr" }), title); }
+function akColPaint(el, bar, shut) {
+  el.classList.toggle("akfold-shut", shut);
+  if (bar) { bar.classList.toggle("shut", shut); bar.setAttribute("aria-expanded", shut ? "false" : "true"); }
+}
+function akColApply(el, r) {
+  var key = typeof r.key === "function" ? r.key(el) : r.key, shut = akColShut(key, r.def), bar = null;
+  el.setAttribute("data-akcol", key);
+  if (r.mode === "head") el.classList.add("akfold", "akfold-head");
+  else if (r.mode === "inner") {
+    el.classList.add("akfold");
+    bar = el.firstElementChild && el.firstElementChild.classList.contains("akfold-bar") ? el.firstElementChild : null;
+    if (!bar) { bar = akColBar(r.title, key); el.insertBefore(bar, el.firstChild); }
+  } else {
+    el.classList.add("akfold-tgt");
+    bar = el.previousElementSibling && el.previousElementSibling.getAttribute("data-akcolk") === key ? el.previousElementSibling : null;
+    if (!bar && el.parentNode) { bar = akColBar(r.title, key); el.parentNode.insertBefore(bar, el); }
+  }
+  akColPaint(el, bar, shut);
+}
+function akColRun(root) {
+  root = root || document.body; if (!root || !root.querySelectorAll) return;
+  AKCOL_RULES.forEach(function (r) {
+    Array.prototype.forEach.call(root.querySelectorAll(r.sel), function (el) { try { akColApply(el, r); } catch (e) {} });
+  });
+  /* the Phone recorders window's own boxes: remember open or closed */
+  Array.prototype.forEach.call(root.querySelectorAll(".akrr-win details:not([data-akcold])"), function (d) {
+    var s = d.querySelector("summary"), key = "rrw:" + (s ? s.textContent.trim() : "box");
+    d.setAttribute("data-akcold", "1");
+    var m = akColMap(); if (Object.prototype.hasOwnProperty.call(m, key)) d.open = !m[key];
+    d.addEventListener("toggle", function () { akColSet(key, !d.open); });
+  });
+}
+/* taps: a bar, or the title of a "head" section */
+document.addEventListener("click", function (e) {
+  var t = e.target && e.target.closest ? e.target : null; if (!t) return;
+  var bar = t.closest(".akfold-bar"), el = null;
+  if (bar) el = bar.parentNode && bar.parentNode.classList.contains("akfold") && bar.parentNode.firstElementChild === bar ? bar.parentNode : bar.nextElementSibling;
+  else {
+    var head = t.closest(".akfold-head > :first-child"); if (!head || t.closest("input,select,textarea,a")) return;
+    el = head.parentNode;
+  }
+  if (!el || !el.getAttribute("data-akcol")) return;
+  e.preventDefault(); e.stopPropagation();
+  var key = el.getAttribute("data-akcol"), shut = !el.classList.contains("akfold-shut");
+  akColSet(key, shut); akColPaint(el, bar && bar.getAttribute("data-akcolk") === key ? bar : (el.firstElementChild && el.firstElementChild.classList.contains("akfold-bar") ? el.firstElementChild : el.previousElementSibling && el.previousElementSibling.classList.contains("akfold-bar") ? el.previousElementSibling : null), shut);
+}, true);
+(function () {
+  var t = 0;
+  function later() { if (t) return; t = setTimeout(function () { t = 0; akColRun(); }, 60); }
+  function start() { if (window.MutationObserver && document.body) new MutationObserver(later).observe(document.body, { childList: true, subtree: true }); later(); }
+  if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
+
+/* ---------------------------------------------------------------- the phone recorder page */
+(function () {
+  var dr = akRpDraw;
+  akRpDraw = function () {
+    var out = dr.apply(this, arguments);
+    try { akRp114(); } catch (e) { if (window.console) console.warn("akcol recorder page", e); }
+    return out;
+  };
+})();
+function akRp114() {
+  var inn = AKRP.el && AKRP.el.querySelector(".akrp-in"); if (!inn) return;
+  var kids = [].slice.call(inn.children), h1 = inn.querySelector("h1");
+  /* the 📌 This phone box (switch phones, the normal app) goes to the top */
+  var keep = inn.querySelector(".ak16f-keep");
+  if (keep && h1) inn.insertBefore(keep, h1.nextSibling);
+  /* the camera picture and the level meter */
+  var pv = inn.querySelector(":scope > .akrp-pv"), meter = inn.querySelector(":scope > .ak11-meter");
+  if (pv || meter) {
+    var pc = h("div", { class: "akrp-cb card ak114-pv" }, h("b", null, pv ? "📈 Picture and level" : "📈 Sound level"));
+    (pv || meter).parentNode.insertBefore(pc, pv || meter);
+    if (pv) pc.appendChild(pv); if (meter) pc.appendChild(meter);
+  }
+  /* Black screen, Files, save to Downloads and the hint: one box */
+  var row = kids.filter(function (x) { return x.classList.contains("row") && /Black screen/.test(x.textContent); })[0];
+  if (row) {
+    var fc = h("div", { class: "akrp-cb card ak114-files" }, h("b", null, "💾 Files and screen"));
+    inn.insertBefore(fc, row);
+    var n = row, nx;
+    for (var i = 0; i < 3 && n; i++) { nx = n.nextElementSibling; fc.appendChild(n); n = nx; if (!n || !(n.matches("label.chk") || (n.matches("p.hint") && /Keep this page open/.test(n.textContent)))) break; }
+  }
+  if (pv && AKRP.stream && pv.paused) { pv.muted = true; pv.play().catch(function () {}); }
+  akColRun(AKRP.el);
+}
+akCss("akfold", [
+  ".akfold.akfold-shut > :not(:first-child){display:none !important}",
+  ".akfold-tgt.akfold-shut{display:none !important}",
+  ".akfold.akfold-shut{min-height:0 !important;height:auto !important;padding-bottom:4px}",
+  ".akfold-head > :first-child{cursor:pointer;user-select:none}",
+  ".akfold-head > :first-child::after{content:' ▾';opacity:.6;font-weight:400}",
+  ".akfold-head.akfold-shut > :first-child::after{content:' ▸'}",
+  ".akfold-bar{display:flex;align-items:center;gap:4px;width:100%;min-height:26px !important;margin:2px 0;padding:1px 4px !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:var(--muted,#999);font-size:.8rem;font-weight:600;text-align:left;cursor:pointer;justify-content:flex-start}",
+  ".akfold-bar .akfold-arr::before{content:'▾'}.akfold-bar.shut .akfold-arr::before{content:'▸'}",
+  ".ak18-pane.akfold-shut + .ak18-grip{display:none}",
+  ".akrp-in > .akrp-cb > b:first-child{display:block;padding:2px 0;text-align:left;font-size:1rem}.akrp-cb.akfold-shut{margin:8px 0;padding:8px 12px}",
+  ".ak114-pv .akrp-pv{margin-top:6px}"
+].join(""));
+
+/* ---------------------------------------------------------------- the Write tab */
+(function () {
+  var vw = viewWrite;
+  viewWrite = function () { var el = vw.apply(this, arguments); try { akColRun(el); } catch (e) {} return el; };
+  AK_VIEWS.write = viewWrite;
+})();
+
+/* ---------------------------------------------------------------- tags in groups */
+var AKTAG_CATS = ["Kind", "Mood and energy", "Genre", "Decade", "Length and voice", "Occasion", "Other"];
+var AKTAG_MOOD = /^(mellow|slow|mid-?tempo|upbeat( energy)?|soft|sad|happy|loud|heavy|fast|love|ballad|slow dance|singalong|sing-?along|chill|party|dance|romantic|energetic|calm|dark|fun)$/i;
+var AKTAG_GENRE = /(rock|pop|folk|country|blues|jazz|soul|funk|r&b|rnb|hip hop|rap|reggae|grunge|gospel|indie|swing|bossa|ska|trip hop|britpop|brazilian|latin|alternative|metal|punk|disco|motown|showtunes?|soundtrack|oldie|top 40|classical|bluegrass|americana|electronic|edm|house|musical|standards?)/i;
+function akTagCatOf(name) {
+  var c = (settings().tagCats || {})[name]; if (c) return c;
+  var n = String(name || "").trim();
+  if (/^(cover|original|new|instrumental|duet|request|mine|wip)$/i.test(n)) return "Kind";
+  if (/^(\d{4}s|\d0s|'\d0s)$/i.test(n)) return "Decade";
+  if (/^(long|short|high notes|low notes|easy|hard|capo.*|falsetto)$/i.test(n)) return "Length and voice";
+  if (/^(christmas|holiday|halloween|wedding|birthday|valentine'?s?|summer|winter)$/i.test(n)) return "Occasion";
+  if (AKTAG_MOOD.test(n)) return "Mood and energy";
+  if (AKTAG_GENRE.test(n)) return "Genre";
+  return "Other";
+}
+function akTagGroups() {
+  var g = {}, order = AKTAG_CATS.slice();
+  allTags().forEach(function (t) { var c = akTagCatOf(t.name); if (!g[c]) { g[c] = []; if (order.indexOf(c) < 0) order.splice(order.length - 1, 0, c); } g[c].push(t); });
+  return order.filter(function (c) { return g[c]; }).map(function (c) { return { cat: c, tags: g[c] }; });
+}
+/* o: {sel: [] (changed in place), onChange(), key} */
+function akTagPanel(o) {
+  var key = "tags:" + (o.key || "pick"), box = h("div", { class: "aktp" });
+  function changed() { draw(); if (o.onChange) o.onChange(); }
+  function tog(name) { var i = o.sel.indexOf(name); if (i >= 0) o.sel.splice(i, 1); else o.sel.push(name); changed(); }
+  function draw() {
+    var shut = akColShut(key, true), groups = akTagGroups();
+    box.textContent = "";
+    if (!groups.length) return;
+    box.appendChild(h("button", { type: "button", class: "aktp-head" + (shut ? " shut" : ""), "aria-expanded": shut ? "false" : "true", onClick: function () { akColSet(key, !shut); draw(); } },
+      h("span", { class: "akfold-arr" }), "🏷 Tags", h("span", { class: "muted" }, o.sel.length ? " · " + o.sel.length + " picked" : " · " + allTags().length + " in groups")));
+    if (o.sel.length) {
+      box.appendChild(h("div", { class: "chips aktp-picked" }, o.sel.map(function (n) { return h("button", { type: "button", class: "chip on", "aria-label": "Remove the tag " + n, onClick: function () { tog(n); } }, n + " ✕"); }),
+        h("button", { type: "button", class: "chip", onClick: function () { o.sel.length = 0; changed(); } }, "Clear")));
+    }
+    if (shut) return;
+    var body = h("div", { class: "aktp-body" });
+    groups.forEach(function (g) {
+      var ck = "tagcat:" + g.cat, cs = akColShut(ck, true), on = g.tags.filter(function (t) { return o.sel.indexOf(t.name) >= 0; }).length;
+      body.appendChild(h("button", { type: "button", class: "akfold-bar aktp-cath" + (cs ? " shut" : ""), "aria-expanded": cs ? "false" : "true", onClick: function () { akColSet(ck, !cs); draw(); } },
+        h("span", { class: "akfold-arr" }), g.cat, h("span", { class: "muted" }, " (" + g.tags.length + (on ? ", " + on + " picked" : "") + ")")));
+      if (!cs) body.appendChild(h("div", { class: "chips aktp-chips" }, g.tags.map(function (t) {
+        var sel = o.sel.indexOf(t.name) >= 0;
+        return h("button", { type: "button", class: "chip" + (sel ? " on" : ""), "aria-pressed": sel ? "true" : "false", onClick: function () { tog(t.name); } }, t.name);
+      })));
+    });
+    body.appendChild(h("div", { class: "row", style: "margin:4px 0 0" }, h("button", { type: "button", class: "sm", onClick: function () { akTagGroupsEdit(draw); } }, "✎ Change the groups")));
+    box.appendChild(body);
+  }
+  draw();
+  box.akDraw = draw;
+  return box;
+}
+function akTagGroupsEdit(done) {
+  var st = settings(); if (!st.tagCats || typeof st.tagCats !== "object") st.tagCats = {};
+  var body = h("div"), list = h("div", { class: "aktp-edit" });
+  function cats() { var c = AKTAG_CATS.slice(); allTags().forEach(function (t) { var x = akTagCatOf(t.name); if (c.indexOf(x) < 0) c.splice(c.length - 1, 0, x); }); return c; }
+  function draw() {
+    list.textContent = "";
+    var cs = cats();
+    akTagGroups().forEach(function (g) {
+      list.appendChild(h("div", { class: "aktp-edh" }, g.cat));
+      g.tags.forEach(function (t) {
+        list.appendChild(h("label", { class: "row aktp-edr" }, h("span", { class: "grow" }, t.name),
+          h("select", { "aria-label": "Group for " + t.name, onChange: function () {
+            var v = this.value, me = this;
+            if (v === "+") { askText("New group", "", "Add group", function (n) { n = String(n || "").trim().slice(0, 30); if (!n) { draw(); return; } st.tagCats[t.name] = n; save(); draw(); }); return; }
+            st.tagCats[t.name] = v; save(); draw();
+          } }, cs.map(function (c) { return h("option", { value: c, selected: c === g.cat }, c); }), h("option", { value: "+" }, "+ New group…"))));
+      });
+    });
+  }
+  draw();
+  body.appendChild(h("p", { class: "hint" }, "Pick a group for any tag. The app guesses groups for new tags; your picks stay."));
+  body.appendChild(list);
+  modal("Tag groups", body, [{ label: "Back to the app's guesses", onClick: function () { st.tagCats = {}; save(); if (done) done(); } }, { label: "Done", primary: true, onClick: function () { if (done) done(); } }], { wide: true });
+}
+akCss("aktp", [
+  ".aktp{margin:6px 0}",
+  ".aktp-head{display:flex;align-items:center;gap:6px;width:100%;text-align:left;justify-content:flex-start;font-weight:700}",
+  ".aktp-head .akfold-arr::before{content:'▾'}.aktp-head.shut .akfold-arr::before{content:'▸'}",
+  ".aktp-picked{margin:6px 0 0}.aktp-body{margin:4px 0 0;padding:2px 0 4px 6px;border-left:2px solid var(--line,#8884)}",
+  ".aktp-chips{margin:0 0 6px 14px}.aktp-cath{font-size:.9rem;color:var(--fg,inherit)}",
+  ".aktp-edh{font-weight:800;margin:10px 0 2px}.aktp-edr{margin:2px 0;gap:8px}.aktp-edr select{max-width:55%}"
+].join(""));
+
+/* Add songs (setlists): search, the folded tags, then the songs */
+pickSongs = function (done, o) {
+  var chosen = {}, q = "", tagSel = [], list = h("div", { class: "list" }), count = h("span", null, "0");
+  function shown() { return sortedSongs().filter(function (s) { return s.active && (!q || (s.title + " " + s.artist).toLowerCase().indexOf(q) >= 0) && (!tagSel.length || tagSel.some(function (t) { return (s.tags || []).indexOf(t) >= 0; })); }); }
+  function fill() {
+    list.textContent = "";
+    shown().forEach(function (s) {
+      var have = o && o.have && o.have[s.id];
+      list.appendChild(h("label", { class: "chk card" + (have ? " ak16-have" : ""), style: "margin:0;cursor:pointer" }, h("input", { type: "checkbox", checked: !!chosen[s.id], onChange: function () { if (this.checked) chosen[s.id] = Date.now() + Math.random(); else delete chosen[s.id]; count.textContent = String(Object.keys(chosen).length); } }),
+        h("span", null, h("strong", null, s.title || "Untitled"), h("br"), h("span", { class: "muted" }, songSub(s) + (have ? " · already in this setlist" : "")))));
+    });
+    if (!list.firstChild) list.appendChild(h("div", { class: "empty" }, "No songs match."));
+  }
+  var tags = akTagPanel({ sel: tagSel, key: "pick", onChange: fill });
+  fill();
+  var body = h("div", null, h("input", { type: "search", placeholder: "Search songs", "aria-label": "Search songs", onInput: function () { q = this.value.trim().toLowerCase(); fill(); } }), tags,
+    h("div", { class: "row" }, h("button", { onClick: function () { shown().forEach(function (s) { chosen[s.id] = Date.now() + Math.random(); }); count.textContent = String(Object.keys(chosen).length); fill(); } }, "Select all shown"), h("span", { class: "muted" }, "Selected: ", count)), list);
+  modal("Add songs", body, [{ label: "Cancel" }, { label: "Add selected", primary: true, onClick: function () { done(Object.keys(chosen).sort(function (a, b) { return chosen[a] - chosen[b]; })); } }], { wide: true });
+};
+
+/* What fits next (playing screen): the same folded tags */
+openSuggest = function () {
+  if (!S.play) return;
+  var body = h("div"), close, tagSel = [], listBox = h("div");
+  var cur = curSong();
+  var modeSel = h("select", { "aria-label": "What kind of song", onChange: draw }, [["like", "Something similar to this one"], ["change", "A change of pace"], ["rusty", "Songs I haven't played in a while"], ["fav", "My favorites"], ["any", "Anything (A–Z)"]].map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+  var fromSel = h("select", { "aria-label": "Where from", onChange: draw }, h("option", { value: "lib" }, "My whole library"), h("option", { value: "show" }, "Only what's left in this show"));
+  function draw() {
+    listBox.textContent = "";
+    var c = suggestCandidates(modeSel.value, fromSel.value === "show", tagSel);
+    if (!c.length) { listBox.appendChild(h("div", { class: "empty" }, "Nothing matches. Try a different kind of song or clear the tags.")); return; }
+    c.slice(0, 15).forEach(function (x) {
+      var s = x.s, bits = [s.artist, s.key, s.tempo ? s.tempo + " bpm" : "", (s.tags || []).slice(0, 3).join(", ")].filter(Boolean).join(" · ");
+      listBox.appendChild(h("div", { class: "card reqrow" },
+        h("div", null, h("strong", null, (s.fav ? "★ " : "") + (s.title || "Untitled"))),
+        h("div", { class: "muted" }, bits), x.why.length ? h("div", { class: "muted" }, x.why.join(" · ")) : null,
+        h("div", { class: "row", style: "margin:6px 0 0" },
+          h("button", { onClick: function () { playInsert(s.id, false); toast("“" + s.title + "” is next."); } }, "Play next"),
+          h("button", { class: "primary", onClick: function () { close(); playInsert(s.id, true); } }, "Play now"))));
+    });
+    if (c.length > 15) listBox.appendChild(h("p", { class: "hint" }, (c.length - 15) + " more not shown. Use the tags to narrow it down."));
+  }
+  body.appendChild(h("p", { class: "hint" }, "Suggestions for after “" + (cur.title || "this song") + "”. Songs you've already played in this show are left out."));
+  body.appendChild(h("div", { class: "row", style: "margin:0 0 6px" }, h("button", { onClick: function () { close(); openEncore(); } }, "🔥 Encore ideas")));
+  body.appendChild(h("label", { class: "fld" }, "I'm looking for", modeSel)); body.appendChild(h("label", { class: "fld" }, "From", fromSel));
+  body.appendChild(akTagPanel({ sel: tagSel, key: "suggest", onChange: draw }));
+  body.appendChild(listBox);
+  draw();
+  close = modal("What fits next", body, [{ label: "Close" }], { wide: true });
+};
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
