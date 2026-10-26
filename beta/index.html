@@ -1818,7 +1818,8 @@ function backViaUI() {
 window.addEventListener("popstate", function () {
   if (ignorePop > 0) { ignorePop--; return; }
   if (histDepth > 0) histDepth--;
-  if (document.querySelector(".modal")) { closeMenu(); document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); return; }
+  /* Back with a menu or window open closes just that one and stays on this screen (akx_close.js) */
+  if (akxTop()) { akxCloseTop(); histPush(); return; }
   if (S.view !== "play" && !navPeek()) return;
   S.popping = true; try { backViaUI(); } finally { S.popping = false; }
 });
@@ -37930,6 +37931,136 @@ akMarkApply = function (toks, everySong) {
     }
     return r;
   };
+})();
+
+/* akx_close.js (version 15.5): every menu, drop-down and window can be closed without picking anything.
+   - ⋯ menus (menu()) get a "✕ Close" row pinned to their bottom.
+   - Every window made by modal() gets a ✕ in its top corner (the same as tapping outside it).
+   - Other pop-ups put on the page without a way out get a ✕ too (akxEnsure), and the chord fingering pop-up closes on a tap outside.
+   - The phone's Back button and the Escape key close the top pop-up only, and stay on the same screen. */
+AK_VERSION = "15.5";
+AK_WHATS_NEW = [
+  "Every ⋯ menu and drop-down has a ✕ Close at the bottom, and every window has a ✕ in its corner, so you can always get back without choosing anything.",
+  "Tapping outside a menu or window still closes it, and so does the phone's Back button: it closes just the pop-up and keeps you on the same screen."
+].concat(AK_WHATS_NEW);
+
+/* a button that already closes its window: Close, Cancel, Done, ✕... */
+var AKX_CLOSE_RX = /^(✕|×|close|cancel|done|not now|no thanks|got it|hide)\b/i;
+function akxIsCloser(b) {
+  var a = b.getAttribute("aria-label") || "";
+  if (/^close/i.test(a)) return true;
+  if (/remove|delete/i.test(a)) return false;
+  return AKX_CLOSE_RX.test((b.textContent || "").trim());
+}
+function akxXBtn(label, fn) {
+  return h("button", { class: "icon sm akx-x", "aria-label": label || "Close", title: "Close", onClick: function (e) { e.stopPropagation(); fn(); } }, "✕");
+}
+
+/* menus: a Close row at the bottom (stays in view when a long menu scrolls) */
+(function () {
+  var m0 = menu;
+  menu = function (anchor, items) {
+    var r = m0.apply(this, arguments);
+    try {
+      var m = openMenuEl;
+      if (m && !m.querySelector(".akx-mclose")) {
+        m.appendChild(h("button", { class: "akx-mclose", "aria-label": "Close this menu", onClick: function () { closeMenu(); } }, "✕ Close"));
+        /* the menu may have grown past the bottom of the screen: nudge it back up */
+        var rc = m.getBoundingClientRect();
+        if (rc.bottom > window.innerHeight - 8) m.style.top = Math.max(8, window.innerHeight - 8 - m.offsetHeight) + "px";
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* windows from modal(): a ✕ in the corner that does what a tap outside does */
+(function () {
+  var md0 = modal;
+  modal = function () {
+    var close = md0.apply(this, arguments);
+    try { var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1]; if (m) akxModalX(m); } catch (e) {}
+    return close;
+  };
+})();
+function akxModalX(m) {
+  var sh = m.querySelector(":scope > .sheet"); if (!sh || sh.querySelector(":scope > .akx-x")) return;
+  sh.classList.add("akx-has"); if (!sh.querySelector(":scope > h2")) sh.classList.add("akx-notitle");
+  sh.insertBefore(akxXBtn("Close this window", function () { akxCloseEl(m); }), sh.firstChild);
+}
+
+/* close one pop-up the way its own controls would */
+function akxCloseEl(el) {
+  if (!el || !el.isConnected) return false;
+  if (el.classList.contains("menu")) { if (el === openMenuEl) closeMenu(); else el.remove(); return true; }
+  if (el.classList.contains("modal")) {
+    /* the same as tapping the dark area around the window (runs its onClose) */
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    if (el.isConnected) { var d = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); }); if (d) d.click(); }
+    if (el.isConnected) el.remove();
+    return true;
+  }
+  var own = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); });
+  if (own) own.click();
+  if (el.isConnected) el.remove();
+  return true;
+}
+
+/* the pop-up on top: an open menu first, then the newest window, then other pop-ups (not the floating tool windows, which have their own ✕) */
+var AKX_POPS = ".ak15-ipop, .chordpop, .listpanel, .akws-over";
+function akxTop() {
+  if (openMenuEl && openMenuEl.isConnected) return openMenuEl;
+  var ms = document.querySelectorAll(".modal"); if (ms.length) return ms[ms.length - 1];
+  var ps = document.querySelectorAll(AKX_POPS); return ps.length ? ps[ps.length - 1] : null;
+}
+function akxCloseTop() { var t = akxTop(); return t ? akxCloseEl(t) : false; }
+
+/* other pop-ups with no way out get a ✕ (checked as they appear) */
+function akxEnsure(el) {
+  if (!el || el.nodeType !== 1 || el.akxDone) return;
+  if (!el.matches || !el.matches('[role="dialog"]:not(.modal):not(.menu):not(.akfloat)')) return;
+  el.akxDone = true;
+  if (Array.prototype.some.call(el.querySelectorAll("button"), akxIsCloser)) return;
+  el.classList.add("akx-has", "akx-gen"); if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  el.insertBefore(akxXBtn("Close", function () { el.remove(); }), el.firstChild);
+}
+(function () {
+  if (typeof MutationObserver === "undefined") return;
+  new MutationObserver(function (list) {
+    list.forEach(function (r) {
+      Array.prototype.forEach.call(r.addedNodes, function (n) {
+        if (n.nodeType !== 1) return;
+        if (n.classList.contains("modal")) akxModalX(n);
+        akxEnsure(n);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+
+/* a tap outside the chord fingering pop-up closes it */
+document.addEventListener("pointerdown", function (e) {
+  var p = document.querySelector(".chordpop"); if (!p) return;
+  var t = e.target;
+  if (p.contains(t) || (t.closest && t.closest(".modal, .menu, [data-shape]"))) return;
+  p.remove();
+}, true);
+
+/* Escape closes the top pop-up (the phone's Back button is handled in ui.js's popstate, through akxCloseTop) */
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape" || S.learning) return;
+  if (akxCloseTop()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+
+(function () {
+  var css = ".menu .akx-mclose{position:sticky;bottom:-6px;margin:4px -6px -6px;padding:0 12px;min-height:44px;text-align:center;font-weight:600;background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 12px 12px;color:var(--muted)}" +
+    ".menu .akx-mclose:hover{color:var(--fg)}" +
+    ".sheet.akx-has{position:relative}" +
+    ".akx-has > .akx-x{position:absolute;top:8px;right:8px;z-index:2;min-width:36px;min-height:36px;padding:0;border-radius:50%;font-size:1rem;line-height:1;background:var(--panel);border:1px solid var(--line);color:var(--fg);opacity:.85}" +
+    ".akx-has > .akx-x:hover{opacity:1}" +
+    ".sheet.akx-has > h2{padding-right:44px}" +
+    ".sheet.akx-notitle > .body{margin-top:38px}" +
+    ".akx-gen{padding-top:40px !important}";
+  document.head.appendChild(h("style", { id: "akx-css" }, css));
 })();
 
 /* ---------- turning pasted charts into bracket form ---------- */
