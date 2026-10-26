@@ -37783,6 +37783,156 @@ openSuggest = function () {
   close = modal("What fits next", body, [{ label: "Close" }], { wide: true });
 };
 
+/* ================================================================ akmc_a: Make chords works in the chord box (version 15.3.5)
+   - The chord box (chord pane on the playing screen) only shows a line's chords when every word on it is a chord, so lines like
+     "Intro: G D Em C", "Chorus C G Am F" or "G D Em C (x2)" stayed plain text and ♪ Make all chords did nothing for them
+     (it even offered "Chorus" as a chord). Now Make all chords puts the chords on such lines in [brackets], which the chord pane
+     shows as chords, and leaves the labels (Intro:, Verse, (x2)...) as words. Commas after chords ("G, D, Em") are kept outside.
+   - Mark words as chords on the playing screen (the Make chords button) only changed the song's words, never the chord box,
+     so tapping a word in the chord pane did nothing there. It now changes the chord box too (and every song's, with "In every
+     song too"), and a chord with a comma after it is made a chord without the comma.
+   - The mark bar has ♪ Make all chords for the whole chord box when the song has one. */
+AK_VERSION = "15.3.5";
+AK_WHATS_NEW = [
+  "♪ Make all chords now works in the chord box: chords on lines with a label, like \"Intro: G D Em C\" or \"G D Em C (x2)\", show as chords in the chord pane. Mark words as chords on the playing screen changes the chord pane too, and has its own ♪ Make all chords."
+].concat(AK_WHATS_NEW);
+
+var AKMC_LABEL = /^(?:\(?(?:intro|verse|chorus|pre-?chorus|bridge|outro|solo|interlude|instrumental|tag|ending|end|riff|break|coda|refrain|hook|turnaround|vamp|hit|stop)\s*\d*\)?:?|.*:|\(?(?:x\s*\d+|\d+\s*x|\d+x|x\d+)\)?|\d+\.?|\.\.\.?|…|\(|\)|\|\|?|:\|\|?|\|\|?:|\*)$/i;
+/* a token split into the chord and what is around it: "(G)" -> ( G ), "D," -> D , */
+function akMcSplit(t) {
+  var m = /^(\(?)(.+?)([,;.]*\)?[,;.]*)$/.exec(t);
+  if (!m) return null;
+  if (m[1] && !/\)/.test(m[3])) return { lead: "", core: (m[2] + m[3]).replace(/[,;.]+$/, ""), tail: (m[2] + m[3]).match(/[,;.]*$/)[0] };
+  return { lead: m[1], core: m[2], tail: m[3] };
+}
+/* the chord name for a token, fixed if needed (♯ -> #, Fm# -> F#m), or null */
+function akMcChord(t) {
+  if (isChordTok(t)) return { lead: "", core: t, tail: "" };
+  var f = akCv17Fix(t); if (f) return { lead: "", core: f, tail: "" };
+  var p = akMcSplit(t); if (!p || p.core === t) return null;
+  if (isChordTok(p.core)) return p;
+  f = akCv17Fix(p.core); return f ? { lead: p.lead, core: f, tail: p.tail } : null;
+}
+function akMcCand(t) { return /^[A-G][#b♯♭]?/.test(t) && t.length <= 10 && (t.length <= 4 || /[\d#+°Δ()\/♯♭]/.test(t)) && !AKMC_LABEL.test(t); }
+
+akCv17Scan = function (text) {
+  var fixed = [], odd = [];
+  var out = String(text || "").replace(/\r\n?/g, "\n").split("\n").map(function (ln) {
+    if (/^\s*[\[{]/.test(ln) || (typeof isTabLine === "function" && isTabLine(ln)) || !ln.trim()) return ln;
+    var BR = /^\(?\[[^\[\]]+\][,;.)]*$/; /* a chord already in brackets, like [G] or [D], */
+    if (/[\[\]]/.test(ln.replace(/\S+/g, function (t) { return BR.test(t) ? "" : t; }))) return ln; /* chords inside words (lyrics style): leave it */
+    var toks = ln.split(/\s+/).filter(Boolean), good = 0, plain = 0, label = 0, cand = [], words = 0;
+    toks.forEach(function (t) {
+      if (EXTRA_TOKENS[t]) return;
+      if (BR.test(t)) { good++; plain++; return; }
+      var c = akMcChord(t);
+      if (c) { good++; if (c.lead || c.tail) plain++; return; }
+      if (AKMC_LABEL.test(t)) { label++; return; }
+      if (akMcCand(t)) { cand.push(t); return; }
+      words++;
+    });
+    if (!good && !cand.length) return ln;
+    /* a line of chords (with labels like Intro: or (x2) at most), or one that is mostly chords */
+    var chordy = words === 0 ? good + cand.length >= 1 && good >= cand.length && (good + cand.length >= label || good >= 2) : good >= 3 && good >= 2 * words;
+    if (!chordy) return ln;
+    var keepOdd = words === 0 && cand.length && good >= cand.length;
+    if (keepOdd) cand.forEach(function (t) { if (odd.indexOf(t) < 0) odd.push(t); });
+    var bare = !label && !plain && !words; /* the whole line is chords: it shows as one without brackets */
+    return ln.replace(/\S+/g, function (t) {
+      if (EXTRA_TOKENS[t] || BR.test(t)) return t;
+      if (isChordTok(t)) return bare ? t : "[" + t + "]";
+      var c = akMcChord(t);
+      if (c) { if (c.core !== t.replace(/^\(|[,;.)]+$/g, "")) fixed.push(t + " → " + c.core); else if (bare) return t; else fixed.push(t + " → [" + c.core + "]"); return bare ? c.core : c.lead + "[" + c.core + "]" + c.tail; }
+      if (keepOdd && cand.indexOf(t) >= 0) return bare ? t : "[" + t + "]";
+      return t;
+    });
+  }).join("\n");
+  return { text: out, fixed: fixed, odd: odd, changed: out !== String(text || "").replace(/\r\n?/g, "\n") };
+};
+/* Make all chords: also runs when the only change is putting a line's chords in brackets */
+akCv17Run = function (ta, song, done) {
+  if (!ta) return;
+  var r = akCv17Scan(ta.value);
+  if (!r.changed && !r.odd.length) { toast("Everything in the chord box already shows as a chord."); return; }
+  var shown = 0;
+  r.text.split("\n").forEach(function (ln, i) { var o = String(ta.value || "").replace(/\r\n?/g, "\n").split("\n")[i]; if (o !== ln) shown++; });
+  function go() {
+    var l = settings().customChords = settings().customChords || [];
+    r.odd.forEach(function (n) { if (l.indexOf(n) < 0) l.push(n); });
+    syncCustomChords();
+    ta.value = r.text; song.chords = r.text; done();
+    toast("Made the chords on " + shown + (shown === 1 ? " line" : " lines") + " show as chords.");
+  }
+  var nb = r.fixed.filter(function (x) { return !/→ \[/.test(x); });
+  var msg = (nb.length ? "Fix the spelling: " + nb.slice(0, 12).join(",  ") + (nb.length > 12 ? " …" : "") + ". " : "") +
+    (r.text.indexOf("[") >= 0 && r.text.split("[").length > String(ta.value || "").split("[").length ? "Chords on lines with a label (like Intro: or x2) go in [brackets] so they show as chords. " : "") +
+    (r.odd.length ? "Treat these as chords too (remembered for every song): " + r.odd.join("  ") + "." : "");
+  if (!msg) msg = "Make the chords in this box show as chords?";
+  modal("Make all chords", h("p", null, msg), [{ label: "Cancel" }, { label: "Make chords", primary: true, onClick: go }]);
+};
+
+/* mark words as chords on the playing screen: the words and the chord box both change; "D," becomes [D], */
+function akMcCore(t) { if (isChordTok(t)) return t; var p = akMcSplit(t); return p && p.core !== t && isChordTok(p.core) ? p.core : null; }
+function akMcMark(text, toks, box) {
+  var want = {}; toks.forEach(function (t) { want[t] = 1; });
+  var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), out = [], n = 0;
+  function hasTok(l) { return l.replace(/\[[^\]]*\]/g, " ").split(/\s+/).some(function (t) { return want[t]; }); }
+  function wrap(t) { var c = akMcCore(t); if (!c) return "[" + t + "]"; var i = t.indexOf(c); return t.slice(0, i) + "[" + c + "]" + t.slice(i + c.length); }
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (!hasTok(l)) { out.push(l); continue; }
+    if (!/\[/.test(l) && isChordLineText(l)) {
+      if (box === "chords") { out.push(l); n++; continue; } /* the whole line shows as chords already */
+      var nx = lines[i + 1];
+      if (nx != null && nx.trim() && !isChordLineText(nx) && !/\[[^\]]+\]/.test(nx) && !/^\s*\{/.test(nx)) { out.push(mergeAbove(l, nx, false)); i++; }
+      else out.push(l.replace(/\S+/g, function (t) { return isChordTok(t) ? "[" + t + "]" : t; }));
+      n++; continue;
+    }
+    if (/^\s*\{/.test(l) || (typeof isTabLine === "function" && isTabLine(l))) { out.push(l); continue; }
+    out.push(l.split(/(\[[^\]]*\])/).map(function (part) {
+      if (/^\[[^\]]*\]$/.test(part)) return part;
+      return part.replace(/(^|\s)(\S+)(?=\s|$)/g, function (m0, sp, t) { if (want[t]) { n++; return sp + wrap(t); } return m0; });
+    }).join(""));
+    /* in the chord box, the other chords on that line go in brackets too, so the whole line shows */
+    if (box === "chords") { var one = akCv17Scan(out[out.length - 1]); if (!one.odd.length) out[out.length - 1] = one.text; }
+  }
+  return { text: out.join("\n"), n: n };
+}
+akMarkLyrics = function (text, toks) { return akMcMark(text, toks, "lyrics"); };
+akMarkApply = function (toks, everySong) {
+  var song = curSong(); if (!song) return;
+  snap("make chords");
+  var l = settings().customChords = settings().customChords || [], added = [];
+  toks.forEach(function (t) { if (!isChordTok(t) && !akMcCore(t) && l.indexOf(t) < 0) { l.push(t); added.push(t); } });
+  syncCustomChords();
+  var songs = everySong ? lib().songs : [song], lines = 0;
+  songs.forEach(function (s2) {
+    if (s2.lyrics) { var r = akMcMark(s2.lyrics, toks, "lyrics"); if (r.n) { s2.lyrics = r.text; lines += r.n; } }
+    if (s2.chords) { var r2 = akMcMark(s2.chords, toks, "chords"); if (r2.n) { s2.chords = r2.text; lines += r2.n; } }
+  });
+  save();
+  var m = S.akMark; if (m) { document.removeEventListener("click", m.tap, true); if (m.bar && m.bar.parentNode) m.bar.parentNode.removeChild(m.bar); S.akMark = null; }
+  keepAutoRender();
+  toast("Made " + (toks.length === 1 ? toks[0] : toks.length + " words") + " into chords" + (lines ? " (" + lines + (lines === 1 ? " place)." : " places).") : "."), { label: "Undo", fn: function () { settings().customChords = (settings().customChords || []).filter(function (n) { return added.indexOf(n) < 0; }); syncCustomChords(); undoLast(); } });
+};
+/* ♪ Make all chords for the whole chord box, right in the mark bar */
+(function () {
+  var paint = akMarkPaint;
+  akMarkPaint = function () {
+    var r = paint.apply(this, arguments);
+    var m = S.akMark, song = S.play && curSong();
+    if (m && m.bar && song && (song.chords || "").trim() && !m.bar.querySelector(".akmc-all")) {
+      var row = m.bar.querySelector(".row");
+      var b = h("button", { class: "akmc-all", onClick: function () {
+        var box = { value: song.chords };
+        akCv17Run(box, {}, function () { snap("make chords"); song.chords = box.value; save(); var mk = S.akMark; if (mk) { document.removeEventListener("click", mk.tap, true); if (mk.bar && mk.bar.parentNode) mk.bar.parentNode.removeChild(mk.bar); S.akMark = null; } keepAutoRender(); });
+      } }, "♪ Make all chords");
+      if (row) row.insertBefore(b, row.firstChild.nextSibling); else m.bar.appendChild(b);
+    }
+    return r;
+  };
+})();
+
 /* akx_close.js (version 15.5): every menu, drop-down and window can be closed without picking anything.
    - ⋯ menus (menu()) get a "✕ Close" row pinned to their bottom.
    - Every window made by modal() gets a ✕ in its top corner (the same as tapping outside it).
