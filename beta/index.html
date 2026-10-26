@@ -37932,6 +37932,262 @@ akMarkApply = function (toks, everySong) {
   };
 })();
 
+/* ================================================================ akven_a: new shows save their venue (version 15.8)
+   - Every show made from now on (New show, Duplicate, the Google Calendar shows, imported or sent shows, nights turned into
+     shows) saves its venue to My venues when no venue has that name yet (names match ignoring capitals, spaces and "&").
+     A show that already names a saved venue is linked to it. The sweep (akVenSweep) runs a moment after any save, never while
+     typing (it waits for the box to lose focus) and never on the playing screen.
+     Each show remembers the venue name it handled (g.akVA), so a venue he deletes is not made again. A venue made this way
+     (v.auto) whose show is renamed before he touched it is renamed with it instead of leaving a stray venue behind.
+     Two devices making the same venue before they sync: the automatic copy is merged into the other one (akVenDedupe).
+   - Settings in settings().venueAuto: on (save venues, default on), look (look online, Personal on, Public off),
+     from (shows added before this time are left alone; "Save venues from all my shows" in the Venues window does them too),
+     area (town used for the online lookup when the venue has no address; else the most common town of his venues).
+   - Online lookup (akVenPump): free OpenStreetMap search (Nominatim, no key, at most one request every 1.5 s), only empty fields
+     are filled (address, phone, website), never what he typed. What was filled is kept in v.found and the venue card shows
+     "Found online, check it" with ✓ Looks right / ✕ Clear it. Offline or no match: it quietly tries again later (3 tries).
+     A Google Calendar show's location ("The Wine Cellar, 12 Main St, Town") already gives the address. */
+AK_VERSION = "15.8";
+AK_WHATS_NEW = [
+  "New shows save their venue: when you make a show (or one comes in from your Google Calendar), a venue you don't have yet is added to My venues by itself. Shows at a venue you already have are linked to it.",
+  "The address, phone and website of a new venue are looked up online (OpenStreetMap, free) and filled in when found. They're marked \"Found online, check it\" on the venue card. Anything you typed is never changed. Switch it off in Shows › Venues."
+].concat(AK_WHATS_NEW);
+
+function akVenCfg() {
+  var st = settings();
+  if (!st.venueAuto || typeof st.venueAuto !== "object") st.venueAuto = { on: true, look: akPersonal(), from: new Date().toISOString(), area: "" };
+  return st.venueAuto;
+}
+function akVenSig(v) { return AK_VFIELDS.map(function (f) { return v[f[0]] || ""; }).join("\u0001"); }
+function akVenUntouched(v) { return !!(v && v.auto && v.autoSig === akVenSig(v) && !(v.photos || []).length); }
+function akVenUsers(v) {
+  var n = 0;
+  akGigs().forEach(function (g) { if (akVenueFor(g) === v) n++; });
+  (lib().shows || []).forEach(function (sh) { if (sh.venueId === v.id) n++; });
+  return n;
+}
+/* "The Wine Cellar, 12 Main St, Grass Valley, CA" -> "12 Main St, Grass Valley, CA" (the calendar puts the name first) */
+function akVenAddrFrom(g, name) {
+  var a = (g.address || "").replace(/\s+/g, " ").trim(); if (!a) return "";
+  var parts = a.split(",");
+  if (parts.length > 1 && normTitle(parts[0]) === normTitle(name)) a = parts.slice(1).join(",").trim();
+  return normTitle(a) === normTitle(name) ? "" : a;
+}
+/* the town part of an address: "12 Main St, Grass Valley, CA 95945" -> "Grass Valley, CA" */
+function akVenTown(addr) {
+  var parts = String(addr || "").split(",").map(function (p) { return p.trim(); }).filter(Boolean);
+  if (parts.length > 1 && /^\d/.test(parts[0])) parts.shift();
+  parts = parts.map(function (p) { return p.replace(/\s*\d{5}(-\d{4})?$/, "").trim(); }).filter(function (p) { return p && !/^(usa|united states)$/i.test(p); });
+  if (!parts.length || /^\d/.test(parts[0])) return "";
+  return parts.slice(0, 2).join(", ");
+}
+function akVenArea() {
+  var c = akVenCfg(); if ((c.area || "").trim()) return c.area.trim();
+  var n = {}, best = "", bn = 0;
+  akVenues().forEach(function (v) { var t = akVenTown(v.address); if (t) { n[t] = (n[t] || 0) + 1; if (n[t] > bn) { bn = n[t]; best = t; } } });
+  return best;
+}
+
+/* ---------------------------------------------------------------- saving the venues of new shows */
+function akVenSweep(all) {
+  var c = akVenCfg(); if (!c.on && !all) return [];
+  var made = [], ch = false;
+  if (akVenDedupe()) ch = true;
+  akGigs().forEach(function (g) {
+    var name = (g.venue || "").replace(/\s+/g, " ").trim(), key = normTitle(name);
+    if (!key) return;
+    if (!all && !(g.added && g.added >= c.from)) return;
+    var v = akVenueByName(name);
+    if (v) {
+      if (g.venueId !== v.id) { g.venueId = v.id; ch = true; }
+      if (g.akVA !== key) { g.akVA = key; ch = true; }
+      return;
+    }
+    if (g.akVA === key && !all) return;              // handled before and he deleted that venue
+    var old = g.akVA && g.venueId ? akVenues().filter(function (x) { return x.id === g.venueId; })[0] : null;
+    if (old && akVenUntouched(old) && akVenUsers(old) <= 1) {
+      /* the show's venue was renamed before he did anything with the venue: rename it with the show */
+      old.name = name; old.address = old.address || akVenAddrFrom(g, name);
+      if (old.found) { (old.found.got || []).forEach(function (k) { if (k !== "address" || !akVenAddrFrom(g, name)) old[k] = ""; }); delete old.found; }
+      delete old.lat; delete old.lon; old.autoSig = akVenSig(old); old.look = { want: 1, tries: 0 };
+      g.akVA = key; ch = true; made.push(old); return;
+    }
+    v = { id: uid(), name: name, address: akVenAddrFrom(g, name), auto: { at: new Date().toISOString(), show: g.id }, look: { want: 1, tries: 0 } };
+    v.autoSig = akVenSig(v);
+    akVenues().push(v); g.venueId = v.id; g.akVA = key; made.push(v); ch = true;
+  });
+  if (made.length) akVenues().sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+  if (ch) save();
+  if (made.length) setTimeout(akVenPump, 300);
+  return made;
+}
+/* the same venue twice (two devices saved it before they synced): an automatic copy is merged into the other */
+function akVenDedupe() {
+  var L = akVenues(), by = {}, gone = false;
+  L.slice().forEach(function (v) {
+    var k = normTitle(v.name); if (!k) return;
+    var keep = by[k]; if (!keep) { by[k] = v; return; }
+    var drop = v;
+    if (!v.auto && keep.auto) { by[k] = v; drop = keep; keep = v; }
+    if (!drop.auto) return;                          // two he made himself: leave them
+    AK_VFIELDS.forEach(function (f) { if (!keep[f[0]] && drop[f[0]]) keep[f[0]] = drop[f[0]]; });
+    keep.photos = (keep.photos || []).concat((drop.photos || []).filter(function (p) { return (keep.photos || []).indexOf(p) < 0; }));
+    akGigs().concat(lib().shows || []).forEach(function (g) { if (g.venueId === drop.id) g.venueId = keep.id; });
+    L.splice(L.indexOf(drop), 1); gone = true;
+  });
+  return gone;
+}
+function akVenTyping() {
+  var a = document.activeElement;
+  return !!(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable));
+}
+var akVenTimer = 0;
+function akVenSoon() { if (!akVenTimer) akVenTimer = setTimeout(akVenTick, 1500); }   // not pushed back by a stream of saves
+function akVenTick() {
+  akVenTimer = 0;
+  if (typeof S === "undefined" || S.view === "play" || akVenTyping()) return;
+  var made = akVenSweep();
+  if (!made.length) return;
+  toast(made.length === 1 ? "Saved “" + made[0].name + "” to your venues." : "Saved " + made.length + " new venues from your shows.");
+  if (S.view === "gig" && !document.querySelector(".modal")) render();
+}
+(function () {
+  var sv = save;
+  save = function () { var r = sv.apply(this, arguments); akVenSoon(); return r; };
+  document.addEventListener("focusout", function () { akVenSoon(); });
+  window.addEventListener("online", function () { setTimeout(akVenPump, 2000); });
+  setTimeout(function () { try { akVenCfg(); akVenTick(); akVenPump(); } catch (e) {} }, 5000);
+})();
+
+/* ---------------------------------------------------------------- looking a venue up online (OpenStreetMap) */
+function akVenNameHit(a, b) {
+  a = normTitle(a).replace(/^the /, ""); b = normTitle(b).replace(/^the /, "");
+  if (!a || !b) return false;
+  if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return true;
+  var A = a.split(" "), B = b.split(" "), n = 0;
+  A.forEach(function (w) { if (w.length > 2 && B.indexOf(w) >= 0) n++; });
+  return n >= Math.max(1, Math.ceil(Math.min(A.length, B.length) / 2));
+}
+function akVenQueries(v) {
+  var town = akVenTown(v.address) || akVenArea(), q = [];
+  q.push(town ? v.name + ", " + town : v.name);
+  if (v.address && v.address.indexOf(",") > 0) q.push(v.name + ", " + v.address);
+  return q;
+}
+/* look one venue up; cb(filledKeys or null) */
+function akVenLook(v, cb) {
+  var qs = akVenQueries(v), i = 0;
+  function next() {
+    if (i >= qs.length) { cb(null); return; }
+    akVenueSearch(qs[i++], function (err, list) {
+      if (err) { cb(null, err); return; }
+      var hit = (list || []).filter(function (r) { return akVenNameHit(r.name, v.name); })[0];
+      if (!hit) { setTimeout(next, 1500); return; }
+      var got = [], clean = akVenUntouched(v);
+      ["address", "phone", "website"].forEach(function (k) { if (hit[k] && !(v[k] || "").trim()) { v[k] = hit[k]; got.push(k); } });
+      if (hit.lat && !v.lat) { v.lat = hit.lat; v.lon = hit.lon; }
+      if (got.length && clean) v.autoSig = akVenSig(v);
+      if (got.length) v.found = { got: got, vals: got.reduce(function (o, k) { o[k] = v[k]; return o; }, {}), src: "OpenStreetMap", at: new Date().toISOString() };
+      cb(got);
+    });
+  }
+  next();
+}
+var akVenBusy = false;
+function akVenPump(force) {
+  if (akVenBusy || (!force && !akVenCfg().look) || !/^https?:$/.test(location.protocol) || navigator.onLine === false) return;
+  var v = akVenues().filter(function (x) { return x.look && x.look.want && (x.look.tries || 0) < 3; })[0];
+  if (!v) return;
+  akVenBusy = true; v.look.tries = (v.look.tries || 0) + 1;
+  akVenLook(v, function (got, err) {
+    akVenBusy = false;
+    if (!err || v.look.tries >= 3) delete v.look;    // found, or nothing to find: done. Offline: try again later
+    save();
+    if (got && got.length && !document.querySelector(".modal")) toast("Found " + got.map(function (k) { return k === "address" ? "the address" : k === "phone" ? "the phone number" : "the website"; }).join(" and ") + " of " + v.name + " online. Check it in Venues.");
+    if (!err) setTimeout(akVenPump, 1500);
+  });
+}
+
+/* ---------------------------------------------------------------- the venue card: what was found online, look it up */
+(function () {
+  var card = akVenueCard;
+  akVenueCard = function (v, o) {
+    var r = card.apply(this, arguments);
+    var box = [].slice.call(document.querySelectorAll(".modal .akv-card")).pop();
+    if (!box) return r;
+    var top = h("div", { class: "akven-top" });
+    function draw() {
+      top.textContent = "";
+      var f = v.found;
+      if (f && !f.ok) {
+        var what = f.got.map(function (k) { return k === "address" ? "address" : k === "phone" ? "phone" : "website"; }).join(", ");
+        top.appendChild(h("div", { class: "akven-found" }, h("b", null, "🔎 Found online, check it"),
+          h("div", { class: "muted" }, "The " + what + " came from OpenStreetMap and may be out of date."),
+          h("div", { class: "row", style: "margin:6px 0 0" },
+            h("button", { type: "button", onClick: function () { f.ok = true; save(); draw(); } }, "✓ Looks right"),
+            h("button", { type: "button", onClick: function () {
+              snap("clear found venue info");
+              var clean = akVenUntouched(v);
+              f.got.forEach(function (k) { if (v[k] === f.vals[k]) v[k] = ""; });
+              delete v.found; delete v.lat; delete v.lon; if (clean) v.autoSig = akVenSig(v); save();
+              [].slice.call(document.querySelectorAll(".modal")).pop().remove(); akVenueCard(v, o);
+            } }, "✕ Clear it"))));
+      }
+      if (v.auto && !f) top.appendChild(h("div", { class: "muted", style: "margin:0 0 4px" }, "Saved by itself from a show."));
+      if (!v.address || !v.phone) top.appendChild(h("button", { type: "button", class: "akven-look", onClick: function () {
+        var b = this; b.disabled = true; b.textContent = "Looking it up…";
+        akVenLook(v, function (got, err) {
+          if (err) { b.disabled = false; b.textContent = "🔎 Look up the address and phone online"; toast("Couldn't look it up right now (no internet?)."); return; }
+          if (!got || !got.length) { b.textContent = "Nothing more found online"; return; }
+          save(); [].slice.call(document.querySelectorAll(".modal")).pop().remove(); akVenueCard(v, o);
+        });
+      } }, "🔎 Look up the address and phone online"));
+    }
+    draw();
+    box.insertBefore(top, box.firstChild);
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- the Venues window: the switches */
+(function () {
+  var open = openVenues;
+  openVenues = function (onPick) {
+    var r = open.apply(this, arguments);
+    if (onPick) return r;
+    var body = [].slice.call(document.querySelectorAll(".modal .sheet > .body")).pop();
+    if (!body) return r;
+    var c = akVenCfg();
+    function chk(label, key) {
+      return h("label", { class: "akven-chk" }, h("input", { type: "checkbox", checked: !!c[key], onChange: function () { c[key] = this.checked; save(); if (key === "look" && c.look) akVenPump(); } }), " " + label);
+    }
+    var area = h("input", { type: "text", value: c.area || "", placeholder: akVenArea() || "Town, state", autocapitalize: "words", "aria-label": "Your area",
+      onChange: function () { c.area = this.value.trim(); save(); } });
+    var all = h("button", { type: "button", onClick: function () {
+      snap("venues from all shows");
+      var made = akVenSweep(true);
+      toast(made.length ? "Saved " + made.length + (made.length === 1 ? " venue" : " venues") + " from your shows." : "All your shows' venues are saved already.");
+      [].slice.call(document.querySelectorAll(".modal")).pop().remove(); openVenues();
+    } }, "Save venues from all my shows");
+    var panel = h("details", { class: "akven-set" }, h("summary", null, "⚙ New venues: " + (c.on ? "saved by themselves" : "off") + (c.on && c.look ? ", looked up online" : "")),
+      chk("Save the venue of every new show here (also calendar shows)", "on"),
+      chk("Look up the address, phone and website online (OpenStreetMap, free). Found details are marked so you can check them; what you typed is never changed.", "look"),
+      h("label", { class: "fld" }, "Your area (helps the lookup find the right place when a venue has no address)", area),
+      h("div", { class: "row", style: "margin:4px 0 0" }, all));
+    body.insertBefore(panel, body.firstChild);
+    return r;
+  };
+})();
+
+akCss("akven", [
+  ".akven-found{padding:8px 10px;border:1px dashed var(--accent);border-radius:10px;background:var(--accent-bg);margin:0 0 8px}",
+  ".akven-look{margin:0 0 8px}",
+  ".akven-set{margin:0 0 10px;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}",
+  ".akven-set summary{cursor:pointer;font-weight:600}",
+  ".akven-chk{display:flex;gap:8px;align-items:flex-start;margin:8px 0;line-height:1.3}",
+  ".akven-chk input{margin-top:3px;flex:none}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
