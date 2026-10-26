@@ -1818,7 +1818,8 @@ function backViaUI() {
 window.addEventListener("popstate", function () {
   if (ignorePop > 0) { ignorePop--; return; }
   if (histDepth > 0) histDepth--;
-  if (document.querySelector(".modal")) { closeMenu(); document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); return; }
+  /* Back with a menu or window open closes just that one and stays on this screen (akx_close.js) */
+  if (akxTop()) { akxCloseTop(); histPush(); return; }
   if (S.view !== "play" && !navPeek()) return;
   S.popping = true; try { backViaUI(); } finally { S.popping = false; }
 });
@@ -37787,393 +37788,285 @@ openSuggest = function () {
   close = modal("What fits next", body, [{ label: "Close" }], { wide: true });
 };
 
-/* ================================================================ akcal_a: several calendars, private shows (version 15.7)
-   - Sign in with Google (Settings > Calendar > Calendars from my Google account) lists every calendar in that account, including
-     the ones another email shares with it. Tick the ones to show; each gets a name, a color and Public or 🔒 Private.
-     Google Identity Services token client, scope calendar.readonly (read only, nothing is ever written). It needs his own OAuth
-     Client ID (settings().cal.gClient). The token lasts about an hour and lives only on this device (localStorage akcal:tok),
-     never in backups; when it runs out the last loaded events stay and "Sign in again" refreshes them.
-   - settings().cal.cals = [{ id, src: "google" | "key", name, gname, color, priv, on }]. The old public calendar (API key + Calendar ID)
-     still works and shows in the same list (src "key"). An event from a ticked calendar is { ..., cal, priv, color, calName };
-     its id is "calendarId|eventId", except the old public calendar's, which keep the plain event id (so shows already made stay linked).
-     The same event in two ticked calendars is listed once, private wins.
-   - Shows made from a private calendar get g.priv (unless set by hand: g.privHand) and the calendar's color. A private show is never
-     published: not on the request page (g.pub off, akPublicShows), not on posters, flyers, Shows this week or shows.csv (akGigsIn
-     skips them unless asked), not on the press kit. Invoices, setlists, pay and tips work as usual. A flyer for a private show asks first.
-   - A calendar that is not ticked makes no new shows; shows it already made stay (they are not removed).
-   - settings().cal.privShow === false hides private shows on the Shows screen (🔒 chip there). */
-AK_VERSION = "15.7";
+/* ================================================================ akmc_a: Make chords works in the chord box (version 15.3.5)
+   - The chord box (chord pane on the playing screen) only shows a line's chords when every word on it is a chord, so lines like
+     "Intro: G D Em C", "Chorus C G Am F" or "G D Em C (x2)" stayed plain text and ♪ Make all chords did nothing for them
+     (it even offered "Chorus" as a chord). Now Make all chords puts the chords on such lines in [brackets], which the chord pane
+     shows as chords, and leaves the labels (Intro:, Verse, (x2)...) as words. Commas after chords ("G, D, Em") are kept outside.
+   - Mark words as chords on the playing screen (the Make chords button) only changed the song's words, never the chord box,
+     so tapping a word in the chord pane did nothing there. It now changes the chord box too (and every song's, with "In every
+     song too"), and a chord with a comma after it is made a chord without the comma.
+   - The mark bar has ♪ Make all chords for the whole chord box when the song has one. */
+AK_VERSION = "15.3.5";
 AK_WHATS_NEW = [
-  "Private shows: sign in with Google in Settings › Calendar and pick which of your calendars show in the app, including ones from another email. Mark each one Public or 🔒 Private and give it a color. Private shows get setlists, invoices, pay and tips like any show, but they never go on flyers, posters, Shows this week or your request page."
+  "♪ Make all chords now works in the chord box: chords on lines with a label, like \"Intro: G D Em C\" or \"G D Em C (x2)\", show as chords in the chord pane. Mark words as chords on the playing screen changes the chord pane too, and has its own ♪ Make all chords."
 ].concat(AK_WHATS_NEW);
 
-var AKCAL_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
-var AKCAL_COLORS = ["#7E57C2", "#26A69A", "#EF6C00", "#C2185B", "#1E88E5", "#689F38", "#8D6E63", "#546E7A"];
-var AKCAL = { gis: null, client: null, pending: null };
+var AKMC_LABEL = /^(?:\(?(?:intro|verse|chorus|pre-?chorus|bridge|outro|solo|interlude|instrumental|tag|ending|end|riff|break|coda|refrain|hook|turnaround|vamp|hit|stop)\s*\d*\)?:?|.*:|\(?(?:x\s*\d+|\d+\s*x|\d+x|x\d+)\)?|\d+\.?|\.\.\.?|…|\(|\)|\|\|?|:\|\|?|\|\|?:|\*)$/i;
+/* a token split into the chord and what is around it: "(G)" -> ( G ), "D," -> D , */
+function akMcSplit(t) {
+  var m = /^(\(?)(.+?)([,;.]*\)?[,;.]*)$/.exec(t);
+  if (!m) return null;
+  if (m[1] && !/\)/.test(m[3])) return { lead: "", core: (m[2] + m[3]).replace(/[,;.]+$/, ""), tail: (m[2] + m[3]).match(/[,;.]*$/)[0] };
+  return { lead: m[1], core: m[2], tail: m[3] };
+}
+/* the chord name for a token, fixed if needed (♯ -> #, Fm# -> F#m), or null */
+function akMcChord(t) {
+  if (isChordTok(t)) return { lead: "", core: t, tail: "" };
+  var f = akCv17Fix(t); if (f) return { lead: "", core: f, tail: "" };
+  var p = akMcSplit(t); if (!p || p.core === t) return null;
+  if (isChordTok(p.core)) return p;
+  f = akCv17Fix(p.core); return f ? { lead: p.lead, core: f, tail: p.tail } : null;
+}
+function akMcCand(t) { return /^[A-G][#b♯♭]?/.test(t) && t.length <= 10 && (t.length <= 4 || /[\d#+°Δ()\/♯♭]/.test(t)) && !AKMC_LABEL.test(t); }
 
-function akCalList() { var c = calSet(); if (!Array.isArray(c.cals)) c.cals = []; akCalLegacy(c); return c.cals; }
-/* the old public calendar (API key + Calendar ID) is one entry in the list */
-function akCalLegacy(c) {
-  var id = (c.id || "").trim(), has = c.cals.filter(function (x) { return x.src === "key"; })[0];
-  if (!(c.key && id)) { if (has) c.cals.splice(c.cals.indexOf(has), 1); return; }
-  if (!has) c.cals.unshift({ id: id, src: "key", name: "My public calendar", gname: "", color: "", priv: false, on: true });
-  else has.id = id;
-}
-function akCalGoogleOn() { var c = calSet(); return !!(c.gClient && akCalList().some(function (x) { return x.src === "google" && x.on; })); }
-function akCalById(id) { return akCalList().filter(function (x) { return x.id === id; })[0] || null; }
-function akCalName(x) { return (x && (x.name || x.gname || x.id)) || "Calendar"; }
-function akCalColor(x, i) { return (x && (x.color || x.gcolor)) || AKCAL_COLORS[(i || 0) % AKCAL_COLORS.length]; }
-
-/* ---------------------------------------------------------------- the token (this device only) */
-function akCalTok() {
-  try { var t = JSON.parse(localStorage.getItem("akcal:tok") || "null"); if (t && t.t && t.exp > Date.now() + 60000) return t.t; } catch (e) {}
-  return "";
-}
-function akCalTokSet(t, secs) { try { if (t) localStorage.setItem("akcal:tok", JSON.stringify({ t: t, exp: Date.now() + (Number(secs) || 3600) * 1000 })); else localStorage.removeItem("akcal:tok"); } catch (e) {} }
-function akCalGis() {
-  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
-  if (AKCAL.gis) return AKCAL.gis;
-  AKCAL.gis = new Promise(function (ok, no) {
-    var s = document.createElement("script"); s.src = "https://accounts.google.com/gsi/client"; s.async = true;
-    s.onload = function () { ok(); }; s.onerror = function () { AKCAL.gis = null; no(new Error("Couldn't reach Google sign-in. You may be offline.")); };
-    document.head.appendChild(s);
-  });
-  return AKCAL.gis;
-}
-/* opens Google's sign-in window (needs a tap, browsers block it otherwise) */
-function akCalSignIn() {
-  var c = calSet(); if (!c.gClient) return Promise.reject(new Error("Paste your OAuth Client ID first (see “How do I set this up?”)."));
-  return akCalGis().then(function () {
-    return new Promise(function (ok, no) {
-      AKCAL.pending = { ok: ok, no: no };
-      if (!AKCAL.client || AKCAL.client._id !== c.gClient) {
-        AKCAL.client = google.accounts.oauth2.initTokenClient({ client_id: c.gClient, scope: AKCAL_SCOPE,
-          callback: function (r) { var p = AKCAL.pending; AKCAL.pending = null; if (!p) return; if (r && r.access_token) { akCalTokSet(r.access_token, r.expires_in); c.gSigned = true; save(); p.ok(r.access_token); } else p.no(new Error(akCalAuthWhy(r && r.error))); },
-          error_callback: function (e) { var p = AKCAL.pending; AKCAL.pending = null; if (p) p.no(new Error(e && e.type === "popup_closed" ? "The sign-in window was closed." : e && e.type === "popup_failed_to_open" ? "The sign-in window was blocked. Allow pop-ups for this app and try again." : "Google sign-in didn't finish.")); } });
-        AKCAL.client._id = c.gClient;
-      }
-      AKCAL.client.requestAccessToken(Object.assign({ prompt: c.gSigned ? "" : "consent" }, c.gEmail ? { login_hint: c.gEmail } : {}));
+akCv17Scan = function (text) {
+  var fixed = [], odd = [];
+  var out = String(text || "").replace(/\r\n?/g, "\n").split("\n").map(function (ln) {
+    if (/^\s*[\[{]/.test(ln) || (typeof isTabLine === "function" && isTabLine(ln)) || !ln.trim()) return ln;
+    var BR = /^\(?\[[^\[\]]+\][,;.)]*$/; /* a chord already in brackets, like [G] or [D], */
+    if (/[\[\]]/.test(ln.replace(/\S+/g, function (t) { return BR.test(t) ? "" : t; }))) return ln; /* chords inside words (lyrics style): leave it */
+    var toks = ln.split(/\s+/).filter(Boolean), good = 0, plain = 0, label = 0, cand = [], words = 0;
+    toks.forEach(function (t) {
+      if (EXTRA_TOKENS[t]) return;
+      if (BR.test(t)) { good++; plain++; return; }
+      var c = akMcChord(t);
+      if (c) { good++; if (c.lead || c.tail) plain++; return; }
+      if (AKMC_LABEL.test(t)) { label++; return; }
+      if (akMcCand(t)) { cand.push(t); return; }
+      words++;
     });
-  });
-}
-function akCalAuthWhy(err) {
-  if (/access_denied/.test(err || "")) return "Google said no. If it says the app isn't verified or you're not a tester, add your email under OAuth consent screen › Test users.";
-  return "Google sign-in didn't finish" + (err ? " (" + err + ")." : ".");
-}
-function akCalSignOut() {
-  var t = akCalTok(); akCalTokSet(""); calSet().gSigned = false; save();
-  try { if (t && window.google && google.accounts) google.accounts.oauth2.revoke(t, function () {}); } catch (e) {}
-}
-function akCalGet(path, tok) {
-  return fetch("https://www.googleapis.com/calendar/v3/" + path, { headers: { Authorization: "Bearer " + tok } }).then(function (r) {
-    return r.json().catch(function () { return null; }).then(function (body) {
-      if (r.status === 401) { akCalTokSet(""); var e = new Error("Your Google sign-in ran out. Tap Sign in again."); e.signIn = true; throw e; }
-      if (!r.ok) throw new Error(calExplain(r.status, body));
-      return body || {};
+    if (!good && !cand.length) return ln;
+    /* a line of chords (with labels like Intro: or (x2) at most), or one that is mostly chords */
+    var chordy = words === 0 ? good + cand.length >= 1 && good >= cand.length && (good + cand.length >= label || good >= 2) : good >= 3 && good >= 2 * words;
+    if (!chordy) return ln;
+    var keepOdd = words === 0 && cand.length && good >= cand.length;
+    if (keepOdd) cand.forEach(function (t) { if (odd.indexOf(t) < 0) odd.push(t); });
+    var bare = !label && !plain && !words; /* the whole line is chords: it shows as one without brackets */
+    return ln.replace(/\S+/g, function (t) {
+      if (EXTRA_TOKENS[t] || BR.test(t)) return t;
+      if (isChordTok(t)) return bare ? t : "[" + t + "]";
+      var c = akMcChord(t);
+      if (c) { if (c.core !== t.replace(/^\(|[,;.)]+$/g, "")) fixed.push(t + " → " + c.core); else if (bare) return t; else fixed.push(t + " → [" + c.core + "]"); return bare ? c.core : c.lead + "[" + c.core + "]" + c.tail; }
+      if (keepOdd && cand.indexOf(t) >= 0) return bare ? t : "[" + t + "]";
+      return t;
     });
-  }, function () { throw new Error("Couldn't reach Google. You may be offline."); });
-}
-/* every calendar in the account; new ones start unticked and 🔒 private */
-function akCalLoadList(tok) {
-  return akCalGet("users/me/calendarList?minAccessRole=reader&maxResults=250&fields=" + encodeURIComponent("items(id,summary,summaryOverride,backgroundColor,primary)"), tok).then(function (b) {
-    var list = akCalList(), c = calSet(), seen = {};
-    (b.items || []).forEach(function (it, i) {
-      seen[it.id] = 1;
-      if (it.primary && !c.gEmail) c.gEmail = it.id;
-      /* the public calendar already read with the API key stays one row */
-      var x = list.filter(function (y) { return y.id === it.id; })[0];
-      if (!x) { x = { id: it.id, src: "google", name: "", color: "", priv: true, on: false }; list.push(x); }
-      x.gname = it.summaryOverride || it.summary || it.id; x.gcolor = it.backgroundColor || ""; x.gone = false;
-    });
-    list.forEach(function (x) { if (x.src === "google" && !seen[x.id]) x.gone = true; });
-    c.listAt = Date.now(); save();
-    return list;
-  });
-}
-
-/* ---------------------------------------------------------------- loading events */
-/* the old public calendar, read with the API key (the same request as calendar.js, without saving over the other calendars) */
-function akCalFetchKey() {
-  var c = calSet();
-  return fetch("https://www.googleapis.com/calendar/v3/" + akCalEvUrl(c.id.trim()) + "&key=" + encodeURIComponent(c.key.trim())).then(function (r) {
-    return r.json().catch(function () { return null; }).then(function (body) {
-      if (!r.ok) throw new Error(calExplain(r.status, body));
-      return calNormalize((body.items || []).filter(function (i) { return i.status !== "cancelled"; }));
-    });
-  }, function () { throw new Error("Couldn't reach Google. You may be offline."); });
-}
-function akCalEvUrl(id) {
-  var now = new Date(), from = new Date(now.getFullYear(), now.getMonth(), 1), to = new Date(now.getTime() + 366 * 864e5);
-  return "calendars/" + encodeURIComponent(id) + "/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin=" + encodeURIComponent(from.toISOString()) +
-    "&timeMax=" + encodeURIComponent(to.toISOString()) + "&fields=" + encodeURIComponent("items(id,summary,location,description,htmlLink,start,end,status)");
-}
-function akCalCache() { var c = calSet(); if (!c.cache || typeof c.cache !== "object") c.cache = { at: 0, events: [] }; if (!c.cache.by || typeof c.cache.by !== "object") c.cache.by = {}; return c.cache; }
-calConfigured = function () { var c = calSet(); return !!((c.key && c.id) || akCalGoogleOn()); };
-/* tok: a token, or "" to load only what doesn't need one. Resolves with the combined events. */
-calFetch = function (o) {
-  o = o || {};
-  var c = calSet(), list = akCalList(), jobs = [], errs = [], tok = akCalTok(), cache = akCalCache(), done = {};
-  if (!calConfigured()) return Promise.reject(new Error("Add a calendar in Settings first."));
-  var gOn = list.filter(function (x) { return x.src === "google" && x.on && !x.gone; });
-  var leg = list.filter(function (x) { return x.src === "key" && x.on; })[0];
-  /* the old public calendar is read with the key, unless the same calendar comes through the sign-in */
-  if (leg) jobs.push(akCalFetchKey().then(function (ev) {
-    akCalCache().by[leg.id] = { at: Date.now(), events: ev }; done[leg.id] = 1;
-  }, function (e) { errs.push(e); }));
-  if (gOn.length && !tok) { c.needSign = true; if (!jobs.length && !o.quiet) errs.push(Object.assign(new Error("Sign in with Google to load your other calendars."), { signIn: true })); }
-  if (tok) gOn.forEach(function (x) {
-    jobs.push(akCalGet(akCalEvUrl(x.id), tok).then(function (b) {
-      akCalCache().by[x.id] = { at: Date.now(), events: calNormalize((b.items || []).filter(function (i) { return i.status !== "cancelled"; })) }; done[x.id] = 1;
-    }, function (e) { errs.push(e); }));
-  });
-  return Promise.all(jobs).then(function () {
-    var ch = akCalCache(); if (tok && gOn.length) c.needSign = false;
-    ch.events = akCalCombine(); ch.at = Date.now(); c.cache = ch; save();
-    AKCAL.loaded = done;
-    try { akGcalSync(); } catch (e) {}
-    if (!Object.keys(done).length && errs.length) throw errs[0];
-    if (errs.length) AKCAL.lastErr = errs[0].message; else AKCAL.lastErr = "";
-    return calEvents();
-  });
+  }).join("\n");
+  return { text: out, fixed: fixed, odd: odd, changed: out !== String(text || "").replace(/\r\n?/g, "\n") };
 };
-/* every ticked calendar's saved events, as one list (keeps the last load of a calendar that couldn't refresh) */
-function akCalCombine(all) {
-  var c = calSet(), by = akCalCache().by, leg = (c.id || "").trim(), out = [], ix = {};
-  akCalList().forEach(function (x, i) {
-    if (!all && !x.on) return;
-    var src = (by[x.id] || {}).events || [];
-    src.forEach(function (e) {
-      var bare = (e.id || "").split("|").pop(), id = x.id === leg ? bare : x.id + "|" + bare;
-      var ev = Object.assign({}, e, { id: id, cal: x.id, priv: !!x.priv, color: akCalColor(x, i), calName: akCalName(x), off: !x.on });
-      var k = bare + "@" + e.start, had = ix[k];
-      if (had === undefined) { ix[k] = out.length; out.push(ev); }
-      else if (ev.priv && !out[had].priv) out[had] = ev;
-    });
-  });
-  return out;
-}
-/* the list the app shows. While shows are being matched, events from unticked calendars that already have a show are kept, so their shows stay. */
-(function () {
-  var ce = calEvents;
-  calEvents = function () {
-    var c = calSet(); if (!c.cache) return [];
-    if (!c.cache.by) return ce.apply(this, arguments);
-    var keep = c.cache.events;
-    if (AKCAL.syncing) {
-      var linked = {}; akGigs().forEach(function (g) { if (g.calId) linked[g.calId] = 1; });
-      c.cache.events = akCalCombine(true).filter(function (e) { return !e.off || linked[e.id]; });
-    } else c.cache.events = akCalCombine();
-    try { return ce.apply(this, arguments); } finally { c.cache.events = keep; }
-  };
-})();
-/* matching shows: private from the calendar, its color; only calendars that loaded can take a show away */
-(function () {
-  var gs = akGcalSync;
-  akGcalSync = function () {
-    var c = calSet(), loaded = AKCAL.loaded || {}, guard = [];
-    /* shows from calendars that didn't load this time are hidden from the "taken off the calendar" step */
-    if (c.cache && c.cache.by) akGigs().forEach(function (g) { if (g.calId && g.calSrc && !loaded[g.calSrc] && !g.calGone) guard.push(g); });
-    var evs; AKCAL.syncing = true;
-    try { evs = calEvents(); } finally { AKCAL.syncing = false; }
-    var ids = {}; evs.forEach(function (e) { ids[e.id] = e; });
-    guard = guard.filter(function (g) { return !ids[g.calId]; });
-    guard.forEach(function (g) { g._akKeep = g.calId; g.calId = ""; });
-    var out;
-    AKCAL.syncing = true;
-    try { out = gs.apply(this, arguments); } finally {
-      AKCAL.syncing = false;
-      guard.forEach(function (g) { g.calId = g._akKeep; delete g._akKeep; });
-    }
-    var ch = false;
-    akGigs().forEach(function (g) {
-      var e = g.calId && ids[g.calId]; if (!e) return;
-      if (g.calSrc !== e.cal) { g.calSrc = e.cal; ch = true; }
-      if (!g.privHand && !!g.priv !== !!e.priv) { g.priv = !!e.priv; ch = true; }
-      if (g.priv && g.pub) { g.pub = false; ch = true; }
-      if (!g.color && e.color && c.cals && c.cals.length > 1) { g.color = e.color; ch = true; }
-    });
-    if (ch) { save(); if (/^(shows|gig)$/.test(S.view)) render(); }
-    return out;
-  };
-})();
-/* the automatic load at start and on return: never opens the sign-in window */
-akGcalAuto = function () {
-  if (!akGcalOn() || S.akGcalBusy || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
-  var c = calSet(); if (c.cache && Date.now() - c.cache.at < 30 * 60000) return;
-  S.akGcalBusy = true;
-  calFetch({ quiet: true }).then(function () { S.akGcalBusy = false; }, function () { S.akGcalBusy = false; });
-};
-/* Refresh in the Next shows window: signs in first when the token ran out (the tap allows the sign-in window) */
-function akCalRefreshTap() {
-  var need = akCalGoogleOn() && !akCalTok();
-  return (need ? akCalSignIn().catch(function (e) { toast(e.message); return ""; }) : Promise.resolve()).then(function () { return calFetch(); });
-}
-
-/* ---------------------------------------------------------------- private shows stay private */
-function akGigPriv(g) { return !!(g && g.priv); }
-(function () {
-  var gi = akGigsIn;
-  /* withPriv: include private shows (only for things that stay with you, like an invoice) */
-  akGigsIn = function (fromKey, toKey, pubOnly, withPriv) { var l = gi.apply(this, arguments); return withPriv ? l : l.filter(function (g) { return !g.priv; }); };
-  var ps = akPublicShows;
-  akPublicShows = function () { var keep = akGigs().filter(function (g) { return g.priv && g.pub; }); keep.forEach(function (g) { g.pub = false; }); return ps.apply(this, arguments); };
-  var pr = akGigPubRow;
-  akGigPubRow = function (g) {
-    var box = h("div", { class: "akcal-privbox" + (g.priv ? " on" : "") });
-    function draw() {
-      box.textContent = ""; box.className = "akcal-privbox" + (g.priv ? " on" : "");
-      box.appendChild(h("label", { class: "chk akcal-priv" }, h("input", { type: "checkbox", checked: !!g.priv, onChange: function () {
-        g.priv = this.checked; g.privHand = true; if (g.priv) g.pub = false; save(); if (typeof AKL === "object" && AKL.conn) akLivePublish().catch(function () {}); draw();
-      } }), "🔒 Private show (never on flyers, posters, Shows this week or my request page)"));
-      if (g.priv) {
-        var cal = g.calSrc && akCalById(g.calSrc);
-        box.appendChild(h("p", { class: "hint" }, (cal ? "From your " + akCalName(cal) + " calendar. " : "") + "Setlists, invoices, pay and tips work as usual. Untick to make it public."));
-      } else box.appendChild(pr.apply(this, [g]));
-    }
-    draw(); return box;
-  };
-  var gr = akGigRow;
-  akGigRow = function (g) {
-    if (g.priv && calSet().privShow === false && S.view === "shows") return document.createComment("private show");
-    var el = gr.apply(this, arguments);
-    if (g.priv) { el.classList.add("akcal-p"); var t = el.querySelector(".main-btn .t"); if (t) t.insertBefore(h("span", { class: "akcal-lock", title: "Private show" }, "🔒 "), t.firstChild); }
-    return el;
-  };
-  var ci = akShowsCalItems;
-  akShowsCalItems = function () {
-    var o = ci.apply(this, arguments); if (calSet().privShow !== false) return o;
-    Object.keys(o).forEach(function (k) { o[k] = o[k].filter(function (it) { return !(it.gig && it.gig.priv); }); if (!o[k].length) delete o[k]; });
-    return o;
-  };
-  var cn = akShowsCalName;
-  akShowsCalName = function (it) { return (it.gig && it.gig.priv ? "🔒 " : "") + cn.apply(this, arguments); };
-  /* flyers: a private show asks first; posters leave private shows out */
-  var go2 = akGfxOpen;
-  akGfxOpen = function (kind, g) {
-    var self = this, args = arguments;
-    if (g && g.priv && kind === "flyer") {
-      modal("Private show", h("p", null, "“" + akGigTitle(g) + "” is a private show, so it stays off flyers and posters. Make a flyer for it anyway? (It stays private everywhere else.)"),
-        [{ label: "Cancel" }, { label: "Make a flyer", primary: true, onClick: function () { akGfxDesign(kind).privOk = g.id; go2.apply(self, args); } }]);
-      return;
-    }
-    if (g && g.priv && kind === "week") { toast("Private shows are left off the week poster."); return go2.call(this, kind, null); }
-    return go2.apply(this, arguments);
-  };
-})();
-/* ---------------------------------------------------------------- Settings > Calendar */
-function akCalHelp() {
-  var origin = location.origin;
-  modal("Private calendars: setting up Google sign-in", h("div", null,
-    h("p", { class: "hint" }, "Once, on a computer, about ten minutes. It lets the app read (never change) the calendars in your Google account, including the ones another email shares with you. Use the same Google Cloud project as your API key."),
-    h("ol", { style: "padding-left:20px;line-height:1.5" },
-      h("li", null, "Go to console.cloud.google.com and pick the project you made for the calendar key. Check APIs & Services › Library › Google Calendar API is Enabled."),
-      h("li", null, "APIs & Services › OAuth consent screen (Google Auth Platform). Get started: app name Akashic Chords, your email, Audience: External, then Create."),
-      h("li", null, "Audience › Test users › Add users: the Google account you'll sign in with (the one that shows all your calendars). Leave the app in Testing; you don't need Google's review."),
-      h("li", null, "Data access › Add or remove scopes: tick “…/auth/calendar.readonly” (See and download any calendar). Save."),
-      h("li", null, "Clients (or Credentials › Create credentials › OAuth client ID): type Web application, name Akashic Chords. Under Authorized JavaScript origins add " + origin + " (no slash at the end). No redirect URI is needed. Create."),
-      h("li", null, "Copy the Client ID (it ends in .apps.googleusercontent.com) and paste it into the Client ID box here, then tap Sign in with Google."),
-      h("li", null, "Google may warn “Google hasn't verified this app”. That's your own app: tap Continue. Then tick the calendars to show and mark them Public or 🔒 Private.")),
-    h("p", { class: "hint" }, "Private events from a calendar that only lives in another Google account: in that account's Google Calendar, ⚙ Settings › the calendar › Share with specific people, add your main email (See all event details). It then shows up in the list here."),
-    h("p", { class: "hint" }, "The sign-in lasts about an hour on each device. After that the app keeps showing what it loaded last; tap Refresh (or Sign in again) to update. The sign-in is never in backups.")), [{ label: "Close", primary: true }]);
-}
-function akCalRow(x, i, redraw) {
-  var col = akCalColor(x, i);
-  var dot = h("button", { class: "akcal-dot", style: "background:" + col, "aria-label": "Color for " + akCalName(x), onClick: function () {
-    var box = h("div"), old = col; box.appendChild(colorPicker(x.color || col, function (c2) { x.color = c2; save(); }));
-    modal("Color for " + akCalName(x), box, [{ label: "Done", primary: true, onClick: function () { akCalRecolor(x, old); redraw(); } }]);
-  } });
-  var n = ((akCalCache().by[x.id] || {}).events || []).filter(function (e) { return e.end >= Date.now(); }).length;
-  return h("div", { class: "akcal-row" + (x.on ? " on" : "") + (x.priv ? " priv" : "") },
-    h("label", { class: "chk akcal-on" }, h("input", { type: "checkbox", checked: !!x.on, "aria-label": "Show " + akCalName(x), onChange: function () { x.on = this.checked; save(); redraw(); } }), dot),
-    h("div", { class: "akcal-mid" },
-      h("input", { type: "text", value: x.name || "", placeholder: x.gname || "Calendar name", "aria-label": "Name for this calendar", onInput: function () { x.name = this.value.trim(); save(); } }),
-      h("div", { class: "hint" }, (x.src === "key" ? (x.gname ? x.gname + " · " : "") + "read with the API key" : x.id) + (x.gone ? " · not in your account any more" : "") + (x.on && n ? " · " + n + " coming up" : ""))),
-    h("div", { class: "chips akcal-pp", role: "group", "aria-label": "Public or private" },
-      h("button", { class: "chip" + (!x.priv ? " on" : ""), onClick: function () { akCalSetPriv(x, false); redraw(); } }, "Public"),
-      h("button", { class: "chip" + (x.priv ? " on" : ""), onClick: function () { akCalSetPriv(x, true); redraw(); } }, "🔒 Private")));
-}
-/* changing a calendar's flag changes its shows too (not the ones you set by hand) */
-function akCalSetPriv(x, v) {
-  x.priv = v; var n = 0;
-  akGigs().forEach(function (g) { if (g.calSrc === x.id && !g.privHand && !!g.priv !== v) { g.priv = v; if (v) g.pub = false; n++; } });
-  akCalCache().events = akCalCombine(); save();
-  if (n) toast(n + (n === 1 ? " show is" : " shows are") + " now " + (v ? "private." : "public (still off your request page until you tick it in the show)."));
-}
-/* shows that still have the calendar's old color take the new one */
-function akCalRecolor(x, old) {
-  var i = akCalList().indexOf(x), col = akCalColor(x, i);
-  akGigs().forEach(function (g) { if (g.calSrc === x.id && g.color && g.color === old) g.color = col; });
-  akCalCache().events = akCalCombine(); save();
-}
-function akCalGoogleUI(out) {
-  var c = calSet(), box = h("div", { class: "akcal-g" });
-  out.appendChild(h("h3", { class: "akl-h" }, "Calendars from my Google account"));
-  out.appendChild(h("p", { class: "hint" }, "For private events that must stay off your public calendar: sign in with Google and pick which calendars show here. Each can be Public or 🔒 Private. Private shows never go on flyers, posters or your request page."));
-  out.appendChild(box);
-  function draw() {
-    box.textContent = "";
-    var res = h("p", { class: "hint", role: "status" }, AKCAL.lastErr || "");
-    box.appendChild(h("label", { class: "fld" }, "OAuth Client ID", h("input", { type: "text", value: c.gClient || "", placeholder: "1234…apps.googleusercontent.com", autocomplete: "off", autocapitalize: "off", spellcheck: "false", "aria-label": "OAuth Client ID",
-      onChange: function () { var v = this.value.trim(); if (v === c.gClient) return; c.gClient = v; c.gSigned = false; akCalTokSet(""); AKCAL.client = null; save(); draw(); } })));
-    var signed = !!akCalTok();
-    box.appendChild(h("div", { class: "row" },
-      h("button", { class: signed ? "" : "primary", disabled: !c.gClient, onClick: function () {
-        res.textContent = "Opening Google…";
-        akCalSignIn().then(function (t) { res.textContent = "Signed in. Loading your calendars…"; return akCalLoadList(t); }).then(function () { draw(); if (akCalGoogleOn()) calFetch().catch(function () {}); }, function (e) { res.textContent = e.message; });
-      } }, signed ? "↻ Sign in again" : "Sign in with Google"),
-      signed ? h("button", { onClick: function () { res.textContent = "Loading…"; akCalLoadList(akCalTok()).then(function () { draw(); }, function (e) { res.textContent = e.message; }); } }, "↻ Check for new calendars") : null,
-      signed ? h("button", { onClick: function () { akCalSignOut(); draw(); } }, "Sign out") : null,
-      h("button", { onClick: akCalHelp }, "How do I set this up?")));
-    if (c.gEmail) box.appendChild(h("p", { class: "hint" }, (signed ? "Signed in as " : "Last signed in as ") + c.gEmail + (signed ? " (on this device, for about an hour)." : ".")));
-    box.appendChild(res);
-    var list = akCalList();
-    if (list.length) {
-      box.appendChild(h("div", { class: "akcal-sub" }, "Tick the calendars to show in the app"));
-      var l = h("div", { class: "akcal-list" }); list.forEach(function (x, i) { l.appendChild(akCalRow(x, i, function () { draw(); })); }); box.appendChild(l);
-      box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { res.textContent = "Loading…"; akCalRefreshTap().then(function (ev) { res.textContent = "Loaded. " + ev.filter(function (e) { return e.end >= Date.now(); }).length + " upcoming events." + (AKCAL.lastErr ? " " + AKCAL.lastErr : ""); draw(); }, function (e) { res.textContent = e.message; }); } }, "↻ Load the ticked calendars now")));
-    } else if (signed) box.appendChild(h("p", { class: "hint" }, "No calendars found in this account."));
-    box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: c.privShow !== false, onChange: function () { c.privShow = this.checked; save(); } }), "Show private shows on the Shows screen (they are always kept off flyers and posters)"));
+/* Make all chords: also runs when the only change is putting a line's chords in brackets */
+akCv17Run = function (ta, song, done) {
+  if (!ta) return;
+  var r = akCv17Scan(ta.value);
+  if (!r.changed && !r.odd.length) { toast("Everything in the chord box already shows as a chord."); return; }
+  var shown = 0;
+  r.text.split("\n").forEach(function (ln, i) { var o = String(ta.value || "").replace(/\r\n?/g, "\n").split("\n")[i]; if (o !== ln) shown++; });
+  function go() {
+    var l = settings().customChords = settings().customChords || [];
+    r.odd.forEach(function (n) { if (l.indexOf(n) < 0) l.push(n); });
+    syncCustomChords();
+    ta.value = r.text; song.chords = r.text; done();
+    toast("Made the chords on " + shown + (shown === 1 ? " line" : " lines") + " show as chords.");
   }
-  draw();
+  var nb = r.fixed.filter(function (x) { return !/→ \[/.test(x); });
+  var msg = (nb.length ? "Fix the spelling: " + nb.slice(0, 12).join(",  ") + (nb.length > 12 ? " …" : "") + ". " : "") +
+    (r.text.indexOf("[") >= 0 && r.text.split("[").length > String(ta.value || "").split("[").length ? "Chords on lines with a label (like Intro: or x2) go in [brackets] so they show as chords. " : "") +
+    (r.odd.length ? "Treat these as chords too (remembered for every song): " + r.odd.join("  ") + "." : "");
+  if (!msg) msg = "Make the chords in this box show as chords?";
+  modal("Make all chords", h("p", null, msg), [{ label: "Cancel" }, { label: "Make chords", primary: true, onClick: go }]);
+};
+
+/* mark words as chords on the playing screen: the words and the chord box both change; "D," becomes [D], */
+function akMcCore(t) { if (isChordTok(t)) return t; var p = akMcSplit(t); return p && p.core !== t && isChordTok(p.core) ? p.core : null; }
+function akMcMark(text, toks, box) {
+  var want = {}; toks.forEach(function (t) { want[t] = 1; });
+  var lines = String(text || "").replace(/\r\n?/g, "\n").split("\n"), out = [], n = 0;
+  function hasTok(l) { return l.replace(/\[[^\]]*\]/g, " ").split(/\s+/).some(function (t) { return want[t]; }); }
+  function wrap(t) { var c = akMcCore(t); if (!c) return "[" + t + "]"; var i = t.indexOf(c); return t.slice(0, i) + "[" + c + "]" + t.slice(i + c.length); }
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (!hasTok(l)) { out.push(l); continue; }
+    if (!/\[/.test(l) && isChordLineText(l)) {
+      if (box === "chords") { out.push(l); n++; continue; } /* the whole line shows as chords already */
+      var nx = lines[i + 1];
+      if (nx != null && nx.trim() && !isChordLineText(nx) && !/\[[^\]]+\]/.test(nx) && !/^\s*\{/.test(nx)) { out.push(mergeAbove(l, nx, false)); i++; }
+      else out.push(l.replace(/\S+/g, function (t) { return isChordTok(t) ? "[" + t + "]" : t; }));
+      n++; continue;
+    }
+    if (/^\s*\{/.test(l) || (typeof isTabLine === "function" && isTabLine(l))) { out.push(l); continue; }
+    out.push(l.split(/(\[[^\]]*\])/).map(function (part) {
+      if (/^\[[^\]]*\]$/.test(part)) return part;
+      return part.replace(/(^|\s)(\S+)(?=\s|$)/g, function (m0, sp, t) { if (want[t]) { n++; return sp + wrap(t); } return m0; });
+    }).join(""));
+    /* in the chord box, the other chords on that line go in brackets too, so the whole line shows */
+    if (box === "chords") { var one = akCv17Scan(out[out.length - 1]); if (!one.odd.length) out[out.length - 1] = one.text; }
+  }
+  return { text: out.join("\n"), n: n };
 }
+akMarkLyrics = function (text, toks) { return akMcMark(text, toks, "lyrics"); };
+akMarkApply = function (toks, everySong) {
+  var song = curSong(); if (!song) return;
+  snap("make chords");
+  var l = settings().customChords = settings().customChords || [], added = [];
+  toks.forEach(function (t) { if (!isChordTok(t) && !akMcCore(t) && l.indexOf(t) < 0) { l.push(t); added.push(t); } });
+  syncCustomChords();
+  var songs = everySong ? lib().songs : [song], lines = 0;
+  songs.forEach(function (s2) {
+    if (s2.lyrics) { var r = akMcMark(s2.lyrics, toks, "lyrics"); if (r.n) { s2.lyrics = r.text; lines += r.n; } }
+    if (s2.chords) { var r2 = akMcMark(s2.chords, toks, "chords"); if (r2.n) { s2.chords = r2.text; lines += r2.n; } }
+  });
+  save();
+  var m = S.akMark; if (m) { document.removeEventListener("click", m.tap, true); if (m.bar && m.bar.parentNode) m.bar.parentNode.removeChild(m.bar); S.akMark = null; }
+  keepAutoRender();
+  toast("Made " + (toks.length === 1 ? toks[0] : toks.length + " words") + " into chords" + (lines ? " (" + lines + (lines === 1 ? " place)." : " places).") : "."), { label: "Undo", fn: function () { settings().customChords = (settings().customChords || []).filter(function (n) { return added.indexOf(n) < 0; }); syncCustomChords(); undoLast(); } });
+};
+/* ♪ Make all chords for the whole chord box, right in the mark bar */
 (function () {
-  var cs = calSettingsUI;
-  calSettingsUI = function (out) { cs.apply(this, arguments); try { akCalGoogleUI(out); } catch (e) {} };
+  var paint = akMarkPaint;
+  akMarkPaint = function () {
+    var r = paint.apply(this, arguments);
+    var m = S.akMark, song = S.play && curSong();
+    if (m && m.bar && song && (song.chords || "").trim() && !m.bar.querySelector(".akmc-all")) {
+      var row = m.bar.querySelector(".row");
+      var b = h("button", { class: "akmc-all", onClick: function () {
+        var box = { value: song.chords };
+        akCv17Run(box, {}, function () { snap("make chords"); song.chords = box.value; save(); var mk = S.akMark; if (mk) { document.removeEventListener("click", mk.tap, true); if (mk.bar && mk.bar.parentNode) mk.bar.parentNode.removeChild(mk.bar); S.akMark = null; } keepAutoRender(); });
+      } }, "♪ Make all chords");
+      if (row) row.insertBefore(b, row.firstChild.nextSibling); else m.bar.appendChild(b);
+    }
+    return r;
+  };
 })();
-/* the Shows screen: a 🔒 chip to show or hide private shows, when there are any */
+
+/* akx_close.js (version 15.5): every menu, drop-down and window can be closed without picking anything.
+   - ⋯ menus (menu()) get a "✕ Close" row pinned to their bottom.
+   - Every window made by modal() gets a ✕ in its top corner (the same as tapping outside it).
+   - Other pop-ups put on the page without a way out get a ✕ too (akxEnsure), and the chord fingering pop-up closes on a tap outside.
+   - The phone's Back button and the Escape key close the top pop-up only, and stay on the same screen. */
+AK_VERSION = "15.5";
+AK_WHATS_NEW = [
+  "Every ⋯ menu and drop-down has a ✕ Close at the bottom, and every window has a ✕ in its corner, so you can always get back without choosing anything.",
+  "Tapping outside a menu or window still closes it, and so does the phone's Back button: it closes just the pop-up and keeps you on the same screen."
+].concat(AK_WHATS_NEW);
+
+/* a button that already closes its window: Close, Cancel, Done, ✕... */
+var AKX_CLOSE_RX = /^(✕|×|close|cancel|done|not now|no thanks|got it|hide)\b/i;
+function akxIsCloser(b) {
+  var a = b.getAttribute("aria-label") || "";
+  if (/^close/i.test(a)) return true;
+  if (/remove|delete/i.test(a)) return false;
+  return AKX_CLOSE_RX.test((b.textContent || "").trim());
+}
+function akxXBtn(label, fn) {
+  return h("button", { class: "icon sm akx-x", "aria-label": label || "Close", title: "Close", onClick: function (e) { e.stopPropagation(); fn(); } }, "✕");
+}
+
+/* menus: a Close row at the bottom (stays in view when a long menu scrolls) */
 (function () {
-  var vg = viewGigs;
-  viewGigs = function () {
-    var el = vg.apply(this, arguments);
+  var m0 = menu;
+  menu = function (anchor, items) {
+    var r = m0.apply(this, arguments);
     try {
-      var n = akGigs().filter(function (g) { return g.priv; }).length, tabs = el.querySelector(".akshtabs"), tog = el.querySelector(".svtog") || tabs;
-      if (n && tog) {
-        var on = calSet().privShow !== false;
-        tog.after(h("div", { class: "chips akcal-shtog" }, h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { calSet().privShow = !on; save(); render(); } }, "🔒 Private shows: " + (on ? "shown" : "hidden") + " (" + n + ")")));
+      var m = openMenuEl;
+      if (m && !m.querySelector(".akx-mclose")) {
+        m.appendChild(h("button", { class: "akx-mclose", "aria-label": "Close this menu", onClick: function () { closeMenu(); } }, "✕ Close"));
+        /* the menu may have grown past the bottom of the screen: nudge it back up */
+        var rc = m.getBoundingClientRect();
+        if (rc.bottom > window.innerHeight - 8) m.style.top = Math.max(8, window.innerHeight - 8 - m.offsetHeight) + "px";
       }
     } catch (e) {}
-    return el;
+    return r;
   };
 })();
 
-akCss("akcal-a", [
-  ".akcal-list{display:flex;flex-direction:column;gap:6px;margin:6px 0}",
-  ".akcal-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:10px;opacity:.75}",
-  ".akcal-row.on{opacity:1}",
-  ".akcal-row.priv{border-style:dashed}",
-  ".akcal-on{display:flex;align-items:center;gap:6px;margin:0}",
-  ".akcal-dot{width:26px;height:26px;min-width:26px;min-height:26px;max-height:26px;flex:none;border-radius:50%;padding:0;border:2px solid var(--line)}",
-  ".akcal-mid{flex:1;min-width:0}",
-  ".akcal-mid input{width:100%}",
-  ".akcal-mid .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:2px 0 0}",
-  ".akcal-pp{flex-wrap:nowrap;margin:0}",
-  ".akcal-sub{font-weight:600;margin-top:8px}",
-  ".akcal-privbox.on{border:1px dashed var(--accent);border-radius:10px;padding:6px 8px;margin:6px 0}",
-  ".akcal-shtog{margin:6px 0}",
-  ".calev.akcal-pe{border-style:dashed}",
-  ".calev .akcal-cn{font-size:.8em;opacity:.8}",
-  "@media (max-width:480px){.akcal-row{flex-wrap:wrap}.akcal-pp{width:100%;justify-content:flex-end}}"
-].join("\n"));
+/* windows from modal(): a ✕ in the corner that does what a tap outside does */
+(function () {
+  var md0 = modal;
+  modal = function () {
+    var close = md0.apply(this, arguments);
+    try { var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1]; if (m) akxModalX(m); } catch (e) {}
+    return close;
+  };
+})();
+function akxModalX(m) {
+  var sh = m.querySelector(":scope > .sheet"); if (!sh || sh.querySelector(":scope > .akx-x")) return;
+  sh.classList.add("akx-has"); if (!sh.querySelector(":scope > h2")) sh.classList.add("akx-notitle");
+  sh.insertBefore(akxXBtn("Close this window", function () { akxCloseEl(m); }), sh.firstChild);
+}
+
+/* close one pop-up the way its own controls would */
+function akxCloseEl(el) {
+  if (!el || !el.isConnected) return false;
+  if (el.classList.contains("menu")) { if (el === openMenuEl) closeMenu(); else el.remove(); return true; }
+  if (el.classList.contains("modal")) {
+    /* the same as tapping the dark area around the window (runs its onClose) */
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    if (el.isConnected) { var d = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); }); if (d) d.click(); }
+    if (el.isConnected) el.remove();
+    return true;
+  }
+  var own = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); });
+  if (own) own.click();
+  if (el.isConnected) el.remove();
+  return true;
+}
+
+/* the pop-up on top: an open menu first, then the newest window, then other pop-ups (not the floating tool windows, which have their own ✕) */
+var AKX_POPS = ".ak15-ipop, .chordpop, .listpanel, .akws-over";
+function akxTop() {
+  if (openMenuEl && openMenuEl.isConnected) return openMenuEl;
+  var ms = document.querySelectorAll(".modal"); if (ms.length) return ms[ms.length - 1];
+  var ps = document.querySelectorAll(AKX_POPS); return ps.length ? ps[ps.length - 1] : null;
+}
+function akxCloseTop() { var t = akxTop(); return t ? akxCloseEl(t) : false; }
+
+/* other pop-ups with no way out get a ✕ (checked as they appear) */
+function akxEnsure(el) {
+  if (!el || el.nodeType !== 1 || el.akxDone) return;
+  if (!el.matches || !el.matches('[role="dialog"]:not(.modal):not(.menu):not(.akfloat)')) return;
+  el.akxDone = true;
+  if (Array.prototype.some.call(el.querySelectorAll("button"), akxIsCloser)) return;
+  el.classList.add("akx-has", "akx-gen"); if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  el.insertBefore(akxXBtn("Close", function () { el.remove(); }), el.firstChild);
+}
+(function () {
+  if (typeof MutationObserver === "undefined") return;
+  new MutationObserver(function (list) {
+    list.forEach(function (r) {
+      Array.prototype.forEach.call(r.addedNodes, function (n) {
+        if (n.nodeType !== 1) return;
+        if (n.classList.contains("modal")) akxModalX(n);
+        akxEnsure(n);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+
+/* a tap outside the chord fingering pop-up closes it */
+document.addEventListener("pointerdown", function (e) {
+  var p = document.querySelector(".chordpop"); if (!p) return;
+  var t = e.target;
+  if (p.contains(t) || (t.closest && t.closest(".modal, .menu, [data-shape]"))) return;
+  p.remove();
+}, true);
+
+/* Escape closes the top pop-up (the phone's Back button is handled in ui.js's popstate, through akxCloseTop) */
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape" || S.learning) return;
+  if (akxCloseTop()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+
+(function () {
+  var css = ".menu .akx-mclose{position:sticky;bottom:-6px;margin:4px -6px -6px;padding:0 12px;min-height:44px;text-align:center;font-weight:600;background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 12px 12px;color:var(--muted)}" +
+    ".menu .akx-mclose:hover{color:var(--fg)}" +
+    ".sheet.akx-has{position:relative}" +
+    ".akx-has > .akx-x{position:absolute;top:8px;right:8px;z-index:2;min-width:36px;min-height:36px;padding:0;border-radius:50%;font-size:1rem;line-height:1;background:var(--panel);border:1px solid var(--line);color:var(--fg);opacity:.85}" +
+    ".akx-has > .akx-x:hover{opacity:1}" +
+    ".sheet.akx-has > h2{padding-right:44px}" +
+    ".sheet.akx-notitle > .body{margin-top:38px}" +
+    ".akx-gen{padding-top:40px !important}";
+  document.head.appendChild(h("style", { id: "akx-css" }, css));
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
