@@ -35488,858 +35488,1107 @@ akCss("akset", [
   ".akset-tagger input[type=search]{width:100%;margin:6px 0}.akset-small{font-size:.85rem;margin-top:4px}.akset-encard .akset-lvchips{margin-top:4px}"
 ].join("\n"));
 
-/* ================================================================ akyt: YouTube window (version 15.2, item 112)
-   A floating window (akFloat "yt") with a YouTube player on top and four tabs under it: This song (song.ytVids plus the song's
-   Listen link song.ytUrl), Warm-ups (lib().ytWarm, saved vocal warm-up links that play one after another), Find (YouTube search;
-   needs a free YouTube Data API key kept only on this device in localStorage "akyt:key", otherwise opens a YouTube search and you
-   paste the link back), Link (paste any YouTube link). The player (.akyt-player) sits outside .akf-body, so changing tabs or
-   screens never restarts the video; minimising the window hides the picture and keeps the sound playing.
-   Entry: Button bar / side button / Song header "ytwin", the song editor's Listen links card, the Listen window, Learn › Warm-ups,
-   the Tonight page, Settings › Data and extras › YouTube window. */
-AK_VERSION = "15.2";
+/* ================================================================ akgfx_a: Graphics studio, part 1: designs, layouts, drawing (version 15.0, items 83, 99, 102, 103)
+   One studio (S.view "gfx", akgfx_b.js) makes four kinds of graphics, each with several layouts and sizes:
+     week    = several shows (this week, next week, a month, the next 2 weeks or any dates): "My weekly style" (his SHOWS THIS WEEK
+               posts, rebuilt), Clean list, Calendar (month grid, also the calendar printout)
+     flyer   = one show: My weekly style (one row), Spotlight, Photo band
+     tip     = tip sign with QR codes: QR codes, Jar label, Big words (sizes for a jar, a card, 5x7 and 8x10 frames, letter)
+     invoice = a bill for one show (letter or A4), with the fields picked in the studio
+   A design D (settings().gfx.last[kind]) -> akGfxLayers(D) -> P = { W, H, size, layers, gfx: true }, the same layer list the older
+   Signs and posters dialog (ak11_c.js) uses, so akPosterCanvas / akPosterPdf / akPosterGuide work on it. New layer types are drawn by
+   the akDrawLayer wrapper below: gbg (photo or color, zoom, focus, blur), grect, gpic (logo, wordmark), gstairs (line accents),
+   gbadge (patterned circles behind the title), grows (the show rows with dotted arrow lines), gspiral, gcal (month grid), ginv (invoice table).
+   Edits made in the studio live in D.edit[layerId] = { dx, dy, k, hide, text, color, font } and are baked into a copy (akGfxBake).
+   Text color "auto" = white on a dark background, black on a light one (akGfxPrepare measures the background).
+   Fonts: vendor/gfx/fonts (OFL), registered as "AKGFX <name>" (akGfxFontsLoad); his logo and wordmark: vendor/gfx/brand (Personal only). */
+AK_VERSION = "15.0";
 AK_WHATS_NEW = [
-  "YouTube window: watch videos inside the app in a window you can move, dock or minimise (minimised keeps the sound). Keep videos with each song, save warm-up videos to play in a row on the way to a show, and search YouTube with a free key (Settings › YouTube window).",
-  "Help: a new Help page. Ask “where is the capo?” or “how do I back up?” and tap Take me there. Also a Quick start, step-by-step guides like “Playing a show”, and “ways to use it” for every feature.",
-  "Chord keyboard: in the Chord chart box a keyboard made for chords opens by itself. Big A–G letters, then ♯ ♭ m 7 maj7 sus4 dim aug; space takes you back to the letters. Phone switches to your own keyboard; ⚙ lets you choose the keys."
+  "New: Graphics studio (Shows › ⋯ › 🎨 Graphics studio, or the 🎨 buttons on a show). Make your SHOWS THIS WEEK posts in your own style, filled in from your shows: pick the week (Monday or Sunday start), change the background picture, add or hide rows, dark overlay, blur and a panel behind the rows.",
+  "Graphics studio also makes show flyers, month calendars to post or print, tip signs with QR codes (jar label, card, frames, letter) and invoices for a show. Several layouts each, your logo and fonts by default, any font you like, drag any part to move it, and save as a picture, PDF, PDF with layers or a layers zip for Canva."
 ].concat(AK_WHATS_NEW);
-var AKYT = { cur: null, songId: null, queue: null, qi: 0, res: null, q: "", busy: false, msg: "" };
 
-/* a YouTube link -> { v: video id, list: playlist id, t: start seconds } (or null) */
-function akYtParse(u) {
-  u = String(u || "").trim(); if (!u) return null;
-  if (/^[\w-]{11}$/.test(u)) return { v: u, list: "", t: 0 };
-  var m, url; try { url = new URL(/^https?:/i.test(u) ? u : "https://" + u); } catch (e) { return null; }
-  var host = url.hostname.replace(/^www\.|^m\.|^music\./, ""), v = "", list = url.searchParams.get("list") || "";
-  if (host === "youtu.be") v = url.pathname.slice(1).split("/")[0];
-  else if (/(^|\.)youtube(-nocookie)?\.com$/.test(host)) {
-    if (url.pathname === "/watch") v = url.searchParams.get("v") || "";
-    else if ((m = /^\/(shorts|embed|live|v)\/([\w-]{11})/.exec(url.pathname))) v = m[2];
-    else if (url.pathname !== "/playlist") return null;
-  } else return null;
-  if (v && !/^[\w-]{11}$/.test(v)) v = "";
-  if (!v && !list) return null;
-  var t = url.searchParams.get("t") || url.searchParams.get("start") || "", sec = 0;
-  if (/^\d+$/.test(t)) sec = +t; else if (t) { var mm = /(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/.exec(t); if (mm) sec = (+mm[1] || 0) * 3600 + (+mm[2] || 0) * 60 + (+mm[3] || 0); }
-  return { v: v, list: list, t: sec };
+var AKGFX = { imc: {}, bgc: null, fontsP: null };
+var AKG_TYPES = { gbg: 1, grect: 1, gpic: 1, gstairs: 1, gbadge: 1, grows: 1, gspiral: 1, gcal: 1, ginv: 1 };
+var AKG_BASE = "gfx/";
+/* [family, file, weight range] */
+var AKG_FONTS = [["Syncopate", "syncopate-400.woff2", "400"], ["Syncopate", "syncopate-700.woff2", "700"], ["Poiret One", "poiret-one.woff2", "400"],
+  ["League Spartan", "league-spartan.woff2", "100 900"], ["Quicksand", "quicksand.woff2", "300 700"], ["Outfit", "outfit.woff2", "100 900"],
+  ["Bebas Neue", "bebas-neue.woff2", "400"], ["Playfair Display", "playfair-display.woff2", "400 900"], ["Montserrat", "montserrat.woff2", "100 900"],
+  ["Pacifico", "pacifico.woff2", "400"], ["Cinzel", "cinzel.woff2", "400 900"], ["Megrim", "megrim.woff2", "400"], ["Righteous", "righteous.woff2", "400"]];
+function akGfxStack(fam) { return '"AKGFX ' + fam + '", "' + fam + '", system-ui, sans-serif'; }
+function akGfxFontsLoad() {
+  if (AKGFX.fontsP) return AKGFX.fontsP;
+  var jobs = [];
+  if (typeof FontFace === "function" && document.fonts && /^https?:$/.test(location.protocol)) AKG_FONTS.forEach(function (f) {
+    try { var face = new FontFace("AKGFX " + f[0], "url(" + AKG_BASE + "fonts/" + f[1] + ")", { weight: f[2] }); document.fonts.add(face); jobs.push(face.load().catch(function () {})); } catch (e) {}
+  });
+  AKGFX.fontsP = Promise.all(jobs);
+  return AKGFX.fontsP;
 }
-function akYtEmbed(p, auto) {
-  var base = "https://www.youtube-nocookie.com/embed/" + (p.v || "videoseries");
-  var q = ["playsinline=1", "rel=0", "enablejsapi=1", "origin=" + encodeURIComponent(location.origin || "")];
-  if (p.list) q.push("list=" + encodeURIComponent(p.list));
-  if (p.t) q.push("start=" + p.t);
-  if (auto) q.push("autoplay=1");
-  return base + "?" + q.join("&");
-}
-function akYtWatchUrl(u) { var p = akYtParse(u); if (!p) return u; return p.v ? "https://www.youtube.com/watch?v=" + p.v + (p.list ? "&list=" + p.list : "") + (p.t ? "&t=" + p.t + "s" : "") : "https://www.youtube.com/playlist?list=" + p.list; }
-function akYtThumb(u) { var p = akYtParse(u); return p && p.v ? "https://i.ytimg.com/vi/" + p.v + "/mqdefault.jpg" : ""; }
-function akYtCfg() { var s = settings(); if (!s.ytWin || typeof s.ytWin !== "object") s.ytWin = {}; if (s.ytWin.auto === undefined) s.ytWin.auto = true; if (s.ytWin.next === undefined) s.ytWin.next = true; return s.ytWin; }
-function akYtKey(v) { try { if (v !== undefined) { if (v) localStorage.setItem("akyt:key", v); else localStorage.removeItem("akyt:key"); } return localStorage.getItem("akyt:key") || ""; } catch (e) { return ""; } }
-function akYtWarm() { var L = lib(); if (!Array.isArray(L.ytWarm)) L.ytWarm = []; return L.ytWarm; }
-function akYtSongVids(s) { if (!Array.isArray(s.ytVids)) s.ytVids = []; return s.ytVids; }
-function akYtSong() {
-  if (AKYT.songId) { var a = findSong(AKYT.songId); if (a) return a; }
-  if (S.view === "song" && S.songId) return findSong(S.songId);
-  if (S.view === "play" && S.play) { try { return curSong(); } catch (e) {} }
-  return null;
-}
-/* every video a song has: its Listen link first, then the attached ones */
-function akYtSongList(s) {
-  var out = [];
-  if (s.ytUrl && akYtParse(s.ytUrl)) out.push({ u: s.ytUrl, n: "Listen link", listen: true });
-  akYtSongVids(s).forEach(function (x, i) { out.push({ u: x.u, n: x.n || "Video " + (i + 1), i: i }); });
+/* font choices: [css stack, label, group] */
+function akGfxFontOpts() {
+  var seen = {}, out = [];
+  AKG_FONTS.forEach(function (f) { if (!seen[f[0]]) { seen[f[0]] = 1; out.push([akGfxStack(f[0]), f[0], "Graphics fonts"]); } });
+  try { fontList().forEach(function (f) { out.push([f[3], f[1], f[2] || "App fonts"]); }); } catch (e) {}
   return out;
 }
-function akYtSame(a, b) { var p = akYtParse(a), q = akYtParse(b); return !!(p && q && p.v === q.v && p.list === q.list); }
 
-/* ---- the window ---- */
-function akYtOpen(o) {
-  o = o || {};
-  if (o.song) AKYT.songId = o.song.id; else if (o.song === null) AKYT.songId = null;
-  if (o.url) { var p = akYtParse(o.url); if (!p) { toast("That doesn't look like a YouTube link."); return; } AKYT.cur = { u: o.url, n: o.name || "" }; if (!o.queue) AKYT.queue = null; }
-  if (o.queue) { AKYT.queue = o.queue; AKYT.qi = o.qi || 0; }
-  var c = akFloatCfg("yt"); if (o.tab) c.tab = o.tab; c.min = false;
-  if (!akFloatOpen("yt")) {
-    akFloat("yt", { title: "YouTube", tabs: [["song", "This song"], ["warm", "Warm-ups"], ["find", "Find"], ["link", "Link"]], w: 380, h: 520,
-      key: function () { var s = akYtSong(); return (s ? s.id : "") + ":" + (akFloatCfg("yt").tab || ""); },
-      body: akYtBody, onClose: function () { AKYT.cur = null; AKYT.queue = null; } });
-    var f = AK_FLOATS.yt; f.el.classList.add("akyt-win");
-    f.player = h("div", { class: "akyt-player" }); f.el.insertBefore(f.player, f.body);
-  } else akFloatFill("yt");
-  AK_FLOATS.yt.el.classList.remove("min"); save();
-  akYtPaint(!!o.url);
+/* ---------------------------------------------------------------- sizes, kinds, layouts */
+/* [id, label, W, H, inches wide, inches high] */
+var AKG_SIZES = [["post", "Post 4:5 (1080×1350)", 1080, 1350], ["story", "Story 9:16 (1080×1920)", 1080, 1920], ["square", "Square post (1080×1080)", 1080, 1080],
+  ["wide", "Wide / event cover (1920×1080)", 1920, 1080], ["letter", "Letter 8.5×11 in", 2550, 3300, 8.5, 11], ["quarter", "Quarter page 4.25×5.5 in", 1275, 1650, 4.25, 5.5],
+  ["tabloid", "Big poster 11×17 in", 3300, 5100, 11, 17], ["a4", "A4", 2480, 3508, 8.27, 11.69], ["jar", "Jar label 3.5×2 in", 1050, 600, 3.5, 2],
+  ["card46", "Card 4×6 in", 1200, 1800, 4, 6], ["frame57", "Frame 5×7 in", 1500, 2100, 5, 7], ["frame810", "Frame 8×10 in", 2400, 3000, 8, 10]];
+var AKG_KINDS = [["week", "📅 Shows poster", "Several shows: your weekly post, a list or a month calendar"], ["flyer", "🎤 Show flyer", "One show"],
+  ["tip", "💵 Tip sign", "QR codes for tips"], ["invoice", "🧾 Invoice", "Bill a venue for a show"]];
+var AKG_LAYOUTS = { week: [["mine", "My weekly style"], ["list", "Clean list"], ["cal", "Calendar"]], flyer: [["mine", "My weekly style"], ["spot", "Spotlight"], ["band", "Photo band"]],
+  tip: [["qr", "QR codes"], ["jar", "Jar label"], ["big", "Big words"]], invoice: [["classic", "Classic"], ["band", "Header band"], ["minimal", "Minimal"]] };
+var AKG_KSIZES = { week: ["post", "story", "square", "letter", "quarter", "tabloid"], flyer: ["post", "story", "square", "wide", "letter", "quarter", "tabloid"],
+  tip: ["jar", "card46", "frame57", "frame810", "letter", "square"], invoice: ["letter", "a4"] };
+function akGfxSize(id) { return AKG_SIZES.filter(function (s) { return s[0] === id; })[0] || AKG_SIZES[0]; }
+
+function akGfxCfg() {
+  var s = settings(); if (!s.gfx || typeof s.gfx !== "object") s.gfx = {};
+  var c = s.gfx; if (!c.last) c.last = {}; if (!Array.isArray(c.styles)) c.styles = []; if (!Array.isArray(c.photos)) c.photos = []; if (!c.invNext) c.invNext = 1001;
+  return c;
 }
-function akYtPaint(fresh) {
-  var f = AK_FLOATS.yt; if (!f || !f.player) return;
-  var cur = AKYT.cur, p = cur && akYtParse(cur.u), box = f.player;
-  if (!p) { box.textContent = ""; box.classList.remove("on"); return; }
-  if (fresh || !box.querySelector("iframe")) {
-    box.textContent = ""; box.classList.add("on");
-    var fr = h("iframe", { class: "akyt-frame", src: akYtEmbed(p, akYtCfg().auto), title: cur.n || "YouTube video", allow: "autoplay; encrypted-media; picture-in-picture; fullscreen", allowfullscreen: "true", referrerpolicy: "strict-origin-when-cross-origin" });
-    fr.addEventListener("load", function () { try { fr.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "akyt", channel: "widget" }), "*"); } catch (e) {} });
-    box.appendChild(h("div", { class: "akyt-16x9" }, fr));
-    var s = akYtSong(), on = s && akYtSongList(s).some(function (x) { return akYtSame(x.u, cur.u); }), warmOn = akYtWarm().some(function (x) { return akYtSame(x.u, cur.u); });
-    var q = AKYT.queue;
-    box.appendChild(h("div", { class: "akyt-now" },
-      h("span", { class: "grow akyt-nt" }, cur.n || "Now playing", q ? h("span", { class: "muted" }, "  " + (AKYT.qi + 1) + " of " + q.length) : null),
-      q && AKYT.qi < q.length - 1 ? h("button", { class: "sm", "aria-label": "Next video", onClick: function () { akYtNext(); } }, "⏭") : null,
-      s && !on ? h("button", { class: "sm", onClick: function () { akYtAttach(s, cur.u, cur.n); } }, "+ This song") : null,
-      !warmOn ? h("button", { class: "sm", onClick: function () { akYtAddWarm(cur.u, cur.n); } }, "+ Warm-ups") : null,
-      h("a", { class: "btnlink sm", href: akYtWatchUrl(cur.u), target: "_blank", rel: "noopener noreferrer", "aria-label": "Open in YouTube" }, "↗")));
+function akGfxArtIds() { return typeof AK_ART_FILES === "object" ? Object.keys(AK_ART_FILES) : []; }
+function akGfxDefault(kind) {
+  var art = akGfxArtIds(), pick = ["a_inferno", "a_ember", "a_orion"].filter(function (x) { return art.indexOf(x) >= 0; })[0] || art[0] || "";
+  var D = { kind: kind, layout: AKG_LAYOUTS[kind][0][0], size: AKG_KSIZES[kind][0], text: {}, edit: {}, hideRows: {}, rowEdit: {}, extraRows: [],
+    bg: { src: pick ? "art" : "color", id: pick, color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0 },
+    overlay: 0, panel: { on: false, color: "", alpha: 45 }, fg: "auto", accent: "auto", upper: true, logo: true, wordmark: true,
+    fonts: { title: akGfxStack("Poiret One"), main: akGfxStack("League Spartan"), small: akGfxStack("Quicksand") },
+    range: { mode: "week", start: "mon", shift: 0, days: 14, month: "", from: "", to: "" }, gigId: "", pay: {}, reqQr: false };
+  if (kind === "tip" || kind === "invoice") { D.fonts.title = akGfxStack("Syncopate"); D.fonts.main = akGfxStack("Outfit"); D.fonts.small = akGfxStack("Outfit"); }
+  if (kind === "invoice") { D.bg = { src: "color", id: "", color: "#ffffff", color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0 }; D.accent = "#6B3FA0"; D.fields = {}; }
+  if (kind === "tip") { D.size = "card46"; }
+  return D;
+}
+/* the current design of a kind (kept between visits) */
+function akGfxDesign(kind) {
+  var c = akGfxCfg(), d = c.last[kind], def = akGfxDefault(kind);
+  if (!d || typeof d !== "object") { d = def; c.last[kind] = d; }
+  Object.keys(def).forEach(function (k) { if (d[k] === undefined) d[k] = def[k]; });
+  ["bg", "panel", "fonts", "range"].forEach(function (k) { Object.keys(def[k]).forEach(function (j) { if (d[k][j] === undefined) d[k][j] = def[k][j]; }); });
+  if (!AKG_LAYOUTS[kind].some(function (l) { return l[0] === d.layout; })) d.layout = def.layout;
+  return d;
+}
+
+/* ---------------------------------------------------------------- show data */
+function akGfxDateKey(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function akGfxDay(key) { return new Date(key + "T12:00:00"); }
+function akGfxAddDays(key, n) { var d = akGfxDay(key); d.setDate(d.getDate() + n); return akGfxDateKey(d); }
+/* the town of a show, for "(GRASS VALLEY)": g.town, else the part of the address after the street */
+function akGfxTown(g) {
+  if (g.town) return g.town;
+  var v = typeof akVenueFor === "function" ? akVenueFor(g) : null; if (v && v.town) return v.town;
+  var a = (typeof akGigAddr === "function" ? akGigAddr(g) : g.address || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
+  function clean(t) { return t.replace(/\s*\b\d{5}(-\d{4})?\b.*$/, "").replace(/\s+\b[A-Z]{2}\b$/, "").replace(/^(California|USA|United States)$/i, "").trim(); }
+  if (a.length >= 3) { var st = -1; a.forEach(function (x, i) { if (st < 0 && /^\d+\s+\S/.test(x)) st = i; }); return clean(st >= 0 && a[st + 1] ? a[st + 1] : a[0]); }
+  if (a.length === 2) return /\d/.test(a[0]) ? clean(a[1]) : clean(a[0]);
+  if (a.length === 1 && !/\d/.test(a[0])) return clean(a[0]);
+  return "";
+}
+function akGfxTimes(g) {
+  function p(t) { var m = /^(\d+):(\d+)/.exec(t || ""); if (!m) return null; var hh = +m[1]; return { h: hh % 12 || 12, m: m[2], pm: hh >= 12 }; }
+  var a = p(g.start), b = p(g.end);
+  if (!a) return "";
+  function f(x) { return x.h + (x.m !== "00" ? ":" + x.m : ""); }
+  if (!b) return f(a) + (a.pm ? "PM" : "AM");
+  return f(a) + (a.pm === b.pm ? "" : (a.pm ? "PM" : "AM")) + "-" + f(b) + (b.pm ? "PM" : "AM");
+}
+function akGfxVenue(g) { return g.venue || ((typeof akVenueFor === "function" ? akVenueFor(g) : null) || {}).name || g.name || "Show"; }
+/* the dates a shows poster covers -> { from, to, title (two lines for My weekly style), sub } */
+function akGfxRange(D) {
+  var r = D.range, today = akTodayKey(), from, to, title, sub;
+  if (r.mode === "month") {
+    var mk = r.month || today.slice(0, 7), d = akGfxDay(mk + "-01");
+    from = mk + "-01"; to = akGfxDateKey(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    title = "SHOWS IN\n" + d.toLocaleDateString(undefined, { month: "long" }).toUpperCase(); sub = d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  } else if (r.mode === "next") {
+    from = today; to = akGfxAddDays(today, (Number(r.days) || 14) - 1); title = "UPCOMING\nSHOWS"; sub = "";
+  } else if (r.mode === "custom") {
+    from = r.from || today; to = r.to && r.to >= from ? r.to : akGfxAddDays(from, 6); title = "UPCOMING\nSHOWS"; sub = "";
+  } else {
+    var t = akGfxDay(today), wd = t.getDay(), back = r.start === "sun" ? wd : (wd + 6) % 7;
+    from = akGfxAddDays(today, -back + 7 * (Number(r.shift) || 0)); to = akGfxAddDays(from, 6);
+    title = !r.shift ? "SHOWS THIS\nWEEK" : r.shift === 1 ? "SHOWS NEXT\nWEEK" : "SHOWS THE\nWEEK OF " + (akGfxDay(from).getMonth() + 1) + "/" + akGfxDay(from).getDate();
+    sub = "";
   }
+  if (!sub) { var a = akGfxDay(from), b = akGfxDay(to); sub = a.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " – " + b.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  return { from: from, to: to, title: title, sub: sub };
 }
-function akYtNext() {
-  var q = AKYT.queue; if (!q || AKYT.qi >= q.length - 1) { AKYT.queue = null; akYtPaint(false); return; }
-  AKYT.qi++; AKYT.cur = { u: q[AKYT.qi].u, n: q[AKYT.qi].n }; akYtPaint(true);
+function akGfxRowOf(g) {
+  var d = akGfxDay(g.date);
+  return { id: g.id, date: g.date, l1: d.toLocaleDateString("en-US", { weekday: "long" }) + " " + (d.getMonth() + 1) + "/" + d.getDate(), l2: akGfxTimes(g), r1: akGfxVenue(g), r2: akGfxTown(g) ? "(" + akGfxTown(g) + ")" : "" };
 }
-/* the player tells us when a video ends (enablejsapi + "listening"): go on to the next warm-up */
-window.addEventListener("message", function (e) {
-  if (!/youtube(-nocookie)?\.com$/.test(String(e.origin).replace(/^https?:\/\//, ""))) return;
-  var d; try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (x) { return; }
-  if (!d) return;
-  var st = d.event === "onStateChange" ? d.info : d.event === "infoDelivery" && d.info ? d.info.playerState : null;
-  if (st === 0 && AKYT.queue && akYtCfg().next) setTimeout(akYtNext, 600);
-});
-function akYtAttach(s, u, n) {
-  var p = akYtParse(u); if (!p) { toast("That doesn't look like a YouTube link."); return; }
-  if (akYtSongList(s).some(function (x) { return akYtSame(x.u, u); })) { toast("Already on this song."); return; }
-  akYtSongVids(s).push({ u: u, n: n || "" });
-  if (!s.ytUrl) s.ytUrl = u;
-  save(); toast("Added to “" + (s.title || "this song") + "”.");
-  akFloatFill("yt"); akYtPaint(true);
-}
-function akYtAddWarm(u, n) {
-  if (!akYtParse(u)) { toast("That doesn't look like a YouTube link."); return; }
-  if (akYtWarm().some(function (x) { return akYtSame(x.u, u); })) { toast("Already in your warm-ups."); return; }
-  akYtWarm().push({ id: uid(), u: u, n: n || "Warm-up " + (akYtWarm().length + 1) });
-  save(); toast("Saved to Warm-ups."); akFloatFill("yt"); akYtPaint(true);
-}
-function akYtRow(x, acts) {
-  var th = akYtThumb(x.u);
-  return h("div", { class: "akyt-row" + (AKYT.cur && akYtSame(AKYT.cur.u, x.u) ? " on" : "") },
-    th ? h("img", { class: "akyt-th", src: th, alt: "", loading: "lazy" }) : h("span", { class: "akyt-th" }, "▶"),
-    h("button", { class: "grow linkish akyt-play", onClick: acts.play }, h("b", null, x.n || "Video"), x.sub ? h("span", { class: "muted" }, " " + x.sub) : null),
-    (acts.more || []).map(function (a) { return h("button", { class: "sm", "aria-label": a[1], title: a[1], onClick: a[2] }, a[0]); }));
-}
-function akYtPasteRow(label, onAdd) {
-  var inp = h("input", { type: "url", inputmode: "url", autocapitalize: "off", autocorrect: "off", spellcheck: "false", placeholder: "https://youtu.be/…", "aria-label": label });
-  var nm = h("input", { type: "text", placeholder: "Name (optional)", "aria-label": "Name for this video", autocapitalize: "sentences" });
-  function go2() { var v = inp.value.trim(); if (!akYtParse(v)) { toast("Paste a YouTube link first."); return; } onAdd(v, nm.value.trim()); inp.value = ""; nm.value = ""; }
-  inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go2(); });
-  var pasteB = navigator.clipboard && navigator.clipboard.readText ? h("button", { class: "sm", onClick: function () { navigator.clipboard.readText().then(function (t) { inp.value = (t || "").trim(); }).catch(function () { toast("Couldn't read the clipboard. Long-press the box and Paste."); }); } }, "📋 Paste") : null;
-  return h("div", { class: "akyt-paste" }, h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, inp), pasteB), h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, nm), h("button", { class: "sm primary", onClick: go2 }, label)));
-}
-function akYtBody(tab, el) {
-  var s = akYtSong();
-  if (tab === "song") {
-    if (!s) { el.appendChild(h("p", { class: "hint" }, "Open a song (or play one) to see its videos here. Warm-ups, Find and Link work anywhere.")); return; }
-    el.appendChild(h("div", { class: "akyt-h" }, h("b", null, s.title || "This song")));
-    var list = akYtSongList(s);
-    if (!list.length) el.appendChild(h("p", { class: "hint" }, "No videos on this song yet. Find one, or paste a link below. A lesson, a live version, a play-along: keep as many as you like."));
-    list.forEach(function (x) {
-      el.appendChild(akYtRow({ u: x.u, n: x.n, sub: x.listen ? "(also the 🎧 button)" : "" }, { play: function () { akYtOpen({ url: x.u, name: (s.title || "") + (x.listen ? "" : " · " + x.n) }); },
-        more: x.listen ? [] : [
-          ["✎", "Rename", function () { askText("Name for this video", x.n, "Save", function (v) { s.ytVids[x.i].n = v; save(); akFloatFill("yt"); }); }],
-          ["★", "Make it the Listen link", function () { s.ytUrl = x.u; save(); toast("Now the song's Listen link."); akFloatFill("yt"); }],
-          ["✕", "Remove from this song", function () { s.ytVids.splice(x.i, 1); save(); akFloatFill("yt"); }]] }));
-    });
-    el.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { AKYT.q = ((s.title || "") + " " + (s.artist || "")).trim(); akFloatCfg("yt").tab = "find"; save(); akFloatFill("yt"); if (akYtKey()) akYtSearch(); } }, "🔎 Find videos for this song")));
-    el.appendChild(akYtPasteRow("Add to song", function (u, n) { akYtAttach(s, u, n); }));
-    return;
-  }
-  if (tab === "warm") {
-    var W = akYtWarm();
-    el.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "Your vocal warm-up videos, for the drive to a show. ▶ All plays them in order. Minimise (—) the window to keep just the sound."));
-    if (W.length) el.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("button", { class: "primary sm", onClick: function () { akYtOpen({ url: W[0].u, name: W[0].n, queue: W.map(function (x) { return { u: x.u, n: x.n }; }), qi: 0 }); } }, "▶ All (" + W.length + ")")));
-    W.forEach(function (x, i) {
-      el.appendChild(akYtRow(x, { play: function () { akYtOpen({ url: x.u, name: x.n, queue: W.map(function (y) { return { u: y.u, n: y.n }; }), qi: i }); },
-        more: [
-          i > 0 ? ["↑", "Move up", function () { W.splice(i - 1, 0, W.splice(i, 1)[0]); save(); akFloatFill("yt"); }] : null,
-          ["✎", "Rename", function () { askText("Name for this warm-up", x.n, "Save", function (v) { x.n = v; save(); akFloatFill("yt"); }); }],
-          ["✕", "Remove", function () { W.splice(i, 1); save(); akFloatFill("yt"); }]].filter(Boolean) }));
-    });
-    if (!W.length) el.appendChild(h("p", { class: "hint" }, "None saved yet. Find some (try “vocal warm up baritone 10 minutes”) or paste a link."));
-    el.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { AKYT.q = "vocal warm up " + (akWarmCfgSafe().voice || "") + " 10 minutes"; akFloatCfg("yt").tab = "find"; save(); akFloatFill("yt"); if (akYtKey()) akYtSearch(); } }, "🔎 Find warm-up videos")));
-    el.appendChild(akYtPasteRow("Save warm-up", function (u, n) { akYtAddWarm(u, n); }));
-    return;
-  }
-  if (tab === "find") {
-    var inp = h("input", { type: "search", value: AKYT.q || "", placeholder: s ? (s.title || "") + " lesson" : "Search YouTube", "aria-label": "Search YouTube", onInput: function () { AKYT.q = this.value; } });
-    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { AKYT.q = inp.value; akYtSearch(); } });
-    el.appendChild(h("div", { class: "row", style: "margin:4px 0" }, h("div", { class: "grow" }, inp), h("button", { class: "primary sm", onClick: function () { AKYT.q = inp.value; akYtSearch(); } }, "Search")));
-    if (!akYtKey()) {
-      el.appendChild(h("p", { class: "hint" }, "Searching inside the app needs a free YouTube key (Settings › YouTube window). Without one, Search opens YouTube: copy the video's link (Share › Copy link), come back and paste it in the Link tab."));
-      return;
-    }
-    if (AKYT.busy) el.appendChild(h("p", { class: "hint" }, "Searching…"));
-    if (AKYT.msg) el.appendChild(h("p", { class: "hint" }, AKYT.msg));
-    (AKYT.res || []).forEach(function (r) {
-      var u = "https://www.youtube.com/watch?v=" + r.v;
-      el.appendChild(akYtRow({ u: u, n: r.t, sub: r.ch }, { play: function () { akYtOpen({ url: u, name: r.t }); },
-        more: [s ? ["+♫", "Add to this song", function () { akYtAttach(s, u, r.t); }] : null, ["+🎤", "Save as a warm-up", function () { akYtAddWarm(u, r.t); }]].filter(Boolean) }));
-    });
-    return;
-  }
-  el.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "Paste any YouTube link (a video, a Short, a playlist, or a link with a start time) to play it here."));
-  el.appendChild(akYtPasteRow("▶ Play", function (u, n) { akYtOpen({ url: u, name: n }); }));
-}
-function akWarmCfgSafe() { try { return akWarmCfg(); } catch (e) { return {}; } }
-function akYtSearch() {
-  var q = (AKYT.q || "").trim(); if (!q) { toast("Type what to search for."); return; }
-  var key = akYtKey();
-  if (!key) { window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank", "noopener"); return; }
-  AKYT.busy = true; AKYT.msg = ""; akFloatFill("yt");
-  fetch("https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=15&q=" + encodeURIComponent(q) + "&key=" + encodeURIComponent(key))
-    .then(function (r) { return r.json(); })
-    .then(function (d) {
-      if (d.error) throw new Error(d.error.message || "error");
-      AKYT.res = (d.items || []).filter(function (it) { return it.id && it.id.videoId; }).map(function (it) {
-        var t = h("textarea"); t.innerHTML = it.snippet.title; var c2 = h("textarea"); c2.innerHTML = it.snippet.channelTitle || "";
-        return { v: it.id.videoId, t: t.value, ch: c2.value };
-      });
-      if (!AKYT.res.length) AKYT.msg = "Nothing found.";
-    })
-    .catch(function (e) { AKYT.res = []; AKYT.msg = "Search didn't work (" + e.message + "). Check the key in Settings › YouTube window, or your connection."; })
-    .then(function () { AKYT.busy = false; akFloatFill("yt"); });
-}
-
-/* ---- Button bar, side button, Song header ---- */
-AK_IC.ytwin = "M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3z M10 9l5 3-5 3z";
-TB_ITEMS.push(["ytwin", "▶ YouTube window (videos for this song, warm-ups)"]); TB_SHORT.ytwin = "YouTube";
-FAB_ITEMS.push(["ytwin", "▶ YouTube window"]); FAB_OFF.ytwin = 1; FAB_SHORT.ytwin = "Video";
-AK_CORNER.push(["ytwin", "▶ YouTube window"]);
-(function () {
-  var tb = akExtraTb25, fb = akExtraFab12, cb = akCornerBtn;
-  akExtraTb25 = function (id, song, root) { if (id === "ytwin") return h("button", { "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: song || null }); this.blur(); } }, akIcon("ytwin")); return tb.apply(this, arguments); };
-  akExtraFab12 = function (song, root) { var o = fb.apply(this, arguments) || {}; o.ytwin = function () { return h("button", { class: "fb", "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: song || null }); this.blur(); } }, akIcon("ytwin")); }; return o; };
-  akCornerBtn = function (id, root) {
-    if (id !== "ytwin") return cb.apply(this, arguments);
-    var b = h("button", { class: "ak9-cb", "aria-label": "YouTube window", onClick: function () { akYtOpen({ song: null }); } }, "▶", h("span", { class: "ak9-cl" }, "Video"));
-    b.setAttribute("data-ak9c", "ytwin"); return b;
-  };
-})();
-(function () {
-  /* the 🎧 Listen window gets a "watch here" button */
-  var ol = openListen;
-  openListen = function (song) {
-    var r = ol.apply(this, arguments);
-    try {
-      var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1], row = m && m.querySelector(".body .row");
-      if (row) row.insertBefore(h("button", { class: "primary bigl", onClick: function () { closeModals(); var L = akYtSongList(song); akYtOpen(L.length ? { song: song, url: L[0].u, name: song.title || "", tab: "song" } : { song: song, tab: "song" }); } }, "▶ Watch here, in a window"), row.firstChild);
-    } catch (e) {}
-    return r;
-  };
-})();
-
-/* ---- the song editor's Listen links card, Learn › Warm-ups, Tonight ---- */
-function akYtEditorPaint() {
-  if (S.view !== "song" || !S.songId) return;
-  var s = findSong(S.songId); if (!s) return;
-  var det = Array.prototype.filter.call(document.querySelectorAll("#app details.card"), function (d) { var su = d.querySelector("summary"); return su && /^Listen links/.test(su.textContent); })[0];
-  if (!det || det.querySelector(".akyt-ed")) return;
-  var n = akYtSongList(s).length;
-  det.appendChild(h("div", { class: "row akyt-ed" }, h("button", { class: "primary", onClick: function () { var L = akYtSongList(s); akYtOpen(L.length ? { song: s, url: L[0].u, name: s.title || "", tab: "song" } : { song: s, tab: "song" }); } }, "▶ Watch in a window" + (n ? " (" + n + ")" : "")),
-    h("span", { class: "hint", style: "margin:0" }, "Keep lessons, live versions and play-alongs with the song. The window stays open while you edit or play.")));
-}
-(function () { var r = render; render = function () { var x = r.apply(this, arguments); try { akYtEditorPaint(); } catch (e) {} return x; }; })();
-function akYtWarmCard() {
-  var W = akYtWarm();
-  return h("div", { class: "card akyt-warmcard" }, h("strong", null, "🎤 Warm-up videos"),
-    h("p", { class: "hint", style: "margin:4px 0" }, W.length ? W.length + " saved. They play one after another; minimise the window to keep only the sound (handy on the way to a show)." : "Save YouTube warm-up videos you like, and play them in a row on the way to a show."),
-    h("div", { class: "row", style: "margin:0" },
-      W.length ? h("button", { class: "primary", onClick: function () { akYtOpen({ song: null, url: W[0].u, name: W[0].n, queue: W.map(function (x) { return { u: x.u, n: x.n }; }), qi: 0, tab: "warm" }); } }, "▶ Play my warm-ups") : null,
-      h("button", { onClick: function () { akYtOpen({ song: null, tab: "warm" }); } }, W.length ? "Edit the list" : "Add warm-up videos")));
-}
-if (typeof akWarmupsView === "function") (function () { var wv = akWarmupsView; akWarmupsView = function (box) { var r = wv.apply(this, arguments); try { box.insertBefore(akYtWarmCard(), box.firstChild); } catch (e) {} return r; }; })();
-if (typeof viewTonight === "function") (function () {
-  var vt = viewTonight;
-  viewTonight = function () { var el = vt.apply(this, arguments); try { var app = el.querySelector("#mainScroll > div") || el; var c = akYtWarmCard(); c.setAttribute("data-bk", "warm-up-videos"); app.appendChild(c); } catch (e) {} return el; };
-  AK_VIEWS.tonight = viewTonight;
-})();
-
-/* ---- Settings ---- */
-(function () {
-  var prev = akSettingsExtra27;
-  akSettingsExtra27 = function (c) {
-    prev(c);
-    c.again("data-and-extras");
-    c.section("YouTube window", "Watch videos inside the app: per song, warm-ups, search");
-    var yc = akYtCfg();
-    c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { akYtOpen({}); } }, "▶ Open the YouTube window")));
-    c.check("Start playing as soon as a video opens", function () { return yc.auto; }, function (v) { yc.auto = v; });
-    c.check("Warm-ups: go on to the next video when one ends", function () { return yc.next; }, function (v) { yc.next = v; });
-    var key = h("input", { type: "text", value: akYtKey(), placeholder: "AIza…", autocapitalize: "off", autocorrect: "off", spellcheck: "false", "aria-label": "YouTube key" });
-    c.out.appendChild(h("label", { class: "fld" }, "YouTube search key (optional, kept only on this device)", key));
-    c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akYtKey(key.value.trim()); toast(key.value.trim() ? "Key saved on this device." : "Key removed."); } }, "Save key"),
-      h("button", { onClick: function () { modal("Get a free YouTube key", h("ol", { class: "akyt-steps" },
-        h("li", null, "On a computer, open console.cloud.google.com and sign in with your Google account."),
-        h("li", null, "Make a project (any name, like “Akashic”)."),
-        h("li", null, "APIs and services › Library › “YouTube Data API v3” › Enable."),
-        h("li", null, "APIs and services › Credentials › Create credentials › API key. Copy it."),
-        h("li", null, "Optional but good: Edit the key › Website restrictions › add aedryan13.github.io/*, and API restrictions › YouTube Data API v3."),
-        h("li", null, "Paste it here and tap Save key. It's free for normal use (about 100 searches a day)."))); } }, "How to get one")));
-    c.out.appendChild(h("p", { class: "hint" }, "Playing a pasted link needs no key. The key is only for searching inside the app. A few videos don't allow playing outside YouTube; ↗ opens those in YouTube. After you tap the video, tap the song once so your pedal works again."));
-  };
-})();
-
-/* ---- feature guide ---- */
-AK_FEAT.push(
-  { id: "ytwin", cat: "Practice", name: "YouTube window", desc: "Watch YouTube inside the app in a window you can move, dock or minimise. Keep videos with each song (lessons, live versions, play-alongs), and search YouTube with a free key.", where: "Button bar button “YouTube window”, or a song's Listen links", modes: "", go: function () { akYtOpen({}); }, sel: null, area: "float", links: ["ytwarm"], tour: false },
-  { id: "ytwarm", cat: "Practice", name: "Warm-up videos", desc: "Save your favourite vocal warm-up videos and play them in a row on the way to a show. Minimise the window to keep only the sound.", where: "Learn › Warm-ups, the Tonight page, or the YouTube window's Warm-ups tab", modes: "", go: function () { akYtOpen({ tab: "warm" }); }, sel: null, area: "float", links: ["ytwin", "warmups"], tour: false });
-
-akCss("akyt", [
-  ".akyt-player{flex:none;background:#000}.akyt-player:not(.on){display:none}",
-  ".akyt-16x9{position:relative;width:100%;padding-top:56.25%}.akyt-frame{position:absolute;inset:0;width:100%;height:100%;border:0}",
-  ".akyt-now{display:flex;gap:4px;align-items:center;padding:4px 6px;background:var(--panel,var(--bg));color:var(--fg);font-size:.85rem}",
-  ".akyt-nt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-  ".akfloat.min .akyt-player .akyt-16x9{height:0;padding-top:0;overflow:hidden}.akfloat.min .akyt-now{display:flex}",
-  ".akyt-row{display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line,#8883)}.akyt-row.on{background:color-mix(in srgb,var(--accent,#c9a227) 18%,transparent)}",
-  ".akyt-th{width:64px;height:36px;object-fit:cover;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background:#0004}",
-  ".akyt-play{text-align:left;min-width:0;overflow:hidden;text-overflow:ellipsis}",
-  ".akyt-paste{border-top:1px dashed var(--line,#8885);margin-top:8px;padding-top:4px}",
-  ".akyt-steps li{margin:6px 0}"
-].join("\n"));
-
-/* ================================================================ akckb: chord keyboard (version 15.2, item 92)
-   The on-screen keyboard's ♪ layer (OSK.layer "chords") becomes a chord keyboard in two steps: big root letters A–G, and once a
-   root is typed, the endings (♯ ♭ m 7 maj7 sus4 dim aug /…). The step comes from the letter before the cursor, so after a space
-   (or "/", "(", "|") it is back on the letters by itself. settings().ckb = { box: opens by itself in chord boxes (default on),
-   one: letters and endings on one page, ends: the ending keys in order (editable) }.
-   Chord boxes (akCkbIsBox): the song editor's Chord chart box, the Key box (#akKeyInp), any [data-ckb] box, and boxes labelled
-   "Chord", "Chords" or "Chord name". In a chord box the device keyboard stays down (inputmode none, set on pointerdown) unless
-   "Phone" is tapped, which hands that box back to the device keyboard until the page is redrawn. */
-var AK_CKB_ENDS = ["#", "b", "m", "7", "maj7", "m7", "sus4", "sus2", "add9", "dim", "aug", "6", "9", "m7b5", "dim7", "7sus4", "11", "13", "/"];
-function akCkbCfg() { var s = settings(); if (!s.ckb || typeof s.ckb !== "object") s.ckb = {}; var c = s.ckb; if (c.box === undefined) c.box = true; if (!Array.isArray(c.ends) || !c.ends.length) c.ends = AK_CKB_ENDS.slice(); return c; }
-function akCkbIsBox(el) {
-  if (!el || el.nodeType !== 1 || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return false;
-  if (el.hasAttribute("data-ckb")) return el.getAttribute("data-ckb") !== "0";
-  if (el.id === "akKeyInp") return true;
-  var lab = el.closest && el.closest("label");
-  if (el.tagName === "TEXTAREA" && lab && /^\s*Chord chart/.test(lab.textContent)) return true;
-  return /^(chord|chords|chord name|a chord|chord to add)$/i.test((el.getAttribute("aria-label") || "").trim());
-}
-function akCkbLabel(v) { return v === "#" ? "♯" : v === "b" ? "♭" : v; }
-/* letters or endings, from what is just before the cursor */
-function akCkbStage() {
-  if (akCkbCfg().one) return "one";
-  if (OSK.ckbForce) return OSK.ckbForce;
-  var t = OSK.target; if (!t) return "letters";
-  var r = oskSel(t), prev = t.value.slice(0, r[0]).slice(-1);
-  return !prev || /[\s\/(\[|\-,]/.test(prev) ? "letters" : "ends";
-}
-function akCkbRows() {
-  var c = akCkbCfg(), st = akCkbStage(), rows = [];
-  function k(v, w) { return { t: akCkbLabel(v), v: v, w: w }; }
-  var letters = "CDEFGAB".split("").map(function (x) { return k(x, 1.2); });
-  var ends = c.ends.filter(function (x) { return x && String(x).trim(); }).map(function (x) { return k(String(x).trim(), String(x).length > 3 ? 1.4 : 1); });
-  function chunk(list, n) { for (var i = 0; i < list.length; i += n) rows.push(list.slice(i, i + n)); }
-  if (st === "letters" || st === "one") {
-    rows.push(letters.concat([{ t: "⌫", k: "back", w: 1.3 }]));
-    if (st === "letters") rows.push([k("N.C."), k("|"), k("("), k(")"), k("x2"), k("-"), { t: "♯ ♭ m 7…", k: "ckbEnds", w: 1.6 }]);
-  }
-  if (st === "ends" || st === "one") {
-    var per = Math.max(5, Math.min(8, Math.ceil(ends.length / 3)));
-    chunk(ends, per);
-    if (st === "ends") rows[rows.length - 1] = rows[rows.length - 1].concat([{ t: "⌫", k: "back", w: 1.3 }]);
-  }
-  rows.push([{ t: "abc", k: "abc", w: 1.2 }, st === "ends" ? { t: "A–G", k: "ckbLetters", w: 1.2 } : { t: "123", k: "num", w: 1.2 }, { t: "space", v: " ", w: 3.2 },
-    { t: "⚙", k: "ckbGear", w: 0.9 }, { t: "Phone", k: "ckbPhone", w: 1.4 }, { t: "↵", k: "enter", w: 1.2 }]);
-  return rows;
-}
-(function () {
-  var rowsWas = oskRows, pressWas = oskPress, openWas = oskOpen, drawWas = oskDraw;
-  oskRows = function () { if (OSK.layer === "chords" && !OSK.numeric) return akCkbRows(); return rowsWas.apply(this, arguments); };
-  oskPress = function (k) {
-    if (k.k === "ckbEnds") { OSK.ckbForce = "ends"; oskDraw(); return; }
-    if (k.k === "ckbLetters") { OSK.ckbForce = "letters"; oskDraw(); return; }
-    if (k.k === "ckbGear") { akCkbSetup(); return; }
-    if (k.k === "ckbPhone") { akCkbPhone(); return; }
-    OSK.ckbForce = null;
-    return pressWas.apply(this, arguments);
-  };
-  oskOpen = function (t) {
-    var r = openWas.apply(this, arguments);
-    OSK.ckbForce = null;
-    if (t && akCkbIsBox(t) && akCkbCfg().box && !t.hasAttribute("data-ckb-off")) { OSK.layer = "chords"; drawWas(); }
-    return r;
-  };
-  oskDraw = function () { var r = drawWas.apply(this, arguments); try { if (OSK.el) OSK.el.classList.toggle("akckb-on", OSK.layer === "chords"); } catch (e) {} return r; };
-})();
-/* the device keyboard for this box instead */
-function akCkbPhone() {
-  var t = OSK.target; if (!t) { oskClose(); return; }
-  t.setAttribute("data-ckb-off", "1");
-  OSK.saved = null; t.removeAttribute("inputmode");
-  oskClose();
-  setTimeout(function () { try { t.focus(); } catch (e) {} }, 30);
-  toast("Device keyboard for this box. Tap ♪ on the app keyboard (⌨) to get chords back.");
-}
-/* in a chord box: keep the device keyboard down and open the chord keyboard */
-document.addEventListener("pointerdown", function (e) {
-  var t = e.target; if (!akCkbIsBox(t) || !akCkbCfg().box || t.hasAttribute("data-ckb-off")) return;
-  t.setAttribute("inputmode", "none");
-}, true);
-document.addEventListener("focusin", function (e) {
-  var t = e.target; if (!akCkbIsBox(t) || !akCkbCfg().box || t.hasAttribute("data-ckb-off") || t.readOnly || t.disabled) return;
-  OSK.last = t;
-  if (!oskOpenNow() || OSK.target !== t) oskOpen(t); else if (OSK.layer !== "chords") { OSK.layer = "chords"; oskDraw(); }
-});
-
-/* customise: from ⚙ on the keyboard and from Settings */
-function akCkbEditor(after) {
-  var c = akCkbCfg(), box = h("div", { class: "akckb-ed" });
-  function draw() {
-    box.textContent = "";
-    box.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, "The ending keys, in order. Tap ✕ to take one off, ◀ to move it earlier, or add your own (like m9, 7#9, 5, add2)."));
-    var chips = h("div", { class: "akckb-chips" });
-    c.ends.forEach(function (x, i) {
-      chips.appendChild(h("span", { class: "akckb-chip" },
-        i > 0 ? h("button", { class: "sm", "aria-label": "Move " + x + " earlier", onClick: function () { c.ends.splice(i - 1, 0, c.ends.splice(i, 1)[0]); save(); draw(); if (after) after(); } }, "◀") : null,
-        h("b", null, akCkbLabel(x)),
-        h("button", { class: "sm", "aria-label": "Remove " + x, onClick: function () { c.ends.splice(i, 1); if (!c.ends.length) c.ends = AK_CKB_ENDS.slice(); save(); draw(); if (after) after(); } }, "✕")));
-    });
-    box.appendChild(chips);
-    var inp = h("input", { type: "text", placeholder: "New key, like m9", "aria-label": "New ending key", autocapitalize: "off", "data-ckb": "0" });
-    function add() { var v = inp.value.trim(); if (!v) return; v.split(/[,\s]+/).forEach(function (x) { if (x && c.ends.indexOf(x) < 0) c.ends.push(x); }); save(); draw(); if (after) after(); }
-    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") add(); });
-    box.appendChild(h("div", { class: "row" }, h("div", { class: "grow" }, inp), h("button", { onClick: add }, "Add"), h("button", { onClick: function () { c.ends = AK_CKB_ENDS.slice(); save(); draw(); if (after) after(); } }, "Reset")));
-  }
-  draw();
-  return box;
-}
-function akCkbSetup() {
-  var c = akCkbCfg(), t = OSK.target;
-  var body = h("div", null,
-    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: c.box, onChange: function () { c.box = this.checked; save(); } }), "Open the chord keyboard by itself in chord boxes"),
-    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.one, onChange: function () { c.one = this.checked; save(); oskDraw(); } }), "Letters and endings on one page (otherwise endings show after you tap a letter)"),
-    akCkbEditor(function () { oskDraw(); }));
-  modal("Chord keyboard", body, [{ label: "Done", onClick: function () { if (t && t.isConnected) setTimeout(function () { try { t.focus({ preventScroll: true }); } catch (e) {} }, 30); } }]);
-}
-(function () {
-  var prev = akSettingsExtra27;
-  akSettingsExtra27 = function (c) {
-    prev(c);
-    c.again("data-and-extras");
-    c.section("Chord keyboard", "Big chord letters and endings for chord boxes");
-    var k = akCkbCfg();
-    c.check("Open the chord keyboard by itself in chord boxes (Chord chart, Key, chord names)", function () { return k.box; }, function (v) { k.box = v; });
-    c.check("Letters and endings on one page", function () { return !!k.one; }, function (v) { k.one = v; });
-    c.out.appendChild(h("p", { class: "hint" }, "Tap a letter, then its ending (♯ ♭ m 7 maj7 sus4 dim aug…). Space or / takes you back to the letters. Phone on the chord keyboard switches that box to your device's keyboard. In any other box, the ♪ key on the app keyboard gives you the same chord keys."));
-    c.out.appendChild(akCkbEditor());
-    c.out.appendChild(h("label", { class: "fld" }, "Try it", h("input", { type: "text", "data-ckb": "1", placeholder: "Tap here: G  D/F#  Em7  Cadd9", "aria-label": "Chord keyboard test box" })));
-  };
-})();
-AK_FEAT.push({ id: "ckb", cat: "Songs", name: "Chord keyboard", desc: "A keyboard made for chords: big A–G letters, then ♯ ♭ m 7 maj7 sus4 dim aug and your own endings. It opens by itself in chord boxes; Phone switches back to the device keyboard.", where: "Song editor, Chord chart box; Settings › Chord keyboard", modes: "", go: "settings", sel: '[data-bk="chord-keyboard"]', area: "editor", links: ["editor"], tour: false });
-
-akCss("akckb", [
-  ".osk.akckb-on button.k{font-weight:600}",
-  ".akckb-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}",
-  ".akckb-chip{display:inline-flex;align-items:center;gap:2px;border:1px solid var(--line,#8886);border-radius:16px;padding:2px 4px}",
-  ".akckb-chip b{padding:0 4px}.akckb-chip button.sm{min-height:26px;padding:0 6px;font-size:.8rem}"
-].join("\n"));
-
-/* ================================================================ akhelp: Help page (version 15.2, items 106–109)
-   AK_VIEWS.help ("Help and how-to"): a "Where is…?" box (akHelpSearch: offline word matching with stop words, simple stems and
-   synonym groups AK_HELP_SYN, over the hand-written answers AK_HELP_WHERE, the feature guide incl. its ways to use it, every
-   Settings section from akSetIndex, the guided flows and the quick start), the Quick start (AK_HELP_QS, also a card at the top of
-   Songs until finished or hidden), and Guided flows (AK_HELP_FLOWS, steps with Take me there and a tick).
-   Ways to use it (107): AK_FEAT_WAYS[id] shows under each feature in the feature guide (akViewFeatures is redrawn here).
-   State: settings().akHelp = { qs: { done: {id: 1}, hide }, flows: { flowId: { stepIndex: 1 } } }.
-   Hooks other updates can fill: akFlyerOpen(gig) (flyers) and akTipSignOpen() (tip signs) light up their flow steps. */
-function akHelpCfg() { var s = settings(); if (!s.akHelp || typeof s.akHelp !== "object") s.akHelp = {}; var c = s.akHelp; if (!c.qs) c.qs = { done: {} }; if (!c.qs.done) c.qs.done = {}; if (!c.flows) c.flows = {}; return c; }
-function akHelpFn(n) { return typeof window[n] === "function" ? window[n] : null; }
-
-/* ---- going to a Settings section by its title ---- */
-function akHelpSetFind(title) {
-  var idx = []; try { idx = akSetIndex(); } catch (e) {}
-  var t = String(title).toLowerCase();
-  return idx.filter(function (x) { return (x.title || "").toLowerCase() === t; })[0] || idx.filter(function (x) { return (x.title || "").toLowerCase().indexOf(t) >= 0; })[0] || null;
-}
-function akHelpSetGo(x) {
-  if (!x) { go("settings"); return; }
-  var scr = settings().allInSettings ? "" : (typeof akScrOf === "function" ? akScrOf(x.id) : "");
-  if (scr) { akScreenCustomize(scr, x.bk); return; }
-  go("settings");
-  setTimeout(function () { var el = document.querySelector('[data-blocks="settings/' + x.id.split("/")[0] + '"] > [data-bk="' + x.bk + '"]') || document.querySelector('[data-bk="' + x.bk + '"]'); if (el) akPulse(el); }, 250);
-}
-function akHelpSet(title) { return function () { akHelpSetGo(akHelpSetFind(title)); }; }
-function akHelpSetWhere(title) { var x = akHelpSetFind(title); return x ? "Settings › " + (x.group ? x.group + " › " : "") + x.title : "Settings"; }
-function akHelpView(v, extra) { return function () { go(v, extra); }; }
-function akHelpFirstSong() { var l = lib().songs.filter(function (s) { return !s.trashed; }); return l[0] || null; }
-function akHelpEditSong() { var s = (S.songId && findSong(S.songId)) || akHelpFirstSong(); if (s) go("song", { songId: s.id }); else { go("songs"); toast("Add a song first."); } }
-function akHelpPlay() { try { var l = filteredSongs(); if (l.length) playFromSongs(l, 0); else toast("Add a song first."); } catch (e) { go("songs"); } }
-
-/* ---- 109: hand-written answers. t = the question, a = where (a function of nothing, or text), k = extra words, go ---- */
-var AK_HELP_WHERE = [
-  { t: "Change the key (transpose)", a: "Song editor: the key change buttons right above the Chord chart box. Your original key is kept so you can go back.", k: "transpose key up down semitone original", go: akHelpEditSong },
-  { t: "Capo", a: "Song editor › Playing › Capo fret. Sounding key shows what the audience hears.", k: "capo fret sounding", go: akHelpEditSong },
-  { t: "Auto-scroll speed", a: function () { return "Each song: song editor › scroll speed. Defaults: " + akHelpSetWhere("Auto-scroll") + "."; }, k: "scroll speed autoscroll faster slower", go: akHelpSet("Auto-scroll") },
-  { t: "Bluetooth foot pedal", a: function () { return akHelpSetWhere("Pedal") + ": teach it your pedal's keys."; }, k: "pedal foot bluetooth page turner", go: akHelpSet("Pedal") },
-  { t: "Bigger or smaller text", a: function () { return akHelpSetWhere("Text size and style") + ". Each song can have its own size in the song editor."; }, k: "text size font bigger smaller", go: akHelpSet("Text size and style") },
-  { t: "Make the whole app bigger or smaller", a: function () { return akHelpSetWhere("Size of the app") + "."; }, k: "size zoom scale small big app", go: akHelpSet("Size of the app") },
-  { t: "Themes, colors and background pictures", a: function () { return akHelpSetWhere("Themes and Atmosphere") + ", and Theme art."; }, k: "theme color dark light background picture look", go: akHelpSet("Themes and Atmosphere") },
-  { t: "Buttons on the playing screen", a: function () { return akHelpSetWhere("Button bar") + " and Side buttons. On the playing screen, Buttons ▾ has quick on/off."; }, k: "button toolbar side bar add remove playing", go: akHelpSet("Button bar") },
-  { t: "Back up my songs", a: function () { return akHelpSetWhere("Backups") + ": Save backup now, or GitHub backup."; }, k: "backup save copy safe github", go: akHelpSet("Backups") },
-  { t: "Restore a backup", a: "Import tab › open the backup file. “Replace everything” overwrites; adding keeps what you have.", k: "restore backup load file", go: akHelpView("import") },
-  { t: "Move to a new phone or tablet", a: function () { return "Save a backup file (" + akHelpSetWhere("Backups") + "), open it on the new device's Import tab. Or " + akHelpSetWhere("Sync between my devices") + "."; }, k: "new device phone tablet move transfer sync", go: akHelpSet("Sync between my devices") },
-  { t: "Make a setlist", a: "Shows tab › + New › New setlist. Or ✦ Build a setlist from your songs.", k: "setlist set list new", go: akHelpView("shows") },
-  { t: "Add a show (a gig)", a: "Shows tab › + New › New show: date, venue, address, pay and its setlists.", k: "show gig venue date new", go: function () { go("shows"); var f = akHelpFn("akGigNewDialog"); if (f) setTimeout(f, 60); } },
-  { t: "Song requests and tips QR code", a: function () { return akHelpSetWhere("Live requests") + " › Show my QR code."; }, k: "request tip tips qr code audience money", go: akHelpSet("Live requests") },
-  { t: "Breaks and the break countdown", a: "☕ Start break button (Button bar or Song header ⋯), and Timers.", k: "break pause timer countdown rest", go: akHelpSet("Break button") },
-  { t: "What I played last night", a: "Shows › Play history › Nights: songs in order with times and breaks.", k: "history played night log last", go: akHelpView("history") },
-  { t: "Record my show", a: function () { return "The 🎙 Recorder button, and " + akHelpSetWhere("Record my show") + "."; }, k: "record recording video audio phone", go: akHelpSet("Record my show") },
-  { t: "Watch a YouTube video in the app", a: "Button bar › YouTube window, or a song's Listen links › ▶ Watch in a window.", k: "youtube video watch lesson", go: function () { if (typeof akYtOpen === "function") akYtOpen({}); } },
-  { t: "Vocal warm-ups", a: "Learn › Warm-ups (exercises with guide tones), and Warm-up videos to play on the way to a show.", k: "warm warmup vocal voice sing", go: function () { go("learn", { learnTab: "warmups" }); } },
-  { t: "Metronome and tuner", a: "Buttons for the Button bar (Settings › Playing screen › Button bar), also in Learn.", k: "metronome tuner tune click tempo bpm", go: akHelpSet("Button bar") },
-  { t: "Instrument, tuning and chord diagrams", a: function () { return akHelpSetWhere("Instrument and tuning") + ": guitar, ukulele, piano, Drop D…"; }, k: "instrument tuning guitar ukulele piano diagram drop", go: akHelpSet("Instrument and tuning") },
-  { t: "Share a song", a: "Song editor › ⋯ › Share this song (a .chordbook.json file). The other person opens it with Import › Songs.", k: "share send song file", go: akHelpEditSong },
-  { t: "Add songs (paste, file, photos)", a: "Songs › + New: blank, paste, a file, or 📷 photos of a chord sheet. Import tab for many at once.", k: "add new song paste photo import file", go: akHelpView("songs") },
-  { t: "Deleted a song by mistake", a: function () { return akHelpSetWhere("Libraries and reset") + " › Recently deleted (kept 30 days)."; }, k: "delete deleted trash undo recover", go: akHelpSet("Libraries and reset") },
-  { t: "Type chords quickly", a: "The chord keyboard opens in the Chord chart box. Elsewhere, ⌨ then ♪.", k: "chord keyboard type typing", go: akHelpSet("Chord keyboard") },
-  { t: "Keyboard won't show with the pedal", a: function () { return "Use the app's keyboard: tap the box, then ⌨. " + akHelpSetWhere("On-screen keyboard") + "."; }, k: "keyboard type typing pedal missing", go: akHelpSet("On-screen keyboard") },
-  { t: "Write a song", a: "Write tab: lyric pad, chords, rhymes, layouts. Quick idea makes a work in progress with a voice memo.", k: "write songwriting lyric rhyme idea original", go: akHelpView("write") },
-  { t: "Banter and jokes", a: "The Banter screen, and the banter window on the playing screen.", k: "banter joke talk story crowd", go: akHelpView("banter") },
-  { t: "Learn, lessons and scales", a: "Learn tab: lessons, scales, chord library, trainer, licks, warm-ups, plans.", k: "learn lesson scale practice theory", go: akHelpView("learn") },
-  { t: "Calendar", a: function () { return akHelpSetWhere("Calendar") + ": your next shows from Google Calendar."; }, k: "calendar date schedule google", go: akHelpSet("Calendar") },
-  { t: "Move things around on a page", a: "The ⇅ button at the top of a page: drag by ⠿, snap, hide, save as default.", k: "arrange move layout drag order", go: akHelpView("songs") },
-  { t: "Fewer buttons (simpler)", a: function () { return akHelpSetWhere("Simple mode") + ", and Usage modes."; }, k: "simple easy less fewer hide clutter", go: akHelpSet("Simple mode") },
-  { t: "Find duplicate songs and tidy up", a: "More › Tidy my library: empty songs, duplicates, songs with no chords.", k: "duplicate tidy clean empty", go: akHelpView("tidy") },
-  { t: "Pay, tips and stats", a: "A show's page › money (pay, tips, costs); Logs and stats for totals and charts.", k: "pay tips money stats earnings invoice", go: akHelpView("stats") },
-  { t: "Take the tour again", a: function () { return akHelpSetWhere("Help, tour and tips") + "."; }, k: "tour tutorial welcome intro", go: function () { openTour(); } }
-];
-
-/* ---- 107: ways to use each feature ---- */
-var AK_FEAT_WAYS = {
-  search: ["Type a word you remember from the chorus to find a song fast.", "Filter by “not played in a while” to freshen a set."],
-  smart: ["Tag songs “capo 2”, “Drop D” or “upbeat” and save each as a smart list.", "Make a smart list of requests you still need to learn."],
-  shelves: ["Keep half-finished originals off your stage list.", "Move a song to Originals the night you first play it live."],
-  editor: ["Paste a chart from the web and let it convert chords-above to [C]chords.", "Keep a stage note (“count in 4”, “key of A for duet”) that shows while you play."],
-  findchords: ["Paste a messy chord sheet with ♭/♯ and let it turn into real chords."],
-  sheet: ["Paste only the chord sheet from a website onto lyrics you already typed."],
-  lucky: ["Have a chord list but no placement? Spread it and nudge the dashed guesses."],
-  placer: ["From the playing screen, fix a chord in the right spot without losing your place.", "Tap a word, then the chord: fastest way to chord new lyrics."],
-  shape: ["Found a voicing you like? Tap its frets and the app names it and keeps it."],
-  bv: ["Mark harmony lines for a duo gig.", "Show only one singer's part on their tablet."],
-  degrees: ["Use numbers to play in any key a singer asks for.", "Show both to learn the theory as you play."],
-  versions: ["Rewrote a verse and miss the old one? Restore it from song history."],
-  play: ["Fit to screen for short songs; auto-scroll for long ones.", "Touch lock so a stray tap doesn't jump songs mid-set."],
-  toolbar: ["Keep only the buttons you use at gigs on the Button bar.", "Make a “practice” button set and a “stage” set and swap with Buttons ▾."],
-  infoflip: ["Flip to banter between songs, then back to your buttons."],
-  infowin: ["Dock the Info window to the side on a tablet to see the next song coming."],
-  notepad: ["Jot a line idea mid-song without leaving the playing screen."],
-  pedal: ["Left pedal = previous, right = next; a double press starts auto-scroll.", "Turn pages hands-free while you keep strumming."],
-  solo: ["Add a Solo block so auto-scroll waits while you take the solo."],
-  loop: ["Loop the bridge until it's in your hands, then play the whole song."],
-  practice: ["Slow the scroll and metronome to 80% for a new song, then build up."],
-  needswork: ["Flag shaky songs during a gig, then practice them the next morning."],
-  learn: ["Pick your level and instrument; everything on Learn follows it."],
-  lessons: ["Read one short lesson a day before practice."],
-  scales: ["See the scale for a song's key in your tuning before writing a solo."],
-  levels: ["Set Beginner to hide advanced chords while you learn."],
-  trainer: ["Two minutes of note naming a day to learn the neck."],
-  licks: ["Learn one lick in the key of tonight's set and drop it into a solo."],
-  warmups: ["Run the pre-show routine in the car (sound only).", "Set your voice type so the guide tones fit your range."],
-  plans: ["Pick a goal (“learn songs faster”) and follow the daily plan."],
-  piano: ["Switch to piano to show a keyboard player the voicings."],
-  soloscales: ["Let it pop up just before a solo with the chord you're on lit up."],
-  words: ["Stuck on a rhyme? Put the cursor on the word and look at Rhymes.", "Use Same meaning to avoid repeating a word in a verse."],
-  syllables: ["Match syllable counts so verse 2 sings like verse 1."],
-  audio: ["Record a rough take on each new song idea.", "Link the original recording to learn it by ear."],
-  sharein: ["Hum an idea into your voice recorder app, then Share it into the song."],
-  strum: ["Show the strum under the chords while you teach the song to a friend."],
-  exports: ["Print a lead sheet for a sit-in player.", "Export ChordPro to use your songs in another app."],
-  stats: ["See which songs you really play most, and which you never play."],
-  emaillist: ["Grow your mailing list from the request page, export it for your newsletter."],
-  idea: ["Driving and a melody hits? One tap, sing it, done."],
-  sendto: ["Send a song to a show straight from the editor."],
-  shows: ["Tick songs off as you play them; timers keep each set on length."],
-  breaks: ["Glance at the countdown to know if there's time for one more."],
-  retune: ["Get a heads-up before the Drop D song, and a reminder to tune back."],
-  requests: ["Put the QR sign on the tip jar so people request and tip from their phones."],
-  history: ["Look back at what worked at a venue before you play there again.", "Make a setlist from a great night."],
-  build: ["Pick “wine bar, 3 sets” and get a ready setlist from your own songs."],
-  backup: ["Put the backup button on the bar and tap it after every edit session."],
-  import: ["Bring a whole folder of chord files in at once."],
-  modes: ["Turn off Songwrite on your stage tablet to keep it clean."],
-  themes: ["A dark theme for dim bars, a light one for daytime patios."],
-  arrange: ["Put the search box where your thumb reaches on the phone."],
-  ytwin: ["Keep a lesson video with a song you're learning.", "Watch the original live version before a gig, right next to your chart."],
-  ytwarm: ["Play your warm-up videos in a row on the drive; minimise to keep only the sound."],
-  ckb: ["Type “G  D/F#  Em7  C” in the chord box with big keys, no hunting for #.", "Add your own endings (m9, 7#9) so they're one tap."],
-  help: ["Ask “where is the capo” or “how do I back up” and tap Take me there."],
-  flows: ["Follow “Playing a show” the week of a gig so nothing is forgotten."]
-};
-
-/* ---- 106: quick start ---- */
-var AK_HELP_QS = [
-  { id: "inst", t: "Pick your instrument and tuning", d: "Guitar, ukulele or piano, and your tuning, so chord shapes are right.", go: akHelpSet("Instrument and tuning") },
-  { id: "song", t: "Add your first song", d: "Songs › + New: paste a chart from the web, type one, or take photos of a chord sheet.", go: function () { go("songs"); var f = akHelpFn("akQuickAdd"), b = document.querySelector('[aria-label="New"],[aria-label="+ New"]'); if (f) setTimeout(function () { try { f(b || document.body); } catch (e) {} }, 80); }, auto: function () { try { return songCount() > 0 && !akOnlySamples(); } catch (e) { return false; } } },
-  { id: "play", t: "Play it", d: "Tap ▶ on a song. Auto-scroll moves the words; the pedal or a tap turns songs.", go: akHelpPlay, auto: function () { return (lib().log || []).length > 0; } },
-  { id: "set", t: "Make a setlist", d: "Shows › + New, or ✦ Build a setlist to get one made from your songs.", go: akHelpView("shows"), auto: function () { return (lib().shows || []).some(function (s) { return (s.items || []).length > 0; }); } },
-  { id: "pedal", t: "Connect your pedal (if you have one)", d: "Teach the app your pedal's keys once.", go: akHelpSet("Pedal") },
-  { id: "look", t: "Choose your look", d: "A theme, text size and the buttons you want on the playing screen.", go: akHelpSet("Themes and Atmosphere") },
-  { id: "backup", t: "Save a backup", d: "One file with everything. Keep it somewhere safe.", go: function () { saveBackupFile(null); }, auto: function () { return !!store.lastBackup; } }
-];
-function akHelpQsDone(st) { var c = akHelpCfg(); return !!(c.qs.done[st.id] || (st.auto && st.auto())); }
-function akHelpQsCount() { return AK_HELP_QS.filter(akHelpQsDone).length; }
-function akHelpQsList(compact) {
-  var c = akHelpCfg(), box = h("div", { class: "akhelp-steps" });
-  AK_HELP_QS.forEach(function (st, i) {
-    var done = akHelpQsDone(st);
-    box.appendChild(h("div", { class: "akhelp-step" + (done ? " done" : "") },
-      h("button", { class: "akhelp-tick", "aria-pressed": done ? "true" : "false", "aria-label": (done ? "Not done: " : "Done: ") + st.t, onClick: function () { c.qs.done[st.id] = !c.qs.done[st.id] ? 1 : 0; save(); render(); } }, done ? "✓" : String(i + 1)),
-      h("div", { class: "grow" }, h("b", null, st.t), compact ? null : h("div", { class: "muted" }, st.d)),
-      h("button", { class: "sm", onClick: function () { c.qs.done[st.id] = 1; save(); st.go(); } }, "Show me")));
+/* the rows of a shows poster: shows in the dates (minus hidden ones, with any hand edits) plus rows typed by hand */
+function akGfxRows(D, all) {
+  var R = akGfxRange(D), out = [];
+  akGigsIn(R.from, R.to).forEach(function (g) {
+    if (!all && D.hideRows[g.id]) return;
+    var r = akGfxRowOf(g), e = D.rowEdit[g.id]; if (e) ["l1", "l2", "r1", "r2"].forEach(function (k) { if (e[k] != null && e[k] !== "") r[k] = e[k]; });
+    r.hidden = !!D.hideRows[g.id]; out.push(r);
   });
-  return box;
+  (D.extraRows || []).forEach(function (x, i) { if (!x.date || (x.date >= R.from && x.date <= R.to)) out.push(Object.assign({ extra: i, date: x.date || "9999" }, x)); });
+  out.sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+  if (D.upper !== false) out.forEach(function (r) { ["l1", "l2", "r1", "r2"].forEach(function (k) { r[k] = String(r[k] || "").toUpperCase(); }); });
+  return out;
 }
-function akHelpQsCard() {
-  var c = akHelpCfg(), n = akHelpQsCount(), all = AK_HELP_QS.length;
-  if (c.qs.hide || n >= all) return null;
-  var det = h("details", { class: "card akhelp-qs", "data-bk": "quick-start" }, h("summary", null, h("b", null, "Quick start"), h("span", { class: "muted" }, "  " + n + " of " + all + " done")));
-  if (!c.qs.closed) det.open = true;
-  det.addEventListener("toggle", function () { if (!!c.qs.closed === !det.open) return; c.qs.closed = !det.open; save(); });
-  det.appendChild(akHelpQsList(true));
-  det.appendChild(h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "sm", onClick: function () { go("help"); } }, "❓ Help and how-to"), h("button", { class: "sm", onClick: function () { c.qs.hide = true; save(); render(); toast("Hidden. It's on the Help page any time."); } }, "Hide")));
-  return det;
+function akGfxGig(D) {
+  var g = D.gigId ? akGig(D.gigId) : null;
+  if (!g) { g = akGigsIn(akTodayKey(), "9999")[0] || akGigs().filter(function (x) { return x.date; }).sort(function (a, b) { return b.date.localeCompare(a.date); })[0] || null; if (g) D.gigId = g.id; }
+  return g;
+}
+function akGfxName() { return (typeof akArtistName === "function" && akArtistName()) || "Live music"; }
+function akGfxSite() { var t = typeof akSiteText === "function" ? akSiteText() : ""; if (/^(www\.)?aedryangantt\.com$/i.test(t)) t = "AedryanGantt.com"; return t || (akPersonal() ? "AedryanGantt.com" : ""); }
+/* tip links: the request page's pay links (Settings > Requests and tips), Personal falls back to his own */
+function akGfxPays() {
+  var p = []; try { p = (akLive().profile.pay || []).filter(function (x) { return x && x.url; }); } catch (e) {}
+  if (!p.length && akPersonal() && typeof AK_PERSONAL_PROFILE === "object") p = AK_PERSONAL_PROFILE.pay.slice();
+  return p;
+}
+function akGfxHandle(p) { var u = p.url || "", m = /cash\.app\/(\$[\w.-]+)/i.exec(u) || /venmo\.com\/(?:u\/)?(@?[A-Za-z][\w-]{2,})(?:$|[/?])/i.exec(u) || /paypal\.me\/([\w.-]+)/i.exec(u); if (!m || /^code$/i.test(m[1])) return ""; return m[1].charAt(0) === "$" || m[1].charAt(0) === "@" ? m[1] : (/venmo/i.test(u) ? "@" : "paypal.me/") + m[1]; }
+
+/* ---------------------------------------------------------------- layouts -> layers */
+function akGfxLayers(D) {
+  var sz = akGfxSize(D.size), W = sz[2], H = sz[3], s = Math.min(W / 1080, H / 1350), lay = [], F = D.fonts, T = D.text || {}, me = akPersonal();
+  var land = W > H * 1.2;
+  function tx(k, def) { return T[k] != null && T[k] !== "" ? T[k] : def; }
+  function text(id, name, t, x, y, size, o) { lay.push(Object.assign({ id: id, name: name, type: "text", text: t, x: x, y: y, size: size, font: F.main, weight: 400, color: "#fff", fgAuto: true, align: "center", maxW: W * 0.9, lh: 1.15 }, o || {})); }
+  function shadow() { return { c: "rgba(0,0,0,0.55)", b: 8 * s, x: 3 * s, y: 5 * s, auto: true }; }
+  function bg(area) {
+    var b = D.bg, src = "";
+    if (b.src === "art" && b.id && AK_ART_FILES[b.id]) src = AK_ART_BASE + b.id + "_" + AK_ART_FILES[b.id][0] + ".webp";
+    else if ((b.src === "photo" || b.src === "venue") && b.id && IMG[b.id]) src = IMG[b.id].data;
+    lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: b.color || "#140c26", color2: b.color2 || "", src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: area || null });
+    if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: "rgba(0,0,0," + (D.overlay / 100) + ")" });
+  }
+  function wordmark(cx, y, w) {
+    var name = akGfxName();
+    if (me && D.wordmark !== false && /aedryan/i.test(name)) lay.push({ id: "wordmark", name: "Name (wordmark)", type: "gpic", byFg: { light: AKG_BASE + "brand/wordmark-light.png", dark: AKG_BASE + "brand/wordmark-dark.png" }, x: cx - w / 2, y: y, w: w, h: w * 107 / 1545, alt: name.toUpperCase(), altFont: akGfxStack("Syncopate"), fgAuto: true });
+    else text("wordmark", "Name", name.toUpperCase(), cx, y + w * 0.035, w * 0.075, { font: akGfxStack("Syncopate"), spacing: w * 0.004, maxW: W * 0.94 });
+  }
+  function logo(cx, cy, hgt) { if (me && D.logo !== false) lay.push({ id: "logo", name: "Logo", type: "gpic", src: AKG_BASE + "brand/logo-symbol.png", x: cx - hgt * 0.3, y: cy - hgt / 2, w: hgt * 0.6, h: hgt }); }
+  function spirals(y, r, gap) { [["spiral1", "Spiral (left)", W / 2 - gap], ["spiral2", "Spiral (right)", W / 2 + gap]].forEach(function (x) { lay.push({ id: x[0], name: x[1], type: "gspiral", x: x[2] - r, y: y - r, w: r * 2, h: r * 2, color: "#fff", fgAuto: true }); }); }
+  function panel(x, y, w, hgt) { if (D.panel && D.panel.on) lay.push({ id: "panel", name: "Panel behind the words", type: "grect", x: x, y: y, w: w, h: hgt, r: 10 * s, fill: D.panel.color || "", accentAuto: !D.panel.color, alpha: (D.panel.alpha == null ? 45 : D.panel.alpha) / 100 }); }
+  function weekly(title, rows, footer) {
+    /* his SHOWS THIS WEEK posts: wordmark with line accents, big title over patterned circles, dotted rows, logo, footer between two spirals */
+    var top = 0, bot = H;
+    wordmark(W / 2, top + 40 * s, 740 * s);
+    lay.push({ id: "lines", name: "Line accents", type: "gstairs", x: W / 2 - 450 * s, y: top + 108 * s, w: 900 * s, h: 96 * s, color: "#fff", fgAuto: true });
+    lay.push({ id: "badge", name: "Circles behind the title", type: "gbadge", x: W / 2 - 280 * s, y: top + 200 * s, w: 560 * s, h: 262 * s, color: "#C8962E", accentAuto: true });
+    var tl = String(title).split("\n");
+    tl.forEach(function (t, i) { text("title" + (i ? i + 1 : ""), i ? "Title, line " + (i + 1) : "Title", t, W / 2, top + (268 + i * 115 - (tl.length > 2 ? 40 : 0)) * s, 118 * s, { font: F.title, weight: 400, stroke: 2.2 * s, shadow: shadow(), maxW: W * 0.92, spacing: 0 }); });
+    var areaTop = top + 480 * s, areaBot = bot - 300 * s, n = Math.max(1, rows.length), pitch = Math.min(98 * s, (areaBot - areaTop) / n), hh = pitch * n, ry = (areaTop + areaBot) / 2 - hh / 2 + (n <= 3 ? 30 * s : 0);
+    if (!rows.length) text("norows", "No shows note", "MORE SHOWS SOON", W / 2, (areaTop + areaBot) / 2, 44 * s, { weight: 700, shadow: shadow() });
+    else {
+      panel(W * 0.035, ry - 22 * s, W * 0.93, hh + 44 * s);
+      lay.push({ id: "rows", name: "Show rows", type: "grows", x: 80 * s + (W - 1080 * s) / 2, y: ry, w: W - 2 * (80 * s + (W - 1080 * s) / 2), h: hh, rows: rows, font: F.main, weight: 700, size: Math.min(36 * s, pitch * 0.36), pitch: pitch, color: "#fff", fgAuto: true, shadow: { c: "rgba(0,0,0,0.5)", b: 4 * s, x: 1.5 * s, y: 2.5 * s, auto: true } });
+    }
+    logo(W / 2, bot - 210 * s, 135 * s);
+    spirals(bot - 75 * s, 68 * s, 318 * s);
+    if (footer[0]) text("footer1", "Footer, line 1", footer[0], W / 2, bot - 100 * s, 50 * s, { font: F.small, weight: 500, maxW: 470 * s });
+    if (footer[1]) text("footer2", "Footer, line 2", footer[1], W / 2, bot - 42 * s, 34 * s, { font: F.small, weight: 500, maxW: 470 * s });
+  }
+  var site = akGfxSite();
+  if (D.kind === "week") {
+    var R = akGfxRange(D), rows = akGfxRows(D);
+    if (D.layout === "cal") {
+      bg(); var top = H * 0.05, u = W / 100;
+      text("title", "Title", tx("title", akGfxDay(R.from).toLocaleDateString(undefined, { month: "long", year: "numeric" }).toUpperCase()), W / 2, top + 4 * u, 6.5 * u, { font: F.title, stroke: 0.15 * u, shadow: shadow() });
+      text("subtitle", "Line under the title", tx("sub", akGfxName() + " · live music"), W / 2, top + 10.5 * u, 2.8 * u, { font: F.small, weight: 500 });
+      var gy = top + 15 * u, gh = H - gy - 12 * u;
+      lay.push({ id: "grid", name: "Calendar", type: "gcal", x: W * 0.04, y: gy, w: W * 0.92, h: gh, from: R.from, start: D.range.start, font: F.main, small: F.small, size: 2.1 * u, color: "#fff", fgAuto: true, accent: "#C8962E", accentAuto: true,
+        gigs: akGigsIn(R.from, R.to).filter(function (g) { return !D.hideRows[g.id]; }).map(function (g) { var r = akGfxRowOf(g); return { date: g.date, t: (D.rowEdit[g.id] || {}).r1 || r.r1, time: (D.rowEdit[g.id] || {}).l2 || r.l2 }; }) });
+      logo(W * 0.1, H - 6 * u, 8 * u);
+      if (site) text("footer1", "Website", tx("footer1", site), W / 2, H - 6 * u, 3 * u, { font: F.small, weight: 600 });
+    } else if (D.layout === "list") {
+      bg(); var m = 70 * s + (W - 1080 * s) / 2;
+      wordmark(W / 2, 50 * s, 620 * s);
+      text("title", "Title", tx("title", R.title.replace("\n", " ")), m, 200 * s, 84 * s, { font: F.title, align: "left", stroke: 1.8 * s, shadow: shadow(), maxW: W - 2 * m });
+      text("subtitle", "Dates", tx("sub", R.sub.toUpperCase()), m, 270 * s, 32 * s, { font: F.small, weight: 700, align: "left", color: "#C8962E", fgAuto: false, accentAuto: true, spacing: 3 * s });
+      var top2 = 340 * s, bot2 = H - 190 * s, n2 = Math.max(1, rows.length), pitch2 = Math.min(150 * s, (bot2 - top2) / n2);
+      if (rows.length) { panel(m - 24 * s, top2 - 20 * s, W - 2 * m + 48 * s, pitch2 * n2 + 30 * s); lay.push({ id: "rows", name: "Show rows", type: "grows", style: "list", x: m, y: top2, w: W - 2 * m, h: pitch2 * n2, rows: rows, font: F.main, weight: 700, size: Math.min(40 * s, pitch2 * 0.3), pitch: pitch2, color: "#fff", fgAuto: true, accent: "#C8962E", accentAuto: true, shadow: { c: "rgba(0,0,0,0.5)", b: 4 * s, x: 1.5 * s, y: 2.5 * s, auto: true } }); }
+      else text("norows", "No shows note", "MORE SHOWS SOON", W / 2, (top2 + bot2) / 2, 44 * s, { weight: 700 });
+      logo(W - m - 30 * s, H - 95 * s, 110 * s);
+      if (site) text("footer1", "Website", tx("footer1", site + "/shows"), m, H - 95 * s, 38 * s, { font: F.small, weight: 600, align: "left" });
+    } else {
+      bg(); weekly(tx("title", R.title), rows, [tx("footer1", me ? "Full Calendar at" : (site ? "More shows at" : "")), tx("footer2", site ? site + "/shows" : "")]);
+    }
+  } else if (D.kind === "flyer") {
+    var g = akGfxGig(D), r1 = g ? akGfxRowOf(g) : { l1: "", l2: "", r1: "", r2: "" };
+    if (g && D.rowEdit[g.id]) ["l1", "l2", "r1", "r2"].forEach(function (k) { if (D.rowEdit[g.id][k]) r1[k] = D.rowEdit[g.id][k]; });
+    var gd = g && g.date ? akGfxDay(g.date) : null, wdN = gd ? gd.toLocaleDateString("en-US", { weekday: "long" }) : "", isToday = g && g.date === akTodayKey();
+    if (D.layout === "spot") {
+      bg(); var u2 = Math.min(W, H) / 100, cy = H * (land ? 0.5 : 0.55);
+      wordmark(W / 2, H * 0.05, Math.min(W * 0.72, 760 * s));
+      text("kicker", "Small heading", tx("kicker", "LIVE MUSIC"), W / 2, H * 0.05 + 110 * s, 34 * s, { font: F.small, weight: 700, spacing: 8 * s, color: "#C8962E", fgAuto: false, accentAuto: true });
+      lay.push({ id: "badge", name: "Circles", type: "gbadge", x: W / 2 - 300 * s, y: cy - 330 * s, w: 600 * s, h: 280 * s, color: "#C8962E", accentAuto: true });
+      text("title", "Venue", tx("title", (r1.r1 || "").toUpperCase()), W / 2, cy - 190 * s, 104 * s, { font: F.title, stroke: 2 * s, shadow: shadow(), maxW: W * 0.9 });
+      panel(W * 0.08, cy - 30 * s, W * 0.84, 300 * s);
+      text("date", "Date", tx("date", gd ? gd.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }).toUpperCase() : "DATE"), W / 2, cy + 30 * s, 54 * s, { weight: 700, shadow: shadow() });
+      text("time", "Time", tx("time", r1.l2), W / 2, cy + 105 * s, 46 * s, { weight: 700, shadow: shadow() });
+      text("town", "Town", tx("town", r1.r2), W / 2, cy + 170 * s, 40 * s, { weight: 700, shadow: shadow() });
+      text("note", "Note", tx("note", (g && g.pubNote) || ""), W / 2, cy + 240 * s, 32 * s, { font: F.small, weight: 500 });
+      logo(W / 2, H - 230 * s, 130 * s);
+      if (site) text("footer1", "Website", tx("footer1", site), W / 2, H - 70 * s, 38 * s, { font: F.small, weight: 600 });
+    } else if (D.layout === "band") {
+      var split = land ? W * 0.55 : H * 0.58;
+      if (land) bg({ x: 0, y: 0, w: split, h: H }); else bg({ x: 0, y: 0, w: W, h: split });
+      lay.push({ id: "band", name: "Color band", type: "grect", x: land ? split : 0, y: land ? 0 : split, w: land ? W - split : W, h: land ? H : H - split, fill: D.panel.color || "", accentAuto: !D.panel.color, alpha: 1, darken: 0.45 });
+      wordmark(land ? split / 2 : W / 2, 40 * s, Math.min(land ? split * 0.8 : W * 0.7, 700 * s));
+      var bx = land ? split + 60 * s : 70 * s, by = land ? H * 0.18 : split + 50 * s, bw = (land ? W - split : W) - 140 * s - (land ? 0 : 120 * s);
+      var mc = document.createElement("canvas").getContext("2d");
+      function seq(id, name, t, size, o) { if (!t) return; o = Object.assign({ align: "left", valign: "top", maxW: bw, fgAuto: false, color: "#fff", band: true, lh: 1.12 }, o); mc.font = (o.weight || 400) + " " + size + "px " + (o.font || F.main); text(id, name, t, bx, by, size, o); by += akWrap(mc, t, bw).length * size * o.lh + size * 0.45; }
+      seq("kicker", "Small heading", tx("kicker", isToday ? "TONIGHT" : (wdN ? "THIS " + wdN.toUpperCase() : "LIVE MUSIC")), 34 * s, { font: F.small, weight: 700, spacing: 6 * s });
+      seq("title", "Venue", tx("title", (r1.r1 || "").toUpperCase()), 84 * s, { font: F.title, stroke: 1.6 * s });
+      seq("date", "Date and time", tx("date", (gd ? gd.toLocaleDateString(undefined, { month: "long", day: "numeric" }).toUpperCase() + "  ·  " : "") + r1.l2), 44 * s, { weight: 700 });
+      seq("town", "Town", tx("town", r1.r2), 38 * s, { weight: 700 });
+      if (site) text("footer1", "Website", tx("footer1", site), bx, H - 60 * s, 34 * s, { font: F.small, weight: 600, align: "left", maxW: bw, fgAuto: false, color: "#fff", band: true });
+      logo(W - 90 * s, H - 110 * s, 120 * s);
+    } else {
+      bg(); weekly(tx("title", isToday ? "LIVE\nTONIGHT" : (wdN ? "LIVE THIS\n" + wdN.toUpperCase() : "LIVE\nMUSIC")), g ? [D.upper !== false ? { l1: r1.l1.toUpperCase(), l2: r1.l2.toUpperCase(), r1: r1.r1.toUpperCase(), r2: r1.r2.toUpperCase() } : r1] : [], [tx("footer1", me ? "Full Calendar at" : (site ? "More shows at" : "")), tx("footer2", site ? site + "/shows" : "")]);
+    }
+  } else if (D.kind === "tip") {
+    bg(); var pays = akGfxPays().filter(function (p, i) { return !(D.pay || {})["off" + i]; }).slice(0, 3), u3 = Math.min(W, H) / 100;
+    var qrs = pays.map(function (p) { return { url: p.url, label: p.label || p.kind, handle: (D.pay || {})["h_" + (p.kind || p.label)] || akGfxHandle(p) }; });
+    if (D.reqQr) { var ru = typeof akPosterUrlFor === "function" ? akPosterUrlFor("request") : ""; if (ru) qrs.push({ url: ru, label: "Request a song", handle: "" }); }
+    function qrRow(cx0, cy0, size, gap, vertical) {
+      qrs.forEach(function (q, i) {
+        var n = qrs.length, cx = vertical ? cx0 : cx0 + (i - (n - 1) / 2) * (size + gap), cyy = vertical ? cy0 + (i - (n - 1) / 2) * (size + gap) : cy0;
+        lay.push({ id: "qr" + (i + 1), name: "QR: " + q.label, type: "qr", url: q.url, x: cx - size / 2, y: cyy - size / 2, s: size });
+        text("qrlabel" + (i + 1), "Label: " + q.label, (q.label + (q.handle ? "\n" + q.handle : "")).toUpperCase(), cx, cyy + size / 2 + size * 0.17, size * 0.12, { weight: 700, maxW: size * 1.3, shadow: shadow() });
+      });
+    }
+    if (D.layout === "jar") {
+      var land2 = W > H;
+      text("title", "Big word", tx("title", "TIPS"), land2 ? W * 0.3 : W / 2, land2 ? H * 0.38 : H * 0.16, (land2 ? 20 : 16) * u3, { font: F.title, weight: 700, stroke: 0.25 * u3, shadow: shadow(), maxW: land2 ? W * 0.52 : W * 0.9 });
+      text("subtitle", "Thank you line", tx("sub", "THANK YOU!"), land2 ? W * 0.3 : W / 2, land2 ? H * 0.62 : H * 0.28, 5.5 * u3, { font: F.small, weight: 700, spacing: 0.5 * u3, maxW: land2 ? W * 0.52 : W * 0.9 });
+      text("name", "Name", tx("name", akGfxName().toUpperCase()), land2 ? W * 0.3 : W / 2, land2 ? H * 0.82 : H * 0.92, 4.2 * u3, { font: akGfxStack("Syncopate"), maxW: land2 ? W * 0.55 : W * 0.9 });
+      var qsz = land2 ? Math.min(H * 0.55, (W * 0.44) / Math.max(1, qrs.length) - 3 * u3) : Math.min(W * 0.5, H * 0.18);
+      if (qrs.length) qrRow(land2 ? W * 0.76 : W / 2, land2 ? H * 0.42 : H * 0.58, qsz, 3 * u3, !land2);
+    } else if (D.layout === "big") {
+      wordmark(W / 2, H * 0.05, W * 0.74);
+      text("title", "Big word", tx("title", "TIPS"), W / 2, H * 0.3, 30 * u3, { font: F.title, weight: 700, stroke: 0.3 * u3, shadow: shadow() });
+      text("subtitle", "Thank you line", tx("sub", "APPRECIATED"), W / 2, H * 0.45, 7 * u3, { font: F.small, weight: 700, spacing: 1 * u3 });
+      text("handles", "Tip handles", tx("handles", qrs.filter(function (q) { return q.handle || q.label; }).map(function (q) { return q.label + (q.handle ? "  " + q.handle : ""); }).join("\n").toUpperCase()), W / 2, H * 0.62, 5 * u3, { weight: 700, lh: 1.5, shadow: shadow() });
+      if (qrs.length) { var bq = qrs[0]; lay.push({ id: "qr1", name: "QR: " + bq.label, type: "qr", url: bq.url, x: W / 2 - 11 * u3, y: H * 0.74, s: 22 * u3 }); }
+      logo(W * 0.12, H * 0.92, 10 * u3);
+    } else {
+      wordmark(W / 2, H * 0.04, W * 0.74);
+      text("title", "Big heading", tx("title", "TIPS\nAPPRECIATED"), W / 2, H * 0.2, 9.5 * u3, { font: F.title, weight: 700, stroke: 0.15 * u3, shadow: shadow(), lh: 1.1 });
+      text("subtitle", "Line under the heading", tx("sub", "Thank you for supporting live music!"), W / 2, H * 0.31, 3.6 * u3, { font: F.small, weight: 500 });
+      var qn = Math.max(1, qrs.length), qs2 = Math.min(W * 0.8 / qn - 4 * u3, H * 0.3, W * 0.5);
+      if (qrs.length) qrRow(W / 2, H * 0.55, qs2, 6 * u3, false); else text("note", "Note", "Add tip links in Settings › Requests and tips.", W / 2, H * 0.55, 3.4 * u3);
+      logo(W / 2, H * 0.84, 10 * u3);
+      if (site) text("footer1", "Website", tx("footer1", site), W / 2, H * 0.94, 3.2 * u3, { font: F.small, weight: 600 });
+    }
+  } else if (D.kind === "invoice") {
+    akGfxInvoiceLayers(D, W, H, lay, text, bg, logo, wordmark);
+  }
+  return { W: W, H: H, size: sz, layers: lay, gfx: true };
+}
+
+/* ---------------------------------------------------------------- invoice */
+var AKG_INV_FIELDS = [["fromName", "My name"], ["fromSite", "My website"], ["fromEmail", "My email"], ["fromPhone", "My phone"], ["fromAddr", "My address"],
+  ["toName", "Venue name"], ["toContact", "Venue contact"], ["toAddr", "Venue address"], ["no", "Invoice number"], ["date", "Invoice date"], ["due", "Due"],
+  ["show", "Show date and time"], ["items", "Lines and total"], ["payHow", "How to pay"], ["notes", "Notes / thank you"], ["logo", "My logo"]];
+/* the invoice of a show: kept on the show (g.inv), numbered once from settings().gfx.invNext */
+function akGfxInv(g) {
+  if (!g) return null;
+  var a = typeof akArtist === "function" ? akArtist() : {}, v = typeof akVenueFor === "function" ? akVenueFor(g) : null;
+  if (!g.inv || typeof g.inv !== "object") {
+    var c = akGfxCfg(), prev = c.invFrom || {};
+    g.inv = { no: String(c.invNext++), date: akTodayKey(), due: "Due on receipt", items: [{ desc: "Live music" + (g.date ? ", " + akGfxDay(g.date).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }) : "") + (akGfxTimes(g) ? ", " + akGfxTimes(g).toLowerCase() : ""), amt: Number(g.pay) || 0 }],
+      toName: akGfxVenue(g), toContact: (v && v.contact) || "", toAddr: akGigAddr(g), notes: "Thank you for having me!",
+      fromName: prev.fromName || akGfxName(), fromSite: prev.fromSite != null ? prev.fromSite : akGfxSite(), fromEmail: prev.fromEmail || (akPersonal() ? "" : a.email || ""), fromPhone: prev.fromPhone || "", fromAddr: prev.fromAddr || "",
+      payHow: prev.payHow || akGfxPays().map(function (p) { return p.label + (akGfxHandle(p) ? " " + akGfxHandle(p) : ""); }).concat(["Check", "Cash"]).join(" · ") };
+    save();
+  }
+  return g.inv;
+}
+function akGfxMoney(n) { n = Number(n) || 0; return "$" + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+function akGfxInvoiceLayers(D, W, H, lay, text, bg, logo, wordmark) {
+  var g = akGfxGig(D), I = akGfxInv(g) || { items: [] }, f = D.fields || {}, on = function (k) { return f[k] !== false && (k !== "fromAddr" && k !== "fromPhone" && k !== "fromEmail" || I[k]); };
+  var u = W / 100, m = 7 * u, ink = "#1b1822", soft = "#5a5566", acc = D.accent && D.accent !== "auto" ? D.accent : "#6B3FA0", F = D.fonts, y = 6 * u;
+  bg();
+  var t = function (id, name, s, x, yy, size, o) { text(id, name, s, x, yy, size, Object.assign({ align: "left", valign: "top", color: ink, fgAuto: false, maxW: W - 2 * m }, o || {})); };
+  if (D.layout === "band") {
+    lay.push({ id: "band", name: "Header band", type: "grect", x: 0, y: 0, w: W, h: 22 * u, fill: acc });
+    if (on("logo")) logo(W - m - 3 * u, 11 * u, 15 * u);
+    t("heading", "INVOICE", D.text.title || "INVOICE", m, 5 * u, 6 * u, { font: F.title, weight: 700, color: "#fff" });
+    if (on("fromName")) t("fromName", "My name", I.fromName, m, 13.5 * u, 3 * u, { font: akGfxStack("Syncopate"), color: "#fff" });
+    y = 27 * u;
+  } else {
+    if (D.layout === "classic" && on("logo")) logo(m + 3.5 * u, y + 6 * u, 13 * u);
+    var hx = D.layout === "classic" && on("logo") && akPersonal() ? m + 10 * u : m;
+    if (on("fromName")) t("fromName", "My name", I.fromName, hx, y + 0.4 * u, 2.8 * u, { font: akGfxStack("Syncopate"), weight: 700, maxW: W - hx - m - 34 * u });
+    t("heading", "INVOICE", D.text.title || "INVOICE", W - m, y - 0.5 * u, 6 * u, { font: F.title, weight: 700, align: "right", color: D.layout === "minimal" ? ink : acc, maxW: 40 * u });
+    y += 6 * u;
+    var fromL = [on("fromSite") ? I.fromSite : "", on("fromEmail") ? I.fromEmail : "", on("fromPhone") ? I.fromPhone : "", on("fromAddr") ? I.fromAddr : ""].filter(Boolean);
+    if (fromL.length) t("from", "My details", fromL.join("\n"), hx, y, 2.1 * u, { color: soft, lh: 1.45, maxW: 50 * u });
+    y += Math.max(12 * u, fromL.length * 3.1 * u + 4 * u);
+    lay.push({ id: "rule", name: "Line", type: "grect", x: m, y: y, w: W - 2 * m, h: Math.max(2, 0.25 * u), fill: D.layout === "minimal" ? "#cccccc" : acc });
+    y += 4 * u;
+  }
+  if (D.layout === "band") { var fl = [on("fromSite") ? I.fromSite : "", on("fromEmail") ? I.fromEmail : "", on("fromPhone") ? I.fromPhone : "", on("fromAddr") ? I.fromAddr : ""].filter(Boolean); if (fl.length) { t("from", "My details", fl.join("  ·  "), m, y, 2.1 * u, { color: soft }); y += 5 * u; } }
+  var toL = [on("toName") ? I.toName : "", on("toContact") && I.toContact ? "Attn: " + I.toContact : "", on("toAddr") ? I.toAddr : ""].filter(Boolean);
+  if (toL.length) { t("toHead", "Bill to (heading)", "BILL TO", m, y, 1.9 * u, { weight: 700, color: soft, spacing: 0.25 * u }); t("to", "Bill to", toL.join("\n"), m, y + 3.2 * u, 2.5 * u, { lh: 1.4, maxW: 48 * u }); }
+  var meta = [on("no") ? ["Invoice #", I.no] : null, on("date") ? ["Date", I.date ? akGfxDay(I.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""] : null, on("due") ? ["Due", I.due] : null, on("show") && g ? ["Show", (g.date ? akGfxDay(g.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "") + (akGfxTimes(g) ? ", " + akGfxTimes(g).toLowerCase() : "")] : null].filter(Boolean);
+  if (meta.length) {
+    t("metaL", "Invoice details (names)", meta.map(function (x) { return x[0]; }).join("\n"), W - m - 38 * u, y, 2.2 * u, { weight: 700, color: soft, lh: 1.6, maxW: 14 * u });
+    t("metaR", "Invoice details", meta.map(function (x) { return x[1]; }).join("\n"), W - m, y, 2.2 * u, { align: "right", lh: 1.6, maxW: 24 * u });
+  }
+  y += Math.max(toL.length * 3.6 * u + 5 * u, meta.length * 3.6 * u) + 5 * u;
+  if (on("items")) {
+    var items = (I.items || []).filter(function (x) { return x.desc || x.amt; }), rh = 4.6 * u, th = rh * (items.length + 1) + 7 * u;
+    lay.push({ id: "items", name: "Lines and total", type: "ginv", x: m, y: y, w: W - 2 * m, h: th, items: items, size: 2.3 * u, rh: rh, font: F.main, color: ink, soft: soft, acc: D.layout === "minimal" ? "#999999" : acc, head: D.layout !== "minimal" });
+    y += th + 6 * u;
+  }
+  if (on("payHow") && I.payHow) { t("payHead", "How to pay (heading)", "HOW TO PAY", m, y, 1.9 * u, { weight: 700, color: soft, spacing: 0.25 * u }); t("payHow", "How to pay", I.payHow, m, y + 3.2 * u, 2.3 * u, { lh: 1.45, maxW: W - 2 * m }); y += 12 * u; }
+  if (on("notes") && I.notes) t("notes", "Notes", I.notes, m, y, 2.3 * u, { lh: 1.45, color: soft, font: F.small });
+}
+
+/* ---------------------------------------------------------------- loading pictures and fonts, auto colors */
+function akGfxImg(src) { if (!src) return Promise.resolve(null); if (!AKGFX.imc[src]) AKGFX.imc[src] = akImgLoad(src).then(function (im) { if (!im) delete AKGFX.imc[src]; return im; }); return AKGFX.imc[src]; }
+function akGfxBgCanvas(l, W, H) {
+  var key = [l.src ? l.src.length + l.src.slice(-40) : "", l.color, l.color2, l.zoom, l.fx, l.fy, l.blur, W, H, JSON.stringify(l.area || 0), !!l._im].join("|");
+  if (AKGFX.bgc && AKGFX.bgc.key === key) return AKGFX.bgc.cv;
+  var cv = document.createElement("canvas"); cv.width = W; cv.height = H; var ctx = cv.getContext("2d"), A = l.area || { x: 0, y: 0, w: W, h: H };
+  if (l.color2) { var gr = ctx.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, l.color); gr.addColorStop(1, l.color2); ctx.fillStyle = gr; } else ctx.fillStyle = l.color;
+  ctx.fillRect(A.x, A.y, A.w, A.h);
+  if (l._im) {
+    var im = l._im, iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, k = Math.max(A.w / iw, A.h / ih) * (l.zoom || 1), w = iw * k, hh = ih * k, bl = (l.blur || 0) * W / 1080;
+    ctx.save(); ctx.beginPath(); ctx.rect(A.x, A.y, A.w, A.h); ctx.clip();
+    if (bl) { try { ctx.filter = "blur(" + bl + "px)"; } catch (e) {} var e2 = bl * 3; ctx.drawImage(im, A.x + (A.w - w) * (l.fx == null ? 0.5 : l.fx) - e2, A.y + (A.h - hh) * (l.fy == null ? 0.5 : l.fy) - e2, w + e2 * 2, hh + e2 * 2); }
+    else ctx.drawImage(im, A.x + (A.w - w) * (l.fx == null ? 0.5 : l.fx), A.y + (A.h - hh) * (l.fy == null ? 0.5 : l.fy), w, hh);
+    ctx.restore();
+  }
+  AKGFX.bgc = { key: key, cv: cv };
+  return cv;
+}
+function akGfxHsl(r, g, b) { r /= 255; g /= 255; b /= 255; var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, s = 0, h = 0; if (mx !== mn) { var d = mx - mn; s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; } return [h, s, l]; }
+/* -> { lum (0-1, of the area where the words go, after the overlay), accent (a strong color from the picture) } */
+function akGfxMeasure(cv, D) {
+  try {
+    var t = document.createElement("canvas"); t.width = 24; t.height = 30; var c = t.getContext("2d"); c.drawImage(cv, 0, 0, 24, 30);
+    var px = c.getImageData(0, 0, 24, 30).data, sum = 0, n = 0, best = null, bs = -1, ov = (D.overlay || 0) / 100;
+    for (var y = 0; y < 30; y++) for (var x = 0; x < 24; x++) {
+      var i = (y * 24 + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2], L = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (y >= 9 && y <= 25) { sum += L; n++; }
+      var hs = akGfxHsl(r, g, b), sc = hs[1] * (1 - Math.abs(hs[2] - 0.5) * 1.6); if (sc > bs) { bs = sc; best = hs; }
+    }
+    var lum = (sum / Math.max(1, n)) * (1 - ov), acc = "#C8962E";
+    if (best && best[1] > 0.18) acc = "hsl(" + Math.round(best[0]) + "," + Math.round(Math.max(55, best[1] * 100)) + "%," + (lum > 0.55 ? 40 : 46) + "%)";
+    return { lum: lum, accent: acc };
+  } catch (e) { return { lum: 0.2, accent: "#C8962E" }; }
+}
+/* load what the design needs and settle the auto colors. Changes P in place. */
+function akGfxPrepare(P, D) {
+  var bgL = P.layers.filter(function (l) { return l.type === "gbg"; })[0];
+  return akGfxFontsLoad().then(function () { return bgL ? akGfxImg(bgL.src) : null; }).then(function (im) {
+    if (bgL) bgL._im = im;
+    var meas = bgL ? akGfxMeasure(akGfxBgCanvas(bgL, P.W, P.H), D) : { lum: 1, accent: "#6B3FA0" };
+    var dark = D.fg === "auto" ? meas.lum > 0.55 : D.fg === "#111111" || D.fg === "black";
+    var fg = D.fg === "auto" ? (dark ? "#111111" : "#ffffff") : D.fg, accent = D.accent === "auto" ? meas.accent : D.accent;
+    P.fgDark = dark; P.fg = fg; P.accent = accent;
+    P.layers.forEach(function (l) {
+      if (l.fgAuto) l.color = fg;
+      if (l.accentAuto) { if (l.type === "grows" || l.type === "gcal") l.accent = accent; else if (l.type === "grect") l.fill = accent; else l.color = accent; }
+      if (l.shadow && l.shadow.auto) l.shadow.c = dark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.55)";
+      if (l.byFg) l.src = dark ? l.byFg.dark : l.byFg.light;
+      if (l.band) l.color = "#ffffff";
+    });
+    var jobs = P.layers.filter(function (l) { return l.type === "gpic"; }).map(function (l) { return akGfxImg(l.src).then(function (im2) { l._im = im2; }); });
+    var fonts = {};
+    P.layers.forEach(function (l) { if (l.font) fonts[(l.weight || 400) + " 40px " + l.font] = 1; if (l.altFont) fonts["400 40px " + l.altFont] = 1; if (l.small) fonts["500 40px " + l.small] = 1; });
+    if (document.fonts && document.fonts.load) Object.keys(fonts).forEach(function (f) { jobs.push(document.fonts.load(f).catch(function () {})); });
+    return Promise.all(jobs).then(function () { return P; });
+  });
+}
+/* the studio's edits (moved, resized, hidden, other words, colors, fonts) -> a copy of P */
+function akGfxBake(P, E) {
+  E = E || {};
+  var out = Object.assign({}, P);
+  out.layers = P.layers.filter(function (l) { return !(E[l.id] || {}).hide; }).map(function (l) {
+    var e = E[l.id]; if (!e) return l;
+    var c = Object.assign({}, l), k = Number(e.k) || 1, dx = Number(e.dx) || 0, dy = Number(e.dy) || 0;
+    if (e.text != null && c.type === "text") c.text = e.text;
+    if (e.color) { if (c.type === "grect") c.fill = e.color; else c.color = e.color; if (c.type === "gpic" && c.byFg) c.src = /^#(0|1|2)/.test(e.color) ? c.byFg.dark : c.byFg.light; }
+    if (e.font && c.font) c.font = e.font;
+    if (c.type === "text") { c.x += dx; c.y += dy; c.size *= k; c.maxW *= k; if (c.spacing) c.spacing *= k; if (c.stroke) c.stroke *= k; }
+    else if (c.type === "qr") { var cx = c.x + c.s / 2, cy = c.y + c.s / 2; c.s *= k; c.x = cx - c.s / 2 + dx; c.y = cy - c.s / 2 + dy; }
+    else if (c.w != null && !c.fixed) { var cx2 = c.x + c.w / 2, cy2 = c.y + c.h / 2; c.w *= k; c.h *= k; c.x = cx2 - c.w / 2 + dx; c.y = cy2 - c.h / 2 + dy; ["size", "pitch", "rh", "r"].forEach(function (q) { if (c[q]) c[q] *= k; }); }
+    return c;
+  });
+  return out;
+}
+
+/* ---------------------------------------------------------------- drawing the new layer types */
+function akGfxDots(ctx, x1, x2, y, sz, col) {
+  var r = Math.max(1, sz * 0.05), step = sz * 0.2;
+  ctx.fillStyle = col;
+  for (var x = x1 + sz * 0.3; x <= x2 - sz * 0.3; x += step) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  var a = sz * 0.22;
+  ctx.beginPath(); ctx.moveTo(x1 - a * 0.2, y); ctx.lineTo(x1 + a, y - a * 0.55); ctx.lineTo(x1 + a, y + a * 0.55); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x2 + a * 0.2, y); ctx.lineTo(x2 - a, y - a * 0.55); ctx.lineTo(x2 - a, y + a * 0.55); ctx.closePath(); ctx.fill();
+}
+function akGfxFit(ctx, t, maxW, size, weight, font) { var sz = size; ctx.font = weight + " " + sz + "px " + font; while (sz > size * 0.5 && ctx.measureText(t).width > maxW) { sz *= 0.94; ctx.font = weight + " " + sz + "px " + font; } return sz; }
+function akGfxShadow(ctx, sh) { if (!sh) return; ctx.shadowColor = sh.c; ctx.shadowBlur = sh.b || 0; ctx.shadowOffsetX = sh.x || 0; ctx.shadowOffsetY = sh.y || 0; }
+function akGfxNoShadow(ctx) { ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0; }
+function akGfxDraw(ctx, l, P) {
+  var W = P.W, H = P.H;
+  ctx.save();
+  if (l.type === "gbg") ctx.drawImage(akGfxBgCanvas(l, W, H), 0, 0);
+  else if (l.type === "grect") {
+    var fill = l.fill || "#000";
+    if (l.darken && /^hsl/.test(fill)) fill = fill.replace(/(\d+)%\)$/, function (m0, p) { return Math.round(p * (1 - l.darken) + 6) + "%)"; });
+    ctx.globalAlpha = l.alpha == null ? 1 : l.alpha; ctx.fillStyle = fill;
+    if (l.r) { akRoundRect(ctx, l.x, l.y, l.w, l.h, l.r); ctx.fill(); } else ctx.fillRect(l.x, l.y, l.w, l.h);
+  } else if (l.type === "gpic") {
+    if (l._im) { var iw = l._im.naturalWidth, ih = l._im.naturalHeight, k = Math.min(l.w / iw, l.h / ih), w = iw * k, hh = ih * k; ctx.drawImage(l._im, l.x + (l.w - w) / 2, l.y + (l.h - hh) / 2, w, hh); }
+    else if (l.alt) { var sz = akGfxFit(ctx, l.alt, l.w, l.h * 0.9, 400, l.altFont || "sans-serif"); ctx.fillStyle = l.color || "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(l.alt, l.x + l.w / 2, l.y + l.h / 2); }
+  } else if (l.type === "gstairs") {
+    var n = 6, lw = Math.max(1.5, l.h / 45), len = l.w * 0.3, sh = l.w * 0.022;
+    ctx.strokeStyle = l.color; ctx.lineWidth = lw; ctx.lineCap = "butt";
+    for (var i = 0; i < n; i++) {
+      var y = l.y + i * (l.h / (n - 1)), e = l.x + l.w * 0.42 - i * sh, st = l.x + l.w * 0.58 + i * sh;
+      ctx.beginPath(); ctx.moveTo(e - len, y); ctx.lineTo(e, y); ctx.moveTo(st, y); ctx.lineTo(st + len, y); ctx.stroke();
+    }
+  } else if (l.type === "gbadge") {
+    var R = l.h / 2, cx = l.x + l.w / 2, cy = l.y + l.h / 2;
+    [-1, 1].forEach(function (sd) {
+      var px = cx + sd * R * 1.02;
+      ctx.save(); ctx.beginPath(); ctx.arc(px, cy, R * 0.98, 0, Math.PI * 2); ctx.clip();
+      ctx.strokeStyle = l.color; ctx.lineWidth = Math.max(1, R / 28); ctx.globalAlpha = 0.9;
+      var step = R / 6.5, amp = R / 13;
+      for (var yy = cy - R; yy <= cy + R + step; yy += step) { ctx.beginPath(); for (var xx = px - R, j = 0; xx <= px + R + step; xx += step / 2, j++) { var py = yy + (j % 2 ? -amp : amp); if (j) ctx.lineTo(xx, py); else ctx.moveTo(xx, py); } ctx.stroke(); }
+      ctx.restore();
+    });
+    ctx.globalAlpha = 0.86; ctx.fillStyle = l.color; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+  } else if (l.type === "gspiral") {
+    var r0 = l.w / 2, x0 = l.x + r0, y0 = l.y + r0, N = 40;
+    ctx.strokeStyle = l.color; ctx.lineWidth = Math.max(1, r0 / 40);
+    for (var q = 0; q < N; q++) {
+      var a = q * Math.PI * 2 / N, ri = r0 * 0.1;
+      ctx.beginPath(); ctx.moveTo(x0 + ri * Math.cos(a), y0 + ri * Math.sin(a));
+      ctx.quadraticCurveTo(x0 + r0 * 0.62 * Math.cos(a + 0.55), y0 + r0 * 0.62 * Math.sin(a + 0.55), x0 + r0 * Math.cos(a + 1.05), y0 + r0 * Math.sin(a + 1.05)); ctx.stroke();
+    }
+    var gl = ctx.createRadialGradient(x0, y0, 0, x0, y0, r0 * 0.28); gl.addColorStop(0, l.color); gl.addColorStop(1, "rgba(255,255,255,0)"); ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(x0, y0, r0 * 0.28, 0, Math.PI * 2); ctx.fill();
+  } else if (l.type === "grows") {
+    var rows = l.rows, p = l.pitch, z = l.size;
+    ctx.textBaseline = "middle";
+    rows.forEach(function (r, i) {
+      var top = l.y + i * p;
+      if (l.style === "list") {
+        akGfxShadow(ctx, l.shadow);
+        var dw = z * 3.5, d = (r.l1 || "").split(" ");
+        ctx.fillStyle = l.accent || l.color; ctx.textAlign = "center";
+        akGfxFit(ctx, d.slice(1).join(" ") || r.l1, dw, z * 1.35, 800, l.font); ctx.fillText(d.slice(1).join(" ") || r.l1, l.x + dw / 2, top + p * 0.38);
+        akGfxFit(ctx, (d[0] || "").slice(0, 3), dw, z * 0.7, 700, l.font); ctx.fillText((d[0] || "").slice(0, 3), l.x + dw / 2, top + p * 0.7);
+        ctx.fillStyle = l.color; ctx.textAlign = "left";
+        akGfxFit(ctx, r.r1, l.w - dw - z, z * 1.05, l.weight, l.font); ctx.fillText(r.r1, l.x + dw + z * 0.6, top + p * 0.36);
+        akGfxFit(ctx, [r.l2, r.r2].filter(Boolean).join("  ·  "), l.w - dw - z, z * 0.78, 500, l.font); ctx.fillText([r.l2, r.r2].filter(Boolean).join("  ·  "), l.x + dw + z * 0.6, top + p * 0.7);
+        akGfxNoShadow(ctx);
+        if (i < rows.length - 1) { ctx.fillStyle = l.color; ctx.globalAlpha = 0.35; ctx.fillRect(l.x, top + p - 1, l.w, Math.max(1, z / 18)); ctx.globalAlpha = 1; }
+        return;
+      }
+      akGfxNoShadow(ctx); akGfxDots(ctx, l.x, l.x + l.w, top, z, l.color);
+      akGfxShadow(ctx, l.shadow); ctx.fillStyle = l.color;
+      var half = l.w * 0.42;
+      ctx.textAlign = "left"; akGfxFit(ctx, r.l1, half, z, l.weight, l.font); ctx.fillText(r.l1, l.x, top + p * 0.3);
+      akGfxFit(ctx, r.l2, half, z, l.weight, l.font); ctx.fillText(r.l2, l.x, top + p * 0.75);
+      ctx.textAlign = "right"; akGfxFit(ctx, r.r1, l.w - half * 0.82, z, l.weight, l.font); ctx.fillText(r.r1, l.x + l.w, top + p * 0.3);
+      akGfxFit(ctx, r.r2, l.w - half * 0.82, z, l.weight, l.font); ctx.fillText(r.r2, l.x + l.w, top + p * 0.75);
+    });
+    if (l.style !== "list" && rows.length) { akGfxNoShadow(ctx); akGfxDots(ctx, l.x, l.x + l.w, l.y + rows.length * p, z, l.color); }
+  } else if (l.type === "gcal") {
+    var f0 = akGfxDay(l.from), first = new Date(f0.getFullYear(), f0.getMonth(), 1), days = new Date(f0.getFullYear(), f0.getMonth() + 1, 0).getDate();
+    var off = l.start === "sun" ? first.getDay() : (first.getDay() + 6) % 7, nr = Math.ceil((off + days) / 7), head = l.size * 2.2, cw = l.w / 7, ch = (l.h - head) / nr;
+    var names = [0, 1, 2, 3, 4, 5, 6].map(function (i) { return new Date(2023, 0, (l.start === "sun" ? 1 : 2) + i).toLocaleDateString(undefined, { weekday: "short" }).toUpperCase(); });
+    ctx.fillStyle = "rgba(0,0,0,0.28)"; ctx.fillRect(l.x, l.y + head, l.w, l.h - head);
+    ctx.fillStyle = l.color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "700 " + l.size + "px " + l.font;
+    names.forEach(function (nm, i) { ctx.fillText(nm, l.x + i * cw + cw / 2, l.y + head / 2); });
+    ctx.strokeStyle = l.color; ctx.globalAlpha = 0.45; ctx.lineWidth = Math.max(1, l.w / 1100);
+    for (var r2 = 0; r2 <= nr; r2++) { ctx.beginPath(); ctx.moveTo(l.x, l.y + head + r2 * ch); ctx.lineTo(l.x + l.w, l.y + head + r2 * ch); ctx.stroke(); }
+    for (var c2 = 0; c2 <= 7; c2++) { ctx.beginPath(); ctx.moveTo(l.x + c2 * cw, l.y + head); ctx.lineTo(l.x + c2 * cw, l.y + l.h); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+    var by = {}; (l.gigs || []).forEach(function (g) { (by[g.date] = by[g.date] || []).push(g); });
+    for (var dd = 1; dd <= days; dd++) {
+      var kk = off + dd - 1, cx3 = l.x + (kk % 7) * cw, cy3 = l.y + head + Math.floor(kk / 7) * ch, key = akGfxDateKey(new Date(first.getFullYear(), first.getMonth(), dd)), gs = by[key] || [];
+      if (gs.length) { ctx.fillStyle = l.accent; ctx.globalAlpha = 0.5; ctx.fillRect(cx3 + 1, cy3 + 1, cw - 2, ch - 2); ctx.globalAlpha = 1; }
+      ctx.fillStyle = l.color; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = "700 " + l.size + "px " + l.font; ctx.fillText(String(dd), cx3 + l.size * 0.4, cy3 + l.size * 0.35);
+      var ly = cy3 + l.size * 1.8, fs = Math.min(l.size * 0.82, cw / 8);
+      gs.forEach(function (g) {
+        ctx.textAlign = "center"; ctx.font = "700 " + fs + "px " + l.font;
+        akWrap(ctx, String(g.t || "").toUpperCase(), cw * 0.9).slice(0, 3).forEach(function (t) { if (ly < cy3 + ch - fs) { ctx.fillText(t, cx3 + cw / 2, ly); ly += fs * 1.1; } });
+        if (g.time && ly < cy3 + ch - fs) { ctx.font = "500 " + fs * 0.9 + "px " + (l.small || l.font); ctx.fillText(g.time, cx3 + cw / 2, ly); ly += fs * 1.25; }
+      });
+    }
+  } else if (l.type === "ginv") {
+    var y2 = l.y, rh = l.rh, z2 = l.size, tot = 0;
+    ctx.textBaseline = "middle";
+    if (l.head) { ctx.fillStyle = l.acc; ctx.fillRect(l.x, y2, l.w, rh); ctx.fillStyle = "#fff"; } else { ctx.fillStyle = l.soft; ctx.fillRect(l.x, y2 + rh - 2, l.w, 2); ctx.fillStyle = l.soft; }
+    ctx.font = "700 " + z2 * 0.9 + "px " + l.font; ctx.textAlign = "left"; ctx.fillText("DESCRIPTION", l.x + z2, y2 + rh / 2); ctx.textAlign = "right"; ctx.fillText("AMOUNT", l.x + l.w - z2, y2 + rh / 2);
+    y2 += rh;
+    l.items.forEach(function (it, i) {
+      if (i % 2 && l.head) { ctx.fillStyle = "rgba(0,0,0,0.04)"; ctx.fillRect(l.x, y2, l.w, rh); }
+      ctx.fillStyle = l.color; ctx.font = "400 " + z2 + "px " + l.font; ctx.textAlign = "left"; akGfxFit(ctx, it.desc || "", l.w * 0.72, z2, 400, l.font); ctx.fillText(it.desc || "", l.x + z2, y2 + rh / 2);
+      ctx.font = "400 " + z2 + "px " + l.font; ctx.textAlign = "right"; ctx.fillText(akGfxMoney(it.amt), l.x + l.w - z2, y2 + rh / 2); tot += Number(it.amt) || 0;
+      y2 += rh;
+    });
+    ctx.fillStyle = l.soft; ctx.fillRect(l.x + l.w * 0.55, y2 + rh * 0.3, l.w * 0.45, Math.max(1, z2 / 12));
+    ctx.fillStyle = l.color; ctx.font = "700 " + z2 * 1.15 + "px " + l.font; ctx.textAlign = "left"; ctx.fillText("TOTAL", l.x + l.w * 0.57, y2 + rh * 0.95); ctx.textAlign = "right"; ctx.fillText(akGfxMoney(tot), l.x + l.w - z2, y2 + rh * 0.95);
+  }
+  ctx.restore();
 }
 (function () {
-  var vs = viewSongs;
-  viewSongs = function () {
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    if (AKG_TYPES[l.type]) return akGfxDraw(ctx, l, P);
+    if (l.type === "text" && (l.shadow || l.stroke)) {
+      ctx.save(); akGfxShadow(ctx, l.shadow); dl.apply(this, arguments); akGfxNoShadow(ctx);
+      if (l.stroke) {
+        ctx.font = l.weight + " " + l.size + "px " + l.font; ctx.strokeStyle = l.color; ctx.lineWidth = l.stroke; ctx.lineJoin = "round"; ctx.textAlign = l.align; ctx.textBaseline = l.valign === "top" ? "top" : "middle";
+        try { ctx.letterSpacing = (l.spacing || 0) + "px"; } catch (e) {}
+        var lines = akWrap(ctx, l.text, l.maxW), lh = l.size * (l.lh || 1.2), y0 = l.valign === "top" ? l.y : l.y - (lines.length - 1) * lh / 2;
+        lines.forEach(function (t, i) { ctx.strokeText(t, l.x, y0 + i * lh); });
+        try { ctx.letterSpacing = "0px"; } catch (e) {}
+      }
+      ctx.restore(); return;
+    }
+    return dl.apply(this, arguments);
+  };
+  var lb = akLayerBox;
+  akLayerBox = function (l, P) { if (AKG_TYPES[l.type]) return { x: l.x, y: l.y, w: l.w, h: l.h }; return lb.apply(this, arguments); };
+  /* the layered SVG: words and QR codes stay real text and shapes; the new drawn parts go in as pictures */
+  var sv = akPosterSvg;
+  akPosterSvg = function (P) {
+    if (!P.gfx) return sv.apply(this, arguments);
+    function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+    return P.layers.reduce(function (pr, l) {
+      return pr.then(function (acc) {
+        if (AKG_TYPES[l.type]) {
+          var b = akLayerBox(l, P), x = Math.max(0, Math.floor(b.x)), y = Math.max(0, Math.floor(b.y)), w = Math.min(P.W, Math.ceil(b.x + b.w)) - x, hh = Math.min(P.H, Math.ceil(b.y + b.h)) - y;
+          if (w < 1 || hh < 1) return acc;
+          var full = akPosterCanvas(P, l.id), cv = document.createElement("canvas"); cv.width = w; cv.height = hh; cv.getContext("2d").drawImage(full, x, y, w, hh, 0, 0, w, hh);
+          acc.push('<g id="' + esc(l.id) + '" inkscape:label="' + esc(l.name) + '" inkscape:groupmode="layer"><image href="' + cv.toDataURL(l.type === "gbg" ? "image/jpeg" : "image/png", 0.9) + '" x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '"/></g>');
+          return acc;
+        }
+        return sv({ W: P.W, H: P.H, size: P.size, layers: [l] }).then(function (t) { acc.push(t.split("\n").slice(2, -2).join("\n")); return acc; });
+      });
+    }, Promise.resolve([])).then(function (parts) {
+      return '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="' + P.W + '" height="' + P.H + '" viewBox="0 0 ' + P.W + " " + P.H + '">\n' + parts.join("\n") + "\n</svg>\n";
+    });
+  };
+})();
+
+/* ================================================================ akgfx_b: Graphics studio, part 2: the studio screen, editing, saving files (version 15.0)
+   S.view "gfx" (AK_VIEWS.gfx). S.gfxKind = week | flyer | tip | invoice; S.gfxGig = a show to start from (set by akGfxOpen).
+   S.akg = { sel: selected layer id, open: {section: true}, P: the baked design last drawn, paint: redraw the preview }.
+   The preview is the real design scaled down; drag on it to move the part under your finger (D.edit[id].dx/dy), the Parts
+   section resizes, hides, rewords, recolors and changes the font of each part. Saving: PNG, JPG, PDF, PDF with layers (one
+   picture per part, stacked), layers zip for Canva (akGfxZip), SVG with layers, print. Entry points: Shows ⋯, the 🎨 row on a show
+   page (akGigPhotos wrapper), akFlyerOpen(gig) and akTipSignOpen() (used by the Help guide "Playing a show"). */
+
+function akGfxState() { if (!S.akg) S.akg = { sel: "", open: { what: true } }; return S.akg; }
+/* open the studio on a kind, starting from a show */
+function akGfxOpen(kind, g) {
+  var D = akGfxDesign(kind);
+  if (g) {
+    D.gigId = g.id;
+    if (kind === "week" && g.date) {
+      if (D.range.mode !== "week") D.range.mode = "week";
+      var today = akGfxDay(akTodayKey()), wd = today.getDay(), back = D.range.start === "sun" ? wd : (wd + 6) % 7, ws = akGfxAddDays(akTodayKey(), -back);
+      D.range.shift = Math.max(0, Math.floor((akGfxDay(g.date) - akGfxDay(ws)) / (7 * 864e5)));
+    }
+  }
+  save(); go("gfx", { gfxKind: kind, gfxGig: g ? g.id : "" });
+}
+function akFlyerOpen(gig) { akGfxOpen("flyer", gig || null); }
+function akTipSignOpen() { akGfxOpen("tip", null); }
+
+function viewGfx() {
+  var c = akGfxCfg(), st = akGfxState(), kind = S.gfxKind && AKG_LAYOUTS[S.gfxKind] ? S.gfxKind : (c.kind || "week");
+  c.kind = kind; S.gfxKind = kind;
+  var D = akGfxDesign(kind);
+  if (S.gfxGig) { D.gigId = S.gfxGig; S.gfxGig = ""; }
+  var cv = h("canvas", { class: "akg-cv", role: "img", "aria-label": "Preview. Drag a part to move it." }), prevWrap = h("div", { class: "akg-prev" }, cv);
+  var status = h("div", { class: "hint akg-status", role: "status" }), panel = h("div", { class: "akg-panel" });
+  var base = null, seq = 0, drag = null;
+
+  function ch(again) { save(); rebuild(); if (again) drawPanel(); }
+  function rebuild() {
+    var n = ++seq; status.textContent = "Drawing…";
+    var P; try { P = akGfxLayers(D); } catch (e) { status.textContent = "Couldn't draw it: " + (e && e.message || e); return Promise.resolve(); }
+    return akGfxPrepare(P, D).then(function (P2) { if (n !== seq) return; base = P2; status.textContent = ""; paint(); refill("parts"); })
+      .catch(function (e) { if (n === seq) status.textContent = "Couldn't draw it: " + (e && e.message || e); });
+  }
+  function paint() {
+    if (!base) return;
+    var P = akGfxBake(base, D.edit); st.P = P;
+    var bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(260, window.innerHeight * (window.innerWidth > 900 ? 0.78 : 0.6));
+    var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = Math.max(1, Math.round(P.W * k * dpr)); cv.height = Math.max(1, Math.round(P.H * k * dpr)); cv.style.width = Math.round(P.W * k) + "px"; cv.style.height = Math.round(P.H * k) + "px";
+    var ctx = cv.getContext("2d"); ctx.setTransform(k * dpr, 0, 0, k * dpr, 0, 0); ctx.clearRect(0, 0, P.W, P.H);
+    P.layers.forEach(function (l) { try { akDrawLayer(ctx, l, P); } catch (e) {} });
+    var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
+    if (L) { var b = akLayerBox(L, P); ctx.setLineDash([8 / k, 6 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = "#00B7FF"; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); }
+    cv._k = k;
+  }
+  st.paint = paint;
+  function pt(e) { var r = cv.getBoundingClientRect(), k = cv._k || 1; return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k }; }
+  cv.addEventListener("pointerdown", function (e) {
+    if (!st.P) return;
+    var p = pt(e), hit = null;
+    st.P.layers.slice().reverse().some(function (l) { if (l.fixed) return false; var b = akLayerBox(l, st.P); if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { hit = l; return true; } return false; });
+    if (!hit) { if (st.sel) { st.sel = ""; paint(); refill("parts"); } return; }
+    var E = D.edit[hit.id] = D.edit[hit.id] || {};
+    st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false };
+    try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+    e.preventDefault(); paint();
+  });
+  cv.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    var p = pt(e), E = D.edit[drag.id], nx = drag.dx + p.x - drag.x, ny = drag.dy + p.y - drag.y;
+    /* snap to the middle */
+    var L = base.layers.filter(function (l) { return l.id === drag.id; })[0];
+    if (L) { var b = akLayerBox(L, base), mid = b.x + b.w / 2 + nx - base.W / 2; if (Math.abs(mid) < base.W * 0.012) nx -= mid; }
+    if (Math.abs(nx - (E.dx || 0)) + Math.abs(ny - (E.dy || 0)) > 0.5) { drag.moved = true; E.dx = Math.round(nx); E.dy = Math.round(ny); paint(); }
+  });
+  function endDrag() { if (!drag) return; var moved = drag.moved; drag = null; if (moved) save(); if (!moved && !st.open.parts) { st.open.parts = true; if (secs.parts) secs.parts.open = true; } refill("parts"); }
+  cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
+
+  /* ---- the sections ---- */
+  var secs = {};
+  function refill(id) { var d = secs[id]; if (!d || !d.open) return; while (d.childNodes.length > 1) d.removeChild(d.lastChild); d._fill(d); }
+  function sec(id, title, fill) {
+    var d = h("details", { class: "card akg-sec", "data-akg": id }, h("summary", null, title));
+    secs[id] = d; d._fill = fill;
+    if (st.open[id]) d.open = true;
+    d.addEventListener("toggle", function () { st.open[id] = d.open; if (d.open && !d._filled) { d._filled = true; fill(d); } });
+    if (d.open) { d._filled = true; fill(d); }
+    return d;
+  }
+  function chips(list, cur, pick, label) { return h("div", { class: "chips akg-chips", role: "group", "aria-label": label || "" }, list.map(function (x) { return h("button", { class: "chip" + (String(cur) === String(x[0]) ? " on" : ""), "aria-pressed": String(cur) === String(x[0]) ? "true" : "false", onClick: function () { pick(x[0]); } }, x[1]); })); }
+  function slider(label, val, min, max, step, set, fmt, light) {
+    var out = h("span", { class: "akg-val" }, fmt ? fmt(val) : String(val));
+    return h("label", { class: "fld akg-slider" }, h("span", null, label, " ", out), h("input", { type: "range", min: min, max: max, step: step, value: val, onInput: function () { set(Number(this.value)); out.textContent = fmt ? fmt(Number(this.value)) : this.value; save(); if (light) paint(); else rebuild(); } }));
+  }
+  function check(label, on, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!on, onChange: function () { set(this.checked); ch(true); } }), label); }
+  function fontSel(label, cur, set) {
+    var opts = akGfxFontOpts(), groups = {}, sel = h("select", { "aria-label": label, onChange: function () { set(this.value); ch(); } });
+    if (cur && !opts.some(function (o) { return o[0] === cur; })) opts.unshift([cur, "(current)", "Graphics fonts"]);
+    opts.forEach(function (o) { var g = groups[o[2]]; if (!g) { g = groups[o[2]] = h("optgroup", { label: o[2] }); sel.appendChild(g); } g.appendChild(h("option", { value: o[0], selected: o[0] === cur, style: "font-family:" + o[0] }, o[1])); });
+    return h("label", { class: "fld" }, label, sel);
+  }
+  function gigPick(label) {
+    var g0 = akGfxGig(D), up = akGigsIn(akTodayKey(), "9999"), past = akGigs().filter(function (g) { return g.date && g.date < akTodayKey(); }).sort(function (a, b) { return b.date.localeCompare(a.date); }).slice(0, 40);
+    var sel = h("select", { "aria-label": label, onChange: function () { D.gigId = this.value; ch(true); } });
+    if (!up.length && !past.length) return h("p", { class: "hint" }, "No shows yet. Add one on the Shows tab first.");
+    if (up.length) sel.appendChild(h("optgroup", { label: "Coming up" }, up.map(function (g) { return h("option", { value: g.id, selected: g0 && g0.id === g.id }, akDateShort(g.date) + " · " + akGigTitle(g)); })));
+    if (past.length) sel.appendChild(h("optgroup", { label: "Past" }, past.map(function (g) { return h("option", { value: g.id, selected: g0 && g0.id === g.id }, akDateShort(g.date) + " · " + akGigTitle(g)); })));
+    return h("label", { class: "fld" }, label, sel);
+  }
+  function rowDialog(r, done) {
+    var f = {}, fields = [["l1", "Day and date", "WEDNESDAY 8/12"], ["l2", "Time", "5:30-8PM"], ["r1", "Place", "THE OAKS CLUBHOUSE"], ["r2", "Town", "(LAKE WILDWOOD)"]];
+    var date = h("input", { type: "date", value: r.date && r.date !== "9999" ? r.date : "" });
+    var body = h("div", null, r.extra != null || r.isNew ? h("label", { class: "fld" }, "Date (puts the row in order; leave empty for the end)", date) : h("p", { class: "hint" }, "Changes the words on this poster only. Empty boxes use the show's own details."),
+      fields.map(function (x) { f[x[0]] = h("input", { type: "text", value: r.isNew ? "" : (r[x[0]] || ""), placeholder: x[2], autocapitalize: "characters" }); return h("label", { class: "fld" }, x[1], f[x[0]]); }));
+    modal(r.isNew ? "Add a row" : "Change this row", body, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () { var o = { date: date.value }; fields.forEach(function (x) { o[x[0]] = f[x[0]].value.trim(); }); done(o); } }]);
+  }
+
+  function fillWhat(d) {
+    d.appendChild(h("div", { class: "fld" }, "Layout", chips(AKG_LAYOUTS[kind], D.layout, function (id) {
+      D.layout = id;
+      if (id === "cal") { D.range.mode = "month"; if (["letter", "tabloid", "quarter", "post", "square"].indexOf(D.size) < 0) D.size = "letter"; }
+      if (kind === "tip" && id === "jar") D.size = "jar"; else if (kind === "tip" && D.size === "jar") D.size = "card46";
+      ch(true);
+    }, "Layout")));
+    d.appendChild(h("label", { class: "fld" }, "Size", h("select", { "aria-label": "Size", onChange: function () { D.size = this.value; ch(); } }, AKG_KSIZES[kind].map(function (id) { var z = akGfxSize(id); return h("option", { value: id, selected: D.size === id }, z[1]); }))));
+  }
+  function fillShows(d) {
+    if (kind === "week") {
+      var r = D.range;
+      d.appendChild(chips([["week", "A week"], ["month", "A month"], ["next", "Next 2 weeks"], ["custom", "Pick dates"]], r.mode, function (m) { r.mode = m; if (m === "next") r.days = 14; ch(true); }, "Which dates"));
+      if (r.mode === "week") {
+        d.appendChild(chips([[0, "This week"], [1, "Next week"], [2, "In 2 weeks"], [3, "In 3 weeks"]], r.shift || 0, function (n) { r.shift = n; ch(true); }, "Which week"));
+        d.appendChild(h("div", { class: "fld" }, "Week starts on", chips([["mon", "Monday"], ["sun", "Sunday"]], r.start, function (x) { r.start = x; ch(true); }, "Week starts on")));
+      } else if (r.mode === "month") {
+        var ms = [], dt = akGfxDay(akTodayKey().slice(0, 7) + "-01"); dt.setMonth(dt.getMonth() - 1);
+        for (var i = 0; i < 14; i++) { ms.push([akGfxDateKey(dt).slice(0, 7), dt.toLocaleDateString(undefined, { month: "long", year: "numeric" })]); dt.setMonth(dt.getMonth() + 1); }
+        var cur = r.month || akTodayKey().slice(0, 7);
+        d.appendChild(h("label", { class: "fld" }, "Month", h("select", { onChange: function () { r.month = this.value; ch(true); } }, ms.map(function (m) { return h("option", { value: m[0], selected: m[0] === cur }, m[1]); }))));
+        if (D.layout === "cal") d.appendChild(h("div", { class: "fld" }, "Week starts on", chips([["mon", "Monday"], ["sun", "Sunday"]], r.start, function (x) { r.start = x; ch(true); })));
+      } else if (r.mode === "next") {
+        d.appendChild(slider("How many days", r.days || 14, 7, 60, 1, function (v) { r.days = v; }));
+      } else {
+        var R0 = akGfxRange(D);
+        d.appendChild(h("div", { class: "two" },
+          h("label", { class: "fld" }, "From", h("input", { type: "date", value: r.from || R0.from, onChange: function () { r.from = this.value; ch(true); } })),
+          h("label", { class: "fld" }, "To", h("input", { type: "date", value: r.to || R0.to, onChange: function () { r.to = this.value; ch(true); } }))));
+      }
+      var R = akGfxRange(D), rows = akGfxRows(D, true);
+      d.appendChild(h("p", { class: "hint", style: "margin:8px 0 4px" }, R.sub + ": " + (rows.length ? rows.length + (rows.length === 1 ? " row" : " rows") : "no shows yet") + ". Untick a show to leave it off; ✎ changes the words on this poster only."));
+      var list = h("div", { class: "akg-rows" });
+      rows.forEach(function (rw) {
+        list.appendChild(h("div", { class: "akg-row" + (rw.hidden ? " off" : "") },
+          rw.extra == null ? h("input", { type: "checkbox", checked: !rw.hidden, "aria-label": "Show " + rw.r1 + " on the poster", onChange: function () { if (this.checked) delete D.hideRows[rw.id]; else D.hideRows[rw.id] = true; ch(true); } }) : h("span", { class: "akg-plus", title: "Added by hand" }, "＋"),
+          h("div", { class: "grow" }, h("div", { class: "t" }, rw.l1 + "  ·  " + rw.l2), h("div", { class: "s" }, rw.r1 + " " + rw.r2)),
+          h("button", { class: "icon sm", "aria-label": "Change the words of this row", onClick: function () {
+            rowDialog(rw, function (o) {
+              if (rw.extra != null) D.extraRows[rw.extra] = o; else { var e = {}; ["l1", "l2", "r1", "r2"].forEach(function (k) { if (o[k]) e[k] = o[k]; }); if (Object.keys(e).length) D.rowEdit[rw.id] = e; else delete D.rowEdit[rw.id]; }
+              ch(true);
+            });
+          } }, "✎"),
+          rw.extra != null ? h("button", { class: "icon sm", "aria-label": "Remove this row", onClick: function () { D.extraRows.splice(rw.extra, 1); ch(true); } }, "✕")
+            : (D.rowEdit[rw.id] ? h("button", { class: "icon sm", "aria-label": "Use the show's own words again", title: "Use the show's own words again", onClick: function () { delete D.rowEdit[rw.id]; ch(true); } }, "↺") : null)));
+      });
+      d.appendChild(list);
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { rowDialog({ isNew: true, date: R.from }, function (o) { D.extraRows.push(o); ch(true); }); } }, "＋ Add a row"),
+        h("button", { class: "sm", onClick: function () { go("shows"); } }, "Open Shows")));
+      d.appendChild(check("Capital letters in the rows", D.upper !== false, function (v) { D.upper = v; }));
+    } else if (kind === "flyer") {
+      d.appendChild(gigPick("Show"));
+    } else if (kind === "tip") {
+      var pays = akGfxPays(); D.pay = D.pay || {};
+      if (!pays.length) d.appendChild(h("p", { class: "hint" }, "No tip links yet. Add them in Settings › Requests and tips (Venmo, Cash App, PayPal…)."));
+      pays.forEach(function (p, i) {
+        var key = "h_" + (p.kind || p.label);
+        d.appendChild(h("div", { class: "akg-row" }, h("input", { type: "checkbox", checked: !D.pay["off" + i], "aria-label": "Use " + p.label, onChange: function () { if (this.checked) delete D.pay["off" + i]; else D.pay["off" + i] = true; ch(); } }),
+          h("div", { class: "grow" }, h("div", { class: "t" }, p.label || p.kind), h("input", { type: "text", value: D.pay[key] || "", placeholder: akGfxHandle(p) || "Handle to show, like @name or $name", "aria-label": "Handle for " + p.label, onInput: function () { D.pay[key] = this.value.trim(); save(); rebuild(); } }))));
+      });
+      d.appendChild(check("Add a QR code for song requests", D.reqQr, function (v) { D.reqQr = v; }));
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { go("settings"); setTimeout(function () { try { var el = document.querySelector('[data-bk="requests"], [data-bk="live-requests"]'); if (el) el.scrollIntoView(); } catch (e) {} }, 300); } }, "Edit tip links (Settings)")));
+    } else if (kind === "invoice") {
+      d.appendChild(gigPick("Show"));
+      var g = akGfxGig(D), I = akGfxInv(g);
+      if (!I) return;
+      function fld(label, key, o) {
+        o = o || {};
+        var inp = h(o.area ? "textarea" : "input", { type: o.type || "text", rows: o.area ? 2 : null, value: I[key] || "", placeholder: o.ph || "", onInput: function () { I[key] = this.value; if (/^from|^payHow/.test(key)) { var cfg = akGfxCfg(); cfg.invFrom = cfg.invFrom || {}; cfg.invFrom[key] = this.value; } save(); rebuild(); } });
+        return h("label", { class: "fld" }, label, inp);
+      }
+      d.appendChild(h("div", { class: "two" }, fld("Invoice number", "no"), fld("Date", "date", { type: "date" })));
+      d.appendChild(fld("Due", "due", { ph: "Due on receipt" }));
+      d.appendChild(h("h4", null, "Bill to"));
+      d.appendChild(fld("Venue", "toName")); d.appendChild(fld("Contact person", "toContact")); d.appendChild(fld("Address", "toAddr"));
+      d.appendChild(h("h4", null, "Lines"));
+      (I.items || []).forEach(function (it, i) {
+        d.appendChild(h("div", { class: "row akg-line" },
+          h("input", { type: "text", class: "grow", value: it.desc || "", "aria-label": "Line " + (i + 1), placeholder: "What it's for", onInput: function () { it.desc = this.value; save(); rebuild(); } }),
+          h("input", { type: "number", inputmode: "decimal", step: "0.01", value: it.amt || "", "aria-label": "Amount, line " + (i + 1), style: "width:7.5em", placeholder: "0.00", onInput: function () { it.amt = Number(this.value) || 0; save(); rebuild(); } }),
+          h("button", { class: "icon sm", "aria-label": "Remove line " + (i + 1), onClick: function () { I.items.splice(i, 1); ch(true); } }, "✕")));
+      });
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { I.items.push({ desc: "", amt: 0 }); ch(true); } }, "＋ Add a line"),
+        g && Number(g.pay) ? null : h("span", { class: "hint" }, "Tip: put the pay on the show (💵 Pay and tips) and new invoices fill it in.")));
+      d.appendChild(h("h4", null, "From (kept for your next invoices)"));
+      d.appendChild(fld("My name", "fromName")); d.appendChild(fld("Website", "fromSite")); d.appendChild(fld("Email", "fromEmail", { type: "email", ph: "Left off when empty" })); d.appendChild(fld("Phone", "fromPhone", { type: "tel", ph: "Left off when empty" })); d.appendChild(fld("Address", "fromAddr", { ph: "Left off when empty" }));
+      d.appendChild(fld("How to pay", "payHow", { area: true })); d.appendChild(fld("Notes", "notes", { area: true }));
+      d.appendChild(h("h4", null, "Show on the invoice"));
+      D.fields = D.fields || {};
+      d.appendChild(h("div", { class: "akg-fields" }, AKG_INV_FIELDS.map(function (x) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: D.fields[x[0]] !== false, onChange: function () { D.fields[x[0]] = this.checked; save(); rebuild(); } }), x[1]); })));
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { confirmBox("Start this show's invoice again with a new number?", "Start again", function () { delete g.inv; save(); drawPanel(); rebuild(); }); } }, "New invoice for this show")));
+    }
+  }
+  function wordKeys() {
+    var L = D.layout;
+    if (kind === "week") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "list" ? [["title", "Title"], ["sub", "Dates line"], ["footer1", "Website"]] : [["title", "Title"], ["sub", "Line under the title"], ["footer1", "Website"]];
+    if (kind === "flyer") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "spot" ? [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date"], ["time", "Time"], ["town", "Town"], ["note", "Note", 1], ["footer1", "Website"]] : [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date and time"], ["town", "Town"], ["footer1", "Website"]];
+    if (kind === "tip") return L === "jar" ? [["title", "Big word"], ["sub", "Thank you line"], ["name", "Name"]] : L === "big" ? [["title", "Big word"], ["sub", "Line under it"], ["handles", "Handles", 1]] : [["title", "Heading", 1], ["sub", "Line under the heading"], ["footer1", "Website"]];
+    return [["title", "Heading (INVOICE)"]];
+  }
+  function autoText(k) {
+    if (!base) return "";
+    var ids = k === "title" ? ["title", "title2", "title3", "heading"] : [k];
+    return base.layers.filter(function (l) { return ids.indexOf(l.id) >= 0 && l.type === "text"; }).map(function (l) { return l.text; }).join("\n");
+  }
+  function fillWords(d) {
+    d.appendChild(h("p", { class: "hint" }, "Empty boxes fill in by themselves from your shows. Type to use your own words."));
+    wordKeys().forEach(function (w) {
+      var inp = h(w[2] ? "textarea" : "input", { type: "text", rows: w[2] ? 2 : null, value: D.text[w[0]] || "", placeholder: autoText(w[0]) || "Automatic", "aria-label": w[1], onInput: function () { if (this.value) D.text[w[0]] = this.value; else delete D.text[w[0]]; save(); rebuild(); } });
+      d.appendChild(h("label", { class: "fld" }, w[1], inp));
+    });
+  }
+  function fillBg(d) {
+    var b = D.bg, g = akGfxGig(D), v = g && typeof akVenueFor === "function" ? akVenueFor(g) : null, vph = ((v && v.photos) || (g && g.photos) || []).filter(function (id) { return IMG[id]; });
+    var srcs = [["art", "Theme pictures"], ["photo", "My photos"]]; if (vph.length && kind !== "week") srcs.push(["venue", "Venue photos"]); srcs.push(["color", "Plain color"]);
+    d.appendChild(chips(srcs, b.src, function (x) { b.src = x; if (x === "art" && !AK_ART_FILES[b.id]) b.id = akGfxArtIds()[0] || ""; if (x === "photo") b.id = akGfxCfg().photos.filter(function (id) { return IMG[id]; })[0] || ""; if (x === "venue") b.id = vph[0] || ""; ch(true); }, "Background"));
+    var grid = h("div", { class: "akg-thumbs" });
+    function thumb(id, src, label) { return h("button", { class: "akg-th" + (b.id === id ? " on" : ""), "aria-label": label, "aria-pressed": b.id === id ? "true" : "false", style: "background-image:url(" + JSON.stringify(src) + ")", onClick: function () { b.id = id; b.fx = 0.5; b.fy = 0.5; b.zoom = 1; ch(true); } }); }
+    if (b.src === "art") akGfxArtIds().forEach(function (id) { grid.appendChild(thumb(id, AK_ART_BASE + id + "_" + AK_ART_FILES[id][0] + ".thumb.webp", "Theme picture " + id.replace(/^[ap]_/, ""))); });
+    if (b.src === "photo") {
+      var c2 = akGfxCfg(); c2.photos = c2.photos.filter(function (id) { return IMG[id]; });
+      c2.photos.forEach(function (id, i) { var w = thumb(id, IMG[id].data, "My photo " + (i + 1)); grid.appendChild(h("div", { class: "akg-thw" }, w, h("button", { class: "icon sm akg-thx", "aria-label": "Remove photo " + (i + 1), onClick: function () { confirmBox("Remove this photo from the studio?", "Remove", function () { c2.photos.splice(c2.photos.indexOf(id), 1); imgDel(id); if (b.id === id) b.id = c2.photos[0] || ""; ch(true); }); } }, "✕"))); });
+      var inp = h("input", { type: "file", accept: "image/*", onChange: function () { var f = this.files && this.files[0]; this.value = ""; if (!f) return; status.textContent = "Adding the photo…"; akGfxPhotoIn(f).then(function (id) { c2.photos.unshift(id); b.id = id; b.fx = 0.5; b.fy = 0.5; b.zoom = 1; ch(true); }, function (e) { status.textContent = (e && e.message) || "Couldn't add that photo."; }); } });
+      d.appendChild(h("div", { class: "row" }, fileBtn("📷 Add a photo", inp)));
+      if (!c2.photos.length) d.appendChild(h("p", { class: "hint" }, "Add your own photos (fire, water, a stage…). They stay on this device for the next posts."));
+    }
+    if (b.src === "venue") vph.forEach(function (id, i) { grid.appendChild(thumb(id, IMG[id].data, "Venue photo " + (i + 1))); });
+    if (grid.childNodes.length) d.appendChild(grid);
+    if (b.src === "color") {
+      d.appendChild(h("div", { class: "fld" }, "Color", colorPicker(b.color, function (c) { b.color = c || "#140c26"; ch(); })));
+      d.appendChild(h("div", { class: "fld" }, "Fade to (empty = one color)", colorPicker(b.color2, function (c) { b.color2 = c; ch(); })));
+    } else {
+      d.appendChild(slider("Zoom", Math.round((b.zoom || 1) * 100), 100, 300, 5, function (v) { b.zoom = v / 100; }, function (v) { return v + "%"; }));
+      d.appendChild(slider("Left ↔ right", Math.round((b.fx == null ? 0.5 : b.fx) * 100), 0, 100, 1, function (v) { b.fx = v / 100; }));
+      d.appendChild(slider("Up ↕ down", Math.round((b.fy == null ? 0.5 : b.fy) * 100), 0, 100, 1, function (v) { b.fy = v / 100; }));
+      d.appendChild(slider("Blur", b.blur || 0, 0, 30, 1, function (v) { b.blur = v; }));
+    }
+  }
+  function fillLook(d) {
+    d.appendChild(slider("Dark overlay", D.overlay || 0, 0, 90, 5, function (v) { D.overlay = v; }, function (v) { return v ? v + "%" : "off"; }));
+    d.appendChild(check(kind === "week" ? "Panel behind the rows" : "Panel behind the words", D.panel.on, function (v) { D.panel.on = v; }));
+    if (D.panel.on) {
+      d.appendChild(slider("Panel see-through", 100 - (D.panel.alpha == null ? 45 : D.panel.alpha), 0, 95, 5, function (v) { D.panel.alpha = 100 - v; }, function (v) { return v + "%"; }));
+      d.appendChild(h("div", { class: "fld" }, "Panel color (empty = matches the picture)", colorPicker(D.panel.color, function (c) { D.panel.color = c; ch(); })));
+    }
+    d.appendChild(h("div", { class: "fld" }, "Words and lines", chips([["auto", "Auto"], ["#ffffff", "White"], ["#111111", "Black"]].concat(["auto", "#ffffff", "#111111"].indexOf(D.fg) < 0 ? [[D.fg, "Mine"]] : []), D.fg, function (x) { D.fg = x; ch(true); }, "Words color")));
+    d.appendChild(h("div", { class: "fld" }, "Pick another color for the words", colorPicker(["auto", "#ffffff", "#111111"].indexOf(D.fg) < 0 ? D.fg : "", function (c) { D.fg = c || "auto"; ch(true); })));
+    d.appendChild(h("div", { class: "fld" }, kind === "week" || kind === "flyer" ? "Circles and highlights (empty = matches the picture)" : "Highlight color (empty = matches the picture)", colorPicker(D.accent === "auto" ? "" : D.accent, function (c) { D.accent = c || "auto"; ch(); })));
+    d.appendChild(fontSel("Title font", D.fonts.title, function (v) { D.fonts.title = v; }));
+    d.appendChild(fontSel("Main font", D.fonts.main, function (v) { D.fonts.main = v; }));
+    d.appendChild(fontSel("Small font", D.fonts.small, function (v) { D.fonts.small = v; }));
+    d.appendChild(h("div", { class: "row" }, typeof googleFontDialog === "function" ? h("button", { class: "sm", onClick: function () { googleFontDialog(); } }, "Get a Google Font by name…") : null, h("span", { class: "hint" }, "Fonts you add (Settings › My fonts) show up here too.")));
+    if (akPersonal()) {
+      d.appendChild(check("My logo", D.logo !== false, function (v) { D.logo = v; }));
+      d.appendChild(check("My name as my wordmark", D.wordmark !== false, function (v) { D.wordmark = v; }));
+    }
+  }
+  function fillParts(d) {
+    if (!base) { d.appendChild(h("p", { class: "hint" }, "Drawing…")); return; }
+    d.appendChild(h("p", { class: "hint" }, "Drag a part on the picture to move it (it snaps to the middle). Tap a part here to resize, reword, recolor or hide it."));
+    var list = h("div", { class: "akg-parts" });
+    base.layers.forEach(function (l) {
+      if (l.fixed) return;
+      var E = D.edit[l.id] || {}, on = st.sel === l.id;
+      list.appendChild(h("div", { class: "akg-part" + (on ? " on" : "") + (E.hide ? " off" : "") },
+        h("input", { type: "checkbox", checked: !E.hide, "aria-label": "Show " + l.name, onChange: function () { var e = D.edit[l.id] = D.edit[l.id] || {}; if (this.checked) delete e.hide; else e.hide = true; save(); paint(); refill("parts"); } }),
+        h("button", { class: "grow akg-pname", onClick: function () { st.sel = on ? "" : l.id; paint(); refill("parts"); } }, l.name + (E.dx || E.dy || (E.k && E.k !== 1) || E.text != null || E.color || E.font ? " •" : ""))));
+      if (!on) return;
+      var box = h("div", { class: "akg-pedit" });
+      box.appendChild(slider("Size", Math.round((E.k || 1) * 100), 30, 300, 5, function (v) { var e = D.edit[l.id] = D.edit[l.id] || {}; e.k = v / 100; }, function (v) { return v + "%"; }, true));
+      if (l.type === "text") box.appendChild(h("label", { class: "fld" }, "Words", h("textarea", { rows: 2, value: E.text != null ? E.text : l.text, onInput: function () { var e = D.edit[l.id] = D.edit[l.id] || {}; e.text = this.value; save(); paint(); } })));
+      if (l.color || l.fill || l.type === "gpic") box.appendChild(h("div", { class: "fld" }, "Color", colorPicker(E.color || "", function (c) { var e = D.edit[l.id] = D.edit[l.id] || {}; if (c) e.color = c; else delete e.color; save(); paint(); })));
+      if (l.font) box.appendChild(fontSel("Font", E.font || l.font, function (v) { var e = D.edit[l.id] = D.edit[l.id] || {}; e.font = v; }));
+      box.appendChild(h("div", { class: "row" },
+        h("button", { class: "sm", onClick: function () { var e = D.edit[l.id] || {}; e.dx = 0; e.dy = 0; save(); paint(); } }, "Put it back in place"),
+        h("button", { class: "sm", onClick: function () { delete D.edit[l.id]; save(); paint(); refill("parts"); } }, "Undo all changes to it")));
+      list.appendChild(box);
+    });
+    d.appendChild(list);
+    d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { confirmBox("Put every part back where the layout puts it?", "Put back", function () { D.edit = {}; st.sel = ""; save(); paint(); refill("parts"); }); } }, "Put every part back")));
+  }
+  function fillStyles(d) {
+    var c3 = akGfxCfg(), mine = c3.styles.filter(function (x) { return x.kind === kind; });
+    d.appendChild(h("p", { class: "hint" }, "Save this look (layout, background, colors, fonts, moved parts) and use it again; the shows fill in by themselves."));
+    d.appendChild(h("div", { class: "row" }, h("button", { class: "primary sm", onClick: function () {
+      askText("Name this style", AKG_KINDS.filter(function (k) { return k[0] === kind; })[0][1].replace(/^\S+\s/, "") + " " + (mine.length + 1), "Save", function (nm) { c3.styles.push(akGfxStyleOf(D, nm)); save(); toast("Saved the style “" + nm + "”."); drawPanel(); });
+    } }, "＋ Save this look as a style"), h("button", { class: "sm", onClick: function () { confirmBox("Start this " + kind + " over with the default look? Saved styles stay.", "Start over", function () { var g = D.gigId; c3.last[kind] = akGfxDefault(kind); c3.last[kind].gigId = g; st.sel = ""; save(); render(); }); } }, "Start over")));
+    mine.forEach(function (x) {
+      d.appendChild(h("div", { class: "akg-row" }, h("div", { class: "grow" }, h("div", { class: "t" }, x.name), h("div", { class: "s" }, (AKG_LAYOUTS[kind].filter(function (l) { return l[0] === x.layout; })[0] || ["", ""])[1] + " · " + akGfxSize(x.size)[1])),
+        h("button", { class: "sm", onClick: function () { akGfxStyleUse(D, x); st.sel = ""; save(); toast("Using “" + x.name + "”."); render(); } }, "Use"),
+        h("button", { class: "icon sm", "aria-label": "More for " + x.name, onClick: function () { menu(this, [
+          { label: "Rename…", onClick: function () { askText("Rename the style", x.name, "Rename", function (nm) { x.name = nm; save(); drawPanel(); }); } },
+          { label: "Save this look over it", onClick: function () { var n = akGfxStyleOf(D, x.name); n.id = x.id; c3.styles[c3.styles.indexOf(x)] = n; save(); toast("Updated."); drawPanel(); } },
+          { label: "Delete", danger: true, onClick: function () { confirmBox("Delete the style “" + x.name + "”?", "Delete", function () { c3.styles.splice(c3.styles.indexOf(x), 1); save(); drawPanel(); }); } }]); } }, "⋯")));
+    });
+  }
+  function drawPanel() {
+    panel.textContent = "";
+    var data = kind === "week" ? "Shows on it" : kind === "flyer" ? "Show" : kind === "tip" ? "Tip links" : "Show and invoice details";
+    panel.appendChild(sec("what", "Layout and size", fillWhat));
+    panel.appendChild(sec("shows", data, fillShows));
+    panel.appendChild(sec("words", "Words", fillWords));
+    panel.appendChild(sec("bg", "Background", fillBg));
+    panel.appendChild(sec("look", "Colors, fonts and overlay", fillLook));
+    panel.appendChild(sec("parts", "Parts (move, resize, hide)", fillParts));
+    panel.appendChild(sec("styles", "My styles", fillStyles));
+  }
+
+  /* ---- saving ---- */
+  function full() { if (!base) return null; return akGfxBake(base, D.edit); }
+  function busy(fn) { var P = full(); if (!P) { toast("Still drawing. Try again in a moment."); return; } status.textContent = "Working…"; Promise.resolve().then(function () { return fn(P); }).then(function () { status.textContent = ""; }, function (e) { status.textContent = "That didn't work: " + (e && e.message || e); }); }
+  function name() { return akGfxFileName(D); }
+  var acts = h("div", { class: "row akg-acts" },
+    h("button", { class: "primary", onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/png").then(function (b) { akRecDownload(b, name() + ".png"); }); }); } }, "⬇ Save picture"),
+    h("button", { onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/png").then(function (b) { return akGfxShare(b, name() + ".png"); }); }); } }, "↗ Share"),
+    h("button", { onClick: function () { busy(function (P) { return akPosterPdf(P).then(function (b) { akRecDownload(b, name() + ".pdf"); }); }); } }, "PDF"),
+    h("button", { "aria-label": "More ways to save", onClick: function () { menu(this, [
+      { label: "JPG (smaller file)", onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/jpeg", 0.9).then(function (b) { akRecDownload(b, name() + ".jpg"); }); }); } },
+      { label: "PDF with layers (one part per layer)", onClick: function () { busy(function (P) { return akGfxPdfLayers(P).then(function (b) { akRecDownload(b, name() + " (layers).pdf"); }); }); } },
+      { label: "Layers for Canva (.zip)", onClick: function () { busy(function (P) { return akGfxZip(P, D, name()).then(function (b) { akRecDownload(b, name() + " (layers).zip"); }); }); } },
+      { label: "SVG with layers (Inkscape, Illustrator, Affinity)", onClick: function () { busy(function (P) { return akPosterSvg(P).then(function (t) { akRecDownload(new Blob([t], { type: "image/svg+xml" }), name() + " (layers).svg"); }); }); } },
+      { label: "🖨 Print…", onClick: function () { busy(function (P) { return akGfxPrint(P, name()); }); } }]); } }, "More ▾"));
+  if (kind === "invoice") acts.appendChild(h("button", { onClick: function () { var g = akGfxGig(D); if (g && g.inv) { g.inv.sent = akTodayKey(); save(); toast("Marked as sent today."); } } }, "✓ Mark as sent"));
+
+  var kinds = h("div", { class: "chips akg-kinds", role: "tablist", "aria-label": "What to make" }, AKG_KINDS.map(function (k) {
+    return h("button", { class: "chip" + (k[0] === kind ? " on" : ""), role: "tab", "aria-selected": k[0] === kind ? "true" : "false", title: k[2], onClick: function () { if (k[0] === kind) return; S.gfxKind = k[0]; st.sel = ""; render(); } }, k[1]);
+  }));
+  drawPanel();
+  setTimeout(rebuild, 0);
+  var more = h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
+    { label: "How the files work…", onClick: akGfxHelp },
+    { label: "Older signs and posters (request QR, setlist board, press kit)…", onClick: function () { akPosterDialog("request"); } },
+    { label: "Shows CSV for Canva Bulk Create", onClick: function () { akShowsCsv(); } }]); } }, "⋯");
+  var body = h("div", { class: "akg" }, kinds, h("div", { class: "akg-grid" }, h("div", { class: "akg-left" }, prevWrap, status, acts), panel));
+  return shell("Graphics studio", body, { back: function () { saveNow(); if (!navBack()) go("shows"); }, actions: more });
+}
+AK_VIEWS.gfx = viewGfx; AK_VIEW_TAB.gfx = "shows";
+window.addEventListener("resize", function () { if (S.view === "gfx" && S.akg && S.akg.paint) { clearTimeout(S.akg.rt); S.akg.rt = setTimeout(S.akg.paint, 150); } });
+
+/* ---------------------------------------------------------------- styles, names, files */
+function akGfxStyleOf(D, nm) {
+  var keep = ["layout", "size", "bg", "overlay", "panel", "fg", "accent", "fonts", "edit", "upper", "logo", "wordmark"], o = { id: uid(), name: nm, kind: D.kind };
+  keep.forEach(function (k) { o[k] = clone(D[k] === undefined ? null : D[k]); });
+  o.text = {}; ["title", "footer1", "footer2", "kicker", "sub"].forEach(function (k) { if (D.text[k] && !(D.kind === "week" && k === "sub")) o.text[k] = D.text[k]; });
+  o.weekStart = D.range.start;
+  return o;
+}
+function akGfxStyleUse(D, x) {
+  ["layout", "size", "bg", "overlay", "panel", "fg", "accent", "fonts", "edit", "upper", "logo", "wordmark"].forEach(function (k) { if (x[k] !== null && x[k] !== undefined) D[k] = clone(x[k]); });
+  D.text = clone(x.text || {}); if (x.weekStart) D.range.start = x.weekStart;
+}
+function akGfxFileName(D) {
+  var g = akGfxGig(D), clean = function (s) { return String(s || "").replace(/[\\\/:*?"<>|]+/g, "-").trim(); };
+  if (D.kind === "week") { var R = akGfxRange(D); return clean((D.layout === "cal" ? "Calendar " : "Shows ") + R.from + (R.to !== R.from ? " to " + R.to : "")); }
+  if (D.kind === "flyer") return clean("Flyer " + (g ? (g.date || "") + " " + akGfxVenue(g) : ""));
+  if (D.kind === "invoice") return clean("Invoice " + (g && g.inv ? g.inv.no + " " : "") + (g ? akGfxVenue(g) : ""));
+  return "Tip sign";
+}
+/* a photo for backgrounds: kept sharp enough for a letter poster, saved on this device */
+function akGfxPhotoIn(file) {
+  return new Promise(function (res, rej) {
+    if (!file || !/^image\//.test(file.type || "image/")) { rej(new Error("That doesn't look like a picture.")); return; }
+    var url = URL.createObjectURL(file), im = new Image();
+    im.onload = function () {
+      try {
+        var k = Math.min(1, 2600 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas"); cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k);
+        cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        var id = "gfxbg" + uid(); imgPut(id, { name: (file.name || "photo").replace(/\.[^.]+$/, ""), data: cv.toDataURL("image/jpeg", 0.88) }).then(function () { res(id); });
+      } catch (e) { URL.revokeObjectURL(url); rej(new Error("Couldn't read that picture.")); }
+    };
+    im.onerror = function () { URL.revokeObjectURL(url); rej(new Error("Couldn't read that picture.")); };
+    im.src = url;
+  });
+}
+/* studio photos are kept when old pictures are cleaned up */
+(function () { var inUse = imgIdsInUse; imgIdsInUse = function () { var ids = inUse.apply(this, arguments); try { (akGfxCfg().photos || []).forEach(function (id) { ids[id] = 1; }); } catch (e) {} return ids; }; })();
+function akGfxShare(blob, nm) {
+  var f = new File([blob], nm, { type: blob.type });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [f] })) return navigator.share({ files: [f], title: nm }).catch(function () {});
+  akRecDownload(blob, nm); toast("Sharing isn't available here, so it was saved instead.");
+}
+/* one part's picture, cut to its own box -> { blob, x, y, w, h } */
+function akGfxPart(P, l) {
+  var b = l.type === "gbg" ? { x: 0, y: 0, w: P.W, h: P.H } : akLayerBox(l, P), pad = Math.max(4, P.W / 200);
+  var x = Math.max(0, Math.floor(b.x - pad)), y = Math.max(0, Math.floor(b.y - pad)), w = Math.min(P.W, Math.ceil(b.x + b.w + pad)) - x, hh = Math.min(P.H, Math.ceil(b.y + b.h + pad)) - y;
+  if (w < 1 || hh < 1) return Promise.resolve(null);
+  var full = akPosterCanvas(P, l.id), cv = document.createElement("canvas"); cv.width = w; cv.height = hh; cv.getContext("2d").drawImage(full, x, y, w, hh, 0, 0, w, hh);
+  full.width = 1; full.height = 1;
+  return akCanvasBlob(cv, l.type === "gbg" ? "image/jpeg" : "image/png", 0.92).then(function (bl) { return { blob: bl, x: x, y: y, w: w, h: hh, jpg: l.type === "gbg" }; });
+}
+/* a PDF where every part is its own picture, stacked in order (editable apart in Illustrator, Affinity, Acrobat) */
+function akGfxPdfLayers(P) {
+  return akPdfLib().then(function () { return PDFLib.PDFDocument.create(); }).then(function (doc) {
+    var pw = P.size[4] ? P.size[4] * 72 : P.W / 150 * 72, ph = P.size[5] ? P.size[5] * 72 : P.H / 150 * 72, pg = doc.addPage([pw, ph]), kx = pw / P.W, ky = ph / P.H;
+    return P.layers.reduce(function (pr, l) {
+      return pr.then(function () { return akGfxPart(P, l); }).then(function (pt) {
+        if (!pt) return;
+        return pt.blob.arrayBuffer().then(function (buf) { return pt.jpg ? doc.embedJpg(buf) : doc.embedPng(buf); }).then(function (img) { pg.drawImage(img, { x: pt.x * kx, y: ph - (pt.y + pt.h) * ky, width: pt.w * kx, height: pt.h * ky }); });
+      });
+    }, Promise.resolve()).then(function () { doc.setTitle(akGfxName()); doc.setSubject(P.layers.map(function (l) { return l.name; }).join(" | ")); return doc.save(); });
+  }).then(function (bytes) { return new Blob([bytes], { type: "application/pdf" }); });
+}
+/* the layers zip: one see-through picture per part (all the same size, so they line up), the finished picture, a guide, the words */
+function akGfxZip(P, D, base) {
+  var files = [];
+  return P.layers.reduce(function (pr, l, i) {
+    return pr.then(function () { var cv = akPosterCanvas(P, l.id); return akCanvasBlob(cv, l.type === "gbg" ? "image/jpeg" : "image/png", 0.92).then(function (b) { cv.width = 1; files.push({ name: ("0" + i).slice(-2) + " " + l.name.replace(/[^\w ,.()-]+/g, "") + (l.type === "gbg" ? ".jpg" : ".png"), data: b }); }); });
+  }, Promise.resolve()).then(function () { return akCanvasBlob(akPosterCanvas(P), "image/png"); }).then(function (b) {
+    files.push({ name: "finished.png", data: b });
+    return akCanvasBlob(akPosterGuide(P), "image/png");
+  }).then(function (b) {
+    files.push({ name: "layout guide.png", data: b });
+    var words = P.layers.map(function (l) { return l.type === "text" ? l.name + ":\n" + l.text : l.type === "grows" ? l.name + ":\n" + l.rows.map(function (r) { return [r.l1, r.l2, r.r1, r.r2].join(" | "); }).join("\n") : ""; }).filter(Boolean).join("\n\n");
+    files.push({ name: "words.txt", data: words + "\n" });
+    files.push({ name: "design.json", data: JSON.stringify(D, null, 1) });
+    files.push({ name: "README.txt", data: base + "\n\nEvery picture is " + P.W + " x " + P.H + " pixels; the parts have see-through backgrounds so they line up when stacked.\nStack them in number order (00 at the bottom). \"layout guide.png\" shows where each part sits; \"finished.png\" is the whole design.\nIn Canva: Uploads > Upload files, then drop each picture on a page of the same size and stretch it to fill the page.\n" });
+    return akZip(files);
+  });
+}
+function akGfxPrint(P, nm) {
+  var w = window.open("", "_blank"); if (!w) { toast("Allow pop-ups to print."); return; }
+  var inW = P.size[4] || P.W / 150, inH = P.size[5] || P.H / 150, url = akPosterCanvas(P).toDataURL("image/jpeg", 0.92);
+  w.document.write("<!doctype html><title>" + String(nm).replace(/</g, "&lt;") + "</title><style>@page{size:" + inW + "in " + inH + "in;margin:0}html,body{margin:0}img{width:" + inW + "in;height:" + inH + "in;display:block}</style><img src='" + url + "'><script>setTimeout(function(){print()},500)<\/script>");
+  w.document.close();
+}
+function akGfxHelp() {
+  modal("Saving your graphics", h("ul", null,
+    h("li", null, h("b", null, "Save picture"), ": a PNG, ready to post on Instagram or Facebook."),
+    h("li", null, h("b", null, "PDF"), ": print at home or at a print shop (letter, quarter page, frames and the jar label print at their real size)."),
+    h("li", null, h("b", null, "PDF with layers"), ": each part (background, title, rows, logo…) is its own picture in the PDF, so you can move them apart in Illustrator, Affinity or Acrobat."),
+    h("li", null, h("b", null, "Layers for Canva"), ": a zip with one see-through picture per part, all the same size, plus the finished picture, a layout guide and the words."),
+    h("li", null, h("b", null, "SVG with layers"), ": words stay real text, each part is a layer in Inkscape, Illustrator, Affinity or Figma."),
+    h("li", null, h("b", null, "My styles"), ": save a look you like. Next week pick it, and the new shows fill in by themselves.")), [{ label: "Close", primary: true }]);
+}
+
+/* ---------------------------------------------------------------- ways in */
+function akGfxMenuItems() { return [{ label: "🎨 Graphics studio: posters, flyers, tip signs, invoices…", onClick: function () { go("gfx"); } }]; }
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
     var el = vs.apply(this, arguments);
-    try { if (!S.q) { var card = akHelpQsCard(), host = el.querySelector('[data-blocks="songs"]'); if (card && host) host.insertBefore(card, host.firstChild); } } catch (e) {}
+    try { var bar = el.querySelector(".topbar"), more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return (b.textContent || "").trim() === "⋯"; })[0]; if (more) akMenuPlus(more, akGfxMenuItems); } catch (e) {}
     return el;
   };
-})();
-
-/* ---- 108: guided flows ---- */
-var AK_HELP_FLOWS = [
-  { id: "show", t: "Playing a show", d: "From booking to the drive home.", steps: [
-    { t: "Add the show", d: "Date, time, venue and address (the address becomes a map link).", go: function () { go("shows"); var f = akHelpFn("akGigNewDialog"); if (f) setTimeout(f, 60); } },
-    { t: "Put it on your calendar", d: "Connect Google Calendar so your shows appear on Tonight.", go: akHelpSet("Calendar") },
-    { t: "Make a flyer", d: "A post or poster for the show.", go: function () { var f = akHelpFn("akFlyerOpen"); if (f) f(); else toast("Flyers are coming in the graphics update."); }, need: "akFlyerOpen" },
-    { t: "Build the setlist", d: "Pick the kind of gig and length, or start from a past night.", go: function () { var f = akHelpFn("akSetHelper"); if (f) f({}); else go("build"); } },
-    { t: "Tip and request sign", d: "Your QR page for requests and tips; print the sign for the tip jar.", go: function () { var f = akHelpFn("akTipSignOpen"); if (f) f(); else akHelpSetGo(akHelpSetFind("Live requests")); } },
-    { t: "Pack and remind", d: "Reminders pop up at the right set (capo, water, mention the mailing list).", go: akHelpSet("Reminders") },
-    { t: "Warm up on the way", d: "Your warm-up videos in a row, sound only if you minimise.", go: function () { if (typeof akYtOpen === "function") akYtOpen({ tab: "warm" }); else go("learn", { learnTab: "warmups" }); } },
-    { t: "Play the show", d: "Open the show and tap Play show. Breaks, timers and requests are on the playing screen.", go: akHelpView("shows") },
-    { t: "After the show", d: "Pay and tips on the show's page, then a backup.", go: akHelpView("history") }] },
-  { id: "learn", t: "Learning a new song", d: "From finding it to playing it on stage.", steps: [
-    { t: "Find it", d: "Discover has about 1,500 well-known songs; or paste a chart.", go: akHelpView("discover") },
-    { t: "Add the chart", d: "Songs › + New › paste. Chords above the words convert by themselves.", go: akHelpView("songs") },
-    { t: "Keep a video with it", d: "A lesson or the original, in the YouTube window.", go: akHelpEditSong },
-    { t: "Practice the hard part", d: "Loop a section and slow it down (Button bar: Loop, Practice).", go: akHelpPlay },
-    { t: "Flag it until it's ready", d: "Needs work keeps it on your practice list.", go: akHelpEditSong },
-    { t: "Put it in a set", d: "Add it to a setlist when it's ready.", go: akHelpView("shows") }] },
-  { id: "write", t: "Writing a song", d: "Idea to finished original.", steps: [
-    { t: "Catch the idea", d: "Quick idea: a new work in progress with a voice memo.", go: akHelpView("write") },
-    { t: "Write the words", d: "Write tab: rhymes, same-meaning words and syllable counts as you type.", go: akHelpView("write") },
-    { t: "Add chords", d: "Pick a layout (split, chord strip, side by side) and tap chords onto the words.", go: akHelpView("write") },
-    { t: "Record takes", d: "Takes and memos stay with the song.", go: akHelpEditSong },
-    { t: "Call it finished", d: "Move it to Originals and into a setlist.", go: akHelpView("songs") }] },
-  { id: "stage", t: "Setting up for the stage", d: "One time, before your first gig with the app.", steps: [
-    { t: "Instrument and tuning", d: "So the chord shapes match what you play.", go: akHelpSet("Instrument and tuning") },
-    { t: "Pedal", d: "Teach it your pedal's keys.", go: akHelpSet("Pedal") },
-    { t: "Buttons", d: "Only the buttons you use live.", go: akHelpSet("Button bar") },
-    { t: "Text size", d: "Readable from where the tablet sits.", go: akHelpSet("Text size and style") },
-    { t: "Theme", d: "Dark for night gigs, light for daytime.", go: akHelpSet("Themes and Atmosphere") },
-    { t: "Try a full run", d: "Play a setlist at home, start to end, with the pedal.", go: akHelpView("shows") }] },
-  { id: "device", t: "Moving to a new device", d: "Bring everything across safely.", steps: [
-    { t: "Save a backup file", d: "On the old device.", go: function () { saveBackupFile(null); } },
-    { t: "Open it on the new device", d: "Import tab › the backup file. Songs, setlists, shows, settings come across.", go: akHelpView("import") },
-    { t: "Things that stay per device", d: "Your GitHub key, recorded guitar, show recordings and YouTube key: set them up again.", go: akHelpSet("Backups") },
-    { t: "Keep them in step", d: "Sync between my devices, if you use both.", go: akHelpSet("Sync between my devices") }] }
-];
-function akHelpFlowEl(f, open) {
-  var c = akHelpCfg(), st = c.flows[f.id] = c.flows[f.id] || {}, n = f.steps.filter(function (x, i) { return st[i]; }).length;
-  var det = h("details", { class: "card akhelp-flow", "data-flow": f.id }, h("summary", null, h("b", null, f.t), h("span", { class: "muted" }, "  " + n + " of " + f.steps.length)));
-  if (open) det.open = true;
-  det.appendChild(h("p", { class: "hint", style: "margin:4px 0" }, f.d));
-  var box = h("div", { class: "akhelp-steps" });
-  f.steps.forEach(function (x, i) {
-    var soon = x.need && !akHelpFn(x.need);
-    box.appendChild(h("div", { class: "akhelp-step" + (st[i] ? " done" : "") },
-      h("button", { class: "akhelp-tick", "aria-pressed": st[i] ? "true" : "false", "aria-label": (st[i] ? "Not done: " : "Done: ") + x.t, onClick: function () { st[i] = st[i] ? 0 : 1; save(); var p = det.parentNode; if (p) p.replaceChild(akHelpFlowEl(f, true), det); } }, st[i] ? "✓" : String(i + 1)),
-      h("div", { class: "grow" }, h("b", null, x.t), h("div", { class: "muted" }, x.d + (soon ? " (coming soon)" : ""))),
-      soon ? null : h("button", { class: "sm", onClick: function () { x.go(); } }, "Take me there")));
-  });
-  det.appendChild(box);
-  det.appendChild(h("div", { class: "row", style: "margin:6px 0 0" }, h("button", { class: "sm", onClick: function () { c.flows[f.id] = {}; save(); var p = det.parentNode; if (p) p.replaceChild(akHelpFlowEl(f, true), det); } }, "Start over")));
-  return det;
-}
-
-/* ---- 109: "Where is…?" matching (no internet needed) ---- */
-var AK_HELP_STOP = "where is are was the a an how do does did i can could to my me of in on for what whats it its this that which there with and or at from get got go find put use using make turn set want need please show into be up out you your change changing adjust".split(" ");
-var AK_HELP_SYN = [
-  ["transpose", "key", "semitone"], ["scroll", "autoscroll", "scrolling", "speed"], ["pedal", "foot", "footswitch", "bluetooth", "page turner"],
-  ["backup", "back up", "save", "copy", "restore"], ["font", "text", "size", "bigger", "smaller", "zoom", "larger"], ["theme", "color", "colour", "dark", "light", "look", "background", "picture"],
-  ["setlist", "set list", "sets", "list"], ["show", "gig", "night", "venue", "concert"], ["tip", "tips", "money", "pay", "qr", "request", "requests", "jar"],
-  ["video", "youtube", "watch", "clip"], ["warm", "warmup", "warm-up", "vocal", "voice", "sing", "singing"], ["record", "recording", "recorder", "audio", "take", "memo"],
-  ["chord", "chords", "shape", "diagram", "fingering"], ["lyric", "lyrics", "words"], ["metronome", "tempo", "bpm", "click", "beat"], ["tuner", "tune", "tuning", "drop d"],
-  ["keyboard", "type", "typing", "keys"], ["calendar", "date", "schedule", "booking"], ["flyer", "poster", "post", "graphic"], ["help", "tour", "tutorial", "guide", "start", "begin", "new here"],
-  ["delete", "remove", "trash", "lost", "undo", "recover"], ["share", "send", "export", "print", "pdf", "printout"], ["volume", "louder", "quieter", "loud", "sound", "audio"], ["import", "add", "paste", "photo"], ["banter", "joke", "jokes", "talk", "story"],
-  ["practice", "learn", "lesson", "lessons", "scale", "scales"], ["break", "pause", "rest", "intermission"], ["write", "writing", "songwriting", "rhyme", "rhymes", "idea", "original"],
-  ["button", "buttons", "toolbar", "bar"], ["history", "played", "log", "stats", "statistics"], ["simple", "easy", "clutter", "fewer"], ["device", "phone", "tablet", "sync", "transfer"]
-];
-function akHelpNorm(t) { return String(t || "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9#♯♭\- ]+/g, " ").replace(/\s+/g, " ").trim(); }
-function akHelpStem(w) { return w.length > 4 ? w.replace(/(ings|ing|ed|es|s)$/, "") : w; }
-function akHelpTerms(q) {
-  var words = akHelpNorm(q).split(" ").filter(function (w) { return w && AK_HELP_STOP.indexOf(w) < 0; });
-  return words.map(function (w) {
-    var set = [w, akHelpStem(w)];
-    AK_HELP_SYN.forEach(function (g) { if (g.indexOf(w) >= 0 || g.indexOf(akHelpStem(w)) >= 0) set = set.concat(g); });
-    return set.filter(function (x, i, a) { return x && a.indexOf(x) === i; });
-  });
-}
-/* each term counts by how rare it is (a word in every item, like "song", counts little) */
-function akHelpScore(terms, text, title, idf) {
-  var T = " " + akHelpNorm(text) + " ", Ti = " " + akHelpNorm(title) + " ", sc = 0, hit = 0;
-  terms.forEach(function (set, i) {
-    var best = 0;
-    set.forEach(function (x, j) {
-      var w = j < 2 ? 1 : 0.6;
-      if (Ti.indexOf(" " + x) >= 0) best = Math.max(best, 2 * w); else if (T.indexOf(" " + x) >= 0) best = Math.max(best, w);
-    });
-    if (best) { hit++; sc += best * (idf ? idf[i] : 1); }
-  });
-  if (!hit) return 0;
-  return sc * (hit / terms.length);
-}
-function akHelpItems() {
-  var out = [];
-  AK_HELP_WHERE.forEach(function (x) { out.push({ kind: "❓", title: x.t, text: x.t + " " + x.k, sub: typeof x.a === "function" ? x.a : function () { return x.a; }, go: x.go, w: 1.5 }); });
-  try { akFeatAll().forEach(function (f) { out.push({ kind: "✦", title: f.name, text: f.name + " " + f.desc + " " + f.where + " " + (AK_FEAT_WAYS[f.id] || []).join(" "), sub: function () { return f.where; }, go: function () { akFeatGo(f); }, w: 1 }); }); } catch (e) {}
-  AK_HELP_FLOWS.forEach(function (f) { out.push({ kind: "➜", title: "Guide: " + f.t, text: f.t + " " + f.d + " " + f.steps.map(function (s) { return s.t + " " + s.d; }).join(" "), sub: function () { return f.d; }, go: function () { S.akHelpFlow = f.id; go("help"); }, w: 1.1 }); });
-  try { akSetIndex().forEach(function (x) { out.push({ kind: "⚙", title: x.title, text: x.title + " " + x.group + " " + x.bits.join(" "), sub: function () { return "Settings › " + (x.group || ""); }, go: function () { akHelpSetGo(x); }, w: 0.8 }); }); } catch (e) {}
-  return out;
-}
-function akHelpSearch(q, max) {
-  var terms = akHelpTerms(q); if (!terms.length) return [];
-  var items = akHelpItems(), seen = {}, N = items.length;
-  var idf = terms.map(function (set) { var df = 0; items.forEach(function (it) { var T = " " + akHelpNorm(it.text) + " "; if (set.some(function (x) { return T.indexOf(" " + x) >= 0; })) df++; }); return Math.log(1 + N / (1 + df)); });
-  return items.map(function (it) { return { it: it, s: akHelpScore(terms, it.text, it.title, idf) * it.w }; })
-    .filter(function (r) { return r.s > 0; }).sort(function (a, b) { return b.s - a.s; })
-    .filter(function (r) { var k = r.it.title.toLowerCase(); if (seen[k]) return false; seen[k] = 1; return true; })
-    .slice(0, max || 8).map(function (r) { return r.it; });
-}
-function akHelpResultsEl(q, max) {
-  var box = h("div", { class: "akhelp-res" }), list = akHelpSearch(q, max);
-  if (!list.length) { box.appendChild(h("p", { class: "hint" }, "Nothing found for “" + q.trim() + "”. Try one word, like capo, pedal, backup, setlist.")); return box; }
-  list.forEach(function (it) {
-    var sub = ""; try { sub = it.sub(); } catch (e) {}
-    box.appendChild(h("div", { class: "akhelp-hit" }, h("span", { class: "akhelp-k", "aria-hidden": "true" }, it.kind),
-      h("div", { class: "grow" }, h("b", null, it.title), sub ? h("div", { class: "muted" }, sub) : null),
-      it.go ? h("button", { class: "sm", onClick: function () { it.go(); } }, "Take me there") : null));
-  });
-  return box;
-}
-
-/* ---- the Help page ---- */
-function viewHelp() {
-  var res = h("div");
-  var inp = h("input", { type: "search", class: "akhelp-q", placeholder: "Where is…?  How do I…?  (capo, pedal, backup…)", "aria-label": "Where is…? Ask a question", value: S.akHelpQ || "", onInput: function () { S.akHelpQ = this.value; draw(); } });
-  function draw() { res.textContent = ""; var q = (S.akHelpQ || "").trim(); if (q.length >= 2) res.appendChild(akHelpResultsEl(q, 8)); }
-  draw();
-  var c = akHelpCfg(), n = akHelpQsCount();
-  var qs = h("details", { class: "card", "data-bk": "quick-start" }, h("summary", null, h("b", null, "Quick start"), h("span", { class: "muted" }, "  " + n + " of " + AK_HELP_QS.length + " done")), akHelpQsList(false),
-    c.qs.hide ? h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { c.qs.hide = false; save(); toast("The Quick start card is back on Songs."); render(); } }, "Show it on Songs again")) : null);
-  if (n < AK_HELP_QS.length) qs.open = true;
-  var flows = h("div", { "data-bk": "guided-flows" }, h("h2", null, "Step by step"));
-  AK_HELP_FLOWS.forEach(function (f) { flows.appendChild(akHelpFlowEl(f, S.akHelpFlow === f.id)); });
-  var more = h("div", { class: "card", "data-bk": "more-help" }, h("strong", null, "More help"),
-    h("div", { class: "row", style: "margin:6px 0 0" },
-      h("button", { onClick: function () { openTour(); } }, "Take the tour"),
-      h("button", { onClick: function () { go("guide"); } }, "All features and ways to use them"),
-      typeof welcomeOpen === "function" ? h("button", { onClick: function () { welcomeOpen(); } }, "Welcome screen") : null));
-  var body = h("div", { "data-blocks": "help" }, h("div", { class: "akhelp-search", "data-bk": "where-is" }, inp, res), qs, flows, more);
-  if (S.akHelpFlow) setTimeout(function () { var el = document.querySelector('[data-flow="' + S.akHelpFlow + '"]'); S.akHelpFlow = null; if (el) el.scrollIntoView({ block: "start" }); }, 60);
-  return shell("Help and how-to", body, {});
-}
-AK_VIEWS.help = viewHelp; AK_VIEW_TAB.help = "settings";
-
-/* ---- 107: the feature guide shows the ways to use each feature ---- */
-akViewFeatures = function () {
-  var list = h("div");
-  var search = h("input", { type: "search", placeholder: "Search features", "aria-label": "Search features", value: S.featQ || "", onInput: function () { S.featQ = this.value; draw(); } });
-  function draw() {
-    list.textContent = "";
-    var all = akFeatAll(), qq = (S.featQ || "").trim().toLowerCase(), cats = AK_FEAT_CATS.concat(["Toolbar buttons"]);
-    cats.forEach(function (cat, ci) {
-      var items = all.filter(function (f) { return f.cat === cat && (!qq || (f.name + " " + f.desc + " " + f.where + " " + (AK_FEAT_WAYS[f.id] || []).join(" ")).toLowerCase().indexOf(qq) >= 0); });
-      if (!items.length) return;
-      var det = h("details", { class: "card akfeatcat", "data-bk": laySlug(cat) }, h("summary", null, h("b", null, cat), h("span", { class: "muted" }, " " + items.length)));
-      if (qq || ci === 0) det.open = true;
-      items.forEach(function (f) {
-        var off = !akModesOk(f.modes), ways = AK_FEAT_WAYS[f.id] || [];
-        var it = h("details", { class: "akfeat" + (off ? " off" : ""), "data-feat": f.id }, h("summary", null, h("span", { class: "gt" }, f.name), off ? h("span", { class: "muted" }, " (mode off)") : null));
-        var links = (f.links || []).map(akFeat).filter(Boolean);
-        it.appendChild(h("div", { class: "akfeat-b" }, akFeatPic(f.area), h("div", { class: "grow" },
-          h("div", { class: "gd" }, f.desc), h("div", { class: "muted gd" }, "Where: " + f.where),
-          ways.length ? h("div", { class: "gd akhelp-ways" }, h("b", null, "Ways to use it"), h("ul", null, ways.map(function (w) { return h("li", null, w); }))) : null,
-          links.length ? h("div", { class: "muted gd" }, "Works with: ", links.map(function (l, i) { return h("button", { class: "linkish", onClick: function () { S.featQ = l.name; search.value = l.name; draw(); } }, l.name + (i < links.length - 1 ? "," : "")); })) : null,
-          f.go ? h("button", { class: "sm", onClick: function () { akFeatGo(f); } }, "Take me there") : null)));
-        det.appendChild(it);
-      });
-      list.appendChild(det);
-    });
-    if (!list.firstChild) list.appendChild(h("p", { class: "empty" }, "Nothing matches."));
-  }
-  draw();
-  var body = h("div", { "data-blocks": "guide" },
-    h("div", { class: "card", "data-bk": "tour" }, h("strong", null, "New here?"), h("p", { class: "hint", style: "margin:6px 0" }, "A short walk through the main features, or ask the Help page “where is…?”."),
-      h("div", { class: "row", style: "margin:0" }, h("button", { class: "primary", onClick: function () { openTour(); } }, "Take the tour"), h("button", { onClick: function () { go("help"); } }, "❓ Help and how-to"))),
-    h("div", { class: "row" }, h("div", { class: "grow" }, search)), list);
-  return shell("All features", body, {});
-};
-AK_FEAT.push(
-  { id: "help", cat: "Look and feel", name: "Help: Where is…?", desc: "Ask in your own words (“where is the capo?”, “how do I back up?”) and get the place with a Take me there button. Works with no internet.", where: "Help and how-to (Songs ⋯, More, or Settings › Help)", modes: "", go: "help", sel: ".akhelp-q", area: "list", links: ["flows"], tour: false },
-  { id: "flows", cat: "Look and feel", name: "Quick start and step-by-step guides", desc: "A short Quick start for new users, and guides like “Playing a show” that walk you through each step and tick them off.", where: "Help and how-to; the Quick start card on Songs", modes: "", go: "help", sel: '[data-bk="guided-flows"]', area: "list", links: ["help"], tour: false });
-
-/* ---- ways in: Songs ⋯ and More menus, Settings › Help, the Settings search ---- */
-(function () {
-  var m0 = menu;
-  menu = function (anchor, items) {
-    try {
-      var item = { label: "❓ Help: Where is…? and how-to", onClick: function () { go("help"); } };
-      var at = -1; (items || []).forEach(function (it, i) { if (it && /^Tour and feature guide/.test(it.label || "")) at = i; });
-      if (at >= 0) { items = items.slice(); items.splice(at, 0, item); }
-      else if (anchor && anchor.classList && anchor.classList.contains("ak8-more")) { items = items.slice(); var sp = -1; items.forEach(function (it, i) { if (it && it.sep && sp < 0) sp = i; }); items.splice(sp >= 0 ? sp : items.length, 0, item); }
-    } catch (e) {}
-    return m0.call(this, anchor, items);
+  /* a show's page: a row of 🎨 buttons above the photos */
+  var ph = akGigPhotos;
+  akGigPhotos = function (g) {
+    var card = ph.apply(this, arguments);
+    if (S.view !== "gig" || !g || !g.id) return card;
+    var row = h("div", { class: "row akg-gigrow", "data-bk": "graphics", "data-bt": "Graphics" },
+      h("button", { class: "sm", onClick: function () { akGfxOpen("flyer", g); } }, "🎨 Flyer"),
+      h("button", { class: "sm", onClick: function () { akGfxOpen("week", g); } }, "📅 Week poster"),
+      h("button", { class: "sm", onClick: function () { akGfxOpen("invoice", g); } }, "🧾 Invoice" + (g.inv && g.inv.no ? " #" + g.inv.no : "")));
+    var frag = document.createDocumentFragment(); frag.appendChild(row); frag.appendChild(card);
+    return frag;
   };
 })();
-(function () {
-  var prev = akSettingsExtra27;
-  akSettingsExtra27 = function (c) {
-    prev(c);
-    c.again("data-and-extras");
-    c.section("Help and how-to", "Where is…? search, Quick start and step-by-step guides");
-    c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { go("help"); } }, "❓ Open Help"),
-      h("button", { onClick: function () { akHelpCfg().qs.hide = false; save(); toast("The Quick start card is back on Songs."); } }, "Show Quick start on Songs")));
-  };
-})();
-(function () {
-  var se = akSetSearchEl;
-  akSetSearchEl = function () {
-    var box = se.apply(this, arguments);
-    try {
-      var inp = box.querySelector("input"), res = box.querySelector(".ak8-sres"), mine = h("div", { class: "akhelp-sres" });
-      box.insertBefore(mine, res);
-      var draw = function () { mine.textContent = ""; var q = (inp.value || "").trim(); if (q.length < 3 || !/\s/.test(q)) return; var l = akHelpSearch(q, 3); if (!l.length) return; mine.appendChild(h("div", { class: "ak8-shead" }, "Help")); l.forEach(function (it) { var sub = ""; try { sub = it.sub(); } catch (e) {} mine.appendChild(h("button", { class: "item ak8-shit", onClick: function () { it.go(); } }, h("span", { class: "ak8-sk" }, it.kind), h("span", { class: "grow" }, h("b", null, it.title), sub ? h("span", { class: "muted" }, "  " + sub) : null))); }); };
-      inp.addEventListener("input", draw); setTimeout(draw, 0);
-    } catch (e) {}
-    return box;
-  };
-})();
+try { if (typeof AK_FEAT === "object" && AK_FEAT.push) AK_FEAT.push({ id: "gfx", cat: "Shows", name: "Graphics studio", desc: "Weekly show posts in your own style, show flyers, month calendars, tip signs with QR codes and invoices, filled in from your shows. Drag parts to move them; save as a picture, PDF or layers.", where: "Shows, ⋯ menu, or the 🎨 buttons on a show", modes: "", go: "gfx", sel: ".akg", area: "list", links: [], tour: false }); } catch (e) {}
 
-akCss("akhelp", [
-  ".akhelp-search{position:sticky;top:0;z-index:5;background:var(--bg);padding:2px 0 8px}",
-  ".akhelp-q{width:100%;font-size:1.05rem;padding:10px 12px;border-radius:12px}",
-  ".akhelp-hit{display:flex;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line,#8883)}.akhelp-k{width:1.4em;text-align:center;flex:none}",
-  ".akhelp-steps{display:flex;flex-direction:column;gap:2px;margin-top:6px}",
-  ".akhelp-step{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line,#8882)}.akhelp-step.done b{opacity:.65;text-decoration:line-through}",
-  ".akhelp-tick{flex:none;width:30px;height:30px;min-height:0;padding:0;border-radius:50%;font-weight:700}.akhelp-step.done .akhelp-tick{background:var(--accent,#2aa198);color:#fff;border-color:transparent}",
-  ".akhelp-ways ul{margin:2px 0 4px 1.1em;padding:0}.akhelp-ways li{margin:2px 0}",
-  ".akhelp-qs summary{cursor:pointer}"
+akCss("akgfx", [
+  ".akg-kinds{margin:0 0 10px;flex-wrap:wrap}",
+  ".akg-grid{display:grid;grid-template-columns:1fr;gap:12px;align-items:start}",
+  "@media (min-width:900px){.akg-grid{grid-template-columns:minmax(0,1.1fr) minmax(320px,0.9fr)}.akg-left{position:sticky;top:0}}",
+  ".akg-prev{display:flex;justify-content:center;min-height:200px}",
+  ".akg-cv{touch-action:none;border-radius:6px;box-shadow:0 2px 14px rgba(0,0,0,.45);background:#222;max-width:100%;cursor:grab}",
+  ".akg-status{min-height:1.2em;text-align:center;margin:4px 0}",
+  ".akg-acts{justify-content:center;flex-wrap:wrap;margin:6px 0}",
+  ".akg-sec{padding:8px 12px;margin:0 0 8px}",
+  ".akg-sec>summary{font-weight:700;cursor:pointer;padding:4px 0}",
+  ".akg-sec h4{margin:12px 0 4px}",
+  ".akg-chips{flex-wrap:wrap;margin:6px 0}",
+  ".akg-slider{display:block}.akg-slider input{width:100%}.akg-val{opacity:.75;font-weight:400}",
+  ".akg-rows,.akg-parts{display:flex;flex-direction:column;gap:4px;margin:6px 0}",
+  ".akg-row,.akg-part{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px;background:rgba(127,127,127,.08)}",
+  ".akg-row.off,.akg-part.off{opacity:.5}",
+  ".akg-row .t{font-weight:700;font-size:.92em}.akg-row .s{font-size:.85em;opacity:.8}",
+  ".akg-row input[type=text]{width:100%;margin-top:2px}",
+  ".akg-part.on{outline:2px solid #00B7FF}",
+  ".akg-pname{text-align:left;background:none;border:0;padding:6px 2px;color:inherit;font:inherit}",
+  ".akg-pedit{padding:6px 8px 10px;border-left:3px solid #00B7FF;margin:0 0 6px 10px}",
+  ".akg-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin:8px 0;max-height:260px;overflow:auto}",
+  ".akg-th{aspect-ratio:9/14;width:100%;border-radius:6px;border:2px solid transparent;background-size:cover;background-position:center;padding:0;min-height:0}",
+  ".akg-th.on{border-color:#00B7FF;box-shadow:0 0 0 2px #00B7FF}",
+  ".akg-thw{position:relative}.akg-thx{position:absolute;top:2px;right:2px;padding:0 4px;min-height:0;background:rgba(0,0,0,.6);color:#fff}",
+  ".akg-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 10px}",
+  ".akg-line input{min-width:0}",
+  ".akg-plus{width:18px;text-align:center;opacity:.7}",
+  ".akg-gigrow{flex-wrap:wrap}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */

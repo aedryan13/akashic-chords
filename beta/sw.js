@@ -1,5 +1,5 @@
 /* Akashic Chords TEST version offline helper. Only looks after the /beta/ folder; its caches are named akbeta-... so the current version's cache is never touched. */
-var CACHE = "akbeta-00d151fe16";
+var CACHE = "akbeta-b4b57bd276";
 var OCR = "akbeta-ocr-25cd554a"; /* the photo reader files: kept across app updates, fetched again only when they change */
 var FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "favicon.png"];
 var OCR_FILES = ["ocr/tesseract.min.js", "ocr/worker.min.js", "ocr/tesseract-core-lstm.wasm.js", "ocr/tesseract-core-simd-lstm.wasm.js", "ocr/eng.traineddata.gz"];
@@ -34,6 +34,6 @@ self.addEventListener("fetch", function (e) {
     e.respondWith(fromNetwork(req, 3500).then(function (r) { if (r && r.ok) { var copy = r.clone(); caches.open(CACHE).then(function (c) { c.put("index.html", copy); }); } return r; }).catch(function () { return caches.match("index.html", { cacheName: CACHE }).then(function (m) { return m || caches.match("./", { cacheName: CACHE }); }); }));
     return;
   }
-  var box = url.pathname.indexOf("/art/") >= 0 ? ART : url.pathname.indexOf("/ocr/") >= 0 ? OCR : url.pathname.indexOf("/sound/") >= 0 ? SOUND : /\/(words|notation)\//.test(url.pathname) ? EXTRA : CACHE;
+  var box = url.pathname.indexOf("/art/") >= 0 ? ART : url.pathname.indexOf("/ocr/") >= 0 ? OCR : url.pathname.indexOf("/sound/") >= 0 ? SOUND : /\/(words|notation|gfx)\//.test(url.pathname) ? EXTRA : CACHE;
   e.respondWith(caches.match(req, { cacheName: box }).then(function (m) { return m || fetch(req).then(function (r) { if (r && r.ok) { var copy = r.clone(); caches.open(box).then(function (c) { c.put(req, copy); }); } return r; }); }));
 });
