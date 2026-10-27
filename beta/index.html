@@ -2543,6 +2543,7 @@ function viewSongs() {
       { label: "📝 Notepad", onClick: function () { akNotepad(); } },
       { label: "Song requests…" + (reqNewCount() ? " (" + reqNewCount() + " new)" : ""), onClick: openRequests },
       { label: "Find duplicate songs…", onClick: openDuplicates },
+      { label: "🏷 Quick tagging…", onClick: function () { akQtStart(); } },
       { label: "Manage tags…", onClick: manageTags },
       { label: "Smart lists…", onClick: openSmartManager },
       { sep: true },
@@ -2832,19 +2833,15 @@ function viewSong() {
         lyrArea.value = t.slice(0, ls) + pre + "[" + name + "]\n" + t.slice(ls); s.lyrics = lyrArea.value; pushHist(); save(); toast("Added [" + name + "] above the line you were on."); }); } }, "+ Section…"), h("button", { onClick: function () { addCue(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); }); } }, "+ Add cue"), h("button", { onClick: function () { pushHist(); akSoloInsert(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Solo"), h("button", { onClick: function () { pushHist(); var n = akFindChordsInSong(s); if (!n) { toast("No plain-text chords found. Chords already in brackets are fine."); return; } lyrArea.value = s.lyrics; var cta = chordsFld.querySelector("textarea"); if (cta) cta.value = s.chords || ""; pushHist(); save(); drawPrev(); toast("Turned plain-text chords into real chords.", { label: "Undo", fn: function () { restore(Math.max(0, hi - 1)); } }); } }, "✨ Chords in text"), h("button", { onClick: function () { pushHist(); akSheetDialog(s, function () { lyrArea.value = s.lyrics; pushHist(); save(); drawPrev(); }); } }, "Chords from a sheet…"), h("button", { onClick: function () { pushHist(); openLucky(s, { onClose: function () { lyrArea.value = s.lyrics; pushHist(); save(); drawPrev(); } }); } }, "🍀 Lucky guess"), h("button", { onClick: function () { pushHist(); akBvDialog(s, lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "🎤 Backing vocals"), h("button", { onClick: function () { openTabEditor(lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }); } }, "+ Tab…"), h("button", { onClick: function () { makeChordFrom(lyrArea, "lyrics", "lyrics"); } }, "♪ Make chord")),
       typeof akTr17Card === "function" ? akTr17Card(s, function () { lyrArea.value = s.lyrics || ""; var cta = chordsFld.querySelector("textarea"); if (cta) cta.value = s.chords || ""; var ki = document.getElementById("akKeyInp"); if (ki) ki.value = s.key || ""; pushHist(); save(); build(); }, function () { pushHist(); save(); drawPrev(); }) : null,
       lyrArea,
-      typeof akWordsRow === "function" ? akWordsRow(s, lyrArea, function () { s.lyrics = lyrArea.value; pushHist(); save(); drawPrev(); }) : null,
-      prevCard, secCard,
+      /* 16.4 (item 136): rhymes, words and syllables live on the Write tab only (✍ Open in the Write tab, at the bottom) */
       h("div", { class: "row" },
-        h("label", { class: "chk" }, snapChk, "Move mid-word chords to the start of the word"),
         h("button", { onClick: function () { pushHist(); var r = normalizeChart(lyrArea.value, snapChk.checked); lyrArea.value = r.text; s.lyrics = r.text; if (r.title && !s.title) s.title = r.title; pushHist(); save(); toast("Converted."); } }, "Convert chords-above")),
       h("div", { class: "row", style: "margin-bottom:0" }, h("button", { class: "ak17-cvall", onClick: function () { akCv17Run(chordsFld.querySelector("textarea"), s, function () { pushHist(); save(); drawPrev(); }); } }, "♪ Make all chords"), h("button", { onClick: function () { makeChordFrom(chordsFld.querySelector("textarea"), "chords", "chords"); } }, "♪ Make chord"), h("span", { class: "hint", style: "margin:0" }, "Make all chords fixes every chord in this box that isn't showing as one. Make chord does just the text you select.")),
-      chordsFld,
       versionsCard(s, function (swapped) { pushHist(); save(); if (swapped === true) build(); }),
-      fld("Stage note (a short reminder that shows on the playing screen)", "stage", { area: true, rows: 2 }),
-      fld("Notes", "notes", { area: true, rows: 3 }),
-      songImagesCard(s, function () { pushHist(); save(); }),
-      listenCard(),
-      akSimilarCard(s),
+      chordsFld,
+      akseNoteFold(fld("Stage note (a short reminder that shows on the playing screen)", "stage", { area: true, rows: 2 }), s, "stage", "Stage note"),
+      akseNoteFold(fld("Notes", "notes", { area: true, rows: 3 }), s, "notes", "Notes"),
+      akseExtras(s, [akDocsCard(s, function () { pushHist(); save(); }), listenCard(), akSimilarCard(s), prevCard, secCard]),
       h("h2", null, "Playing"),
       h("div", { class: "two" },
         fld("Capo fret", "capo", { num: true, cap: "off", inputmode: "numeric" }),
@@ -2873,7 +2870,8 @@ function viewSong() {
       fld("Written by", "writers"),
       akCoversCard(s, { edit: function () { pushHist(); save(); build(); } }),
       fld("Trivia for talking between songs", "trivia", { area: true, rows: 5 }),
-      h("label", { class: "chk" }, h("input", { type: "checkbox", checked: s.infoChecked, onChange: function () { s.infoChecked = this.checked; later(); } }), "I've checked this info"));
+      h("label", { class: "chk" }, h("input", { type: "checkbox", checked: s.infoChecked, onChange: function () { s.infoChecked = this.checked; later(); } }), "I've checked this info"),
+      akseWriteRow(s, function () { clearTimeout(histTimer); saveNow(); }));
     layGroupH2(body, "song");
     bodyHost.textContent = ""; bodyHost.appendChild(body); updUR(); layRun(body);
   }
@@ -10121,7 +10119,7 @@ function viewSettings() {
 
   section("Chord names and shapes", "How chords are spelled, your own chords and shapes");
   select("Minor chords", function () { return s.minor; }, function (v) { s.minor = v; }, [["m", "m  (Em)"], ["min", "min  (Emin)"], ["-", "-  (E-)"]]);
-  select("Major seventh", function () { return s.maj7; }, function (v) { s.maj7 = v; }, [["M7", "M7  (CM7)"], ["maj7", "maj7  (Cmaj7)"], ["Δ7", "Δ7  (CΔ7)"]]);
+  select("Major seventh", function () { return s.maj7; }, function (v) { s.maj7 = v; }, [["M7", "M7  (CM7, CM9)"], ["maj7", "maj7  (Cmaj7, Cmaj9)"], ["Δ7", "Δ7  (CΔ7, CΔ9)"], ["Δ", "Δ triangle  (CΔ, CΔ9)"]]);
   select("Sharps or flats when transposing", function () { return s.acc; }, function (v) { s.acc = v; }, [["auto", "Choose by the song's key"], ["sharp", "Always sharps (C#)"], ["flat", "Always flats (Db)"]]);
 
   (function () {
@@ -41552,6 +41550,712 @@ akCss("akcal-a", [
   ".calev.akcal-pe{border-style:dashed}",
   ".calev .akcal-cn{font-size:.8em;opacity:.8}",
   "@media (max-width:480px){.akcal-row{flex-wrap:wrap}.akcal-pp{width:100%;justify-content:flex-end}}"
+].join("\n"));
+
+/* ================================================================ akse_a: song editor tidy-up and the keyboard group (version 16.4, items 128-137)
+   - 128 Quick tagging on the Songs page (S.akQt {mode: "tag"|"song", tag}): ⋯ › 🏷 Quick tagging, or 🏷 Quick tag in the tag chips.
+     "One tag, many songs": pick a tag on the bar, then each tap on a song puts it on or takes it off. "One song, many tags": tap a
+     song, tick its tags, Next › goes to the next song in the list. Rows are wrapped by songRow (their own click is swapped).
+   - 129 A new song (title "New song", nothing else yet) opens with Title, artist and tags open and the title selected. The Artist box
+     suggests artists already in the library while typing (akseArtistHelp, chips under the box).
+   - 130 Song editor: ✓ Save always saves and stays (as #60 did from the playing screen); ✕ Close at the end of the top bar saves
+     and goes back (to the playing screen when it came from there).
+   - 131 Playing screen: pinching the chord chart moves the divider with it, keeping the same space below the last chord line
+     (settings().akPinchDiv, default on). Wraps enablePinch (both the zoom12 way and the old way).
+   - 132 Chord keyboard: Backspace and Return have their own column on the right that stays in the same place on every page
+     (letters, endings, repeat count); the other keys squeeze to the left. The pages are the same height. Cursor keys and Done stay.
+   - 133 Chord names: styleChord also spells Maj7, maj9, M13, Δ9... the chosen way (settings().maj7 adds "Δ" = triangle only).
+     Default stays M7 and m (CM7, CM9, Em7, Em9).
+   - 134 The x2 key is now x: it opens a number page (2-9, 10, 12, 16) and wraps the repeated part in { } with the count:
+     "{G C D} x3". The repeated part = the selected text, else the line up to the cursor (after the last "}" or "|").
+   - 135 Song editor: the Capo box and Change key fold into one 🎚 Key and capo line (akseKeyCapo), showing "Capo 2 · Key G → A".
+   - 136 Song editor: 📎 Documents (any file: pictures as before, PDFs, text, spreadsheets; song.images entries with doc: true keep
+     the file as a data URL in the picture store, so backups carry them). Chord versions sit under Make chords. Stage note and Notes
+     each fold. Documents, listen links, songs like this, preview and colors are in one 🗂 Extras box. "Move mid-word chords"
+     and the rhymes/syllables row are gone (Write tab only); ✍ Open in the Write tab at the bottom. Tags, energy and color
+     are one 🏷 Tags and color box in Title, artist and tags.
+   - 137 Song header: settings().akHdr {on, rows 1-4, place {item: "row,slot"}, mq "phone"|"always"|"off"}. With on, its items
+     (capo, title, artist, info, key, next, clock, other pills) go into up to 4 rows of left / middle / right slots (one slot per row
+     on phones). Text too long for its slot scrolls like a marquee (default on phones, also with the usual header).
+   Settings: Playing screen › Song header rows; Playing screen › Pinch; Chord names › Major seventh (Δ). Tests ak_t300-ak_t304. */
+AK_VERSION = "16.4";
+AK_WHATS_NEW = [
+  "🏷 Quick tagging on the Songs page (⋯ › Quick tagging): pick a tag and tap songs to tag them, or tap a song, tick its tags and go to the next one. No need to open the songs.",
+  "Song editor tidied: Save keeps you in the editor and ✕ Close goes back. Key and capo are one line that opens. Chord versions sit under Make chords. Stage note and Notes fold. Documents, listen links, songs like this, preview and colors are in one 🗂 Extras box. Tags, energy and color are one box. Rhymes and syllables are on the Write tab (✍ Open in the Write tab at the bottom).",
+  "📎 Documents: a song can keep any file now (PDFs, text, spreadsheets), not just pictures.",
+  "New songs open with the title ready to type, and the Artist box suggests artists you already have.",
+  "Chord keyboard: Backspace and Return have their own column on the right that never moves. The x key asks how many times and puts { } around the part that repeats: {G C D} x3.",
+  "Chord names: Maj7, maj9 and the rest are spelled your way (Settings › Chord names: M7, maj7, Δ7 or just the triangle). The usual is CM7 and Em7.",
+  "Playing screen: pinching the chord chart smaller moves the divider up with it, so the words get the room.",
+  "Song header: up to 4 rows, with each item on the left, middle or right (Settings › Playing screen › Song header rows). A title too long for its space scrolls."
+].concat(AK_WHATS_NEW);
+
+DEFAULTS.akPinchDiv = true;
+
+/* ---------------------------------------------------------------- small helpers */
+function akseFoldDet(key, defShut, sumKids, kids, cls) {
+  var det = h("details", { class: "card akse-fold" + (cls ? " " + cls : ""), "data-akse": key }, h("summary", null, sumKids));
+  (kids || []).forEach(function (k) { if (k) det.appendChild(k); });
+  det.open = !akColShut("se:" + key, defShut);
+  det.addEventListener("toggle", function () { akColSet("se:" + key, !det.open); });
+  return det;
+}
+
+/* ---------------------------------------------------------------- 136 (d) Stage note and Notes fold */
+function akseNoteFold(fldEl, s, key, title) {
+  var ta = fldEl.querySelector("textarea"), lab = fldEl.firstChild;
+  if (lab && lab.nodeType === 3) lab.remove();
+  var peek = h("span", { class: "muted akse-peek" });
+  function paint() { var v = String(s[key] || "").trim().split("\n")[0]; peek.textContent = v ? "  ·  " + v.slice(0, 60) : "  ·  empty"; }
+  paint(); if (ta) ta.addEventListener("input", paint);
+  var hint = key === "stage" ? h("p", { class: "hint", style: "margin:4px 0" }, "A short reminder that shows on the playing screen.") : null;
+  return akseFoldDet(key, !String(s[key] || "").trim(), [h("b", null, title), peek], [hint, fldEl], "akse-note");
+}
+
+/* ---------------------------------------------------------------- 136 (c) one Extras box */
+function akseExtras(s, cards) {
+  var names = ["documents", "listen links", "songs like this", "preview", "colors"];
+  return akseFoldDet("extras", true, [h("b", null, "🗂 Extras"), h("span", { class: "muted akse-peek" }, "  ·  " + names.join(", "))], cards, "akse-extras");
+}
+
+/* ---------------------------------------------------------------- 136 (f) the Write tab */
+function akseWriteRow(s, before) {
+  return h("div", { class: "row akse-write" },
+    h("button", { onClick: function () { before(); akW9().cur = s.id; if (typeof akW9Now === "function") s.updated = akW9Now(); save(); go("write"); } }, "✍ Open in the Write tab"),
+    h("span", { class: "hint", style: "margin:0" }, "Rhymes, words, syllables and the chord wheel are there."));
+}
+
+/* ---------------------------------------------------------------- 136 (a) Documents */
+var AKSE_DOC_MAX = 12 * 1024 * 1024;
+function akseIsImg(f) { return /^image\//.test(f.type || ""); }
+function akseDocIcon(m) {
+  var t = (m.type || "") + " " + (m.name || "");
+  return /pdf/i.test(t) ? "📕" : /sheet|excel|csv|xls|numbers/i.test(t) ? "📊" : /audio/i.test(t) ? "🎵" : /video/i.test(t) ? "🎬" : /text|json|md|rtf|\.txt/i.test(t) ? "📝" : /word|doc/i.test(t) ? "📄" : "📎";
+}
+function akseFileData(f) {
+  return new Promise(function (res, rej) {
+    if (f.size > AKSE_DOC_MAX) { rej(new Error("“" + f.name + "” is over 12 MB, too big to keep in the app.")); return; }
+    var r = new FileReader();
+    r.onload = function () { res({ name: f.name || "document", data: r.result, type: f.type || "", size: f.size, doc: true }); };
+    r.onerror = function () { rej(new Error("Couldn't read “" + (f.name || "that file") + "”.")); };
+    r.readAsDataURL(f);
+  });
+}
+function akseAddDocs(song, files, done) {
+  var list = [].slice.call(files || []);
+  if (!list.length) return;
+  var pics = list.filter(akseIsImg), docs = list.filter(function (f) { return !akseIsImg(f); });
+  function rest() {
+    if (!docs.length) { if (done) done(); return; }
+    song.images = song.images || [];
+    var chain = Promise.resolve(), n = 0, saved = true;
+    docs.forEach(function (f, i) {
+      chain = chain.then(function () { return akseFileData(f); }).then(function (rec) {
+        var id = uid() + "d" + i;
+        return imgPut(id, rec).then(function (ok) { if (!ok) saved = false; song.images.push({ id: id, name: rec.name, doc: true, type: rec.type }); n++; });
+      }).catch(function (e) { toast(e.message || "Couldn't add that file."); });
+    });
+    chain.then(function () {
+      if (n && !saved) toast("Added, but this browser won't keep files after you close the page. Save a backup file to keep them.");
+      else if (n) toast(n === 1 ? "Document added." : n + " documents added.");
+      if (done) done();
+    });
+  }
+  if (pics.length) addSongPictures(song, pics, rest); else rest();
+}
+function akseDataBlob(data) {
+  var m = /^data:([^;,]*)(;base64)?,(.*)$/.exec(data || ""); if (!m) return null;
+  var raw = m[2] ? atob(m[3]) : decodeURIComponent(m[3]), a = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) a[i] = raw.charCodeAt(i);
+  return new Blob([a], { type: m[1] || "application/octet-stream" });
+}
+function akseOpenDoc(m) {
+  var r = IMG[m.id]; if (!r) { toast("That file isn't on this device."); return; }
+  var type = r.type || m.type || "";
+  if (!m.doc) { modal(m.name || "Picture", h("img", { src: r.data, alt: "", style: "width:100%;display:block" }), [{ label: "Close", primary: true }], { wide: true }); return; }
+  var blob = akseDataBlob(r.data), url = blob ? URL.createObjectURL(blob) : r.data;
+  if (/^text\/|json|csv/.test(type) && blob) {
+    blob.text().then(function (txt) {
+      modal(m.name || "Document", h("pre", { class: "akse-doctext" }, txt.slice(0, 200000)), [{ label: "Close", primary: true }], { wide: true });
+    });
+    return;
+  }
+  var a = h("a", { href: url, target: "_blank", rel: "noopener", download: /pdf|image|audio|video/.test(type) ? null : (r.name || m.name || "document") });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) {} }, 60000);
+}
+function akDocsCard(song, onChange) {
+  var list = h("div", { class: "imglist" }), sum = h("span", { class: "muted", style: "font-weight:400" }, "");
+  var card = h("details", { class: "card" }, h("summary", { style: "cursor:pointer;font-weight:700" }, "📎 Documents", sum));
+  var fileIn = h("input", { type: "file", multiple: "multiple" });
+  fileIn.addEventListener("change", function () { var f = [].slice.call(fileIn.files || []); fileIn.value = ""; if (f.length) akseAddDocs(song, f, function () { onChange(); draw(); }); });
+  var paste = h("div", { class: "pastezone", contenteditable: "true", role: "textbox", "aria-label": "Paste a picture or file here", "data-empty": "" });
+  paste.addEventListener("paste", function (e) {
+    var cd = e.clipboardData, files = [];
+    if (cd) { if (cd.files && cd.files.length) files = [].slice.call(cd.files); else if (cd.items) [].forEach.call(cd.items, function (it) { if (it.kind === "file") { var f = it.getAsFile(); if (f) files.push(f); } }); }
+    e.preventDefault();
+    if (files.length) akseAddDocs(song, files, function () { onChange(); draw(); }); else toast("There's no picture or file on the clipboard.");
+  });
+  paste.addEventListener("keydown", function (e) { if (!(e.ctrlKey || e.metaKey)) e.preventDefault(); });
+  paste.addEventListener("dragover", function (e) { e.preventDefault(); });
+  paste.addEventListener("drop", function (e) { e.preventDefault(); var f = e.dataTransfer && e.dataTransfer.files; if (f && f.length) akseAddDocs(song, f, function () { onChange(); draw(); }); });
+  card.appendChild(h("p", { class: "hint", style: "margin:6px 0" }, "Keep anything with this song: screenshots and photos of charts, PDFs, text files, spreadsheets. Pictures open with the 🖼 button on the playing screen; tap a document here to open it. They are kept on this device and in your backup files."));
+  card.appendChild(h("div", { class: "row" }, fileBtn("Add a file or picture", fileIn)));
+  card.appendChild(paste);
+  card.appendChild(list);
+  function draw() {
+    var ims = song.images || [];
+    sum.textContent = ims.length ? "  ·  " + ims.length : "";
+    list.textContent = "";
+    ims.forEach(function (m, i) {
+      var rec = IMG[m.id];
+      var grip = ims.length > 1 ? dragGrip("Drag " + (m.name || "this file") + " to reorder") : null;
+      var thumb = !rec ? h("div", { class: "imgthumb missing" }, "?")
+        : m.doc ? h("button", { class: "imgthumb akse-docthumb", "aria-label": "Open " + (m.name || "document"), onClick: function () { akseOpenDoc(m); } }, akseDocIcon(m))
+        : h("img", { src: rec.data, alt: "", class: "imgthumb", onClick: function () { akseOpenDoc(m); } });
+      var rowEl = h("div", { class: "imgrow" }, grip, thumb,
+        h("input", { type: "text", value: m.name || "", "aria-label": m.doc ? "Document name" : "Picture name", onInput: function () { m.name = this.value; onChange(); } }),
+        i > 0 ? h("button", { class: "icon sm", "aria-label": "Move up", onClick: function () { ims.splice(i - 1, 0, ims.splice(i, 1)[0]); onChange(); draw(); } }, "↑") : null,
+        h("button", { class: "icon sm", "aria-label": m.doc ? "Remove document" : "Remove picture", onClick: function () { ims.splice(i, 1); onChange(); draw(); toast(m.doc ? "Document removed." : "Picture removed."); } }, "✕"));
+      list.appendChild(rowEl);
+      if (grip) rowDrag({ handle: grip, self: rowEl, rows: function () { return Array.prototype.slice.call(list.querySelectorAll(".imgrow")); }, onDrop: function (from, to) { ims.splice(to, 0, ims.splice(from, 1)[0]); onChange(); draw(); } });
+    });
+    if (!ims.length) list.appendChild(h("p", { class: "hint" }, "Nothing yet."));
+  }
+  draw();
+  if (S.edPicsOpen === song.id) card.open = true;
+  card.addEventListener("toggle", function () { S.edPicsOpen = card.open ? song.id : null; });
+  return card;
+}
+/* the playing screen's picture viewer shows the pictures only */
+(function () {
+  var ov = openImageViewer;
+  openImageViewer = function (root, song, start) {
+    var ims = (song && song.images) || [];
+    if (!ims.some(function (m) { return m.doc; })) return ov.apply(this, arguments);
+    var pics = ims.filter(function (m) { return !m.doc; });
+    if (!pics.length) { toast("This song has documents but no pictures. Open them from the song editor (🗂 Extras › 📎 Documents)."); return; }
+    return ov.call(this, root, Object.assign({}, song, { images: pics }), start);
+  };
+})();
+
+/* ---------------------------------------------------------------- 135 Key and capo in one line */
+(function () {
+  if (typeof akTr17Card !== "function") return;
+  var kc = akTr17Card;
+  akTr17Card = function (s) {
+    var inner = kc.apply(this, arguments);
+    var peek = h("span", { class: "muted akse-peek" });
+    function paint() {
+      var cp = typeof akCapoOf === "function" ? akCapoOf(s) : (Number(s.capo) ? { n: Number(s.capo) } : null);
+      var line = typeof akTr17Line === "function" ? akTr17Line(s) : "";
+      peek.textContent = "  ·  " + [cp ? "Capo " + cp.n : "No capo", line.replace(/^In the original key,?\s*/i, "Key ")].filter(Boolean).join(" · ");
+    }
+    paint();
+    var det = akseFoldDet("keycapo", true, [h("b", null, "🎚 Key and capo"), peek], [inner], "akse-kc");
+    det.addEventListener("click", function () { setTimeout(paint, 60); });
+    det.addEventListener("change", function () { setTimeout(paint, 60); });
+    return det;
+  };
+})();
+
+/* ---------------------------------------------------------------- 136 (g) Tags, energy and color in one box */
+(function () {
+  var lg = layGroupH2;
+  layGroupH2 = function (body, cid) {
+    var r = lg.apply(this, arguments);
+    try { if (cid === "song" && S.view === "song") akseTagBox(body); } catch (e) { if (window.console) console.warn("akse tags", e); }
+    return r;
+  };
+})();
+function akseTagBox(body) {
+  var s = findSong(S.songId); if (!s || body.querySelector(".akse-tags")) return;
+  var flds = [].slice.call(body.querySelectorAll(".fld"));
+  var tags = flds.filter(function (k) { return k.firstChild && k.firstChild.nodeType === 3 && /^Tags$/.test(k.firstChild.textContent); })[0];
+  var color = flds.filter(function (k) { return k.firstChild && k.firstChild.nodeType === 3 && /^Color$/.test(k.firstChild.textContent); })[0];
+  if (!tags) return;
+  var energy = body.querySelector(".akset-encard");
+  var peek = h("span", { class: "muted akse-peek" });
+  function paint() {
+    var t = (s.tags || []).slice(0, 6).join(", ") + ((s.tags || []).length > 6 ? "…" : "");
+    peek.textContent = "  ·  " + (t || "no tags");
+    var dot = peek.querySelector(".akse-dot"); if (dot) dot.remove();
+    if (s.color) peek.insertBefore(h("span", { class: "akse-dot", style: "background:" + s.color }), peek.firstChild);
+  }
+  paint();
+  var det = akseFoldDet("tags", !(S.akseNew === s.id), [h("b", null, "🏷 Tags and color"), peek], [], "akse-tags");
+  tags.parentNode.insertBefore(det, tags);
+  [tags, energy, color].forEach(function (x) { if (x) det.appendChild(x); });
+  det.addEventListener("click", function () { setTimeout(paint, 60); });
+}
+
+/* ---------------------------------------------------------------- 129 new songs, artist suggestions */
+function akseIsNew(s) { return s && (!s.title || s.title === "New song") && !String(s.lyrics || "").trim() && !String(s.chords || "").trim() && !s.artist; }
+function akseArtists() {
+  var n = {}, name = {};
+  lib().songs.forEach(function (x) { [x.artist, x.origArtist].forEach(function (a) { a = String(a || "").trim(); if (!a) return; var k = a.toLowerCase(); n[k] = (n[k] || 0) + 1; if (!name[k]) name[k] = a; }); });
+  return Object.keys(n).sort(function (a, b) { return n[b] - n[a] || a.localeCompare(b); }).map(function (k) { return name[k]; });
+}
+function akseArtistHelp(inp) {
+  if (!inp || inp._akse) return; inp._akse = true;
+  var box = h("div", { class: "chips akse-sugg", role: "listbox", "aria-label": "Artists you already have" }), all = null;
+  inp.parentNode.insertBefore(box, inp.nextSibling);
+  function draw() {
+    all = all || akseArtists();
+    var q = inp.value.trim().toLowerCase(); box.textContent = "";
+    if (!q || document.activeElement !== inp) return;
+    var hits = all.filter(function (a) { var l = a.toLowerCase(); return l !== q && (l.indexOf(q) === 0 || l.indexOf(" " + q) >= 0); }).slice(0, 6);
+    hits.forEach(function (a) {
+      var b = h("button", { type: "button", class: "chip", role: "option" }, a);
+      b.addEventListener("pointerdown", function (e) { e.preventDefault(); });
+      b.addEventListener("click", function () { inp.value = a; inp.dispatchEvent(new Event("input", { bubbles: true })); box.textContent = ""; });
+      box.appendChild(b);
+    });
+  }
+  inp.setAttribute("autocomplete", "off");
+  inp.addEventListener("input", draw); inp.addEventListener("focus", draw);
+  inp.addEventListener("blur", function () { setTimeout(function () { if (document.activeElement !== inp) box.textContent = ""; }, 200); });
+}
+function akseEditorPaint() {
+  if (S.view !== "song") return;
+  var s = findSong(S.songId); if (!s) return;
+  var main = document.querySelector(".shell .main"); if (!main) return;
+  var art = [].slice.call(main.querySelectorAll("label.fld")).filter(function (l) { return l.firstChild && l.firstChild.nodeType === 3 && /^Artist$/.test(l.firstChild.textContent); })[0];
+  if (art) akseArtistHelp(art.querySelector("input"));
+  if (akseIsNew(s) && S.akseNewDone !== s.id) {
+    S.akseNewDone = s.id; S.akseNew = s.id;
+    var basics = main.querySelector('[data-bk="basics"]'); if (basics && basics.tagName === "DETAILS") basics.open = true;
+    var tg = main.querySelector(".akse-tags"); if (tg) tg.open = true;
+    var t = [].slice.call(main.querySelectorAll("label.fld")).filter(function (l) { return l.firstChild && l.firstChild.nodeType === 3 && /^Title$/.test(l.firstChild.textContent); })[0];
+    var ti = t && t.querySelector("input");
+    if (ti) setTimeout(function () { try { ti.focus({ preventScroll: true }); ti.select(); } catch (e) {} }, 80);
+  }
+}
+
+/* ---------------------------------------------------------------- 130 Save stays, ✕ Close goes back */
+(function () {
+  var sh = shell;
+  shell = function (title, content, o) {
+    var w = sh.apply(this, arguments);
+    try {
+      if (S.view === "song" && o && o.back) {
+        var tb = w.querySelector(".topbar"), sv = tb && tb.querySelector(".ak17-save");
+        if (sv && !sv.classList.contains("akse-save")) {
+          var nb = h("button", { class: "ak17-save akse-save", "aria-label": "Save (stay here)", title: "Save and keep editing. ✕ Close goes back.", onClick: function () {
+            var ae = document.activeElement; if (ae && ae.blur) ae.blur();
+            if (typeof akShTake === "function") akShTake();
+            saveNow(); toast("Saved.");
+          } }, "✓", h("span", { class: "ak17-sw" }, " Save"));
+          sv.parentNode.replaceChild(nb, sv);
+        }
+        if (tb && !tb.querySelector(".akse-close")) tb.insertBefore(h("button", { class: "icon akse-close", "aria-label": "Close the song editor", title: "Save and close", onClick: function () {
+          var ae = document.activeElement; if (ae && ae.blur) ae.blur();
+          o.back();
+        } }, "✕"), (tb.querySelector(":scope > h1, :scope > .ttl") || {}).nextSibling || null);
+        if (tb) tb.classList.add("akse-x");
+      }
+    } catch (e) { if (window.console) console.warn("akse top bar", e); }
+    return w;
+  };
+})();
+
+/* ---------------------------------------------------------------- 128 Quick tagging */
+function akQtStart(mode) { S.select = false; S.sel = {}; S.akQt = { mode: mode || "tag", tag: (S.akQt && S.akQt.tag) || null }; if (S.view !== "songs") go("songs"); else render(); }
+function akQtStop() { S.akQt = null; render(); }
+function akQtToggle(s, tag) {
+  s.tags = s.tags || []; var i = s.tags.indexOf(tag);
+  if (i >= 0) s.tags.splice(i, 1); else s.tags.push(tag);
+  save(); return i < 0;
+}
+function akQtNewTag(after) {
+  askText("New tag", "", "Add tag", function (v) {
+    var ex = allTags().filter(function (x) { return x.name.toLowerCase() === v.toLowerCase(); })[0];
+    if (!ex) { lib().tags.push({ name: v, color: "" }); save(); }
+    after(ex ? ex.name : v);
+  }, "For example: Upbeat");
+}
+function akQtBar() {
+  var q = S.akQt, bar = h("div", { class: "akqt-bar" });
+  bar.appendChild(h("div", { class: "row akqt-top" },
+    h("strong", { class: "grow" }, "🏷 Quick tagging"),
+    h("button", { class: "primary", onClick: akQtStop }, "Done")));
+  bar.appendChild(h("div", { class: "akqt-seg" },
+      h("button", { class: q.mode === "tag" ? "on" : "", "aria-pressed": q.mode === "tag" ? "true" : "false", onClick: function () { q.mode = "tag"; render(); } }, "One tag, many songs"),
+      h("button", { class: q.mode === "song" ? "on" : "", "aria-pressed": q.mode === "song" ? "true" : "false", onClick: function () { q.mode = "song"; render(); } }, "One song, many tags")));
+  if (q.mode === "tag") {
+    var chips = h("div", { class: "chips akqt-tags" });
+    allTags().forEach(function (t) {
+      chips.appendChild(h("button", { class: "chip" + (q.tag === t.name ? " on" : ""), "aria-pressed": q.tag === t.name ? "true" : "false", style: q.tag !== t.name && t.color ? "border-color:" + t.color : null, onClick: function () { q.tag = q.tag === t.name ? null : t.name; render(); } }, t.name));
+    });
+    chips.appendChild(h("button", { class: "chip", onClick: function () { akQtNewTag(function (n) { q.tag = n; render(); }); } }, "+ New tag"));
+    bar.appendChild(chips);
+    bar.appendChild(h("p", { class: "hint", style: "margin:2px 0 0" }, q.tag ? "Tap songs to put “" + q.tag + "” on them; tap again to take it off." : "Pick a tag, then tap the songs that get it."));
+  } else bar.appendChild(h("p", { class: "hint", style: "margin:2px 0 0" }, "Tap a song to tick its tags. Next › goes to the next song in the list."));
+  return bar;
+}
+function akQtSongSheet(songs, i) {
+  var body = h("div", { class: "akqt-sheet" }), at = i;
+  function draw() {
+    var s = songs[at]; body.textContent = "";
+    body.appendChild(h("div", { class: "akqt-st" }, h("b", null, s.title || "Untitled"), s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null, h("span", { class: "muted" }, "   " + (at + 1) + " / " + songs.length)));
+    var chips = h("div", { class: "chips" });
+    allTags().forEach(function (t) {
+      var on = (s.tags || []).indexOf(t.name) >= 0;
+      chips.appendChild(h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { akQtToggle(s, t.name); draw(); } }, on ? "✓ " + t.name : t.name));
+    });
+    chips.appendChild(h("button", { class: "chip", onClick: function () { akQtNewTag(function (n) { if ((s.tags || []).indexOf(n) < 0) akQtToggle(s, n); draw(); }); } }, "+ New tag"));
+    body.appendChild(chips);
+    body.appendChild(h("div", { class: "row akqt-nav" },
+      h("button", { disabled: at <= 0, onClick: function () { at--; draw(); } }, "‹ Back"),
+      h("span", { class: "grow" }),
+      h("button", { class: "primary", disabled: at >= songs.length - 1, onClick: function () { at++; draw(); } }, "Next ›")));
+  }
+  draw();
+  modal("🏷 Tag songs", body, [{ label: "Done", primary: true }], { onClose: function () { if (S.view === "songs") rerenderKeepScroll(); } });
+}
+(function () {
+  var sr = songRow;
+  songRow = function (s, songs, i) {
+    var row = sr.apply(this, arguments), q = S.akQt;
+    if (!q || S.view !== "songs" || !row) return row;
+    var main = row.querySelector(".main-btn"); if (!main) return row;
+    var nm = main.cloneNode(true); main.parentNode.replaceChild(nm, main);
+    [].slice.call(row.children).forEach(function (k) { if (k !== nm && k.tagName === "BUTTON") k.style.display = "none"; });
+    var has = q.mode === "tag" && q.tag && (s.tags || []).indexOf(q.tag) >= 0;
+    row.classList.add("akqt-row"); if (has) row.classList.add("picked");
+    row.insertBefore(h("div", { class: "pick" + (has ? " on" : ""), "aria-hidden": "true" }, q.mode === "song" ? "🏷" : has ? "✓" : ""), nm);
+    var tl = (s.tags || []).join(", ");
+    var sub = nm.querySelector(".s"); if (sub && tl) sub.textContent = tl;
+    nm.addEventListener("click", function () {
+      if (q.mode === "song") { akQtSongSheet(songs, i); return; }
+      if (!q.tag) { toast("Pick a tag on the bar first."); return; }
+      var on = akQtToggle(s, q.tag);
+      row.replaceWith(songRow(s, songs, i));
+      toast((on ? "Added “" : "Took off “") + q.tag + (on ? "” to " : "” from ") + (s.title || "the song") + ".");
+    });
+    return row;
+  };
+  var vs = viewSongs;
+  viewSongs = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      if (S.akQt) {
+        var main = el.querySelector(".main"), box = main && main.querySelector('[data-blocks="songs"]');
+        var bar = akQtBar();
+        if (box) box.parentNode.insertBefore(bar, box); else if (main) main.insertBefore(bar, main.firstChild);
+      }
+    } catch (e) { if (window.console) console.warn("akqt", e); }
+    return el;
+  };
+  var g0 = go;
+  go = function (view) { if (view !== "songs" && S.akQt) S.akQt = null; return g0.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- 131 pinch moves the divider */
+function akseContentH(pane) {
+  var pr = pane.getBoundingClientRect(), bot = 0;
+  [].forEach.call(pane.children, function (k) { if (k.classList.contains("akcapo-pin")) return; var r = k.getBoundingClientRect(); if (r.height) bot = Math.max(bot, r.bottom); });
+  return bot ? bot - pr.top + pane.scrollTop : 0;
+}
+(function () {
+  var ep = enablePinch;
+  enablePinch = function (pane, kind) {
+    var r = ep.apply(this, arguments);
+    if (kind !== "chords" || !pane) return r;
+    var st = null;
+    pane.addEventListener("touchstart", function (e) {
+      if (e.touches.length !== 2 || settings().akPinchDiv === false) { st = null; return; }
+      var panes = pane.parentNode, lp = $("lyrPane"); if (!lp || !panes || pane.id !== "chPane") { st = null; return; }
+      var ch = akseContentH(pane), hgt = pane.clientHeight;
+      st = { h0: hgt, gap: Math.max(6, hgt - ch), over: ch > hgt + 1, pr: panes.getBoundingClientRect().height };
+    }, { passive: true });
+    pane.addEventListener("touchmove", function (e) {
+      if (!st || e.touches.length < 2) return;
+      requestAnimationFrame(function () {
+        if (!st) return;
+        var ch = akseContentH(pane), want = ch + st.gap;
+        if (st.over && want > st.h0) want = st.h0;
+        var frac = Math.max(0.1, Math.min(0.75, want / st.pr));
+        pane.style.flex = "0 0 " + (frac * 100).toFixed(1) + "%"; st.frac = frac;
+      });
+    }, { passive: true });
+    function end(e) { if (st && e.touches.length < 2) { if (st.frac) { settings().chordsFrac = Math.round(st.frac * 1000) / 1000; save(); } st = null; } }
+    pane.addEventListener("touchend", end, { passive: true }); pane.addEventListener("touchcancel", end, { passive: true });
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- 133 chord names spelled your way */
+styleChord = function (c, st) {
+  var m = /^([A-G][#b]?)(.*?)(?:\/(.+))?$/.exec(c);
+  if (!m) return c;
+  var q = m[2].replace(/^(?:min|m(?![aA][jJ])|-)/, "\u0001").replace(/(?:maj|Maj|MAJ|ma|M|Δ|△)(7|9|11|13)/g, "\u0002$1");
+  var mj = st.maj7 || "M7", base = mj === "Δ" || mj === "Δ7" ? "Δ" : mj === "maj7" ? "maj" : "M";
+  q = q.replace(/\u0001/g, st.minor).replace(/\u0002(\d+)/g, function (x, n) { return mj === "Δ" && n === "7" ? "Δ" : base + n; });
+  return m[1] + q + (m[3] !== undefined ? "/" + m[3] : "");
+};
+
+/* ---------------------------------------------------------------- 132 / 134 chord keyboard */
+var AKSE_REP = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "12", "16"];
+(function () {
+  var rowsWas = akCkbRows;
+  function strip(rows) {
+    return rows.map(function (r) { return r.filter(function (k) { return k.k !== "back" && k.k !== "enter"; }).map(function (k) { return k.v === "x2" ? { t: "x", k: "ckbRep", w: k.w } : k; }); }).filter(function (r) { return r.length; });
+  }
+  akCkbRows = function () {
+    if (OSK.ckbForce === "rep") {
+      var last = strip(rowsWas.apply(this, arguments)).pop() || [];
+      return [AKSE_REP.slice(0, 6).map(function (n) { return { t: n, k: "ckbRepN", n: n }; }),
+        AKSE_REP.slice(6).map(function (n) { return { t: n, k: "ckbRepN", n: n }; }).concat([{ t: "Cancel", k: "ckbLetters", w: 1.6 }]),
+        last];
+    }
+    var rows = strip(rowsWas.apply(this, arguments));
+    /* the x key is on the endings page too, right after a chord */
+    if (rows.length > 1 && !rows.some(function (r) { return r.some(function (k) { return k.k === "ckbRep"; }); })) rows[rows.length - 2].push({ t: "x", k: "ckbRep" });
+    return rows;
+  };
+  akCkbRows._akse = true;
+  /* how many rows the tallest page has, so every page is that tall */
+  function maxRows() {
+    var f = OSK.ckbForce, n = 0;
+    ["letters", "ends", "rep"].forEach(function (x) { OSK.ckbForce = x; try { n = Math.max(n, akCkbRows().length); } catch (e) {} });
+    OSK.ckbForce = f; return n;
+  }
+  var pressWas = oskPress;
+  oskPress = function (k) {
+    if (k && k.k === "ckbRep") { OSK.ckbForce = "rep"; oskDraw(); return; }
+    if (k && k.k === "ckbRepN") { akseRepeat(k.n); OSK.ckbForce = null; oskDraw(); return; }
+    return pressWas.apply(this, arguments);
+  };
+  var openWas = oskOpen;
+  oskOpen = function () { var r = openWas.apply(this, arguments); try { if (OSK.el && OSK.layer === "chords" && !OSK.el.querySelector(".akse-split")) oskDraw(); } catch (e) {} return r; };
+  var drawWas = oskDraw;
+  oskDraw = function () {
+    var r = drawWas.apply(this, arguments);
+    try {
+      var host = OSK.el && OSK.el.querySelector(".oskkeys"); if (!host) return r;
+      var on = OSK.layer === "chords" && !OSK.numeric;
+      host.classList.toggle("akse-split", on);
+      if (!on) { host.style.height = ""; return r; }
+      var left = h("div", { class: "akse-left" });
+      [].slice.call(host.children).forEach(function (x) { left.appendChild(x); });
+      [].forEach.call(left.querySelectorAll("button.k"), function (b) { if (b.textContent === "x") { b.setAttribute("aria-label", "Repeat: how many times"); b.classList.add("akse-xkey"); } });
+      function key(t, k, lab, cls) {
+        var b = h("button", { type: "button", class: "k " + cls, "aria-label": lab }, t);
+        b.addEventListener("pointerdown", function (e) {
+          e.preventDefault(); oskPress({ t: t, k: k });
+          if (k === "back") { clearTimeout(OSK.rep); clearInterval(OSK.rep); OSK.rep = setTimeout(function () { OSK.rep = setInterval(function () { oskBack(); }, 60); }, 420); }
+        });
+        b.addEventListener("click", function (e) { e.preventDefault(); });
+        return b;
+      }
+      var right = h("div", { class: "akse-right" }, key("⌫", "back", "Backspace", "akse-back"), key("↵", "enter", "Enter", "go akse-enter"));
+      host.appendChild(left); host.appendChild(right);
+      host.style.height = "";
+      var row = left.querySelector(".oskrow"), n = maxRows();
+      if (!OSK.akseRh && row && row.offsetHeight) OSK.akseRh = row.offsetHeight;
+      var rh = OSK.akseRh || 0;
+      if (rh && n) host.style.height = (rh * n + 5 * (n - 1)) + "px";
+      if (typeof oskSize === "function") oskSize();
+    } catch (e) { if (window.console) console.warn("akse keys", e); }
+    return r;
+  };
+})();
+/* wrap the part that repeats in { } and put the count after it: {G C D} x3 */
+function akseRepeat(n) {
+  var t = OSK.target; if (!t || !t.isConnected) return;
+  var v = t.value, r = oskSel(t), a = r[0], b = r[1], part, start, end = b;
+  if (a !== b) { start = a; part = v.slice(a, b); }
+  else {
+    var ls = v.lastIndexOf("\n", a - 1) + 1, seg = v.slice(ls, a), cut = Math.max(seg.lastIndexOf("}"), seg.lastIndexOf("|"));
+    start = ls + (cut >= 0 ? cut + 1 : 0); part = v.slice(start, a);
+  }
+  var lead = /^\s*/.exec(part)[0], body = part.slice(lead.length).replace(/\s+$/, ""), tail = part.slice(lead.length + body.length);
+  var ins, caret;
+  if (!body) { ins = lead + "{} x" + n; caret = start + lead.length + 1; }
+  else { ins = lead + "{" + body + "} x" + n + (tail || (v.charAt(end) && !/\s/.test(v.charAt(end)) ? " " : "")); caret = start + ins.length; }
+  t.value = v.slice(0, start) + ins + v.slice(end);
+  try { t.setSelectionRange(caret, caret); } catch (x) {}
+  oskFire(t);
+}
+
+/* ---------------------------------------------------------------- 137 Song header rows */
+var AKHD_ITEMS = [["capo", "Capo badge"], ["title", "Title"], ["artist", "Artist"], ["info", "Song number and year"], ["key", "Key"], ["next", "Next up"], ["clock", "Clock"], ["pills", "Timers, requests and other little buttons"]];
+var AKHD_DEF = { capo: "1,l", title: "1,l", artist: "1,l", info: "2,l", key: "1,r", next: "2,l", clock: "2,r", pills: "2,r" };
+function akHdCfg() {
+  var s = settings(); if (!s.akHdr || typeof s.akHdr !== "object") s.akHdr = {};
+  var c = s.akHdr; if (c.on === undefined) c.on = false; if (!c.rows) c.rows = 2; if (!c.mq) c.mq = "phone";
+  c.place = Object.assign({}, AKHD_DEF, c.place || {}); return c;
+}
+function akHdMqOn() { var c = akHdCfg(); return c.mq === "always" || (c.mq === "phone" && window.innerWidth < 600); }
+function akHdLayout(bar) {
+  var c = akHdCfg(), song = curSong(); if (!bar || !song) return;
+  var grid = bar.querySelector(":scope > .akhd");
+  if (!grid) {
+    var tt = bar.querySelector(":scope > .tt"), ttd = tt && tt.firstElementChild;
+    var items = { capo: [], title: [], artist: [], info: [], key: [], next: [], clock: [], pills: [] };
+    if (ttd) {
+      [].slice.call(ttd.childNodes).forEach(function (n) {
+        if (n.nodeType === 1 && n.classList.contains("akcapob")) items.capo.push(n);
+        else if (n.nodeType === 1 && n.tagName === "B") items.title.push(n);
+        else if (n.nodeType === 3 && n.textContent.trim()) items.artist.push(h("span", { class: "akhd-artist" }, n.textContent.trim()));
+        else if (n.nodeType === 1 && n.classList.contains("muted")) items.info.push(h("span", { class: "muted" }, n.textContent.replace(/^\s*·\s*/, "")));
+        else if (n.nodeType === 1) items.pills.push(n);
+      });
+    }
+    if (tt) [].slice.call(tt.children).forEach(function (n) { if (n !== ttd) items[n.classList.contains("nextup") ? "next" : "pills"].push(n); });
+    var row2 = bar.querySelector(":scope > .brow2");
+    var loose = [].slice.call(bar.children).filter(function (n) { return n !== tt && n !== row2 && !n.classList.contains("ak9-corner"); });
+    if (row2) loose = loose.concat([].slice.call(row2.children));
+    loose.forEach(function (n) { items[n === ui.info ? "key" : n === ui.clock ? "clock" : "pills"].push(n); });
+    grid = h("div", { class: "akhd" });
+    var n = Math.max(1, Math.min(4, Number(c.rows) || 2)), rows = [];
+    for (var i = 0; i < n; i++) rows.push(h("div", { class: "akhd-row" }, h("div", { class: "akhd-s akhd-l" }, h("span", { class: "akhd-in" })), h("div", { class: "akhd-s akhd-m" }, h("span", { class: "akhd-in" })), h("div", { class: "akhd-s akhd-r" }, h("span", { class: "akhd-in" }))));
+    AKHD_ITEMS.forEach(function (it) {
+      var p = String(c.place[it[0]] || "").split(","), ri = Number(p[0]) - 1, sl = p[1] || "l";
+      if (!(ri >= 0)) { items[it[0]].forEach(function (x) { x.remove(); }); return; }
+      ri = Math.min(ri, n - 1);
+      var slot = rows[ri].querySelector(".akhd-" + sl + " > .akhd-in");
+      items[it[0]].forEach(function (x) { slot.appendChild(x); });
+    });
+    rows.forEach(function (r) { akHdRowCls(r); grid.appendChild(r); });
+    if (tt) tt.remove(); if (row2) row2.remove();
+    bar.insertBefore(grid, bar.firstChild);
+    bar.classList.add("akhd-on");
+  } else {
+    /* things painted onto the bar later (requests, recordings...) join the other little buttons */
+    var stray = [].slice.call(bar.children).filter(function (n) { return n !== grid && !n.classList.contains("ak9-corner"); });
+    if (stray.length) {
+      var p = String(c.place.pills || "").split(","), ri = Number(p[0]) - 1, rws = grid.querySelectorAll(".akhd-row");
+      if (ri >= 0 && rws.length) { var slot = rws[Math.min(ri, rws.length - 1)].querySelector(".akhd-" + (p[1] || "r") + " > .akhd-in"); stray.forEach(function (x) { slot.appendChild(x); }); akHdRowCls(slot.closest(".akhd-row")); }
+    }
+  }
+}
+function akHdRowCls(r) {
+  ["l", "m", "r"].forEach(function (k) { r.classList.toggle("akhd-no" + k, !r.querySelector(".akhd-" + k + " > .akhd-in > *")); });
+  r.classList.toggle("akhd-empty", !r.querySelector(".akhd-in > *"));
+}
+function akHdMarquee(bar) {
+  var on = akHdMqOn();
+  var boxes = bar.classList.contains("akhd-on") ? [].slice.call(bar.querySelectorAll(".akhd-s")) : [bar.querySelector(".tt > div:first-child")].filter(Boolean);
+  boxes.forEach(function (box) {
+    var inner = box.querySelector(":scope > .akhd-in");
+    if (!inner && on) { inner = h("span", { class: "akhd-in" }); [].slice.call(box.childNodes).forEach(function (x) { inner.appendChild(x); }); box.appendChild(inner); }
+    if (!inner) return;
+    box.classList.toggle("akhd-clip", on);
+    var over = on ? inner.scrollWidth - box.clientWidth : 0;
+    box.classList.toggle("akhd-go", over > 4);
+    if (over > 4) { inner.style.setProperty("--akhd-mq", -(over + 8) + "px"); inner.style.setProperty("--akhd-t", Math.max(4, Math.round(over / 25)) + "s"); }
+  });
+}
+function akHdPaint() {
+  var root = document.querySelector(".play"); if (!root || S.view !== "play" || S.layout) return;
+  var bar = root.querySelector(".pbottom"); if (!bar) return;
+  if (akHdCfg().on) akHdLayout(bar);
+  setTimeout(function () { if (bar.isConnected) akHdMarquee(bar); }, 30);
+}
+(function () {
+  var fc = fillCharts;
+  fillCharts = function () { var r = fc.apply(this, arguments); try { akHdPaint(); } catch (e) { if (window.console) console.warn("akhd", e); } return r; };
+  window.addEventListener("resize", function () { if (S.view === "play") setTimeout(akHdPaint, 60); });
+})();
+function akHdControls(out) {
+  var c = akHdCfg(), box = h("div", { class: "akhd-set" });
+  function sel(label, val, opts, set) {
+    return h("label", { class: "fld akhd-f" }, label, h("select", { value: val, onChange: function () { set(this.value); save(); draw(); } }, opts.map(function (o) { return h("option", { value: o[0] }, o[1]); })));
+  }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("div", { class: "two" },
+      sel("Rows", c.on ? String(c.rows) : "0", [["0", "The usual header"], ["1", "1 row"], ["2", "2 rows"], ["3", "3 rows"], ["4", "4 rows"]], function (v) { if (v === "0") c.on = false; else { c.on = true; c.rows = Number(v); } }),
+      sel("Text too long for its space", c.mq, [["phone", "Scrolls on phones"], ["always", "Scrolls on every screen"], ["off", "Is cut off (…)"]], function (v) { c.mq = v; })));
+    if (!c.on) { box.appendChild(h("p", { class: "hint" }, "Pick 1 to 4 rows to place each part of the Song header yourself.")); return; }
+    var rowOpts = [["", "Hidden"]]; for (var i = 1; i <= c.rows; i++) rowOpts.push([String(i), "Row " + i]);
+    var grid = h("div", { class: "akhd-grid" });
+    AKHD_ITEMS.forEach(function (it) {
+      var p = String(c.place[it[0]] || "").split(","), r = Number(p[0]) > c.rows ? String(c.rows) : (p[0] || ""), sl = p[1] || "l";
+      grid.appendChild(h("div", { class: "akhd-it" }, h("span", { class: "akhd-nm" }, it[1]),
+        h("select", { "aria-label": it[1] + ": row", value: r, onChange: function () { c.place[it[0]] = this.value ? this.value + "," + sl : ""; save(); draw(); } }, rowOpts.map(function (o) { return h("option", { value: o[0] }, o[1]); })),
+        r ? h("select", { "aria-label": it[1] + ": place", value: sl, onChange: function () { c.place[it[0]] = r + "," + this.value; save(); } }, h("option", { value: "l" }, "Left"), h("option", { value: "m" }, "Middle"), h("option", { value: "r" }, "Right")) : null));
+    });
+    box.appendChild(grid);
+    box.appendChild(h("p", { class: "hint" }, "On a tablet each row has a left, middle and right place. On a phone each row is one line, in that order. The ⋯ and pinned buttons stay at the end of the first row. Which items show at all is still set under Song header (Info bar)."));
+    box.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { c.place = Object.assign({}, AKHD_DEF); save(); draw(); } }, "Reset the places")));
+  }
+  draw(); out.appendChild(box);
+}
+
+/* ---------------------------------------------------------------- Settings */
+(function () {
+  var prev = typeof akSettingsExtra27 === "function" ? akSettingsExtra27 : null;
+  akSettingsExtra27 = function (c) {
+    if (prev) prev(c);
+    c.again("playing-screen");
+    c.section("Song header rows", "Up to 4 rows; put the title, key, next up and the rest on the left, middle or right");
+    akHdControls(c.out);
+    c.check("Pinching the chord chart moves the divider with it (the words get the room)", function () { return settings().akPinchDiv !== false; }, function (v) { settings().akPinchDiv = v; });
+  };
+})();
+
+/* ---------------------------------------------------------------- after each draw */
+(function () {
+  var ar = typeof akAfterRender2 === "function" ? akAfterRender2 : null;
+  akAfterRender2 = function () { if (ar) ar.apply(this, arguments); try { akseEditorPaint(); } catch (e) { if (window.console) console.warn("akse editor", e); } };
+})();
+
+akCss("akse", [
+  ".akse-fold > summary{cursor:pointer;display:flex;align-items:baseline;gap:2px;min-width:0}",
+  ".akse-fold > summary .akse-peek{font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}",
+  ".akse-fold{padding-top:8px;padding-bottom:8px}",
+  ".akse-fold[open] > summary{margin-bottom:6px}",
+  ".akse-note label.fld{margin:0}",
+  ".akse-extras > details.card{margin:6px 0}",
+  ".akse-kc > .akcapo-edwrap > .card,.akse-kc > .card{margin:4px 0;padding:6px 8px}",
+  ".akse-kc .ak17-key strong.grow{font-size:.95rem}",
+  "@media (min-width:700px){.akse-kc > .akcapo-edwrap{display:flex;gap:8px;align-items:flex-start}.akse-kc > .akcapo-edwrap > .akcapo-ed{flex:0 0 auto}.akse-kc > .akcapo-edwrap > .ak17-key{flex:1;min-width:0}}",
+  ".akse-dot{display:inline-block;width:.8em;height:.8em;border-radius:50%;margin:0 4px;vertical-align:middle}",
+  ".akse-tags .fld{margin:4px 0 8px}",
+  ".akse-sugg{margin:4px 0 0}.akse-sugg:empty{display:none}",
+  ".topbar .akse-close{font-weight:800;order:99}",
+  ".topbar.ak17-tbwrap.akse-x > .akse-close{order:0}.topbar.ak17-tbwrap.akse-x > h1{flex:1 1 calc(100% - 52px)}",
+  ".akse-docthumb{font-size:1.8rem;display:flex;align-items:center;justify-content:center;padding:0}",
+  ".akse-doctext{white-space:pre-wrap;max-height:65vh;overflow:auto;font-size:.9rem}",
+  ".akse-write{margin-top:14px}",
+  /* quick tagging */
+  ".akqt-bar{position:sticky;top:0;z-index:5;background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:8px 10px;margin:0 0 8px}",
+  ".akqt-top{margin:0;flex-wrap:wrap;gap:6px;align-items:center}",
+  ".akqt-seg{display:flex;margin:6px 0 0}.akqt-seg button{flex:1;margin:0;border-radius:0;min-height:34px;padding:2px 10px;font-size:.85rem}",
+  ".akqt-seg button:first-child{border-radius:9px 0 0 9px}.akqt-seg button:last-child{border-radius:0 9px 9px 0}",
+  ".akqt-seg button.on{background:var(--accent);color:var(--accent-ink,#fff);border-color:var(--accent)}",
+  ".akqt-tags{max-height:30vh;overflow-y:auto;margin:6px 0 0}",
+  ".akqt-row .pick{min-width:28px;text-align:center;font-weight:800}",
+  ".akqt-st{margin:0 0 8px;font-size:1.05rem}",
+  ".akqt-nav{margin:10px 0 0}",
+  /* chord keyboard: Backspace and Return in their own column */
+  ".osk .oskkeys.akse-split{display:flex;flex-direction:row;gap:4px;align-items:stretch}",
+  ".oskkeys.akse-split > .akse-left{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}",
+  ".oskkeys.akse-split > .akse-left > .oskrow{flex:1 1 0;min-height:0;justify-content:flex-start}",
+  ".oskkeys.akse-split > .akse-right{flex:0 0 clamp(54px,14vw,84px);display:flex;flex-direction:column;gap:5px}",
+  ".oskkeys.akse-split > .akse-right > .akse-back{flex:1;font-size:1.4rem}",
+  ".oskkeys.akse-split > .akse-right > .akse-enter{flex:0 0 auto;min-height:44px}",
+  ".osk .k.akse-xkey{font-weight:800}",
+  /* Song header rows and marquee */
+  ".pbottom.akhd-on{align-items:flex-start}",
+  ".akhd{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
+  ".akhd-row{display:flex;align-items:center;gap:10px;min-width:0}.akhd-row.akhd-empty{display:none}",
+  ".akhd-s{min-width:0}.akhd-s:empty,.akhd-s > .akhd-in:empty{display:none}",
+  ".akhd-in{display:inline-block;white-space:nowrap}.akhd-in > * + *{margin-left:.45em}.akhd-in > *{vertical-align:middle}",
+  ".akhd-s > .akhd-in > b{font-weight:700}",
+  "@media (min-width:600px){.akhd-row{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)}.akhd-m{text-align:center}.akhd-r{text-align:right;justify-self:end}.akhd-s:empty{display:block}}",
+  ".akhd-s:not(.akhd-clip){overflow:hidden}.akhd-s:not(.akhd-clip) > .akhd-in{display:block;overflow:hidden;text-overflow:ellipsis}",
+  "@media (min-width:600px){.akhd-row.akhd-nom.akhd-nor{grid-template-columns:minmax(0,1fr)}.akhd-row.akhd-nom:not(.akhd-nor){grid-template-columns:minmax(0,1fr) auto}.akhd-row.akhd-nom > .akhd-m,.akhd-row.akhd-nor > .akhd-r{display:none}}",
+  ".akhd-clip{overflow:hidden;white-space:nowrap;min-width:0}",
+  ".akhd-go > .akhd-in{animation:akhdmq var(--akhd-t,6s) ease-in-out 1.5s infinite alternate}",
+  "@keyframes akhdmq{0%,12%{transform:translateX(0)}88%,100%{transform:translateX(var(--akhd-mq,0))}}",
+  ".pbottom .tt > div.akhd-clip{text-overflow:clip}",
+  "@media (prefers-reduced-motion:reduce){.akhd-go > .akhd-in{animation:none}}",
+  ".akhd-grid{display:grid;grid-template-columns:1fr auto auto;gap:4px 8px;align-items:center;margin:6px 0}",
+  ".akhd-it{display:contents}.akhd-it select{width:auto;min-height:34px;padding:2px 6px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
