@@ -2864,7 +2864,7 @@ function viewSong() {
       h("label", { class: "fld" }, "Mode", h("select", { value: s.scrollMode || "", onChange: function () { s.scrollMode = this.value; later(); } }, h("option", { value: "" }, "Use my default (" + (settings().scrollMode === "duration" ? "by length" : "pixels per second") + ")"), h("option", { value: "speed" }, "Pixels per second"), h("option", { value: "duration" }, "By length: finish at the end of the song"))),
       h("div", { class: "range" }, "Speed", h("input", { type: "range", min: 0, max: SPEEDS.length - 1, step: 1, value: spIdx, "aria-label": "Scroll speed", onInput: function () { s.scrollSpeed = SPEEDS[Number(this.value)]; spOut.textContent = s.scrollSpeed + " px/s"; later(); } }), spOut),
       h("p", { class: "hint" }, "In “by length” mode the song's Length (under Key, time, tempo and length) sets how long the scroll takes. The − and + buttons on the playing screen change that same number."),
-      fld("Wait before scrolling starts (seconds)", "preRoll", { type: "number", num: true, cap: "off", inputmode: "numeric" }),
+      fld("Wait before scrolling starts (seconds, blank = the default wait)", "preRoll", { type: "number", num: true, cap: "off", inputmode: "numeric" }),
       h("h2", null, "Song info and trivia"),
       h("div", { class: "row", style: "margin-top:0" }, !akClaudeOk() ? null : h("button", { onClick: function () { songInfoFor(s, function () { pushHist(); save(); build(); }); } }, "Get song info"), link("Check online", "song history writer year")),
       h("div", { class: "two" }, fld("Year", "year", { cap: "off", inputmode: "numeric" }), fld("Original artist", "origArtist")),
@@ -10003,6 +10003,9 @@ function viewSettings() {
     if (!todo.length) { toast("Every song in this library already has a length."); return; }
     snap("fill song lengths"); todo.forEach(function (x) { x.duration = L; }); save(); toastUndo("Gave " + fmtTime(L) + " to " + todo.length + (todo.length === 1 ? " song." : " songs."));
   } }, "Give this length to songs that don't have one")));
+  range("Wait before auto-scroll starts (a song's own wait in the song editor comes first)", function () { return akAsOpt().wait; }, function (v) { akAsOpt().wait = v; }, 0, 120, 5, function (v) { return v ? v + " s" : "no wait"; });
+  check("Start auto-scroll when I press Start song", function () { return akAsOpt().onStart; }, function (v) { akAsOpt().onStart = v; });
+  check("Count-in click and flash at the end of the wait", function () { return ciOpt().on; }, function (v) { ciOpt().on = v; });
   range("Default scroll speed", function () { return SPEEDS.indexOf(s.scrollSpeed) < 0 ? 4 : SPEEDS.indexOf(s.scrollSpeed); }, function (v) { s.scrollSpeed = SPEEDS[v]; }, 0, SPEEDS.length - 1, 1, function (v) { return SPEEDS[v] + " px/sec"; });
 
   section("Timers", "Playing time, breaks and the start-time countdown");
@@ -10035,7 +10038,7 @@ function viewSettings() {
   check("When it goes by itself, start scrolling the next song too", function () { return av.startNext !== false; }, function (v) { av.startNext = v; });
   out.appendChild(h("p", { class: "hint" }, "A show can use its own choice (open the show, then Date, length, color and notes). A pedal's left button works as Next while the Next bar is showing, and the up button cancels it."));
   var ci = ciOpt();
-  check("Count-in click and flash before auto-scroll starts (needs the song's tempo)", function () { return ci.on; }, function (v) { ci.on = v; });
+  check("Count-in click and flash before auto-scroll starts (at the song's tempo, or 100 if it has none)", function () { return ci.on; }, function (v) { ci.on = v; });
   select("Beats in the count-in", function () { return ci.beats; }, function (v) { ci.beats = Number(v) || 0; }, [[0, "From the song's time signature (4 if unknown)"], [2, "2"], [3, "3"], [4, "4"], [6, "6"], [8, "8"]]);
   check("Play a click on each beat", function () { return ci.click; }, function (v) { ci.click = v; });
   check("Flash the screen edge and show the beat number", function () { return ci.flash; }, function (v) { ci.flash = v; });
@@ -11102,9 +11105,10 @@ function ciBeats(song) {
   return Math.max(2, Math.min(12, n));
 }
 function ciPlan(song, sc) {
-  var o = ciOpt(); if (!o.on || !(Number(song.tempo) > 0) || !sc || sc.scrollTop >= 5) return null;
+  var o = ciOpt(); if (!o.on || !sc || sc.scrollTop >= 5) return null;
   if (!o.click && !o.flash) return null;
-  var beats = ciBeats(song), beatMs = 60000 / Number(song.tempo);
+  var bpm = Number(song.tempo) > 0 ? Number(song.tempo) : 100; /* 17.8: a song with no tempo counts in at 100 */
+  var beats = ciBeats(song), beatMs = 60000 / bpm;
   return { beats: beats, beatMs: beatMs, ms: beats * beatMs };
 }
 function ciClick(accent) {
@@ -11123,11 +11127,16 @@ function ciFlash(n) {
   var el = h("div", { class: "beatnum", "aria-hidden": "true" }, String(n)); root.appendChild(el);
   setTimeout(function () { root.classList.remove("beat"); if (el.parentNode) el.parentNode.removeChild(el); }, Math.min(220, 60000 / 200));
 }
-function ciRun(plan) {
-  ciStop(); var o = ciOpt();
+function ciRun(plan, lead) {
+  ciStop(); var o = ciOpt(); lead = lead || 0;
+  if (o.click) ciWake();
   for (var i = 0; i < plan.beats; i++) (function (i) {
-    ciTimers.push(setTimeout(function () { if (o.click) ciClick(i === 0); if (o.flash) ciFlash(i + 1); }, i * plan.beatMs));
+    ciTimers.push(setTimeout(function () { if (o.click) ciClick(i === 0); if (o.flash) ciFlash(i + 1); }, lead + i * plan.beatMs));
   })(i);
+}
+/* 17.8: make the click's sound engine inside the tap or pedal press that starts auto-scroll (tablets keep it silent otherwise) */
+function ciWake() {
+  try { var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; if (!ciCtx) ciCtx = new AC(); clearTimeout(ciCtx._akNap); if (ciCtx.state === "suspended") ciCtx.resume(); } catch (e) {}
 }
 function ciStop() { ciTimers.forEach(clearTimeout); ciTimers = []; }
 
@@ -11758,8 +11767,10 @@ function startAuto() {
   var sc = scroller(); if (!sc || !S.play || S.layout) return;
   var song = curSong();
   autoOn = true; pos = sc.scrollTop; lastSet = sc.scrollTop; lastT = performance.now();
-  preUntil = sc.scrollTop < 5 && song.preRoll ? lastT + song.preRoll * 1000 : 0;
-  var cin = ciPlan(song, sc); if (cin) { preUntil = lastT + cin.ms; ciRun(cin); }
+  var wait = sc.scrollTop < 5 ? akAsWait(song) : 0; /* 17.8: the song's own wait, else the default wait (30 s) */
+  preUntil = wait ? lastT + wait * 1000 : 0;
+  var cin = ciPlan(song, sc); if (cin) { var lead = Math.max(0, wait * 1000 - cin.ms); preUntil = lastT + lead + cin.ms; ciRun(cin, lead); } /* the count-in ends the wait */
+  akAsWaitShown = !!preUntil; if (wait && !document.querySelector(".play .spd")) toast("Auto-scroll starts in " + Math.round((preUntil - lastT) / 1000) + " s");
   if (modeOf(song) === "duration") {
     var total = sc.scrollHeight - sc.clientHeight, remaining = Math.max(0, total - sc.scrollTop), frac = total > 0 ? remaining / total : 0;
     endAt = Math.max(lastT, preUntil) + durOf(song) * 1000 * frac;
@@ -11774,6 +11785,8 @@ function tick(t) {
   var sc = scroller(); if (!sc || !S.play) { stopAuto(); return; }
   var dt = Math.min(100, t - lastT) / 1000; lastT = t;
   var song = curSong();
+  if (t < preUntil) { if (ui.speed && t - lastReadout > 250) { lastReadout = t; ui.speed.textContent = "Starts in " + Math.ceil((preUntil - t) / 1000) + " s"; } }
+  else if (akAsWaitShown) { akAsWaitShown = false; lastReadout = 0; if (ui.speed && modeOf(song) !== "duration") ui.speed.textContent = speedOf(song) + " px/s"; }
   if (t >= preUntil) {
     if (Math.abs(sc.scrollTop - lastSet) > 2) pos = sc.scrollTop;
     var sp;
@@ -48183,6 +48196,59 @@ akCss("akgfx-k", ".akg-subhd{display:flex;justify-content:space-between;align-it
   ".akg-fxuse{margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(127,127,127,.25)}" +
   ".akg-fxrow{display:flex;gap:6px;align-items:center;margin:4px 0}.akg-fxname{flex:1;text-align:left;background:none;border:1px solid rgba(127,127,127,.3);padding:6px 8px;color:inherit;font-size:13px}" +
   ".akg-fxname span{opacity:.8}.akg-fxrow.warn .akg-fxname{border-color:#C8962E}.akg-fxoff{min-width:36px}");
+
+/* ================================================================ akas_a: auto-scroll start (version 17.8)
+   settings().autoStart2 = { wait: 30, onStart: true }. wait: seconds auto-scroll waits before it moves, when a song starts at the top
+   (a song's own "Wait before scrolling starts" comes first). onStart: the ▶ Start song button (phone recorders) also starts auto-scroll.
+   The count-in (extras.js ciPlan/ciRun) now works with no tempo (100) and plays at the end of the wait. Turned on once (migAs1).
+   While it waits, the speed readout says "Starts in N s"; tapping the readout opens these choices. Also in Settings › Auto-scroll. */
+
+AK_VERSION = "17.8";
+AK_WHATS_NEW = [
+  "Auto-scroll waits 30 seconds before it starts moving (change it in Settings › Auto-scroll, or tap the speed readout on the playing screen). A song's own wait in the song editor comes first.",
+  "Count-in fixed: it now plays even when a song has no tempo (it counts at 100), and it plays at the end of the wait, right before the scrolling starts.",
+  "Pressing ▶ Start song now starts auto-scroll too (you can turn this off in the same places)."
+].concat(AK_WHATS_NEW);
+
+var akAsWaitShown = false;
+function akAsOpt() {
+  var s = settings(), d = { wait: 30, onStart: true };
+  if (!s.autoStart2 || typeof s.autoStart2 !== "object") s.autoStart2 = {};
+  Object.keys(d).forEach(function (k) { if (s.autoStart2[k] === undefined) s.autoStart2[k] = d[k]; });
+  if (!s.migAs1) { s.migAs1 = 1; ciOpt().on = true; }
+  return s.autoStart2;
+}
+function akAsWait(song) { var own = Number(song && song.preRoll) || 0; return own > 0 ? own : Math.max(0, Number(akAsOpt().wait) || 0); }
+
+/* ▶ Start song starts auto-scroll */
+(function () {
+  var ss = akRrStartSong;
+  akRrStartSong = function (why) {
+    var r = ss.apply(this, arguments);
+    try { if (why !== "auto" && akAsOpt().onStart && S.view === "play" && S.play && !autoOn) startAuto(); } catch (e) {}
+    return r;
+  };
+})();
+
+/* the choices, from the playing screen */
+function akAsPanel() {
+  var o = akAsOpt(), ci = ciOpt(), song = S.play ? curSong() : null;
+  var out = h("output", null, ""), rng = h("input", { type: "range", min: 0, max: 120, step: 5, value: o.wait, "aria-label": "Wait before auto-scroll starts",
+    onInput: function () { o.wait = Number(this.value); paint(); save(); } });
+  function paint() { out.textContent = o.wait ? o.wait + " s" : "no wait"; }
+  paint();
+  function ck(label, get, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); save(); } }), label); }
+  var own = song && Number(song.preRoll) > 0 ? h("p", { class: "hint" }, "This song has its own wait: " + song.preRoll + " s (song editor › Wait before scrolling starts). Clear it there to use the wait above.") : null;
+  modal("Auto-scroll start", h("div", null,
+    h("label", { class: "fld" }, "Wait before auto-scroll starts", h("div", { class: "range" }, rng, out)), own,
+    ck("Count-in click and flash at the end of the wait", function () { return ci.on; }, function (v) { ci.on = v; }),
+    ck("Start auto-scroll when I press Start song", function () { return o.onStart; }, function (v) { o.onStart = v; }),
+    h("p", { class: "hint" }, "The wait only happens when a song starts from the top. Tap ⏸ to stop. More count-in choices: Settings › Song ends and count-in.")));
+}
+document.addEventListener("click", function (e) {
+  var t = e.target && e.target.closest ? e.target.closest(".play .spd") : null;
+  if (t) { e.preventDefault(); akAsPanel(); }
+}, true);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
