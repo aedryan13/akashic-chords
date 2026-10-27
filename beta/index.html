@@ -25532,7 +25532,9 @@ function akSmpPlan(ins, o) {
   for (var m = lo; m <= hi; m += 3) out.push(m);
   if (out[out.length - 1] < hi - 1) out.push(hi);
   var steps = [];
-  out.forEach(function (m) { steps.push({ k: "n" + m, m: m, where: akSmpWhere(tu, m) }); });
+  /* 17.0: 2 or 3 takes of each note (set.takes): keys n<m>_2, n<m>_3; strums take turns between them (akstr_a) */
+  var tk = Math.max(1, Math.min(3, Number(o.takes) || 1));
+  out.forEach(function (m) { for (var t = 1; t <= tk; t++) steps.push({ k: "n" + m + (t > 1 ? "_" + t : ""), m: m, take: t, where: akSmpWhere(tu, m) }); });
   if (o.soft) out.forEach(function (m) { steps.push({ k: "s" + m, m: m, soft: true, where: akSmpWhere(tu, m) }); });
   if (o.strums !== false) (ins === "ukulele" ? ["C", "G", "F", "Am"] : ["G", "C", "D", "Em", "Am"]).forEach(function (c) { steps.push({ k: "c" + c, chord: c }); });
   return steps;
@@ -25708,6 +25710,9 @@ function akSmpPick(list, midi, soft) {
   var pool = list.filter(function (x) { return !!x.soft === !!soft; }); if (!pool.length) pool = list;
   var best = null, bc = 1e9;
   pool.forEach(function (x) { var c = Math.abs(midi - x.m) + (midi > x.m ? 0.1 : 0); if (c < bc) { bc = c; best = x; } });
+  /* 17.0: several takes of that note take turns */
+  var same = best ? pool.filter(function (x) { return x.m === best.m; }) : [];
+  if (same.length > 1) { AKS.rr = AKS.rr || {}; var i = AKS.rr[best.m] = ((AKS.rr[best.m] || 0) + 1) % same.length; best = same[i]; }
   return best;
 }
 /* how fast to play it back so it lands on the exact note (the pitch fix uses the measured pitch) */
@@ -25846,27 +25851,28 @@ function akSmpMic(devId, onLevel) {
 var AK_SMP_KINDS = [["steel", "Steel-string acoustic"], ["nylon", "Nylon (classical)"], ["electric", "Electric"], ["ukulele", "Ukulele"], ["custom", "Something else"]];
 function akSmpNewSet(o, cb) {
   var ins = o.kind === "ukulele" ? "ukulele" : akHearIns() === "ukulele" ? "ukulele" : "guitar", tu = akTuning(ins);
-  var set = { id: "gs" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: o.name, kind: o.kind, ins: ins, notes: tu.notes, tname: tu.name, fix: true, soft: !!o.soft, strums: o.strums !== false, created: Date.now() };
+  var set = { id: "gs" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: o.name, kind: o.kind, ins: ins, notes: tu.notes, tname: tu.name, fix: true, soft: !!o.soft, strums: o.strums !== false, takes: o.takes || 1, created: Date.now() };
   akSmpPutSet(set, function () { cb(set); });
 }
 function akSmpRecorder(setId) {
   if (setId) { akSmpGetSet(setId, function (set, list) { if (set) akSmpWizard(set, list); }); return; }
   var name = h("input", { type: "text", value: "My guitar", "aria-label": "Name of this sound" });
   var kind = h("select", { "aria-label": "Which guitar" }, AK_SMP_KINDS.map(function (k) { return h("option", { value: k[0], selected: k[0] === (akHearIns() === "ukulele" ? "ukulele" : "steel") }, k[1]); }));
-  var soft = h("input", { type: "checkbox" }), strums = h("input", { type: "checkbox", checked: true });
+  var twice = h("input", { type: "checkbox" }), soft = h("input", { type: "checkbox" }), strums = h("input", { type: "checkbox", checked: true });
   var ins = akHearIns(), tu = akTuning(ins), n = akSmpPlan(ins, {}).filter(function (s) { return !s.chord; }).length;
   modal("Record my guitar", h("div", null,
     h("p", null, "You'll play one note at a time and the app keeps each one. It takes about 15 minutes. Tune up first: the app tunes each note exactly, but the closer you start, the more natural it sounds."),
     h("label", { class: "field" }, "Name", name), h("label", { class: "field" }, "Which guitar", kind),
+    h("label", { class: "row" }, twice, " Record each note twice (strums take turns between the two takes: more natural, twice the notes)"),
     h("label", { class: "row" }, soft, " Also record each note played softly (twice the notes, a more natural sound when quiet)"),
     h("label", { class: "row" }, strums, " Also record a few open-chord strums"),
     h("p", { class: "hint" }, "Tuning: " + tu.name + " (" + tu.notes.map(akSmpName).join(" ") + "), " + n + " notes. Play in this tuning. Quiet room, phone or mic about a foot from the soundhole (or plug in), and let every note ring for about 4 seconds.")
   ), [{ label: "Cancel" }, { label: "Start", primary: true, onClick: function () {
-    akSmpNewSet({ name: name.value.trim() || "My guitar", kind: kind.value, soft: soft.checked, strums: strums.checked }, function (set) { akSmpWizard(set, []); });
+    akSmpNewSet({ name: name.value.trim() || "My guitar", kind: kind.value, soft: soft.checked, strums: strums.checked, takes: twice.checked ? 2 : 1 }, function (set) { akSmpWizard(set, []); });
   } }]);
 }
 function akSmpWizard(set, list) {
-  var steps = akSmpPlan(set.ins, { notes: set.notes, soft: set.soft, strums: set.strums, kit: set.kit, chords: set.chords }), have = {}, M = null, idx = 0, take = null, auto = true;
+  var steps = akSmpPlan(set.ins, { notes: set.notes, soft: set.soft, strums: set.strums, kit: set.kit, chords: set.chords, takes: set.takes }), have = {}, M = null, idx = 0, take = null, auto = true;
   list.forEach(function (r) { have[r.k] = r; });
   while (idx < steps.length - 1 && have[steps[idx].k]) idx++;
   var chips = h("div", { class: "aks-chips" }), big = h("div", { class: "aks-big" }), where = h("div", { class: "aks-where" }), meterIn = h("div", { class: "aks-lvl" }), meter = h("div", { class: "aks-meter" }, meterIn);
@@ -25874,13 +25880,19 @@ function akSmpWizard(set, list) {
   var autoBox = h("input", { type: "checkbox", checked: true, onChange: function () { auto = this.checked; } });
   var fixBox = h("input", { type: "checkbox", checked: set.fix !== false, onChange: function () { set.fix = this.checked; akSmpPutSet(set); paintChips(); } });
   var devSel = h("select", { "aria-label": "Input", hidden: true, onChange: function () { openMic(this.value); } });
+  var takesSel = set.kit ? null : h("select", { "aria-label": "Takes of each note", onChange: function () {
+    set.takes = Number(this.value); akSmpPutSet(set); var k0 = steps[idx] && steps[idx].k;
+    steps = akSmpPlan(set.ins, { notes: set.notes, soft: set.soft, strums: set.strums, takes: set.takes });
+    idx = Math.max(0, steps.map(function (x) { return x.k; }).indexOf(k0)); paint();
+  } }, [[1, "1 take"], [2, "2 takes (strums take turns, more natural)"], [3, "3 takes"]].map(function (x) { return h("option", { value: String(x[0]), selected: x[0] === (Number(set.takes) || 1) }, x[1]); }));
   var body = h("div", { class: "aks-wiz" }, chips, big, where, meter, status, warn, btns,
     h("details", null, h("summary", null, "Options"),
       h("label", { class: "row" }, autoBox, " Go to the next note by itself after a good take"),
       h("label", { class: "row" }, fixBox, " Fix the tuning of every note (tunes each one exactly; the cents fixed show on each note)"),
+      takesSel ? h("label", { class: "field" }, "Takes of each note", takesSel) : null,
       h("label", { class: "field" }, "Input (mic or a plugged-in guitar)", devSel)));
   var close = modal(set.name + ": record", body, [{ label: "Done", primary: true }], { wide: true, onClose: function () { if (M) M.stop(); M = null; akSmpUnload(set.id); try { if (typeof render === "function" && S.view === "settings") render(); } catch (e) {} } });
-  function label(s) { return s.chuck ? "✕ chuck" : s.dir ? s.chord + " " + ({ down: "↓", up: "↑", palm: "palm" })[s.dir] : s.chord ? s.chord : akSmpName(s.m) + (s.soft ? " soft" : ""); }
+  function label(s) { return s.chuck ? "✕ chuck" : s.dir ? s.chord + " " + ({ down: "↓", up: "↑", palm: "palm" })[s.dir] : s.chord ? s.chord : akSmpName(s.m) + (s.soft ? " soft" : "") + (s.take > 1 ? " #" + s.take : ""); }
   function paintChips() {
     chips.innerHTML = "";
     steps.forEach(function (s, i) {
@@ -25893,7 +25905,7 @@ function akSmpWizard(set, list) {
   function paint() {
     var s = steps[idx]; paintChips(); warn.innerHTML = "";
     var kt = akSmpKitText(s);
-    big.textContent = kt ? kt[0] : s.chord ? "Strum an open " + s.chord + " chord" : "Play " + akSmpName(s.m) + (s.soft ? " softly" : "");
+    big.textContent = kt ? kt[0] : s.chord ? "Strum an open " + s.chord + " chord" : "Play " + akSmpName(s.m) + (s.soft ? " softly" : "") + (s.take > 1 ? " again (take " + s.take + ")" : "");
     where.textContent = kt ? kt[1] : s.chord ? "Once, downwards, all the strings of the open shape, and let it ring." : s.where + (s.soft ? ". Gently, like a quiet ballad." : ". A normal, firm pick.");
     var done = steps.filter(function (x) { return have[x.k]; }).length;
     status.textContent = (idx + 1) + " of " + steps.length + " · " + done + " recorded" + (M ? "" : " · tap Start listening");
@@ -26063,7 +26075,7 @@ function akSmpSettings(out) {
     /* 16.6 strums */
     var kc = akSmpKitCfg()[ins] || "";
     box.appendChild(h("h4", { class: "aks-h" }, "🥁 Strums for strum patterns"));
-    box.appendChild(h("p", { class: "hint" }, "Record each chord shape strummed down, up and palm-muted, plus a chuck, and every strum pattern (chord workshop, rhythm chart) plays your real strokes. Chords with no recorded strum are built from your single notes."));
+    box.appendChild(h("p", { class: "hint" }, "Record each chord shape strummed down, up and palm-muted, plus a chuck, and every strum pattern (chord workshop, rhythm chart) plays your real strokes. Strums are built from your single notes (see Strums below); your recorded patterns guide the feel."));
     box.appendChild(h("label", { class: "field" }, "Strum patterns play with", h("select", { onChange: function () { akSmpKitCfg()[ins] = this.value; save(); if (this.value) akSmpLoad(this.value, function () { akSmpKitDemo(); }); } },
       [h("option", { value: "" }, "The strums inside my chord sound")].concat(kits.map(function (s) { return h("option", { value: s.id, selected: s.id === kc }, "My strums: " + s.name); })))));
     kits.forEach(function (s) {
@@ -43949,7 +43961,7 @@ function akPatWizard(set, list) {
     var pk = 0; for (var i = 0; i < raw.length; i++) pk = Math.max(pk, Math.abs(raw[i]));
     if (pk < 0.01) { status.textContent = "I didn't hear anything. Check the microphone and try again."; paint(); return; }
     var exp = AK_PAT.map(function (t, j) { return j * e8; }), at = akPatOnsets(raw, sr, exp, pre);
-    take = { raw: raw, sr: sr, marks: AK_PAT.map(function (t, j) { return { tok: t, a: at[j] }; }), clip: pk > 0.98 };
+    take = { raw: raw, sr: sr, pre: pre, e8: e8, marks: AK_PAT.map(function (t, j) { return { tok: t, a: at[j] }; }), clip: pk > 0.98 };
     paint();
     status.textContent = (take.clip ? "⚠ It clipped (too loud): move the mic back and record again. " : "") + "Each coloured line is where a stroke starts. Drag a line if it's off; tap between lines to hear that stroke. Tap a numbered stroke below to leave it out.";
     var ed = akPatEditor(raw, sr, take.marks, function (j) { playOne(j); });
@@ -43966,9 +43978,12 @@ function akPatWizard(set, list) {
   function keep() {
     if (!take) return;
     var sig = akHearNotes(cur, { capo: 0, oct: 0, pos: "low", ins: set.ins }).map(function (x) { return x.m; }), recs = [];
+    /* 17.0: how far each stroke was from the click, next to the take's average (the feel guide in akstr_a: ahead or behind the beat) */
+    var on = take.marks.filter(function (m) { return !m.off; }), mean = on.reduce(function (s, m) { return s + m.a - take.pre - take.marks.indexOf(m) * take.e8; }, 0) / Math.max(1, on.length);
     take.marks.forEach(function (m, j) {
       if (m.off) return; var d = seg(j), r = { set: set.id, k: "q" + cur + "_" + j, chord: cur, rate: take.sr, pcm: akSmpTo16(d), at: Date.now() };
       if (m.tok === "M") r.chuck = true; else { r.dir = AK_PAT_DIR[m.tok]; r.sig = sig; }
+      if (take.e8) { r.dev = Math.round((m.a - take.pre - j * take.e8 - mean) * 10000) / 10000; r.bpm = Math.round(30 / take.e8); }
       if (j === take.marks.length - 1) r.tail = true;
       recs.push(r);
     });
@@ -45948,6 +45963,300 @@ function akGfxCheckShow(out, X) {
     out.appendChild(h("div", { class: "akg-check" }, h("div", null, "• " + it.msg), row));
   });
 }
+
+/* ================================================================ akstr_a: strums built from single notes (version 17.0, item 98 rework)
+   - Every strum (tap a chord, strum patterns in the chord workshop and rhythm chart, ▶ Try it) is put together from your recorded
+     single-string notes (the built-in "My guitar" by default), string by string, so every chord sounds the same, also chords you never
+     strummed. The recorded strum takes are no longer the sound (Settings › Chord sound › Strums: "My recorded strum takes" brings
+     the old way back).
+   - Strum speed (one slider, from a tight strum to a slow arpeggio), softer edge strings, up strokes from the high strings down
+     (brighter, shorter ring, the low strings still ringing a little from the down stroke before), palm mutes (low strings, dull and
+     short) and the chick / chuck (all strings choked at once) are all built from the same notes.
+   - Several takes of a note (Record my guitar › Options › Takes of each note): strings take turns between them, so no two strums
+     are the same.
+   - Even loudness: each strum is brought to the same loudness after it is put together (4-string and 6-string chords match).
+   - For the tablet: each strum is worked out ONCE in JS into one sound (kept, the newest 24, and each string the newest 48; the playing song's chords are worked
+     out ahead in quiet moments) and plays as one voice, no live effects. At most N strums ring at once (settings, default 2): a new
+     stroke stops the older ones like the strumming hand does.
+   - Your recorded strum patterns (16.7 recorder) only guide the feel when "Feel from my recorded patterns" is on: how much quicker
+     your up strokes and palm mutes sweep than your downs, how loud they are next to your downs, and whether you play them a little
+     ahead or behind the beat.
+   settings().hear.strb = { from: "notes" | "takes", ms (between strings), edge 0|1|2, ring 1..3, feel, chick: "notes" | "rec" }.
+   Tests ak_t370-371 (this thread used ak_t370-379). */
+AK_VERSION = "17.0";
+AK_WHATS_NEW = [
+  "Strums are now built from your recorded single notes, string by string, so every chord sounds like the same guitar, even chords you never strummed.",
+  "Settings › Chord sound › Strums: strum speed (tight to slow arpeggio), softer edge strings, how many strums ring at once, and the chuck.",
+  "Up strokes start on the high strings, sound brighter and ring shorter; palm mutes and chucks are made from your notes too.",
+  "Record my guitar › Options: record 2 or 3 takes of each note; the strings take turns between them so strums never repeat exactly.",
+  "Your recorded strum patterns now guide the feel only (how quick and loud your ups and palm mutes are, ahead or behind the beat)."
+].concat(AK_WHATS_NEW);
+
+var AKN = { cache: {}, order: [], str: {}, sord: [], tid: 0, voices: [], vr: {}, feel: null, feelId: "", feelBusy: "", last: null, q: [], qOn: false };
+var AK_STRB_DEF = { from: "notes", edge: 1, ring: 2, feel: true, chick: "notes" };
+function akStrbCfg() {
+  var c = akHearCfg(); if (!c.strb || typeof c.strb !== "object") c.strb = {};
+  var s = c.strb; Object.keys(AK_STRB_DEF).forEach(function (k) { if (s[k] === undefined) s[k] = AK_STRB_DEF[k]; });
+  /* the old Slow / Normal / Fast choice decides where the new slider starts */
+  if (!(s.ms > 0)) s.ms = { slow: 30, fast: 8 }[c.speed] || 14;
+  return s;
+}
+function akStrbOn() { return akStrbCfg().from !== "takes" && !(typeof akPiano === "function" && akPiano()); }
+/* the loaded note sound, only when it has notes to build from */
+function akStrbSound() { if (!akStrbOn()) return null; var L = akSmpReady(); return L && L.notes && L.notes.length ? L : null; }
+
+/* ---------------------------------------------------------------- the notes: nearest pitch, several takes take turns */
+function akStrbGroups(L) {
+  if (L._akg) return L._akg;
+  var g = { hard: {}, soft: {}, ms: [], sms: [], most: 1 };
+  L.notes.forEach(function (x) { var b = x.soft ? g.soft : g.hard; (b[x.m] = b[x.m] || []).push(x); });
+  g.ms = Object.keys(g.hard).map(Number).sort(function (a, b) { return a - b; });
+  g.sms = Object.keys(g.soft).map(Number).sort(function (a, b) { return a - b; });
+  if (!g.ms.length) { g.hard = g.soft; g.ms = g.sms; }
+  g.ms.forEach(function (m) { g.most = Math.max(g.most, g.hard[m].length); });
+  L._akg = g; return g;
+}
+/* -> a take for this note on this string: the nearest recorded pitch (a little in favour of shifting down), then the takes in turn */
+function akStrbTake(L, midi, str, v, soft) {
+  var g = akStrbGroups(L), useSoft = soft && g.sms.length, ms = useSoft ? g.sms : g.ms, pool = useSoft ? g.soft : g.hard, best = null, bc = 1e9;
+  ms.forEach(function (m) { var c = Math.abs(midi - m) + (midi > m ? 0.1 : 0); if (c < bc) { bc = c; best = m; } });
+  if (best == null) return null;
+  var list = pool[best]; return list[(v + str) % list.length];
+}
+
+/* ---------------------------------------------------------------- putting a strum together */
+/* how long a strum is kept ringing (Settings › Chord sound › Ring) */
+var AK_STRB_LEN = { short: 1.3, normal: 3.4, long: 5.4 };
+/* loudness each kind is brought to (the same scale as recorded notes, ak9_e AK_SMP_EVEN) */
+var AK_STRB_RMS = { down: 0.12, up: 0.11, palm: 0.11, chick: 0.085, arp: 0.1 };
+/* one string: a take moved to the note and given the kind's tone, worked out once and kept (the newest 48: strings are shared by
+   many chords, so a new chord is mostly just adding kept strings together). tau = how quickly it dies away (0 = as recorded),
+   bright = a lift of the highs, dull = a cut. */
+var AK_STRB_TONE = { down: [0, 0, 0], arp: [0, 0, 0], up: [1.15, 0.45, 0], palm: [0.1, 0, 700], chick: [0.014, 0, 1900] };
+function akStrbString(L, take, midi, kind, len) {
+  var sr = L.ac.sampleRate, tk = kind === "arp" ? "down" : kind; take._akid = take._akid || ++AKN.tid;
+  var key = take._akid + "|" + Math.round(midi) + "|" + tk + "|" + Math.round(len * 10), c = AKN.str[key];
+  if (c) { var i0 = AKN.sord.indexOf(key); if (i0 >= 0) AKN.sord.splice(i0, 1); AKN.sord.push(key); return c; }
+  var T = AK_STRB_TONE[tk], tau = T[0], bright = T[1], dull = T[2];
+  var kb = 1 - Math.exp(-2 * Math.PI * 1800 / sr), kd = dull ? 1 - Math.exp(-2 * Math.PI * dull / sr) : 0, dm = tau ? Math.exp(-1 / (tau * sr)) : 1;
+  var b = take.buf, sd = b.getChannelData(0), step = akSmpRate(take, midi, L.set.fix) * b.sampleRate / sr;
+  var n = Math.max(0, Math.min(Math.round(len * sr), Math.floor((sd.length - 2) / step))), out = new Float32Array(n), lb = 0, ld = 0, env = 1;
+  for (var j = 0; j < n; j++) {
+    var p = j * step, i = p | 0, x = sd[i] + (sd[i + 1] - sd[i]) * (p - i);
+    if (bright) { lb += kb * (x - lb); x += bright * (x - lb); }
+    if (kd) { ld += kd * (x - ld); x = ld; }
+    if (tau) { env *= dm; x *= env; }
+    out[j] = x;
+  }
+  AKN.str[key] = out; AKN.sord.push(key);
+  while (AKN.sord.length > 48) delete AKN.str[AKN.sord.shift()];
+  return out;
+}
+/* notes [{ m, s }] low to high; kind down | up | palm | chick | arp; o = { gap (seconds between strings), v (which variant), light, soft } */
+function akStrbBuild(L, notes, kind, o) {
+  var ac = L.ac, sr = ac.sampleRate, cfg = akStrbCfg(), ring = AK_STRB_LEN[akHearCfg().ring] || 3.4, v = o.v || 0;
+  var list = notes.slice();
+  if (kind === "up" && list.length > 4) list = list.slice(-(list.length >= 6 && v % 2 ? 5 : 4));
+  else if (kind === "palm" && list.length > 4) list = list.slice(0, 4);
+  else if (o.light && kind === "down" && list.length > 5) list = list.slice(1);
+  if (kind === "up") list.reverse();
+  var n = list.length; if (!n) return null;
+  var len = kind === "palm" ? 0.5 : kind === "chick" ? 0.2 : kind === "up" ? ring * 0.75 : ring;
+  var gap = kind === "arp" ? Math.max(0.12, o.gap || 0) : kind === "chick" ? Math.min(0.006, o.gap) : o.gap;
+  var tail = (n - 1) * gap * 1.15, N = Math.round((len + tail) * sr), out = new Float32Array(N);
+  /* softer edge strings: the outer two strings are caught less than the middle ones */
+  var e = [0, 0.16, 0.3][cfg.edge] || 0;
+  var seed = 1 + v * 7919 + n * 31; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+  var t = 0, lowest = Math.min.apply(null, list.map(function (q) { return q.m; })), highest = Math.max.apply(null, list.map(function (q) { return q.m; }));
+  list.forEach(function (x, k) {
+    var take = akStrbTake(L, x.m, x.s == null ? k : x.s, v, o.soft); if (!take) return;
+    var gain = 1, outer = x.m === lowest || x.m === highest;
+    if (n >= 3 && kind !== "arp" && kind !== "chick") gain *= outer ? 1 - e : 1 - e * 0.3;
+    /* an up stroke loses strength as it goes down towards the thick strings */
+    if (kind === "up" && n > 1) gain *= 1 - 0.3 * k / (n - 1);
+    gain *= 0.92 + rnd() * 0.16;
+    var sd = akStrbString(L, take, x.m, kind, len), off = Math.round(t * sr), maxJ = Math.min(N - off, sd.length);
+    for (var j = 0; j < maxJ; j++) out[off + j] += gain * sd[j];
+    /* the chick: the strings slapped dead give a short burst of string noise */
+    if (kind === "chick") { var nb = Math.round(sr * 0.012), hp = 0; for (var q = 0; q < nb && off + q < N; q++) { var w = rnd() * 2 - 1; hp += 0.25 * (w - hp); out[off + q] += 0.12 * (w - hp) * Math.exp(-q / (sr * 0.004)); } }
+    t += gap * (0.85 + rnd() * 0.3);
+  });
+  /* even loudness, then a smooth end and never past full scale */
+  var a = Math.round(sr * 0.005), z = Math.min(N, Math.round(sr * (kind === "chick" ? 0.08 : 0.35))), en = 0, i;
+  for (i = a; i < z; i++) en += out[i] * out[i];
+  var rms = Math.sqrt(en / Math.max(1, z - a)); if (rms > 1e-6) { var gk = (AK_STRB_RMS[kind] || 0.12) / rms; for (i = 0; i < N; i++) out[i] *= gk; }
+  var pk = 0; for (i = 0; i < N; i++) pk = Math.max(pk, Math.abs(out[i])); if (pk > 0.95) { var gp = 0.95 / pk; for (i = 0; i < N; i++) out[i] *= gp; }
+  var fd = Math.min(N, Math.round(sr * (kind === "chick" ? 0.02 : 0.08))); for (i = 0; i < fd; i++) out[N - 1 - i] *= i / fd;
+  for (i = 0; i < 24 && i < N; i++) out[i] *= i / 24;
+  var buf = ac.createBuffer(1, N, sr); buf.getChannelData(0).set(out);
+  return buf;
+}
+/* each strum is worked out once and kept (the newest 24) */
+function akStrbKey(L, notes, kind, o) { return [L.set.id, kind, notes.map(function (x) { return Math.round(x.m); }).join(","), Math.round(o.gap * 1000), akStrbCfg().edge, akHearCfg().ring, o.v || 0, o.light ? 1 : 0, o.soft ? 1 : 0, akSmpEvenLvl()].join("|"); }
+function akStrbGet(L, notes, kind, o) {
+  if (AKN.ac !== L.ac || AKN.L !== L) { AKN.ac = L.ac; AKN.L = L; AKN.cache = {}; AKN.order = []; AKN.str = {}; AKN.sord = []; }
+  var k = akStrbKey(L, notes, kind, o), b = AKN.cache[k];
+  if (b) { var i = AKN.order.indexOf(k); if (i >= 0) AKN.order.splice(i, 1); AKN.order.push(k); return b; }
+  b = akStrbBuild(L, notes, kind, o); if (!b) return null;
+  AKN.cache[k] = b; AKN.order.push(k);
+  while (AKN.order.length > 24) delete AKN.cache[AKN.order.shift()];
+  return b;
+}
+/* the variants of a strum played in turn (two, or as many as there are takes of a note, up to 3) */
+function akStrbVariant(L, notes, kind) { var k = kind + notes.map(function (x) { return Math.round(x.m); }).join(","), n = Math.min(3, Math.max(2, akStrbGroups(L).most)); var v = AKN.vr[k] = ((AKN.vr[k] == null ? -1 : AKN.vr[k]) + 1) % n; return v; }
+
+/* ---------------------------------------------------------------- playing it: one voice per strum, a cap on what rings */
+function akStrbOff(v, t) {
+  if (!v || v.off) return; v.off = true; var ac = AKS.ac, s = Math.max(t, ac.currentTime + 0.02, v.busy || 0);
+  try { v.d.gain.setValueAtTime(v.lvl, s); v.d.gain.linearRampToValueAtTime(0, s + 0.06); v.src.stop(s + 0.08); } catch (e) {}
+}
+/* the strumming hand stops what was ringing; an up stroke only catches the high strings, so the last down stroke rings on quieter */
+function akStrbDamp(t, kind) {
+  try { akSmpDamp(t); } catch (e) {}
+  AKN.voices.forEach(function (v) {
+    if (v.off) return;
+    if (kind === "up" && v.lvl === 1) { var s = Math.max(t, AKS.ac.currentTime + 0.02); try { v.d.gain.setValueAtTime(1, s); v.d.gain.linearRampToValueAtTime(0.4, s + 0.05); } catch (e) {} v.lvl = 0.4; v.busy = s + 0.05; }
+    else akStrbOff(v, t);
+  });
+}
+function akStrbPlay(buf, vol, when, kind, o) {
+  var bus = akSmpBus(), ac = AKS.ac; if (!bus || !buf) return null;
+  var t = akSndAt(ac, when); akStrbDamp(t, kind);
+  var v = akVoiceStart(ac, buf, 1, vol, t, bus.inp); v.lvl = 1; v.t = t;
+  if (o && o.len) { try { v.g.gain.setValueAtTime(vol, t + o.len); v.g.gain.linearRampToValueAtTime(0, t + o.len + 0.15); v.src.stop(t + o.len + 0.2); } catch (e) {} }
+  var end0 = v.src.onended; v.src.onended = function () { end0(); var i = AKN.voices.indexOf(v); if (i >= 0) AKN.voices.splice(i, 1); };
+  AKN.voices.push(v);
+  /* never more than the chosen number ringing (the oldest go first) */
+  var live = AKN.voices.filter(function (x) { return !x.off; }), cap = Math.max(1, Number(akStrbCfg().ring) || 2);
+  for (var i = 0; i < live.length - cap; i++) akStrbOff(live[i], t);
+  return v;
+}
+
+/* ---------------------------------------------------------------- the feel from your recorded patterns (a guide, never the sound) */
+/* per stroke kind: sp = how long the sweep across the strings takes, lv = how loud next to a down stroke, dev = ahead (-) or behind (+) the beat */
+function akStrbFeel() {
+  var cfg = akStrbCfg(); if (!cfg.feel || typeof akSmpKitCfg !== "function") return null;
+  var id = akSmpKitCfg()[akHearIns()]; if (!id) return null;
+  if (AKN.feelId === id) return AKN.feel;
+  if (AKN.feelBusy !== id) { AKN.feelBusy = id; akSmpGetSet(id, function (set, list) { AKN.feelId = id; AKN.feelBusy = ""; AKN.feel = set ? akStrbFeelFrom(list || []) : null; }); }
+  return null;
+}
+function akStrbFeelFrom(list) {
+  var by = {};
+  list.forEach(function (r) {
+    if (!r.dir || !r.pcm) return; var f = akSmpFrom16(r.pcm), sr = r.rate || 48000, n = Math.min(f.length, Math.round(sr * 0.25)), e = 0, i;
+    for (i = 0; i < n; i++) e += f[i] * f[i];
+    /* the sweep: from 10% to 90% of the first loud moment, on a 1 ms smoothed level */
+    var w = Math.min(f.length, Math.round(sr * 0.15)), sm = 0, k = 1 - Math.exp(-1 / (sr * 0.001)), env = new Float32Array(w), pk = 0;
+    for (i = 0; i < w; i++) { sm += k * (Math.abs(f[i]) - sm); env[i] = sm; if (sm > pk) pk = sm; }
+    var a = -1, b = -1; for (i = 0; i < w; i++) { if (a < 0 && env[i] >= pk * 0.1) a = i; if (env[i] >= pk * 0.9) { b = i; break; } }
+    var o = by[r.dir] = by[r.dir] || { lv: [], sp: [], dev: [] };
+    o.lv.push(Math.sqrt(e / Math.max(1, n))); if (a >= 0 && b > a) o.sp.push((b - a) / sr); if (r.dev != null) o.dev.push(r.dev);
+  });
+  if (!by.down) return null;
+  function avg(x) { return x.length ? x.reduce(function (s, y) { return s + y; }, 0) / x.length : null; }
+  var dl = avg(by.down.lv) || 1, ds = avg(by.down.sp), out = {};
+  Object.keys(by).forEach(function (d) {
+    var o = by[d], sp = avg(o.sp), dv = avg(o.dev);
+    out[d] = { acc: Math.max(0.6, Math.min(1.25, (avg(o.lv) || dl) / dl)), spd: sp && ds ? Math.max(0.4, Math.min(2, sp / ds)) : 1, dev: dv == null ? 0 : Math.max(-0.03, Math.min(0.03, dv)), n: o.lv.length };
+  });
+  return out;
+}
+
+/* ---------------------------------------------------------------- hooking it in */
+(function () {
+  var strum0 = akHearStrum;
+  akHearStrum = function (notes, o) {
+    o = o || {}; var L = akStrbSound(); if (!L || !notes || !notes.length) return strum0(notes, o);
+    var cfg = akStrbCfg(), hc = akHearCfg(), dir = o.dir || hc.dir, kind = o.palm && dir !== "arp" ? "palm" : dir === "up" ? "up" : dir === "arp" ? "arp" : "down";
+    var gap = Math.min(cfg.ms / 1000, o.gap || 1), when = o.when || 0, vol = (o.vol == null ? 0.75 : o.vol) * (hc.vol / 100) * 1.25, F = akStrbFeel(), f = F && F[kind];
+    if (kind === "up") gap *= 0.7;
+    if (f && kind !== "arp") { gap *= f.spd; if (kind !== "down") vol *= f.acc; if (o.when != null) when = Math.max(0, when + f.dev); }
+    try {
+      var bo = { gap: gap, light: !!o.light, soft: o.vol != null && o.vol < 0.3 }, v = bo.v = akStrbVariant(L, notes, kind), buf = akStrbGet(L, notes, kind, bo);
+      if (!buf) return strum0(notes, o);
+      AKN.last = notes;
+      akStrbPlay(buf, vol * (0.95 + Math.random() * 0.1), when, kind, { len: o.len });
+    } catch (e) { return strum0(notes, o); }
+  };
+  /* the chuck (✕) in strum patterns: the chord's strings choked, built from your notes (or your recorded chuck) */
+  if (typeof akRChuck === "function") {
+    var chuck0 = akRChuck;
+    akRChuck = function (when, vol) {
+      var L = akStrbSound(); if (!L || akStrbCfg().chick === "rec") return chuck0(when, vol);
+      try {
+        var notes = AKN.last || akTuning(akHearIns()).notes.map(function (m, i) { return { m: m, s: i }; });
+        var buf = akStrbGet(L, notes, "chick", { gap: 0.005, v: akStrbVariant(L, notes, "chick") });
+        if (!buf) return chuck0(when, vol);
+        akStrbPlay(buf, (vol == null ? 0.5 : vol) * (akHearCfg().vol / 100) * 1.4, when || 0, "chick");
+      } catch (e) { return chuck0(when, vol); }
+    };
+  }
+  var hush0 = akGtrHush;
+  akGtrHush = function () { hush0(); if (AKS.ac) AKN.voices.forEach(function (v) { akStrbOff(v, AKS.ac.currentTime); }); };
+  /* work out the playing song's strums ahead, in quiet moments (down and up, first variant) */
+  var prep0 = akGtrPrep;
+  akGtrPrep = function (song) { prep0(song); try { akStrbWarm(song); } catch (e) {} };
+})();
+function akStrbWarm(song) {
+  if (!akStrbOn() || !akHearCfg().tap) return;
+  var names = [], capo = Number(song.capo) || 0;
+  try { names = akSongChords(song).filter(function (x, i, a) { return a.indexOf(x) === i; }).slice(0, 12); } catch (e) { return; }
+  AKN.q = []; names.forEach(function (c) { var ns = akHearNotes(c, { capo: capo }); if (ns.length) AKN.q.push(ns); });
+  AKN.tries = 0; akStrbWarmRun();
+}
+function akStrbWarmRun() {
+  if (AKN.qOn || !AKN.q.length) return; AKN.qOn = true;
+  setTimeout(function () {
+    AKN.qOn = false; var L = akStrbSound();
+    if (!L) { if (++AKN.tries < 20) setTimeout(akStrbWarmRun, 1500); return; }
+    var ns = AKN.q.shift(), gap = akStrbCfg().ms / 1000;
+    try { akStrbGet(L, ns, "down", { gap: gap, v: 0 }); akStrbGet(L, ns, "up", { gap: gap * 0.7, v: 0 }); } catch (e) {}
+    akStrbWarmRun();
+  }, 60);
+}
+
+/* ---------------------------------------------------------------- settings: Chord sound › Strums */
+function akStrbMsToPos(ms) { return Math.round(100 * Math.log(ms / 3) / Math.log(160 / 3)); }
+function akStrbPosToMs(p) { return Math.round(3 * Math.pow(160 / 3, p / 100)); }
+function akStrbSpeedName(ms) { return ms <= 7 ? "very tight" : ms <= 16 ? "a normal strum" : ms <= 35 ? "relaxed" : ms <= 80 ? "slow, every string heard" : "an arpeggio"; }
+function akStrbSettings(out) {
+  var cfg = akStrbCfg(), box = h("div", { class: "akstr-set" });
+  function sel(label, val, opts, on) { return h("label", { class: "field" }, label, h("select", { onChange: function () { on(this.value); save(); AKN.cache = {}; AKN.order = []; } }, opts.map(function (x) { return h("option", { value: String(x[0]), selected: String(x[0]) === String(val) }, x[1]); }))); }
+  box.appendChild(h("h4", { class: "aks-h" }, "🎸 Strums"));
+  box.appendChild(h("p", { class: "hint" }, "Strums are put together from your single notes, string by string, so every chord sounds like the same guitar. Each strum is worked out once and kept, so nothing heavy runs while you play."));
+  box.appendChild(sel("Strums are made from", cfg.from, [["notes", "My single notes (every chord the same guitar)"], ["takes", "My recorded strum takes where they fit"]], function (v) { cfg.from = v; }));
+  var lab = h("span", { class: "muted" }), rg = h("input", { type: "range", min: "0", max: "100", step: "1", value: String(akStrbMsToPos(cfg.ms)), "aria-label": "Strum speed", style: "flex:1",
+    onInput: function () { cfg.ms = akStrbPosToMs(Number(this.value)); paintLab(); }, onChange: function () { save(); AKN.cache = {}; AKN.order = []; akHearChord("G", { capo: 0 }); } });
+  function paintLab() { lab.textContent = cfg.ms + " ms between strings: " + akStrbSpeedName(cfg.ms); }
+  paintLab();
+  box.appendChild(h("label", { class: "field" }, "Strum speed (left quick, right a slow arpeggio)", h("div", { class: "row" }, h("small", null, "Quick"), rg, h("small", null, "Arpeggio")), lab));
+  box.appendChild(sel("Edge strings (lowest and highest)", cfg.edge, [[0, "As loud as the others"], [1, "A little softer (like a real hand)"], [2, "Softer"]], function (v) { cfg.edge = Number(v); }));
+  box.appendChild(sel("Strums ringing at once", cfg.ring, [[1, "1 (cleanest, lightest)"], [2, "2 (the last one fades under the new one)"], [3, "3 (fuller, more work for the device)"]], function (v) { cfg.ring = Number(v); }));
+  box.appendChild(sel("Chuck (✕)", cfg.chick, [["notes", "Made from my notes (choked strings)"], ["rec", "My recorded chuck, if I recorded one"]], function (v) { cfg.chick = v; }));
+  var fb = h("input", { type: "checkbox", checked: !!cfg.feel, onChange: function () { cfg.feel = this.checked; AKN.feelId = ""; save(); } }), fh = h("p", { class: "hint" });
+  box.appendChild(h("label", { class: "row" }, fb, " Feel from my recorded strum patterns (how quick and loud my up strokes and palm mutes are, a little ahead or behind the beat)"));
+  box.appendChild(fh);
+  var id = typeof akSmpKitCfg === "function" ? akSmpKitCfg()[akHearIns()] : "";
+  if (!id) fh.textContent = "No strum pattern recorded yet: 🎙 Record my strums above. Without one, strums use the settings here.";
+  else akSmpGetSet(id, function (set, list) { var F = akStrbFeelFrom(list || []); fh.textContent = F ? "From “" + set.name + "”: " + Object.keys(F).map(function (d) { var x = F[d]; return ({ down: "downs", up: "ups", palm: "palm mutes" })[d] + (d === "down" ? "" : " " + Math.round(x.acc * 100) + "% as loud, sweep ×" + x.spd.toFixed(1)) + (x.dev ? ", " + Math.abs(Math.round(x.dev * 1000)) + " ms " + (x.dev > 0 ? "behind" : "ahead") : ""); }).join(" · ") : "The chosen strums have no down strokes to compare with yet."; });
+  box.appendChild(h("div", { class: "row" },
+    h("button", { onClick: function () { akSmpKitDemo(); } }, "▶ Hear a strum pattern"),
+    h("button", { onClick: function () { akGtrHush(); ["G", "C", "D", "Em", "F", "Bm7"].forEach(function (c, i) { akHearChord(c, { when: i * 1.0, capo: 0 }); }); } }, "▶ Chords I never strummed"),
+    h("button", { onClick: function () { akGtrHush(); akHearStrum(akHearNotes("Am", { capo: 0 }), { dir: "arp", when: 0 }); } }, "▶ Arpeggio")));
+  return box;
+}
+(function () {
+  var x15 = akSettingsExtra15;
+  akSettingsExtra15 = function (c) {
+    if (x15) x15(c);
+    try { var b = akStrbSettings(c.out), at = c.out.querySelector(".aks-set"); if (at && at.parentNode) at.parentNode.insertBefore(b, at.nextSibling); else c.out.appendChild(b); } catch (e) {}
+  };
+})();
+akCss("akstr-a", [
+  ".akstr-set{margin-top:6px}.akstr-set .row{gap:6px;align-items:center;flex-wrap:wrap}",
+  ".akstr-set input[type=range]{min-width:120px}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
