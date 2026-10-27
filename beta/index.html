@@ -15495,6 +15495,9 @@ function akOcrJoinPages(pages) {
     else if (t && t.toLowerCase().replace(/\W+/g, "") !== title.toLowerCase().replace(/\W+/g, "")) x = t + (x ? "\n" + x : "");
     /* a later page often starts with the title again as a plain line */
     if (i > 0 && title) { var ls = x.split("\n"); while (ls.length && !ls[0].trim()) ls.shift(); if (ls.length && ls[0].trim().toLowerCase().replace(/\W+/g, "") === title.toLowerCase().replace(/\W+/g, "") && !isChordLineText(ls[0])) ls.shift(); x = ls.join("\n"); }
+    /* 16.5: a line that shows at the bottom of one page and again at the top of the next is kept once */
+    var ov = parts.length && typeof akwrOverlap === "function" ? akwrOverlap(parts[parts.length - 1], x) : null;
+    if (ov && ov.hit) { if (ov.x.trim()) parts[parts.length - 1] += "\n" + ov.x.replace(/^\s*\n/, ""); return; }
     x = x.replace(/^\s*\n/, ""); if (x.trim()) parts.push(x);
   });
   return { title: title, text: parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim() };
@@ -15560,7 +15563,7 @@ function openPhotoImport(files, o) {
         guard(function () { pages.splice(to, 0, pages.splice(from, 1)[0]); drawList(); combine(true); });
       } });
     });
-    listHint.textContent = multi ? "Pages are put together top to bottom. Drag ⠇⠇ to change the order." : "If the song goes on to another page, add that photo too.";
+    listHint.textContent = multi ? "Pages are put together top to bottom. Drag ⠇⠇ to change the order. A line that shows at the bottom of one page and again at the top of the next is kept once." : "If the song goes on to another page, add that photo too. Tip for screenshots: scroll so the last line of one screenshot is the first line of the next; the app spots it and joins them without a gap or a repeat.";
   }
   /* changing pages rebuilds the text from what was read; ask first if it was edited by hand */
   function guard(fn) {
@@ -23785,9 +23788,14 @@ function akHearNotes(shape, o) {
   return list.map(function (x) { return { m: x.m + oct, s: x.s }; });
 }
 var AK_HEAR_SPEED = { slow: 0.045, normal: 0.024, fast: 0.012 };
-/* strum notes: o = { when, dir ("down" | "up" | "arp"), vol } */
+/* strum notes: o = { when, dir ("down" | "up" | "arp"), vol, gap (16.5: seconds between strings, for quick strums), light (a stroke off the beat) } */
 function akHearStrum(notes, o) {
-  o = o || {}; var cfg = akHearCfg(), dir = o.dir || cfg.dir, gap = dir === "arp" ? 0.16 : (AK_HEAR_SPEED[cfg.speed] || 0.024), list = dir === "up" ? notes.slice().reverse() : notes, t = o.when || 0;
+  o = o || {}; var cfg = akHearCfg(), dir = o.dir || cfg.dir, gap = dir === "arp" ? 0.16 : Math.min(AK_HEAR_SPEED[cfg.speed] || 0.024, o.gap || 1), t = o.when || 0;
+  /* 16.5: a real hand: up strokes catch the top 3-4 strings, quicker; light down strokes skip the lowest string */
+  if (dir === "up" && notes.length > 4) notes = notes.slice(-4); else if (o.light && dir !== "arp" && notes.length > 5) notes = notes.slice(1);
+  if (dir === "up") gap *= 0.7;
+  if (o.gap && dir !== "arp") t += Math.random() * 0.006;
+  var list = dir === "up" ? notes.slice().reverse() : notes;
   var each = (o.vol == null ? 0.75 : o.vol) / Math.sqrt(Math.max(1, list.length)) * 1.5;
   var parts = list.map(function (x, i) { return { m: x.m, at: t + i * gap * (0.85 + Math.random() * 0.3), vol: each * (dir === "up" ? 0.85 : 1) * (i === 0 && dir !== "up" ? 1.1 : 1), str: x.s }; });
   /* your recorded notes play one by one; the built-in guitar plays the whole strum as one sound */
@@ -30392,7 +30400,7 @@ function akWsHit(ch, o) {
   if (akPiano() || typeof akHearNotes !== "function") { try { akHearChord(ch, { when: o.when || 0.001, capo: 0 }); } catch (e) {} return; }
   try {
     var notes = akHearNotes(ch, { capo: 0, pos: o.p || undefined }); if (!notes.length) return;
-    akHearStrum(notes, { when: o.when || 0, dir: o.dir || undefined, vol: o.vol });
+    akHearStrum(notes, { when: o.when || 0, dir: o.dir || undefined, vol: o.vol, light: o.light, gap: o.gap });
   } catch (e) {}
 }
 function akWsHear(ch, p) { akWsHit(ch, { p: p }); akWsMidiChord(ch, 0, 0.9); }
@@ -30407,16 +30415,17 @@ function akWsStrokes(sec, bar) {
   var p = bar.st != null && bar.st !== undefined ? bar.st : sec.st, bT = akWsBarT(sec.ts), bt = akWsBeatT(sec.ts), out = [];
   if (p === "beats") { var g = akWsGroups(sec), t = 0; g.forEach(function (n) { for (var i = 0; i < n; i++) { out.push({ t: t, tok: i === 0 ? "D>" : "D" }); t += bt; } }); return out; }
   if (!p) return null;
-  var st = akWsStrumStep(sec), n = Math.round(bT / st), toks = akStrumFit(akStrumToks(p), n);
+  var st = akWsStrumStep(sec), n = Math.round(bT / st), toks = akwrFit(akStrumToks(p), n);
   toks.forEach(function (tok, i) { if (tok !== "-") out.push({ t: i * st, tok: tok }); });
   return out;
 }
-function akWsStrumStep(sec) { return Math.min(6, akWsBeatT(sec.ts)); }
+/* 16.5: a section with sixteenths on (sec.s16) gets a strum cell every sixteenth */
+function akWsStrumStep(sec) { return Math.min(sec.s16 ? 3 : 6, akWsBeatT(sec.ts)); }
 function akWsLaneToks(sec, bar) {
   var st = akWsStrumStep(sec), n = Math.round(akWsBarT(sec.ts) / st), p = bar.st != null ? bar.st : sec.st;
   if (p === "beats") { var out = []; for (var i = 0; i < n; i++) out.push(i * st % akWsBeatT(sec.ts) === 0 ? "D" : "-"); return out; }
   if (!p) { var o2 = []; for (var j = 0; j < n; j++) o2.push("-"); bar.c.forEach(function (e) { var k = Math.floor(e.t / st); if (k < n) o2[k] = "D"; }); return o2; }
-  return akStrumFit(akStrumToks(p), n);
+  return akwrFit(akStrumToks(p), n);
 }
 /* the sounds of a stretch of the arrangement: { ev: [{ at (seconds), kind, ch, p, dir, vol, acc, si, bi }], bars: [{ si, bi, at, len, t0 (ticks) }], len (seconds) } */
 function akWsTimeline(st, part) {
@@ -30429,15 +30438,17 @@ function akWsTimeline(st, part) {
       /* the click: the bar's first beat loudest, the start of each beat group next */
       if (ws.click) { var t = 0; groups.forEach(function (n, gi) { for (var i = 0; i < n; i++) { ev.push({ at: (at + t) * spt, kind: "click", acc: gi === 0 && i === 0 ? 2 : i === 0 ? 1 : 0 }); t += bt; } }); }
       var strokes = akWsStrokes(sec, bar), here = function (t) { var e = akWsAt(ws, pc.si, bi, t); return e; };
-      if (!strokes) bar.c.forEach(function (e) { if (e.ch) ev.push({ at: (at + e.t) * spt, kind: "chord", ch: e.ch, p: e.p, dir: "down", vol: 0.8, si: pc.si, bi: bi }); });
+      /* 16.5: groove (swing / shuffle) moves the off-beats late; strokes off the beat are lighter and quicker, like a real hand */
+      var gap = Math.min(0.03, akWsStrumStep(sec) * spt * 0.16);
+      if (!strokes) bar.c.forEach(function (e) { if (e.ch) ev.push({ at: (at + e.t + akwrSwing(sec, e.t)) * spt, kind: "chord", ch: e.ch, p: e.p, dir: "down", vol: 0.8, si: pc.si, bi: bi }); });
       else {
         /* the strum, plus a chord that changes between strokes */
         var tl = strokes.map(function (s) { return s.t; });
         strokes.forEach(function (s) {
-          var e = here(s.t); if (!e || !e.ch) return; var g = akStrumGlyph(s.tok);
-          ev.push({ at: (at + s.t) * spt, kind: g.c === "M" ? "mute" : "chord", ch: e.ch, p: e.p, dir: g.c === "U" ? "up" : "down", vol: (g.c === "U" ? 0.55 : 0.72) * (g.acc ? 1.3 : 1), si: pc.si, bi: bi });
+          var e = here(s.t); if (!e || !e.ch) return; var g = akStrumGlyph(s.tok), r = s.t % bt, lv = !r ? 1 : r * 2 === bt ? 0.86 : 0.7;
+          ev.push({ at: (at + s.t + akwrSwing(sec, s.t)) * spt, kind: g.c === "M" ? "mute" : "chord", ch: e.ch, p: e.p, dir: g.c === "U" ? "up" : "down", vol: (g.c === "U" ? 0.55 : 0.72) * (g.acc ? 1.3 : 1) * lv, light: lv < 1, gap: gap, si: pc.si, bi: bi });
         });
-        bar.c.forEach(function (e) { if (e.ch && tl.indexOf(e.t) < 0) ev.push({ at: (at + e.t) * spt, kind: "chord", ch: e.ch, p: e.p, dir: "down", vol: 0.72, si: pc.si, bi: bi }); });
+        bar.c.forEach(function (e) { if (e.ch && tl.indexOf(e.t) < 0) ev.push({ at: (at + e.t + akwrSwing(sec, e.t)) * spt, kind: "chord", ch: e.ch, p: e.p, dir: "down", vol: 0.72, gap: gap, si: pc.si, bi: bi }); });
       }
       at += bT;
     }
@@ -30502,7 +30513,7 @@ function akWsTick() {
     if (T < now - 0.05) continue; /* the tab slept: skip what's already gone by */
     var lead = akPiano() ? 0 : AK_LEAD, w = Math.max(0, T - now - lead);
     if (e.kind === "click") { try { akRClick(Math.max(0, T - now), e.acc > 0); } catch (x) {} }
-    else { akWsHit(e.ch, { when: w || 0.001, dir: e.dir, vol: e.vol, p: e.p, mute: e.kind === "mute" }); if (e.kind === "chord") akWsMidiChord(e.ch, T - now, akWsNextAt(tl, AKWS.i - 1) - e.at); }
+    else { akWsHit(e.ch, { when: w || 0.001, dir: e.dir, vol: e.vol, p: e.p, mute: e.kind === "mute", light: e.light, gap: e.gap }); if (e.kind === "chord") akWsMidiChord(e.ch, T - now, akWsNextAt(tl, AKWS.i - 1) - e.at); }
   }
   AKWS.timer = setTimeout(akWsTick, 30);
 }
@@ -30701,6 +30712,8 @@ akProgWheel = function (o) {
       { label: "Spin the wheel to change: " + (ws.spin === "key" ? "the key ✓" : "the chord ✓"), onClick: function () { ws.spin = ws.spin === "key" ? "chord" : "key"; save(); draw(); } },
       { label: (ws.adv ? "✓ " : "") + "After a chord goes in, move on to the next beat", onClick: function () { ws.adv = !ws.adv; save(); draw(); toast(ws.adv ? "Each chord moves you on to the next beat." : "You stay on the beat you picked."); } },
       { label: (ws.chordFirst !== false ? "✓ " : "") + "Pick a chord first, then tap the beat it goes on", onClick: function () { ws.chordFirst = ws.chordFirst === false; armed = false; save(); draw(); } },
+      { label: (akwrTipsOn() ? "✓ " : "") + "Show what each row and the wheel mean", onClick: function () { settings().akWsTips = !akwrTipsOn(); save(); draw(); } },
+      { label: "📋 Paste bars: " + (AKWS.clip ? akwrClipName() : "nothing copied yet") + " (hold a bar number)", disabled: true },
       { sep: true },
       { label: "🎹 MIDI keyboard: play chords into the chart…", onClick: function () { midiDialog(); } },
       { label: "💾 Save as a MIDI file (.mid)", onClick: function () { akWsMidiSave(st, o.song ? o.song.title : "chords in " + st.key); } },
@@ -30772,6 +30785,7 @@ akProgWheel = function (o) {
     var s = ws.secs[i];
     menu(btn, [{ head: s.name + " · " + s.bars.length + " bars · " + akWsTsName(s.ts) },
       { label: "✎ Rename…", onClick: function () { var opts = AKWS_SECS.slice(); menu(btn, [{ head: "Call it" }].concat(opts.map(function (nm) { return { label: nm, onClick: function () { s.name = nm; s.col = AKWS_COLS[nm] || s.col; changed(true); } }; })).concat([{ label: "Type a name…", onClick: function () { askText("Section name", s.name, "Rename", function (v) { s.name = v; changed(true); }); } }])); } },
+      o.song ? { label: "⬆ Send this section up to the song", onClick: function () { akWsSend(o.song, st, [i]); } } : null,
       { label: "⧉ Duplicate", onClick: function () { dup(i); } },
       { label: "Time signature (" + akWsTsName(s.ts) + ")…", onClick: function () { tsDialog(s); } },
       { label: "Strum for the section: " + akWsStrumLabel(s.st) + "…", onClick: function () { strumMenu(btn, s, null); } },
@@ -30814,7 +30828,17 @@ akProgWheel = function (o) {
     if (bar) items.push({ label: (cur === null ? "✓ " : "") + "Same as the section (" + akWsStrumLabel(s.st) + ")", onClick: function () { set(null); } });
     items.push({ label: (cur === "" ? "✓ " : "") + "Once when the chord changes", onClick: function () { set(""); } });
     items.push({ label: (cur === "beats" ? "✓ " : "") + "Every beat (accents on the beat groups)", onClick: function () { set("beats"); } });
-    fit.concat(AK_STRUM_PRESETS.filter(function (x) { return fit.indexOf(x) < 0; })).forEach(function (x, i) {
+    if (!bar) {
+      items.push({ head: "Groove" });
+      AKWR_GROOVES.forEach(function (g) { var on = (s.gv ? s.gv.u + ":" + s.gv.a : "0") === (g[0] ? g[0] + ":" + g[1] : "0"); items.push({ label: (on ? "✓ " : "") + g[2], onClick: function () { keep(); if (g[0]) s.gv = { u: g[0], a: g[1] }; else delete s.gv; if (g[0] === 16) s.s16 = true; changed(); } }); });
+      items.push({ label: (s.s16 ? "✓ " : "") + "Sixteenth-note strums (a strum cell every sixteenth)", onClick: function () { keep(); s.s16 = !s.s16; changed(); } });
+    }
+    var s16 = AK_STRUM_PRESETS.filter(function (x) { return x[0] === 16; });
+    if (s16.length) {
+      items.push({ head: "Sixteenth-note strums" });
+      s16.forEach(function (x) { items.push({ label: (cur === x[2] ? "✓ " : "") + x[1] + "   " + akWsGlyphs(x[2]).replace(/ /g, ""), onClick: function () { s.s16 = true; set(x[2]); } }); });
+    }
+    fit.concat(AK_STRUM_PRESETS.filter(function (x) { return fit.indexOf(x) < 0 && x[0] !== 16; })).forEach(function (x, i) {
       if (i === fit.length && fit.length) items.push({ head: "Stretched to fit " + akWsTsName(s.ts) });
       items.push({ label: (cur === x[2] ? "✓ " : "") + x[1] + "   " + akWsGlyphs(x[2]), onClick: function () { set(x[2]); } });
     });
@@ -30831,7 +30855,7 @@ akProgWheel = function (o) {
     function zoom(d) { ws.zoom = Math.max(0.5, Math.min(3, Math.round((ws.zoom + d) * 10) / 10)); save(); draw(); }
     wrap.appendChild(h("div", { class: "akws-gh" },
       h("b", { style: "color:" + (sc.col || "inherit") }, sc.name), h("button", { class: "sm", onClick: function () { tsDialog(sc); } }, akWsTsName(sc.ts) + (sc.grp ? " (" + sc.grp + ")" : "")),
-      h("button", { class: "sm", onClick: function () { strumMenu(this, sc, null); } }, "Strum: " + akWsStrumLabel(sc.st) + " ▾"),
+      h("button", { class: "sm", onClick: function () { strumMenu(this, sc, null); } }, "Strum: " + akWsStrumLabel(sc.st) + (sc.gv ? " · " + akwrGrooveName(sc.gv) : "") + (sc.s16 ? " · 16ths" : "") + " ▾"),
       stepSel, h("span", { class: "grow" }),
       h("button", { class: "sm", "aria-label": "Zoom out", onClick: function () { zoom(-0.25); } }, "−"), h("span", { class: "akws-zoom" }, "🔍"), h("button", { class: "sm", "aria-label": "Zoom in", onClick: function () { zoom(0.25); } }, "+"),
       h("button", { class: "sm akws-tg" + (ws.paint ? " on" : ""), "aria-pressed": ws.paint ? "true" : "false", title: "Paint: every cell you tap gets the last chord you chose", onClick: function () { ws.paint = !ws.paint; save(); draw(); } }, "✎ Paint" + (ws.paint && pend ? " " + pend : "")),
@@ -30840,7 +30864,11 @@ akProgWheel = function (o) {
     var startOf = ws.secs.slice(0, si).reduce(function (a, s) { return a + s.bars.length; }, 0);
     sc.bars.forEach(function (bar, bi) {
       var bEl = h("div", { class: "akws-bar", "data-k": si + ":" + bi, style: "flex:1 0 calc(var(--akws-w) * " + cells + " + 3px)" });
-      bEl.appendChild(h("button", { class: "akws-bn", "aria-label": "Bar " + (bi + 1) + " options", onClick: function () { barMenu(this, si, bi); } }, String(bi + 1), h("small", null, " · " + (startOf + bi + 1))));
+      var bn = h("button", { class: "akws-bn akwr-bn sm", "aria-label": "Bar " + (bi + 1) + " options. Hold to copy or paste, hold and slide to move the bar", onClick: function () { if (bn._akwrHeld) return; barMenu(this, si, bi); } }, h("i", { "aria-hidden": "true" }, "⠿"), String(bi + 1), h("small", null, " · " + (startOf + bi + 1)));
+      akwrHold(bn, { host: gridEl, sel: ".akws-bar", ghost: function () { return "Bar " + (bi + 1); }, lift: bEl,
+        onDrop: function (to) { var k = String(to.getAttribute("data-k") || "").split(":"); if (+k[0] === si) moveBar(si, bi, +k[1]); },
+        onHold: function () { barQuick(bn, si, bi); } });
+      bEl.appendChild(bn);
       var row = h("div", { class: "akws-cells", style: "grid-template-columns:repeat(" + cells + ",minmax(var(--akws-w),1fr))" });
       for (var c = 0; c < cells; c++) (function (c) {
         var t = c * step, i = akWsFind(bar, t), ev = i >= 0 ? bar.c[i] : null, snd = akWsAt(ws, si, bi, t), pc = snd && snd.ch ? akPwParse(snd.ch) : null;
@@ -30851,6 +30879,7 @@ akProgWheel = function (o) {
           onClick: function () { if (cell._drag) return; cellTap(si, bi, t); } },
           ev ? h("span", { class: "akws-chn" }, ev.ch ? akPwName(akPwParse(ev.ch) || { pc: 0, q: "" }, k) : "N.C.", ev.p === "high" ? h("i", null, "bar") : null) : null);
         if (ev) chordDrag(cell, si, bi, t, gridEl);
+        else akwrHold(cell, { ms: 520, onHold: function () { cell._drag = true; setTimeout(function () { cell._drag = false; }, 80); barQuick(cell, si, bi); } });
         row.appendChild(cell);
       })(c);
       bEl.appendChild(row);
@@ -30886,6 +30915,26 @@ akProgWheel = function (o) {
       cell.addEventListener("pointermove", mv); cell.addEventListener("pointerup", up); cell.addEventListener("pointercancel", end);
     });
   }
+  /* 16.5: move a bar (hold its number and slide it onto another bar) */
+  function moveBar(si, from, to) {
+    var s = ws.secs[si]; if (from === to || !s.bars[from] || !s.bars[to]) return;
+    keep(); var b = s.bars.splice(from, 1)[0]; s.bars.splice(to, 0, b); ws.sel = null; changed(); toast("Moved bar " + (from + 1) + " to " + (to + 1) + ".");
+  }
+  /* hold a bar number (or an empty beat): copy one bar or several, cut, paste over / before / after */
+  function barQuick(btn, si, bi) {
+    var s = ws.secs[si], n = s.bars.length, ends = [];
+    for (var e = bi + 1; e < n; e++) (function (e) { ends.push({ label: "to bar " + (e + 1) + " (" + (e - bi + 1) + " bars)", onClick: function () { akwrCopy(s, bi, e); } }); })(e);
+    menu(btn, [{ head: s.name + ", bar " + (bi + 1) },
+      { label: "⧉ Copy this bar", onClick: function () { akwrCopy(s, bi, bi); } },
+      { label: "⧉ Copy from here…", disabled: !ends.length, onClick: function () { menu(btn, [{ head: "Copy from bar " + (bi + 1) }].concat(ends)); } },
+      { label: "✂ Cut this bar", disabled: n < 2, onClick: function () { akwrCopy(s, bi, bi); keep(); s.bars.splice(bi, 1); ws.sel = null; changed(); } },
+      { sep: true },
+      { label: "📋 Paste over this bar" + (AKWS.clip ? " (" + akwrClipName() + ")" : ""), disabled: !AKWS.clip, onClick: function () { keep(); akwrPaste(s, bi, "over"); changed(); } },
+      { label: "📋 Paste before this bar", disabled: !AKWS.clip, onClick: function () { keep(); akwrPaste(s, bi, "before"); changed(); } },
+      { label: "📋 Paste after this bar", disabled: !AKWS.clip, onClick: function () { keep(); akwrPaste(s, bi, "after"); changed(); } },
+      { sep: true },
+      { label: "More for this bar…", onClick: function () { barMenu(btn, si, bi); } }]);
+  }
   function barMenu(btn, si, bi) {
     var s = ws.secs[si], bar = s.bars[bi];
     menu(btn, [{ head: s.name + ", bar " + (bi + 1) },
@@ -30894,8 +30943,8 @@ akProgWheel = function (o) {
       { label: "Strum for this bar: " + (bar.st != null ? akWsStrumLabel(bar.st) : "same as the section") + "…", onClick: function () { strumMenu(btn, s, bar); } },
       { sep: true },
       { label: "⧉ Duplicate the bar", onClick: function () { keep(); s.bars.splice(bi + 1, 0, clone(bar)); changed(); } },
-      { label: "Copy the bar", onClick: function () { AKWS.clip = { bar: clone(bar), ts: s.ts.slice() }; toast("Copied bar " + (bi + 1) + "."); } },
-      { label: "Paste over this bar", disabled: !AKWS.clip, onClick: function () { keep(); var c = clone(AKWS.clip.bar), nT = akWsBarT(s.ts); c.c = c.c.filter(function (e) { return e.t < nT; }); s.bars[bi] = c; changed(); } },
+      { label: "Copy the bar", onClick: function () { akwrCopy(s, bi, bi); } },
+      { label: "Paste over this bar", disabled: !AKWS.clip, onClick: function () { keep(); akwrPaste(s, bi, "over"); changed(); } },
       { label: "Insert an empty bar before", onClick: function () { keep(); s.bars.splice(bi, 0, akWsNewBar()); changed(); } },
       { label: "Insert an empty bar after", onClick: function () { keep(); s.bars.splice(bi + 1, 0, akWsNewBar()); changed(); } },
       { label: "✂ Start a new section here", disabled: bi === 0, onClick: function () { keep(); akWsSplit(ws, si, bi); ws.cur = si + 1; changed(); } },
@@ -30905,7 +30954,7 @@ akProgWheel = function (o) {
   /* ---- what's picked: a chord (change, nudge, delete) or an empty cell */
   function selBar(k) {
     var bar = h("div", { class: "akws-sel" }), s = ws.sel;
-    if (!s) { bar.appendChild(h("span", { class: "muted" }, pend && (armed || ws.paint) ? "Picked " + pend + ". Tap a beat in the chart to put it there" + (ws.paint ? " (✎ Paint is on: every tap adds it)." : ".") : "Tap a beat in the chart, then a chord below or on the wheel: it goes there" + (ws.adv ? " and the next beat is picked." : " (you stay on that beat).") + (ws.chordFirst !== false ? " Or pick a chord first, then tap its beat." : "") + " Hold a chord to slide it.")); return bar; }
+    if (!s) { bar.appendChild(h("span", { class: "muted" }, pend && (armed || ws.paint) ? "Picked " + pend + ". Tap a beat in the chart to put it there" + (ws.paint ? " (✎ Paint is on: every tap adds it)." : ".") : "Tap a beat in the chart, then a chord below or on the wheel: it goes there" + (ws.adv ? " and the next beat is picked." : " (you stay on that beat).") + (ws.chordFirst !== false ? " Or pick a chord first, then tap its beat." : "") + " Hold a chord to slide it. Hold a bar number to copy or paste bars, or hold and slide it to move the bar.")); return bar; }
     var sc = ws.secs[s.s], e = selEvent(), snd = akWsAt(ws, s.s, s.b, s.t);
     var where = "Bar " + (s.b + 1) + ", " + akWsWhere(sc, s.t);
     if (e) {
@@ -30944,7 +30993,9 @@ akProgWheel = function (o) {
     if (spun && spun.k === selKey()) { f = spun.c; hist = [spun.c]; prev = spun.c; }
     var tabs = [["next", "★ Next"], ["key", "In the key"], ["borrow", "Borrowed"], ["sec", "Leading (V/x)"], ["kinds", "Other kinds"], ["shapes", "Shapes"], ["type", "Type one"]];
     var wrap = h("div", { class: "akws-pal" }), body = h("div", { class: "akws-pb" });
-    wrap.appendChild(h("div", { class: "akws-tabs", role: "tablist" }, tabs.map(function (t) { return h("button", { role: "tab", class: ws.pal === t[0] ? "on" : "", "aria-selected": ws.pal === t[0] ? "true" : "false", onClick: function () { ws.pal = t[0]; save(); draw(); } }, t[1]); })));
+    wrap.appendChild(h("div", { class: "akws-tabs", role: "tablist" }, tabs.map(function (t) { return h("button", { role: "tab", class: ws.pal === t[0] ? "on" : "", "aria-selected": ws.pal === t[0] ? "true" : "false", onClick: function () { ws.pal = t[0]; save(); draw(); } }, t[1]); }),
+      akwrTipsOn() ? null : h("button", { class: "akwr-q", "aria-label": "What do these mean?", title: "Show what each row means", onClick: function () { settings().akWsTips = true; save(); draw(); } }, "?")));
+    var tipEl = akwrTip(ws.pal, k, draw); if (tipEl) body.appendChild(tipEl);
     var row = h("div", { class: "akws-chips" });
     if (ws.pal === "next") {
       akPw9Suggest(k, hist).slice(0, 12).forEach(function (x, i) { row.appendChild(chip(x.c, k, (i === 0 ? "★ " : "") + x.r + " · " + akPwWord(x.t, x.c, k, prev), prev, { why: x.why || x.why0 || "" })); });
@@ -30956,7 +31007,7 @@ akProgWheel = function (o) {
       var r2 = h("div", { class: "akws-chips" }); sev.forEach(function (x) { r2.appendChild(chip(x.c, k, null, prev)); });
       body.appendChild(h("div", { class: "muted akws-sub" }, "With 7ths")); body.appendChild(r2);
     } else if (ws.pal === "borrow") {
-      body.appendChild(h("p", { class: "hint" }, "Scales on the same root as your key. Their chords that aren't in " + st.key.replace(/m$/, " minor") + (/m$/.test(st.key) ? "" : " major") + " are marked ✦: borrowing one adds color."));
+      if (akwrTipsOn()) body.appendChild(h("p", { class: "hint" }, "Scales on the same root as your key. Their chords that aren't in " + st.key.replace(/m$/, " minor") + (/m$/.test(st.key) ? "" : " major") + " are marked ✦: borrowing one adds color."));
       var ex = akPw9Extras(k).filter(function (x) { return x.kind === "borrowed"; }), r0 = h("div", { class: "akws-chips" });
       ex.forEach(function (x) { r0.appendChild(chip(x.c, k, x.r + " · " + x.why.replace(/^borrowed /, ""), prev, { why: x.why, mark: "✦" })); });
       body.appendChild(h("div", { class: "akws-sub" }, h("b", null, "The favorites"))); body.appendChild(r0);
@@ -30971,7 +31022,7 @@ akProgWheel = function (o) {
       });
     } else if (ws.pal === "sec") {
       akPw9Extras(k).filter(function (x) { return x.kind === "secondary"; }).forEach(function (x) { row.appendChild(chip(x.c, k, x.r + " · " + x.why, prev, { why: x.why })); });
-      body.appendChild(row); body.appendChild(h("p", { class: "hint" }, "A 7th chord that points at another chord of the key: put it just before that chord."));
+      body.appendChild(row);
     } else if (ws.pal === "kinds") {
       var base = f || { pc: k.pc, q: "" };
       body.appendChild(h("div", { class: "muted akws-sub" }, "Other kinds of " + akPwName({ pc: base.pc, q: "" }, k) + " (spin the wheel or pick a chord to change the root)"));
@@ -30983,7 +31034,7 @@ akProgWheel = function (o) {
         h("button", { class: "chip" + (ws.shape !== "high" ? " on" : ""), onClick: function () { ws.shape = ""; save(); draw(); } }, "My shape"),
         h("button", { class: "chip" + (ws.shape === "high" ? " on" : ""), onClick: function () { ws.shape = "high"; save(); draw(); } }, "Bar chord up the neck")));
       try { body.appendChild(akDiagramsRow(nm, 6)); } catch (e) {}
-      body.appendChild(h("p", { class: "hint" }, "Tap a picture to hear that shape. A chord in the chart can be played as a bar chord too (pick it, then Bar chord)."));
+      if (akwrTipsOn()) body.appendChild(h("p", { class: "hint" }, "A chord in the chart can be played as a bar chord too (pick it, then Bar chord)."));
     } else {
       var inp = h("input", { type: "text", placeholder: "Like F#m7, Bbadd9, D/F#", "aria-label": "Chord name", autocapitalize: "characters" });
       function go2() { var v = inp.value.trim(); if (!v) return; if (!parseChordName(v)) { toast("That doesn't look like a chord name."); return; } choose(v); }
@@ -31078,11 +31129,13 @@ akProgWheel = function (o) {
       side.appendChild(kinds);
       try { side.appendChild(akDiagramsRow(akPwRaw(f, k), 2)); } catch (e) {}
     } else side.appendChild(h("p", { class: "hint" }, "Tap a chord in the chart, or spin the wheel: its other kinds (minor, 7, sus, add9…) show here."));
+    var wtip = akwrTip("wheel", k, draw); if (wtip) side.appendChild(wtip);
     return h("div", { class: "akpw-main akws-main" }, h("div", { class: "akpw-wrap" }, svg, hint), side);
   }
   function sendRow() {
     return h("div", { class: "row akws-send" },
-      h("button", { class: o.song ? "primary" : "", disabled: !st.prog.length, onClick: function () { akWsSend(o.song, st); } }, o.song ? "Put it in the song" : "Add to a song…"),
+      h("button", { class: o.song ? "primary" : "", disabled: !st.prog.length, onClick: function () { akWsSend(o.song, st); } }, o.song ? "⬆ Send it up to the song" : "Add to a song…"),
+      o.song && ws.secs.length > 1 ? h("button", { disabled: !st.prog.length, onClick: function () { akWsSend(o.song, st, [ws.cur]); } }, "⬆ Just “" + sec().name + "”") : null,
       o.song ? null : h("button", { disabled: !st.prog.length, onClick: function () { snap("new song"); var s = newSong({ title: "New idea in " + st.key, shelf: "wip", key: st.key, lyrics: "" }); s.updated = akW9Now(); lib().songs.push(s); s.wheel = clone(st); s.tempo = st.bpm; akWsSend(s, s.wheel); akW9().cur = s.id; save(); toast("Started a song in Works in progress.", { label: "Write", fn: function () { go("write"); } }); } }, "Start a song with it"),
       h("button", { onClick: function () { akWsMidiSave(st, o.song ? o.song.title : "chords in " + st.key); } }, "💾 MIDI file"));
   }
@@ -31116,6 +31169,8 @@ function akWsToMeasure(song, st) {
   var sub = m.sub || 2, n = beats * sub;
   ws.secs.forEach(function (w) {
     var bT = akWsBarT(w.ts), sec = { id: uid(), name: w.name, open: true, bars: [] };
+    /* 16.5: sending a section again replaces the one sent before (same name), in its place */
+    var old = -1; m.sections.forEach(function (x, i) { if (old < 0 && x.name === w.name) old = i; });
     if (w.st && w.st !== "beats") sec.strum = w.st;
     w.bars.forEach(function (b) {
       var nb = akMNewBar(n);
@@ -31123,21 +31178,23 @@ function akWsToMeasure(song, st) {
       if (b.st && b.st !== "beats") nb.st = b.st;
       sec.bars.push(nb);
     });
-    m.sections.push(sec);
+    if (old >= 0) m.sections.splice(old, 1, sec); else m.sections.push(sec);
   });
   akMKeep(song, m);
   return same;
 }
-function akWsSend(song, st) {
+/* only: section indexes to send (16.5); each section's chord line replaces the one sent before under the same [Section] heading */
+function akWsSend(song, st, only) {
   function put(s) {
     snap("add progression");
-    var text = akWsText(st.ws);
-    if (String(s.lyrics || "").indexOf(text) < 0) s.lyrics = String(s.lyrics || "").replace(/\s+$/, "") + (s.lyrics ? "\n\n" : "") + text + "\n";
+    var part = only ? { ws: { secs: only.map(function (i) { return st.ws.secs[i]; }).filter(Boolean) } } : st;
+    s.lyrics = akwrPutSecs(String(s.lyrics || ""), part.ws);
     if (!s.key) s.key = st.key; if (!s.tempo) s.tempo = st.bpm;
-    var same = true; try { same = akWsToMeasure(s, st); } catch (e) {}
+    var same = true; try { same = akWsToMeasure(s, part); } catch (e) {}
     s.updated = akW9Now(); save();
-    toast("Added to “" + (s.title || "the song") + "” (the words and the measure chart)" + (same ? "." : ". The measure chart uses one time signature, so odd bars are squeezed to fit."), { label: "Open", fn: function () { go("song", { songId: s.id }); } });
-    if (S.view === "write") rerenderKeepScroll();
+    var what = only && part.ws.secs.length === 1 ? "“" + part.ws.secs[0].name + "”" : "The chords";
+    if (S.view === "write") { rerenderKeepScroll(); setTimeout(akwrShowPane, 60); toast(what + " went up into the song: the words and the chord window. Hold a section there to move it."); }
+    else toast("Added to “" + (s.title || "the song") + "” (the words and the measure chart)" + (same ? "." : ". The measure chart uses one time signature, so odd bars are squeezed to fit."), { label: "Open", fn: function () { go("song", { songId: s.id }); } });
   }
   if (song) { put(song); return; }
   histSongPicker("Add the chart to which song?", function (ids) { var s = findSong(ids[0]); if (s) put(s); });
@@ -34806,6 +34863,7 @@ function akW18Pane(ctx) {
   var c = akW18(), sel = null, snapped = null, last = ctx.ta.value, focusLine = -1, focusAt = 0;
   var box = h("div", { class: "ak18-pane" + (ctx.strip ? " ak18-edit" : "") });
   var views = h("div", { class: "chips ak18-views", role: "group", "aria-label": "Show the chords as" });
+  var secs = akDragHost(h("div", { class: "ak18-secs", role: "group", "aria-label": "Sections: hold one and slide it to move it" }));
   var body = h("div", { class: "ak18-body" }), nudge = h("div", { class: "ak18-nudge", "aria-live": "polite" }), quick = h("div", { class: "ak18-quick" });
   function song() { return akW9Song(); }
   function lines() { return ctx.ta.value.split("\n"); }
@@ -34947,7 +35005,7 @@ function akW18Pane(ctx) {
   function draw(keepFocus) {
     var ae = document.activeElement, fl = ae && ae.classList && ae.classList.contains("ak18-in") ? +ae.getAttribute("data-li") : -1, fp = fl >= 0 ? ae.selectionStart : 0;
     if (sel && sel.kind === "word") { var s = song(), r = s && akW18M(s, ctx.ta.value), b = r && r.m.sections[sel.si] && r.m.sections[sel.si].bars[sel.bi]; if (b) sel.beat = akW18Beat(akR9Wa(b)[sel.wi], r.m.sub || 2); else sel = null; }
-    viewChips(); body.textContent = "";
+    viewChips(); body.textContent = ""; akwrSecStrip(secs, ctx, lines, setText, function () { sel = null; draw(); });
     var v = ctx.strip ? "words" : c.cview;
     if (v === "words") drawWords(); else drawBars(v);
     drawNudge(); drawQuick(); last = ctx.ta.value;
@@ -34957,7 +35015,7 @@ function akW18Pane(ctx) {
   var t = 0;
   ctx.ta.addEventListener("input", function () { clearTimeout(t); t = setTimeout(function () { if (ctx.ta.value !== last) draw(); }, 200); });
   box._sync = function () { if (ctx.ta.value !== last) draw(); };
-  box.append(views, body, nudge, quick);
+  box.append(views, secs, body, nudge, quick);
   draw();
   return box;
 }
@@ -42256,6 +42314,321 @@ akCss("akse", [
   "@media (prefers-reduced-motion:reduce){.akhd-go > .akhd-in{animation:none}}",
   ".akhd-grid{display:grid;grid-template-columns:1fr auto auto;gap:4px 8px;align-items:center;margin:6px 0}",
   ".akhd-it{display:contents}.akhd-it select{width:auto;min-height:34px;padding:2px 6px}"
+].join("\n"));
+
+/* ================================================================ akwr_a: the Write tab group (version 16.5, items 123-127)
+   - 123 Chord workshop: each palette row (★ Next, In the key, Borrowed, Leading, Other kinds, Shapes, Type one) and the wheel have a
+     plain-words line saying what they are (akwrTip, AKWR_TIPS); "Hide these tips" hides them all (settings().akWsTips false), the "?"
+     on the tab row or the workshop's ⋯ brings them back. Bars: hold a bar number and slide it onto another bar to move it; hold it
+     (or an empty beat) without sliding for Copy this bar / Copy from here to bar N / Cut / Paste over, before or after (AKWS.clip =
+     { bars, ts, from }; it stays while the app is open, so bars can go into another song too). Direct edits in ak14_a.js.
+   - 124 Strums: a section can strum in sixteenths (sec.s16: a strum cell every sixteenth, 16-step patterns AK_STRUM_PRESETS with
+     x[0] === 16) and have a groove (sec.gv = { u: 8 | 16, a: 0..1 }: the off-beat eighths or sixteenths come late; a = 1 is a full
+     triplet shuffle). Strokes off the beat are softer and quicker, up strokes catch only the top strings, light down strokes skip the
+     lowest string, each stroke is a few ms loose (akHearStrum in ak9_b.js takes o.gap / o.light). Recorded strums (item 98) still win
+     on down strokes when your recorded guitar has them.
+   - 125 ⬆ Send it up to the song (all sections) or ⬆ Just "Verse" / the section's ⋯ › Send this section up: each section's chord line
+     replaces the one sent before under the same [Section] heading (akwrPutSecs), and its measure-chart section is replaced in place.
+     The Write tab's chord window gets a row of section chips (akwrSecStrip, called from ak18_a.js): hold one and slide it to move the
+     whole section in the words; tap for earlier / later, duplicate, rename, edit the words, open it in the workshop, delete.
+   - 126 📝 Notepad bubble on every screen (settings().akPad { bubble, play, x, y }): tap opens the floating notepad (This song /
+     General), drag it anywhere, hold it for options. On the Write tab "This song" is the song being written. "✍ Start a song with
+     this" turns general notes into a work in progress.
+   - 127 Photo import: when the last lines of one page come again at the top of the next (overlapping screenshots), they are kept once
+     and the pages join without a gap (akwrOverlap, used by akOcrJoinPages). The review screen suggests taking screenshots that way.
+   Settings: Songs and shows › Writing extras. Tests ak_t310-ak_t312. */
+AK_VERSION = "16.5";
+AK_WHATS_NEW = [
+  "Chord workshop: every row (Next, In the key, Borrowed, Leading, Other kinds, Shapes) and the wheel now say what they are in plain words. Hide the tips when you know them; the ? brings them back.",
+  "Chord workshop bars: hold a bar number and slide it onto another bar to move it. Hold it (or an empty beat) to copy one bar or several, cut, and paste over, before or after. Copied bars can go into another song too.",
+  "Strums sound more like a hand: off-beat strokes are softer, up strokes hit the top strings, and nothing is robot-exact. New: sixteenth-note strums and groove (light swing, shuffle, sixteenth swing) in each section's Strum menu.",
+  "⬆ Send it up: the workshop sends all sections, or just one, into the song. Sending a section again replaces the old one. In the Write tab's chord window, hold a section and slide it to move it; tap it to rename, copy, edit or delete.",
+  "📝 A notepad bubble on every screen: tap it for your notes, drag it out of the way, hold it to hide it.",
+  "Photo import: when screenshots overlap (the last line of one is the first line of the next), the repeat is dropped and the pages join smoothly."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- 124 sixteenths and groove */
+AK_STRUM_PRESETS.push(
+  [16, "Sixteenths, all", "D U D U D U D U D U D U D U D U"],
+  [16, "Funk (chuck on 2 and 4)", "D - - U M - D U - U D U M - D U"],
+  [16, "Pop sixteenths", "D - D U - U D U - U D U D U D U"],
+  [16, "Three-three-two (tresillo)", "D - - D - - D - D - - D - - D -"],
+  [16, "Ballad sixteenths", "D - - - D - - U - U D - D - - U"]);
+var AKWR_GROOVES = [[0, 0, "Straight (no swing)"], [8, 0.5, "Light swing"], [8, 1, "Shuffle (triplet feel)"], [16, 0.5, "Sixteenth swing, light"], [16, 1, "Sixteenth shuffle"]];
+function akwrGrooveName(g) { var x = AKWR_GROOVES.filter(function (r) { return r[0] === g.u && r[1] === g.a; })[0]; return x ? x[2].replace(/ \(.*\)$/, "").toLowerCase() : "swing"; }
+/* how late (in ticks) a place in the bar plays with the section's groove */
+function akwrSwing(sec, t) {
+  var g = sec && sec.gv; if (!g || !g.a) return 0;
+  var bt = akWsBeatT(sec.ts), u = g.u === 16 ? bt / 4 : bt / 2, r = ((t % (2 * u)) + 2 * u) % (2 * u);
+  return Math.abs(r - u) < 0.01 ? g.a * u / 3 : 0;
+}
+/* a pattern into n strum cells: an eighth-note pattern in a sixteenth grid keeps its speed (every other cell) */
+function akwrFit(toks, n) {
+  if (toks.length && toks.length * 2 === n) { var out = []; toks.forEach(function (t) { out.push(t, "-"); }); return out; }
+  return akStrumFit(toks, n);
+}
+
+/* ---------------------------------------------------------------- 123 what each row means */
+function akwrTipsOn() { return settings().akWsTips !== false; }
+var AKWR_TIPS = {
+  next: "★ Next: the chords that most often come after the one you're on, best first (★). The color is the feel: blue is home and calm, warm colors pull, red is tension that wants to move on.",
+  key: "In the key: the seven chords made from the notes of your key, so any of them sounds at home. I is home, IV and V are the strong helpers, vi is its sad cousin. The second row adds the 7th for a jazzier sound.",
+  borrow: "Borrowed: chords from another scale on the same root note (like C minor's chords while you're in C major). One borrowed chord adds a twist, then come back home: iv sounds bittersweet, ♭VII bold, ♭VI big and dreamy.",
+  sec: "Leading (V/x): a 7th chord that leads into another chord of your key, like a little push. V/vi means \"the V of vi\": play it just before the vi chord and it pulls right into it.",
+  kinds: "Other kinds: the same root note as a different kind of chord. Swap a plain chord for its sus, add9, 7 or minor to change the color without changing where the song goes.",
+  shapes: "Shapes: ways to play the chord on your instrument. Tap a picture to hear it. \"Bar chord up the neck\" plays new chords higher up, for a brighter, tighter sound.",
+  type: "Type one: write any chord you know, like F#m7, Bbadd9 or D/F#. Chords already in this song are underneath, ready to use again.",
+  wheel: "The wheel: the outer ring is every note in the circle of fifths, so neighbours sound good together and the notes of your key are lit. The slices inside are what goes well after the chord in the middle; bigger slices are more common, dashed ones are borrowed."
+};
+function akwrTip(id, k, redraw) {
+  if (!akwrTipsOn() || !AKWR_TIPS[id]) return null;
+  return h("p", { class: "hint akwr-tip" }, AKWR_TIPS[id], " ", h("button", { class: "linkish", onClick: function () { settings().akWsTips = false; save(); redraw(); toast("Tips hidden. The ? next to the tabs brings them back."); } }, "Hide these tips"));
+}
+
+/* ---------------------------------------------------------------- hold, then slide (or let go to get a menu) */
+/* o = { ms, host, sel (what it can be dropped on, inside host), ghost() text, lift (element that looks lifted), onDrop(target, ev), onHold(ev) }.
+   el._akwrHeld is true for a moment after a hold, so its click can be skipped. */
+function akwrHold(el, o) {
+  el.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  el.addEventListener("pointerdown", function (e) {
+    if (e.button) return;
+    var x0 = e.clientX, y0 = e.clientY, on = false, moved = false, tgt = null, ghost = null, lift = o.lift || el;
+    var tm = setTimeout(function () {
+      on = true; S.akRowDragging = true; lift.classList.add("akwr-lift");
+      try { el.setPointerCapture(e.pointerId); if (navigator.vibrate) navigator.vibrate(15); } catch (x) {}
+      if (o.ghost && o.sel) { ghost = h("div", { class: "akws-ghost" }, o.ghost()); document.body.appendChild(ghost); pos(e); }
+    }, o.ms || 400);
+    function pos(ev) { if (ghost) { ghost.style.left = ev.clientX + "px"; ghost.style.top = ev.clientY + "px"; } }
+    function mv(ev) {
+      if (!on) { if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) > 10) end(); return; }
+      if (!o.sel) return;
+      if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) > 12) moved = true;
+      pos(ev); if (ev.cancelable) ev.preventDefault();
+      var hit = document.elementFromPoint(ev.clientX, ev.clientY), c = hit && hit.closest ? hit.closest(o.sel) : null;
+      if (c && (!o.host || !o.host.contains(c) || c === lift || c === el)) c = null;
+      if (tgt && tgt !== c) tgt.classList.remove("akwr-tgt"); tgt = c; if (tgt) tgt.classList.add("akwr-tgt");
+    }
+    function up(ev) {
+      var was = on, mvd = moved, to = tgt; end(); if (!was) return;
+      el._akwrHeld = true; setTimeout(function () { el._akwrHeld = false; }, 120);
+      if (mvd) { if (to && o.onDrop) o.onDrop(to, ev); } else if (o.onHold) o.onHold(ev);
+    }
+    function end() {
+      clearTimeout(tm); on = false; S.akRowDragging = false; lift.classList.remove("akwr-lift");
+      if (tgt) tgt.classList.remove("akwr-tgt"); tgt = null; if (ghost) ghost.remove(); ghost = null;
+      el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", end);
+    }
+    el.addEventListener("pointermove", mv); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", end);
+  });
+}
+
+/* ---------------------------------------------------------------- 123 copy and paste bars */
+function akwrCopy(sec, a, b) {
+  AKWS.clip = { bars: clone(sec.bars.slice(a, b + 1)), ts: sec.ts.slice(), from: sec.name + (a === b ? " bar " + (a + 1) : " bars " + (a + 1) + "-" + (b + 1)) };
+  toast("Copied " + (a === b ? "bar " + (a + 1) : (b - a + 1) + " bars") + ". Hold a bar number to paste.");
+}
+function akwrClipName() { var c = AKWS.clip; if (!c) return ""; var n = c.bars ? c.bars.length : 1; return n === 1 ? "1 bar" : n + " bars"; }
+/* how: "over" (from this bar on), "before", "after" */
+function akwrPaste(sec, bi, how) {
+  var c = AKWS.clip; if (!c) return;
+  var nT = akWsBarT(sec.ts), bars = clone(c.bars || [c.bar]).map(function (b) { b.c = (b.c || []).filter(function (e) { return e.t < nT; }); return b; });
+  if (how === "over") { var args = [bi, Math.min(bars.length, sec.bars.length - bi)].concat(bars); Array.prototype.splice.apply(sec.bars, args); }
+  else Array.prototype.splice.apply(sec.bars, [how === "after" ? bi + 1 : bi, 0].concat(bars));
+  if (akWsTsName(c.ts) !== akWsTsName(sec.ts)) toast("Pasted. These bars came from " + akWsTsName(c.ts) + "; chords past the end of a " + akWsTsName(sec.ts) + " bar were left out.");
+}
+
+/* ---------------------------------------------------------------- 125 send sections up, move them in the chord window */
+function akwrChordLine(line) {
+  var m = String(line || "").match(/\[[^\]]+\]/g);
+  return !!m && /^\s*(\[[^\]]+\]\s*)+$/.test(line) && m.every(function (x) { return isChordLike(x.slice(1, -1).trim()); });
+}
+function akwrPutSecs(lyrics, ws) {
+  var ls = lyrics.replace(/\s+$/, "").split("\n"); if (ls.length === 1 && !ls[0]) ls = [];
+  ws.secs.forEach(function (sec) {
+    var chs = []; sec.bars.forEach(function (b) { b.c.forEach(function (e) { if (e.ch) chs.push(e.ch); }); });
+    if (!chs.length) return;
+    var line = chs.map(function (c) { return "[" + c + "]"; }).join(" "), name = String(sec.name || "Section"), at = -1;
+    ls.forEach(function (l, i) { if (at < 0 && l.trim().toLowerCase() === "[" + name.toLowerCase() + "]" && akwrChordLine(ls[i + 1])) at = i + 1; });
+    if (at >= 0) ls[at] = line;
+    else { if (ls.length) ls.push(""); ls.push("[" + name + "]", line); }
+  });
+  return ls.join("\n") + "\n";
+}
+function akwrShowPane() { var p = document.querySelector(".ak18-pane"); if (p && p.scrollIntoView) p.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+/* the [Section] headings of the words: [{ name, a (heading line), b (line after the section) }] */
+function akwrBlocks(ls) {
+  var out = []; ls.forEach(function (l, i) { if (akW18IsHead(l)) out.push({ name: l.trim().slice(1, -1).trim(), a: i }); });
+  out.forEach(function (b, j) { b.b = j < out.length - 1 ? out[j + 1].a : ls.length; });
+  return out;
+}
+/* put the sections back together in a new order (blank line between them) */
+function akwrJoin(ls, blocks, order) {
+  function trim(a) { a = a.slice(); while (a.length && !a[a.length - 1].trim()) a.pop(); return a; }
+  var pre = trim(ls.slice(0, blocks.length ? blocks[0].a : ls.length)), out = pre.length ? [pre.join("\n")] : [];
+  order.forEach(function (j) { var b = blocks[j]; out.push(trim(ls.slice(b.a, b.b)).join("\n")); });
+  return out.join("\n\n");
+}
+function akwrSecStrip(box, ctx, lines, setText, redraw) {
+  box.textContent = "";
+  if (ctx.strip) { box.style.display = "none"; return; }
+  var ls = lines(), blocks = akwrBlocks(ls);
+  box.style.display = blocks.length ? "" : "none"; if (!blocks.length) return;
+  function put(order, label) { snap(label); setText(akwrJoin(ls, blocks, order)); redraw(); }
+  function move(j, k) { if (j === k) return; var order = blocks.map(function (b, i) { return i; }); order.splice(k, 0, order.splice(j, 1)[0]); put(order, "move a section"); toast("Moved “" + blocks[j].name + "”."); }
+  function dupl(j) { var order = blocks.map(function (b, i) { return i; }); order.splice(j + 1, 0, j); put(order, "copy a section"); }
+  function drop(j) { var order = blocks.map(function (b, i) { return i; }).filter(function (i) { return i !== j; }); put(order, "delete a section"); }
+  function rename(j) { askText("Section name", blocks[j].name, "Rename", function (v) { v = String(v || "").trim(); if (!v) return; snap("rename a section"); ls[blocks[j].a] = "[" + v + "]"; setText(ls.join("\n")); redraw(); }); }
+  function edit(j) { var ta = ctx.ta, p = 0; for (var i = 0; i < blocks[j].a + 1 && i < ls.length; i++) p += ls[i].length + 1; ta.classList.remove("ak18-hide"); try { ta.focus(); ta.setSelectionRange(p, p); } catch (e) {} if (ta.scrollIntoView) ta.scrollIntoView({ block: "center" }); }
+  function inWorkshop(j) {
+    var s = akW9Song(); if (!s) return; var st = akPw9SongState(s); akWsNorm(st);
+    var i = st.ws.secs.map(function (x) { return String(x.name).toLowerCase(); }).indexOf(blocks[j].name.toLowerCase());
+    if (i < 0) { toast("The workshop has no section called “" + blocks[j].name + "”."); return; }
+    st.ws.cur = i; st.ws.sel = null; settings().writeWheelOpen = true; save(); rerenderKeepScroll();
+    setTimeout(function () { var w = document.querySelector(".akws"); if (w && w.scrollIntoView) w.scrollIntoView({ block: "start", behavior: "smooth" }); }, 60);
+  }
+  box.appendChild(h("span", { class: "muted ak18-secl" }, "Sections"));
+  blocks.forEach(function (b, j) {
+    function opts() {
+      menu(chip, [{ head: b.name },
+        { label: "◀ Move earlier", disabled: j === 0, onClick: function () { move(j, j - 1); } },
+        { label: "Move later ▶", disabled: j === blocks.length - 1, onClick: function () { move(j, j + 1); } },
+        { label: "⧉ Duplicate", onClick: function () { dupl(j); } },
+        { label: "✎ Rename…", onClick: function () { rename(j); } },
+        { label: "✍ Edit its words and chords", onClick: function () { edit(j); } },
+        { label: "🎡 Open it in the chord workshop", onClick: function () { inWorkshop(j); } },
+        { sep: true },
+        { label: "Delete this section", danger: true, onClick: function () { confirmBox("Delete “" + b.name + "” and its lines?", "Delete", function () { drop(j); }); } }]);
+    }
+    var chip = h("button", { class: "chip ak18-sec", "data-j": String(j), "aria-label": b.name + ". Tap for options, hold and slide to move it", onClick: function () { if (!chip._akwrHeld) opts(); } }, h("i", { "aria-hidden": "true" }, "⠿ "), b.name);
+    akwrHold(chip, { host: box, sel: ".ak18-sec", ghost: function () { return b.name; }, onDrop: function (to) { move(j, +to.getAttribute("data-j")); }, onHold: opts });
+    box.appendChild(chip);
+  });
+}
+
+/* ---------------------------------------------------------------- 127 overlapping photos */
+function akwrNorm(l) { return String(l || "").toLowerCase().replace(/[^a-z0-9#]+/g, ""); }
+function akwrSame(a, b) {
+  a = akwrNorm(a); b = akwrNorm(b); if (!a || !b) return false; if (a === b) return true;
+  var n = Math.max(a.length, b.length); if (Math.abs(a.length - b.length) > n * 0.25) return false;
+  var p = [], i, j; for (j = 0; j <= b.length; j++) p[j] = j;
+  for (i = 1; i <= a.length; i++) { var d = p[0], q; p[0] = i; for (j = 1; j <= b.length; j++) { q = p[j]; p[j] = Math.min(p[j] + 1, p[j - 1] + 1, d + (a[i - 1] === b[j - 1] ? 0 : 1)); d = q; } }
+  return p[b.length] <= Math.floor(n * 0.2);
+}
+/* prev: the text so far, next: the next page. { hit, x (next without the repeated lines) } */
+function akwrOverlap(prev, next) {
+  var A = String(prev).split("\n").filter(function (l) { return l.trim(); }), N = String(next).split("\n"), B = [], idx = [];
+  N.forEach(function (l, i) { if (l.trim()) { B.push(l); idx.push(i); } });
+  for (var k = Math.min(4, A.length, B.length); k >= 1; k--) {
+    var ok = true;
+    for (var i = 0; i < k && ok; i++) ok = akwrSame(A[A.length - k + i], B[i]);
+    if (!ok) continue;
+    /* one short line (or a chord line) alone is too weak to be sure */
+    if (k === 1 && (akwrNorm(B[0]).length < 8 || isChordLineText(B[0]))) continue;
+    return { hit: true, x: N.slice(idx[k - 1] + 1).join("\n") };
+  }
+  return { hit: false, x: next };
+}
+
+/* ---------------------------------------------------------------- 126 the notepad on every screen */
+DEFAULTS.akPad = { bubble: true, play: true };
+function akwrPad() { var s = settings(); if (!s.akPad) s.akPad = { bubble: true, play: true }; return s.akPad; }
+(function () {
+  var ns = akNotepadSong;
+  akNotepadSong = function () { if (S.view === "write" && typeof akW9Song === "function") return akW9Song() || null; return ns.apply(this, arguments); };
+  var np = akNotepad;
+  akNotepad = function () {
+    var r = np.apply(this, arguments), f = AK_FLOATS.notepad;
+    if (f && f.el.isConnected && !f.def._akwr) {
+      var b0 = f.def.body; f.def._akwr = 1;
+      f.def.body = function (tab, el) {
+        b0(tab, el);
+        if (tab !== "all") return;
+        el.appendChild(h("button", { class: "sm akwr-padsong", onClick: function () {
+          var txt = String(settings().notepad || "").trim(); if (!txt) { toast("Write something first."); return; }
+          snap("new song"); var s = newSong({ title: txt.split("\n")[0].slice(0, 60), shelf: "wip", lyrics: txt }); s.autoTitle = true; s.updated = akW9Now(); lib().songs.push(s); akW9().cur = s.id; save();
+          toast("Started a song in Works in progress.", { label: "Write", fn: function () { go("write"); } });
+        } }, "✍ Start a song with this"));
+      };
+      f.key = null; akFloatFill("notepad");
+    }
+    return r;
+  };
+})();
+function akwrBubble() {
+  var P = akwrPad(), b = document.querySelector(".akwr-padb");
+  var show = P.bubble !== false && (S.view !== "play" || P.play !== false) && !S.arrange;
+  if (!show) { if (b) b.remove(); return; }
+  if (!b) {
+    b = h("button", { class: "akwr-padb", "aria-label": "Notepad (drag to move, hold for options)", title: "Notepad" }, "📝");
+    var d = null, held = 0;
+    b.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    b.addEventListener("pointerdown", function (e) {
+      if (e.button) return; var r = b.getBoundingClientRect(); d = { x0: e.clientX, y0: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, mv: false };
+      try { b.setPointerCapture(e.pointerId); } catch (x) {}
+      held = setTimeout(function () { if (d && !d.mv) { d = null; akwrBubbleMenu(b); } }, 600);
+    });
+    b.addEventListener("pointermove", function (e) {
+      if (!d) return; if (!d.mv && Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 8) return;
+      d.mv = true; clearTimeout(held);
+      P.x = Math.max(0, Math.min(window.innerWidth - 48, e.clientX - d.dx)); P.y = Math.max(0, Math.min(window.innerHeight - 48, e.clientY - d.dy)); akwrBubblePlace(b);
+    });
+    b.addEventListener("pointerup", function () { clearTimeout(held); var was = d; d = null; if (!was) return; if (was.mv) save(); else akNotepad(); });
+    b.addEventListener("pointercancel", function () { clearTimeout(held); d = null; });
+    document.body.appendChild(b);
+  }
+  b.classList.toggle("onplay", S.view === "play");
+  b.classList.toggle("open", typeof akFloatOpen === "function" && akFloatOpen("notepad"));
+  akwrBubblePlace(b);
+}
+function akwrBubblePlace(b) {
+  var P = akwrPad(), W = window.innerWidth, H = window.innerHeight;
+  var x = P.x != null ? P.x : W - 58, y = P.y != null ? P.y : Math.round(H * 0.55);
+  b.style.left = Math.max(0, Math.min(W - 48, x)) + "px"; b.style.top = Math.max(0, Math.min(H - 48, y)) + "px";
+}
+function akwrBubbleMenu(b) {
+  var P = akwrPad();
+  menu(b, [{ head: "📝 Notepad bubble" },
+    { label: "Open the notepad", onClick: function () { akNotepad(); } },
+    { label: "Put it back in the corner", onClick: function () { delete P.x; delete P.y; save(); akwrBubble(); } },
+    { label: S.view === "play" ? "Hide it on the playing screen" : "Hide it on the playing screen too", onClick: function () { P.play = false; save(); akwrBubble(); toast("Hidden on the playing screen. Settings › Songs and shows › Writing extras brings it back."); } },
+    { label: "Hide the bubble everywhere", onClick: function () { P.bubble = false; save(); akwrBubble(); toast("Bubble hidden. Settings › Songs and shows › Writing extras brings it back."); } }]);
+}
+(function () {
+  var ar = typeof akAfterRender2 === "function" ? akAfterRender2 : null;
+  akAfterRender2 = function () { if (ar) ar.apply(this, arguments); try { akwrBubble(); } catch (e) { if (window.console) console.warn("akwr bubble", e); } };
+  window.addEventListener("resize", function () { var b = document.querySelector(".akwr-padb"); if (b) akwrBubblePlace(b); });
+  var fc = akFloatClose;
+  akFloatClose = function (id) { var r = fc.apply(this, arguments); if (id === "notepad") try { akwrBubble(); } catch (e) {} return r; };
+})();
+
+/* ---------------------------------------------------------------- Settings */
+(function () {
+  var prev = typeof akSettingsExtra27 === "function" ? akSettingsExtra27 : null;
+  akSettingsExtra27 = function (c) {
+    if (prev) prev(c);
+    c.again("songs-and-shows");
+    c.section("Writing extras", "Notepad bubble, chord workshop tips");
+    var P = akwrPad();
+    c.check("📝 Notepad bubble on every screen", function () { return P.bubble !== false; }, function (v) { P.bubble = v; setTimeout(akwrBubble, 0); });
+    c.check("Also on the playing screen", function () { return P.play !== false; }, function (v) { P.play = v; });
+    c.check("Chord workshop: show what each row and the wheel mean", function () { return akwrTipsOn(); }, function (v) { settings().akWsTips = v; });
+  };
+})();
+
+akCss("akwr-a", [
+  ".akwr-tip{margin:2px 0 6px;font-size:.85rem;line-height:1.35}.akwr-tip .linkish{font-size:.8rem;margin-left:4px}",
+  ".akwr-q{flex:0 0 auto;margin-left:auto;min-height:32px;min-width:32px;padding:0;border-radius:50%;align-self:center;font-weight:800}",
+  ".akwr-bn{display:inline-flex;align-items:center;gap:2px;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:pan-x pan-y;cursor:grab}.akwr-bn i{font-style:normal;opacity:.6}",
+  ".akws-bar{padding-top:24px}.akws-bar>.akwr-bn{height:22px;min-height:0!important;max-height:22px;line-height:22px;padding:0 8px 0 4px;font-size:.78rem}",
+  ".akws-cell{-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}",
+  ".akws-bar.akwr-lift{opacity:.55;outline:2px dashed var(--accent);outline-offset:2px}",
+  ".akws-bar.akwr-tgt{box-shadow:inset 4px 0 0 var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}",
+  ".ak18-secs{display:flex;gap:6px;align-items:center;overflow-x:auto;flex-wrap:nowrap;padding:2px 0}.ak18-secl{font-size:12px;white-space:nowrap}",
+  ".ak18-sec{white-space:nowrap;font-weight:700;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.ak18-sec i{font-style:normal;opacity:.55}",
+  ".ak18-sec.akwr-lift{opacity:.5}.ak18-sec.akwr-tgt{outline:2px dashed var(--accent);outline-offset:2px}",
+  ".akwr-padb{position:fixed;z-index:85;width:46px;height:46px;min-height:0;padding:0;border-radius:50%;font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;background:var(--panel,var(--bg));border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.35);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}",
+  ".akwr-padb.onplay{opacity:.55;width:40px;height:40px;font-size:19px}.akwr-padb.open{outline:2px solid var(--accent)}",
+  ".akwr-padsong{margin-top:6px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
