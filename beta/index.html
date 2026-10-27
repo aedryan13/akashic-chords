@@ -2808,7 +2808,7 @@ function viewSong() {
     var body = h("div", null,
       h("div", { class: "row" },
         h("button", { "aria-label": s.fav ? "Remove from favorites" : "Add to favorites", "aria-pressed": s.fav ? "true" : "false", onClick: function () { var on = toggleFav(s); this.textContent = on ? "★ Unfavorite" : "☆ Favorite"; this.setAttribute("aria-pressed", on ? "true" : "false"); } }, s.fav ? "★ Unfavorite" : "☆ Favorite"),
-        undoB, redoB,
+        /* 16.1: Undo and Redo moved to the top bar (akbug_a.js) */
         h("button", { class: "icon", "aria-label": "More", onClick: function () { menu(this, [
           { label: "Share this song…", onClick: function () { shareDialog([s]); } },
           typeof akRecsSongItem === "function" ? akRecsSongItem(s.id) : null,
@@ -30607,12 +30607,14 @@ akProgWheel = function (o) {
   o = o || {};
   var st = o.state || akPwState();
   if (o.song && !o.state) { var k0 = akSongKey(o.song); if (k0 && !st.ws) st.key = NAMES.sharp[k0.pc] + (k0.minor ? "m" : ""); }
-  var ws = akWsNorm(st), box = h("div", { class: "akpw akws" + (o.full ? " full" : "") }), pend = null, spinA = null;
+  var ws = akWsNorm(st), box = h("div", { class: "akpw akws" + (o.full ? " full" : "") }), pend = null, spinA = null, spun = null, armed = false;
+  /* 16.1: spun = the chord the ring was spun to (for the picked cell it was spun at), armed = a chord picked first waits for a beat */
+  function selKey() { return JSON.stringify(ws.sel || null); }
   function key() { return akParseKey(st.key) || { pc: 0, minor: false }; }
   function sec() { return ws.secs[ws.cur]; }
   function keep() { AKWS.undo.push(JSON.stringify(ws)); if (AKWS.undo.length > 60) AKWS.undo.shift(); }
   function changed(noReplay) { akWsFlat(st); save(); o.onChange && o.onChange(); draw(); if (!noReplay) akWsReplay(st); }
-  function undo() { var j = AKWS.undo.pop(); if (!j) { toast("Nothing to undo."); return; } st.ws = ws = JSON.parse(j); akWsNorm(st); changed(); }
+  function undo() { var j = AKWS.undo.pop(); if (!j) { if (typeof akShUndo === "function" && akShUndo()) return; toast("Nothing to undo."); return; } st.ws = ws = JSON.parse(j); akWsNorm(st); changed(); }
   /* the chord the wheel starts from: the picked one in the chart, else the one sounding there, else where it was spun to */
   function fromChord() {
     var s = ws.sel; if (s) { var e = akWsAt(ws, s.s, s.b, s.t); if (e && e.ch) return akPwParse(e.ch); }
@@ -30632,14 +30634,15 @@ akProgWheel = function (o) {
     if (ws.sel && how !== "hear") {
       keep(); var bar = ws.secs[ws.sel.s].bars[ws.sel.b]; akWsPut(bar, ws.sel.t, raw, ws.shape || "");
       akWsHear(raw, ws.shape); ws.from = cc; pend = null;
-      if (how !== "stay") nextBeat();
+      if (how !== "stay" && ws.adv) nextBeat(); else if (cc) spun = { c: cc, k: selKey() };
       ws.lastSel = { s: ws.sel.s, b: ws.sel.b };
       changed(); return;
     }
-    pend = raw; if (cc) ws.from = cc; akWsHear(raw, ws.shape); save(); draw();
+    pend = raw; armed = ws.chordFirst !== false && how !== "midi"; spun = null; if (cc) ws.from = cc; akWsHear(raw, ws.shape); save(); draw();
   }
   function cellTap(si, bi, t) {
     var bar = ws.secs[si].bars[bi], i = akWsFind(bar, t);
+    if (armed && pend && !ws.paint) { keep(); akWsPut(bar, t, pend, ws.shape || ""); akWsHear(pend, ws.shape); var pc0 = akPwParse(pend); if (pc0) ws.from = pc0; armed = false; ws.sel = null; changed(); return; }
     if (ws.paint && pend && i < 0) { keep(); akWsPut(bar, t, pend, ws.shape || ""); ws.sel = { s: si, b: bi, t: t }; akWsHear(pend, ws.shape); changed(); return; }
     var same = ws.sel && ws.sel.s === si && ws.sel.b === bi && ws.sel.t === t;
     ws.sel = same && i < 0 ? null : { s: si, b: bi, t: t };
@@ -30687,7 +30690,7 @@ akProgWheel = function (o) {
     row.appendChild(h("button", { class: "akws-tg" + (ws.click ? " on" : ""), "aria-pressed": ws.click ? "true" : "false", onClick: function () { ws.click = !ws.click; save(); draw(); akWsReplay(st); } }, "♪ Click"));
     row.appendChild(h("label", { class: "akws-lab" }, "Key", keySel));
     row.appendChild(h("span", { class: "grow" }));
-    row.appendChild(h("button", { "aria-label": "Undo", title: "Undo", disabled: !AKWS.undo.length, onClick: undo }, "↶"));
+    row.appendChild(h("button", { "aria-label": "Undo", title: "Undo", disabled: !AKWS.undo.length && !(typeof akShCan === "function" && akShCan()), onClick: undo }, "↶"));
     if (!o.full) row.appendChild(h("button", { "aria-label": "Full screen", title: "Full screen", onClick: function () { akWsFull(o); } }, "⛶"));
     row.appendChild(h("button", { "aria-label": "More workshop options", onClick: function () { optsMenu(this); } }, "⋯"));
     return row;
@@ -30698,6 +30701,8 @@ akProgWheel = function (o) {
       { label: (ws.lane ? "✓ " : "") + "Show the strum row under each bar", onClick: function () { ws.lane = !ws.lane; save(); draw(); } },
       { label: (ws.sev ? "✓ " : "") + "Show 7th chords in the scales", onClick: function () { ws.sev = !ws.sev; save(); draw(); } },
       { label: "Spin the wheel to change: " + (ws.spin === "key" ? "the key ✓" : "the chord ✓"), onClick: function () { ws.spin = ws.spin === "key" ? "chord" : "key"; save(); draw(); } },
+      { label: (ws.adv ? "✓ " : "") + "After a chord goes in, move on to the next beat", onClick: function () { ws.adv = !ws.adv; save(); draw(); toast(ws.adv ? "Each chord moves you on to the next beat." : "You stay on the beat you picked."); } },
+      { label: (ws.chordFirst !== false ? "✓ " : "") + "Pick a chord first, then tap the beat it goes on", onClick: function () { ws.chordFirst = ws.chordFirst === false; armed = false; save(); draw(); } },
       { sep: true },
       { label: "🎹 MIDI keyboard: play chords into the chart…", onClick: function () { midiDialog(); } },
       { label: "💾 Save as a MIDI file (.mid)", onClick: function () { akWsMidiSave(st, o.song ? o.song.title : "chords in " + st.key); } },
@@ -30902,7 +30907,7 @@ akProgWheel = function (o) {
   /* ---- what's picked: a chord (change, nudge, delete) or an empty cell */
   function selBar(k) {
     var bar = h("div", { class: "akws-sel" }), s = ws.sel;
-    if (!s) { bar.appendChild(h("span", { class: "muted" }, pend ? "Picked " + pend + ". Tap a beat in the chart to put it there" + (ws.paint ? " (✎ Paint is on: every tap adds it)." : ", then tap the chords you want after it.") : "Tap a beat in the chart, then a chord below or on the wheel: it goes there and the next beat is picked. Hold a chord to slide it.")); return bar; }
+    if (!s) { bar.appendChild(h("span", { class: "muted" }, pend && (armed || ws.paint) ? "Picked " + pend + ". Tap a beat in the chart to put it there" + (ws.paint ? " (✎ Paint is on: every tap adds it)." : ".") : "Tap a beat in the chart, then a chord below or on the wheel: it goes there" + (ws.adv ? " and the next beat is picked." : " (you stay on that beat).") + (ws.chordFirst !== false ? " Or pick a chord first, then tap its beat." : "") + " Hold a chord to slide it.")); return bar; }
     var sc = ws.secs[s.s], e = selEvent(), snd = akWsAt(ws, s.s, s.b, s.t);
     var where = "Bar " + (s.b + 1) + ", " + akWsWhere(sc, s.t);
     if (e) {
@@ -30937,6 +30942,8 @@ akProgWheel = function (o) {
   function palette(k) {
     var s = ws.sel, prevs = s ? akWsChordsBefore(ws, s.s, s.b, s.t).map(akPwParse).filter(Boolean) : [], f = fromChord();
     var hist = prevs.length ? prevs : f ? [f] : [], prev = hist.length ? hist[hist.length - 1] : null;
+    /* spun to another chord: the ring stays there and the suggestions follow it (it used to snap back to the chord before the picked cell) */
+    if (spun && spun.k === selKey()) { f = spun.c; hist = [spun.c]; prev = spun.c; }
     var tabs = [["next", "★ Next"], ["key", "In the key"], ["borrow", "Borrowed"], ["sec", "Leading (V/x)"], ["kinds", "Other kinds"], ["shapes", "Shapes"], ["type", "Type one"]];
     var wrap = h("div", { class: "akws-pal" }), body = h("div", { class: "akws-pb" });
     wrap.appendChild(h("div", { class: "akws-tabs", role: "tablist" }, tabs.map(function (t) { return h("button", { role: "tab", class: ws.pal === t[0] ? "on" : "", "aria-selected": ws.pal === t[0] ? "true" : "false", onClick: function () { ws.pal = t[0]; save(); draw(); } }, t[1]); })));
@@ -30994,6 +31001,8 @@ akProgWheel = function (o) {
   function wheel(k) {
     var f = fromChord(), s = ws.sel, prevs = s ? akWsChordsBefore(ws, s.s, s.b, s.t).map(akPwParse).filter(Boolean) : [];
     var hist = prevs.length ? prevs : f ? [f] : [], prev = hist.length ? hist[hist.length - 1] : null;
+    /* spun to another chord: the ring stays there and the suggestions follow it (it used to snap back to the chord before the picked cell) */
+    if (spun && spun.k === selKey()) { f = spun.c; hist = [spun.c]; prev = spun.c; }
     var FIFTHS = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5], spinBy = ws.spin === "key" ? "key" : "chord";
     var topPc = spinBy === "key" ? k.pc : (prev || f || { pc: k.pc }).pc, topIdx = FIFTHS.indexOf(topPc), rot = -topIdx * 30;
     var W = 380, cx = W / 2, cy = W / 2, R2 = 186, R1 = 152, R = 146, r0 = 58;
@@ -31057,7 +31066,7 @@ akProgWheel = function (o) {
       if (spinBy === "key") { st.key = NAMES.sharp[pc] + (k.minor ? "m" : ""); akWsHear(akPwRaw({ pc: pc, q: k.minor ? "m" : "" }, akParseKey(st.key))); changed(true); return; }
       /* start from that note: the chord on it in the key (else major); the picked cell keeps its place */
       var dia = (k.minor ? AKPW_MIN : AKPW_MAJ).filter(function (d) { return (k.pc + d[0]) % 12 === pc; })[0], c = { pc: pc, q: dia ? dia[1] : "" };
-      ws.from = c; pend = akPwRaw(c, k);
+      ws.from = c; pend = akPwRaw(c, k); spun = { c: c, k: selKey() }; armed = ws.chordFirst !== false && !ws.sel;
       if (ws.sel && !selEvent()) ws.sel.from = 1;
       akWsHear(pend); save(); draw();
     }
@@ -33327,7 +33336,7 @@ var AK16F = { t: 0, busy: false, pv: null, pvStream: null, msg: "", big: false }
     if (q.get("rr") === "video" || q.get("rr") === "audio") { localStorage.setItem("akrr:link", location.href.replace(/&go=1/g, "")); return; }
     if (q.get("app") || localStorage.getItem("akrr:auto") !== "1") return;
     var l = localStorage.getItem("akrr:link");
-    if (l && l.split(/[?#]/)[0] === location.href.split(/[?#]/)[0]) location.replace(l + "&go=1");
+    if (l && l.split(/[?#]/)[0] === location.href.split(/[?#]/)[0]) location.replace(l); /* 16.1: no "&go=1": opening the app never turns the camera on by itself */
   } catch (e) {}
 })();
 function akRr141Link(role) {
@@ -40877,6 +40886,285 @@ akCss("akch-a", [
   ".akch-note{white-space:pre-wrap;margin:4px 0}.akch-book.done{opacity:.6}",
   ".akch-origb[aria-pressed=true]{background:var(--accent);color:var(--on,#fff)}"
 ].join("\n"));
+
+/* akbug_a.js (version 16.1): bug fixes from the 10-26 list.
+   - Song history (AKSH): every change to the open song on the song editor and the Write tab (words, chords, the chord bars,
+     the chord workshop, colors, info...) is kept, whatever made it; ↶ / ↷ in the top bar step through it. It is taken from save(),
+     so new editors are covered without hooking each one. The workshop's own ↶ falls back to it when its list is empty.
+   - Song editor opened from the playing screen (the Edit buttons there): ✓ Save saves and stays; ← / Back returns to the
+     playing screen on the same song and list (S.akEdFromPlay, from the last drawn playing screen AKBUG.lastPlay).
+   - Recorder phone: the tablet's wish to record is a stored state, so a phone that opened (or got ready) later obeyed an old
+     "recording" and started by itself. Now the stored state, or a start that came before the phone was ready, asks on the phone
+     first (once per tablet session); a start that comes while the phone is ready and waiting is followed as before. The
+     page has its own bar that stays on screen (also over Black screen): ■ Stop, ● Record here (the phone records by itself),
+     Follow the tablet again, and turning the camera / microphone off. A stop on the phone holds until the tablet stops too.
+   - Write tab: the words box and the chord pane start small (24% of the screen) and the same size; side by side the chord pane
+     follows the words box when you drag its corner. Pinch (or Ctrl + wheel) changes the text size of each one. */
+AK_VERSION = "16.1";
+AK_WHATS_NEW = [
+  "Undo and Redo (↶ ↷) are now at the top of the song editor and the Write tab. They bring back any change to the song: typing, chords, the chord bars and the chord workshop.",
+  "Chord wheel: spinning the outer ring now stays on the chord you spun to. Picking a chord no longer jumps to the next beat (turn it back on in the workshop's ⋯ menu). Pick the beat then the chord, or the chord then the beat.",
+  "Editing a song from the playing screen: ✓ Save keeps you in the editor, and ← takes you back to the song you were playing.",
+  "Recorder phone: opening it never starts recording by itself any more. If the tablet was already recording, the phone asks first. It has its own Stop and Record buttons that stay on screen.",
+  "Write tab: the words box and the chord window start smaller and the same size. Pinch either one to make its text bigger or smaller."
+].concat(AK_WHATS_NEW);
+
+var AKBUG = { lastPlay: null };
+
+/* ---------------------------------------------------------------- song history */
+var AKSH = { id: "", hist: [], hi: 0, t: 0, busy: false };
+var AKSH_SKIP = { plays: 1, lastPlayed: 1, history: 1, updated: 1 };
+function akShSong() {
+  if (S.view === "song") return findSong(S.songId) || null;
+  if (S.view === "write") return typeof akW9Song === "function" ? akW9Song() : null;
+  return null;
+}
+function akShJ(s) { var o = {}; Object.keys(s).forEach(function (k) { if (!AKSH_SKIP[k]) o[k] = s[k]; }); return JSON.stringify(o); }
+function akShBase() { var s = akShSong(); if (s && AKSH.id !== s.id) { clearTimeout(AKSH.t); AKSH.id = s.id; AKSH.hist = [akShJ(s)]; AKSH.hi = 0; } }
+function akShTake() {
+  clearTimeout(AKSH.t); if (AKSH.busy) return;
+  var s = akShSong(); if (!s) return;
+  if (AKSH.id !== s.id) { akShBase(); return; }
+  var j = akShJ(s); if (j === AKSH.hist[AKSH.hi]) return;
+  AKSH.hist = AKSH.hist.slice(0, AKSH.hi + 1); AKSH.hist.push(j);
+  if (AKSH.hist.length > 150) AKSH.hist.shift();
+  AKSH.hi = AKSH.hist.length - 1; akShPaint();
+}
+function akShCan() { akShTake(); return AKSH.hi > 0; }
+function akShApply() {
+  var s = findSong(AKSH.id); if (!s) return false;
+  AKSH.busy = true;
+  try {
+    var o = JSON.parse(AKSH.hist[AKSH.hi]);
+    Object.keys(s).forEach(function (k) { if (!AKSH_SKIP[k]) delete s[k]; });
+    Object.assign(s, o); saveNow();
+    if (typeof rerenderKeepScroll === "function") rerenderKeepScroll(); else render();
+    AKSH.hist[AKSH.hi] = akShJ(s); /* whatever drawing the screen tidied counts as this step */
+  } finally { AKSH.busy = false; }
+  clearTimeout(AKSH.t); akShPaint(); return true;
+}
+function akShUndo() { akShTake(); if (AKSH.hi <= 0 || AKSH.id !== (akShSong() || {}).id) return false; AKSH.hi--; return akShApply(); }
+function akShRedo() { akShTake(); if (AKSH.hi >= AKSH.hist.length - 1 || AKSH.id !== (akShSong() || {}).id) return false; AKSH.hi++; return akShApply(); }
+function akShPaint() {
+  var u = document.querySelector(".aksh-u"), r = document.querySelector(".aksh-r");
+  if (u) u.style.opacity = AKSH.hi > 0 || (S.view === "write" && undoStack.length) ? "" : "0.45";
+  if (r) r.style.opacity = AKSH.hi < AKSH.hist.length - 1 || (S.view === "write" && akRedoStack.length) ? "" : "0.45";
+}
+(function () {
+  var sv = save;
+  save = function () {
+    var out = sv.apply(this, arguments);
+    if (!AKSH.busy && (S.view === "song" || S.view === "write")) { clearTimeout(AKSH.t); AKSH.t = setTimeout(akShTake, 600); }
+    return out;
+  };
+})();
+function akShButtons() {
+  var u = h("button", { class: "icon aksh-u", "aria-label": "Undo", title: "Undo", onClick: function () {
+    var ae = document.activeElement; if (ae && ae.blur && /TEXTAREA|INPUT/.test(ae.tagName)) ae.blur();
+    if (akShUndo()) { toast("Undone."); return; }
+    if (S.view === "write" && undoStack.length) { akUndoMenu(this); return; }
+    toast("Nothing to undo yet.");
+  } }, "↶");
+  var r = h("button", { class: "icon aksh-r", "aria-label": "Redo", title: "Redo", onClick: function () {
+    if (akShRedo()) { toast("Redone."); return; }
+    if (S.view === "write" && akRedoStack.length) { akRedo(); return; }
+    toast("Nothing to redo.");
+  } }, "↷");
+  return [u, r];
+}
+
+/* ---------------------------------------------------------------- song editor from the playing screen */
+(function () {
+  var rd = render;
+  render = function () { if (S.view === "play" && S.play && S.play.list) AKBUG.lastPlay = { list: S.play.list, idx: S.play.idx, back: S.back }; return rd.apply(this, arguments); };
+  var g0 = go;
+  go = function (view, params) {
+    if (view === "song" && S.view === "play" && AKBUG.lastPlay) S.akEdFromPlay = Object.assign({ songId: (params && params.songId) || S.songId }, AKBUG.lastPlay);
+    else if (view !== "song") S.akEdFromPlay = null;
+    return g0.apply(this, arguments);
+  };
+})();
+function akEdFromPlay() { var f = S.akEdFromPlay; return S.view === "song" && f && f.songId === S.songId && f.list && f.list.length ? f : null; }
+function akEdBackToPlay() {
+  var f = akEdFromPlay(); if (!f) return false;
+  var ae = document.activeElement; if (ae && ae.blur) ae.blur();
+  saveNow(); S.akEdFromPlay = null; S.edSong = null;
+  startPlay(f.list, Math.max(0, Math.min(f.idx || 0, f.list.length - 1)), f.back);
+  return true;
+}
+
+/* ---------------------------------------------------------------- top bars: song editor and Write */
+(function () {
+  var sh = shell;
+  shell = function (title, content, o) {
+    var fromPlay = akEdFromPlay();
+    if (fromPlay && o && o.back) o.back = function () { akEdBackToPlay(); };
+    var w = sh.apply(this, arguments);
+    try {
+      if (S.view === "song" || S.view === "write") {
+        akShBase();
+        var tb = w.querySelector(".topbar");
+        if (tb) {
+          var old = tb.querySelector(".ak17-undo"), save0 = tb.querySelector(".ak17-save"), bs = akShButtons();
+          if (fromPlay && save0) {
+            var sb = h("button", { class: "ak17-save", "aria-label": "Save (stay here)", title: "Save. ← goes back to the playing screen", onClick: function () {
+              var ae = document.activeElement; if (ae && ae.blur) ae.blur();
+              akShTake(); saveNow(); toast("Saved. ← takes you back to the song you were playing.");
+            } }, "✓", h("span", { class: "ak17-sw" }, " Save"));
+            save0.parentNode.replaceChild(sb, save0); save0 = sb;
+          }
+          var at = old || (save0 ? save0.nextSibling : tb.querySelector(".akbhead"));
+          bs.forEach(function (b) { if (at && at.parentNode === tb) tb.insertBefore(b, at); else tb.appendChild(b); });
+          if (old) old.remove();
+        }
+        setTimeout(akShPaint, 0);
+      }
+    } catch (e) { if (window.console) console.warn("akbug top bar", e); }
+    return w;
+  };
+})();
+
+/* ---------------------------------------------------------------- the recorder phone */
+(function () {
+  if (typeof akRpApply !== "function") return;
+  /* the tablet's wish is a stored state (maybe hours old) that a phone reads when it opens: that never starts it by itself.
+     A wish sent in the last minute that reaches a phone already ready and waiting is the tablet starting it now, and is followed. */
+  var cm = akRpCmd;
+  akRpCmd = function (cmd) {
+    if (cmd && cmd.seq) cmd._live = !!AKRP.ready && Math.abs(Date.now() - (cmd.at || 0)) < 60000;
+    return cm.apply(this, arguments);
+  };
+  var ap = akRpApply;
+  akRpApply = function () {
+    var w = AKRP.want;
+    if (!w || !AKRP.ready) return ap.apply(this, arguments);
+    if (AKRP.mine) { akRpDraw(); return; } /* recording by itself: the tablet doesn't start or stop it */
+    if (!w.rec) { AKRP.ask = null; AKRP.hold = false; return ap.apply(this, arguments); }
+    if (!AKRP.cur) {
+      if (AKRP.hold) { akRpDraw(); return; }
+      if (AKRP.okSess !== w.sess && w._live) AKRP.okSess = w.sess;
+      if (AKRP.okSess !== w.sess) { if (AKRP.ask !== w) { AKRP.ask = w; try { navigator.vibrate && navigator.vibrate(200); } catch (e) {} } akRpDraw(); return; }
+    }
+    return ap.apply(this, arguments);
+  };
+  var dr = akRpDraw;
+  akRpDraw = function () {
+    var out = dr.apply(this, arguments);
+    try { akBugRpDraw(); } catch (e) { if (window.console) console.warn("akbug recorder", e); }
+    return out;
+  };
+})();
+function akBugRpAgo(at) { var m = Math.round((Date.now() - (at || Date.now())) / 60000); return m < 1 ? "just now" : m < 90 ? m + " min ago" : Math.round(m / 60) + " h ago"; }
+function akBugRpMine() {
+  function go() {
+    if (!AKRP.ready || AKRP.cur) return;
+    var d = new Date(), p = function (n) { return ("0" + n).slice(-2); };
+    AKRP.mine = true; AKRP.hold = false; AKRP.ask = null;
+    akRpStartFile({ rec: true, file: -2, title: "Recording " + p(d.getHours()) + "." + p(d.getMinutes()), mode: "split", show: "" }, false);
+    akRpDraw(); akRpReport(true);
+  }
+  if (AKRP.ready) go(); else { var pr = akRpReady(); if (pr && pr.then) pr.then(go); }
+}
+function akBugRpStop() {
+  var mine = AKRP.mine; akRpStop(); AKRP.mine = false;
+  if (!mine && AKRP.want && AKRP.want.rec) { AKRP.hold = true; AKRP.okSess = ""; }
+  toast(mine || !AKRP.hold ? "Stopped. The file is on this phone." : "Stopped. This phone won't follow the tablet until you tap Follow the tablet again.");
+  akRpDraw(); akRpReport(true);
+}
+function akBugRpOff() {
+  if (AKRP.cur) return;
+  if (AKRP.stream) AKRP.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+  AKRP.stream = null; AKRP.ready = false; AKRP.an = null; AKRP.got = "";
+  try { if (AKRP.wake) AKRP.wake.release(); } catch (e) {}
+  akRpDraw(); akRpReport(true);
+}
+function akBugRpDraw() {
+  var el = AKRP.el; if (!el) return;
+  var inn = el.querySelector(".akrp-in"), w = AKRP.ask, cam = AKRP.role === "video" ? "camera" : "microphone";
+  if (inn && w && !AKRP.cur && w === AKRP.want && w.rec) {
+    var h1 = inn.querySelector("h1");
+    var card = h("div", { class: "card akbug-ask" },
+      h("b", null, "The tablet wants this phone to record"),
+      h("p", null, "“" + (w.mode === "one" ? (w.show || "Whole show") : (w.title || "Song")) + "”, sent " + akBugRpAgo(w.at) + ". It starts only if you say so."),
+      h("div", { class: "row" },
+        h("button", { class: "primary", onClick: function () { AKRP.okSess = w.sess; AKRP.ask = null; AKRP.hold = false; akRpApply(); } }, "● Start recording"),
+        h("button", { onClick: function () { AKRP.ask = null; AKRP.hold = true; akRpDraw(); } }, "Not now")));
+    if (h1 && h1.nextSibling) inn.insertBefore(card, h1.nextSibling); else inn.insertBefore(card, inn.firstChild);
+  }
+  var r = AKRP.cur, bar = h("div", { class: "akbug-rpbar" + (r ? " rec" : "") });
+  if (r) {
+    bar.appendChild(h("span", { class: "akbug-rpst" }, "● REC ", h("span", { class: "akrp-time" })));
+    bar.appendChild(h("button", { class: "danger akbug-stop", onClick: akBugRpStop }, "■ Stop recording"));
+  } else {
+    bar.appendChild(h("span", { class: "akbug-rpst" }, AKRP.hold ? "Not following the tablet" : AKRP.ready ? "Not recording" : "The " + cam + " is off"));
+    bar.appendChild(h("button", { class: "akbug-rec", onClick: akBugRpMine }, "● Record here"));
+    if (AKRP.hold) bar.appendChild(h("button", { onClick: function () { AKRP.hold = false; AKRP.okSess = AKRP.want ? AKRP.want.sess : ""; akRpApply(); } }, "Follow the tablet again"));
+    if (AKRP.ready) bar.appendChild(h("button", { onClick: akBugRpOff }, AKRP.role === "video" ? "Camera off" : "Mic off"));
+  }
+  el.appendChild(bar);
+  akRpPaintLive();
+}
+akCss("akbug-a", [
+  ".akrp-in{padding-bottom:110px!important}",
+  ".akbug-rpbar{position:fixed;left:0;right:0;bottom:0;z-index:2147483550;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:#111d;border-top:1px solid #444;color:#eee;backdrop-filter:blur(6px)}",
+  ".akbug-rpbar.rec{border-top-color:#e5484d}.akbug-rpst{flex:1 1 140px;font-weight:700}.akbug-rpbar.rec .akbug-rpst{color:#ff6b6b}",
+  ".akbug-rpbar button{min-height:48px}.akbug-stop{font-size:1.1rem;min-width:170px}",
+  ".akbug-ask{border:2px solid #e5484d;margin:10px 0}.akbug-ask .row{gap:8px;flex-wrap:wrap}",
+  ".akw9-pad.akbug-pad{min-height:12vh!important;resize:vertical}",
+  ".ak18-L-side .ak18-pane.akbug-pane{max-height:none}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- Write tab: sizes and pinch */
+function akBugPinch(el, cur, set) {
+  var d0 = 0, f0 = 0, t = 0;
+  function dist(ts) { var a = ts[0], b = ts[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+  function done(f) { clearTimeout(t); t = setTimeout(function () { save(); toast("Text size " + Math.round(f)); }, 400); }
+  el.addEventListener("touchstart", function (e) { if (e.touches.length === 2) { d0 = dist(e.touches); f0 = cur(); } }, { passive: true });
+  el.addEventListener("touchmove", function (e) {
+    if (e.touches.length !== 2 || !d0) return;
+    if (e.cancelable) e.preventDefault();
+    var f = Math.max(10, Math.min(48, f0 * dist(e.touches) / d0)); set(f); done(f);
+  }, { passive: false });
+  el.addEventListener("touchend", function (e) { if (e.touches.length < 2) d0 = 0; }, { passive: true });
+  el.addEventListener("wheel", function (e) { if (!e.ctrlKey) return; e.preventDefault(); var f = Math.max(10, Math.min(48, cur() * (e.deltaY < 0 ? 1.08 : 0.93))); set(f); done(f); }, { passive: false });
+}
+(function () {
+  if (typeof viewWrite !== "function") return;
+  var vw = viewWrite;
+  viewWrite = function () {
+    var el = vw.apply(this, arguments);
+    try {
+      var c = akW18(), ta = el.querySelector(".akw9-pad"), pane = el.querySelector(".ak18-pane"), side = !!el.querySelector(".ak18-L-side");
+      if (!c.sz161) { c.sz161 = 1; c.padH = 24; c.splitH = 24; }
+      if (!ta) return el;
+      if (pane && el.querySelector(".ak18-L-split")) pane.style.height = c.splitH + "vh";
+      ta.classList.add("akbug-pad");
+      ta.style.height = (c.padH || 24) + "vh";
+      if (c.padFs) ta.style.fontSize = c.padFs + "px";
+      akBugPinch(ta, function () { return parseFloat(getComputedStyle(ta).fontSize) || 18; }, function (f) { ta.style.fontSize = f + "px"; c.padFs = Math.round(f); });
+      if (pane) {
+        var body = pane.querySelector(".ak18-body") || pane;
+        pane.classList.add("akbug-pane");
+        if (c.paneFs) body.style.fontSize = c.paneFs + "px";
+        akBugPinch(pane, function () { return parseFloat(getComputedStyle(body).fontSize) || 15; }, function (f) { body.style.fontSize = f + "px"; c.paneFs = Math.round(f); });
+        pane.title = "Pinch to change the text size";
+      }
+      ta.title = "Pinch to change the text size. Drag the corner to make the box taller.";
+      var match = function () { if (side && pane && ta.offsetHeight) pane.style.height = ta.offsetHeight + "px"; };
+      match();
+      if (window.ResizeObserver) {
+        var rt = 0;
+        new ResizeObserver(function () {
+          match();
+          var v = Math.round(ta.offsetHeight / window.innerHeight * 100);
+          if (ta.offsetHeight && v !== c.padH) { c.padH = Math.max(12, v); clearTimeout(rt); rt = setTimeout(save, 500); }
+        }).observe(ta);
+      }
+    } catch (e) { if (window.console) console.warn("akbug write sizes", e); }
+    return el;
+  };
+  AK_VIEWS.write = viewWrite;
+})();
 
 /* ================================================================ akcal_a: several calendars, private shows (combined version 16.3: also carries flyers, venues, capo badge, fretboard builder, fold everything, button sets and the chord hub)
    - Sign in with Google (Settings > Calendar > Calendars from my Google account) lists every calendar in that account, including
