@@ -456,6 +456,8 @@
   label.filebtn { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); font-weight: 600; cursor: pointer; }
   .btnlink { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-weight: 600; text-decoration: none; }
   .modal .sheet.wide { width: min(100%, 860px); }
+  .toast.aksy-msg span, .hint[role=status] { white-space: pre-line; }
+  .modal.akqb-m { background: rgba(0,0,0,0.18); }
   .card.cur { border-color: var(--accent); }
   /* playing screen: toolbar, side buttons, bars */
   .ptop { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; gap: var(--tb-gap, 6px); padding-top: calc(6px + var(--tb-pad, 0px)); }
@@ -48249,6 +48251,121 @@ document.addEventListener("click", function (e) {
   var t = e.target && e.target.closest ? e.target.closest(".play .spd") : null;
   if (t) { e.preventDefault(); akAsPanel(); }
 }, true);
+
+/* ================================================================ aksy_b: a sync message that says what happened (version 17.8)
+   - The sync message used to count only what came IN from the other device, so a sync that sent this device's changes out said
+     "nothing new from the other device" and looked like it did nothing. Now it says both ways and what is saved:
+     "Synced at 4:15 PM. From your other device: nothing new. From this device: 3 changes sent. On GitHub now: 492 songs, 12
+     setlists, 4 shows." (ctx.n.sent, counted by the akSyPick wrapper: an item whose merged copy differs from the file's, or a
+     delete made here.) The first sync (no file on GitHub yet) says everything was sent.
+   - Automatic syncs (automatic backups with "Back up to GitHub by syncing" on, also when the app goes to the background) are
+     silent; when one already brought changes in, the next tapped sync says so (AKSY.autoIn), so "nothing new" isn't a puzzle.
+   - With that box off, a tapped sync adds a tip: automatic backups then overwrite the file instead of merging.
+   - The sync message stays on screen longer (9 s).
+   - Buttons window (akQuickButtons) on the playing screen: it no longer covers the side buttons, so a button you turn on shows
+     next to the window right away instead of appearing only after Done.
+   - A sync file opened in Import / Restore offers "Merge with mine" first again (17.5 had hidden it; see the end of this file). */
+AK_VERSION = "17.8";
+AK_WHATS_NEW = [
+  "Sync now tells you both ways: what came in from your other device, how many changes this device sent, and how many songs, setlists and shows are saved on GitHub. If an automatic sync already brought the changes in, it says so.",
+  "Fixed: opening a sync file from your other device offers “Merge with mine” again, so edits made there come in (since 17.5 it went to the restore choices, which kept your copy of every song).",
+  "Turning buttons on and off while playing: the Buttons window leaves the side buttons uncovered, so new ones show right away."
+].concat(AK_WHATS_NEW);
+
+(function () {
+  var p0 = akSyPick;
+  akSyPick = function (l, r, b, ctx, skip, songs, bk) {
+    var n = ctx.n, before = n.added + n.changed + n.removed + n.conflicts;
+    var out = p0.apply(this, arguments);
+    if (n.added + n.changed + n.removed + n.conflicts === before) {
+      var sent = out !== undefined ? (r === undefined || ctx.pushed[bk] !== akSyHash(r, skip)) : (l === undefined && r !== undefined);
+      if (sent) n.sent = (n.sent || 0) + 1;
+    }
+    return out;
+  };
+  var ra = akSyRecordAll;
+  akSyRecordAll = function (ctx) { ra.apply(this, arguments); ctx.n.first = true; };
+})();
+
+function akSyTotals() {
+  var s = 0, l = 0, g = 0;
+  (store.libs || []).forEach(function (x) { s += (x.songs || []).length; l += (x.shows || []).length; g += (x.gigs || []).length; });
+  function p(k, one, many) { return k + " " + (k === 1 ? one : many); }
+  return p(s, "song", "songs") + ", " + p(l, "setlist", "setlists") + ", " + p(g, "show", "shows");
+}
+function akSyTime2(t) { return new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+akSySummary = function (n) {
+  var bits = [];
+  if (n.added) bits.push(n.added + " new");
+  if (n.changed) bits.push(n.changed + " changed");
+  if (n.removed) bits.push(n.removed + " removed");
+  if (n.conflicts) bits.push(n.conflicts + " edited on both (kept the newer)");
+  var inn = bits.join(", ");
+  if (AKSY.quiet) { if (inn) AKSY.autoIn = { at: Date.now(), msg: inn }; }
+  else if (!inn && AKSY.autoIn && Date.now() - AKSY.autoIn.at < 12 * 3600e3) inn = "nothing new now (the automatic sync at " + akSyTime2(AKSY.autoIn.at) + " already brought in " + AKSY.autoIn.msg + ")";
+  if (!AKSY.quiet && bits.length) AKSY.autoIn = null;
+  var out = n.first ? "everything sent (first sync)" : n.sent ? n.sent + (n.sent === 1 ? " change sent" : " changes sent") : "nothing new to send";
+  return "\nFrom your other device: " + (inn || "nothing new") + ".\nFrom this device: " + out + ".\nOn GitHub now: " + akSyTotals();
+};
+
+(function () {
+  var ns = akSyncNow;
+  akSyncNow = function (setStatus, quiet) {
+    if (AKSY.busy) return ns.apply(this, arguments);
+    AKSY.quiet = !!quiet;
+    var p = ns.apply(this, arguments);
+    return p.then(function (ok) {
+      AKSY.quiet = false;
+      if (ok && !quiet) {
+        var tip = akSyncCfg().gh ? "" : "\nTip: tick “Back up to GitHub by syncing” (Settings › Data and extras › Sync between my devices) on both devices, so automatic backups merge instead of overwriting.";
+        var t = document.querySelector("#toastbox .toast span");
+        if (t && /^Synced at/.test(t.textContent)) {
+          if (tip) t.textContent += tip;
+          t.parentNode.classList.add("aksy-msg");
+          clearTimeout(toastTimer); var el = t.parentNode; toastTimer = setTimeout(function () { el.remove(); }, 9000);
+        }
+      }
+      return ok;
+    }, function (e) { AKSY.quiet = false; throw e; });
+  };
+})();
+
+/* the Buttons window on the playing screen leaves the side buttons uncovered */
+(function () {
+  var qb = akQuickButtons;
+  akQuickButtons = function () {
+    var r = qb.apply(this, arguments);
+    try {
+      if (S.view !== "play") return r;
+      var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1], fab = document.querySelector(".fabwrap");
+      if (!m) return r;
+      m.classList.add("akqb-m");
+      var bs = fab ? Array.prototype.map.call(fab.querySelectorAll("[data-fab]"), function (x) { return x.getBoundingClientRect(); }).filter(function (x) { return x.width; }) : [];
+      var right = !bs.length || bs.reduce(function (a, x) { return a + x.left + x.width / 2; }, 0) / bs.length > innerWidth / 2;
+      var gap = bs.length ? Math.ceil(right ? innerWidth - Math.min.apply(null, bs.map(function (x) { return x.left; })) : Math.max.apply(null, bs.map(function (x) { return x.right; }))) + 8 : 90;
+      gap = Math.max(70, Math.min(gap, 140));
+      m.style.justifyContent = right ? "flex-start" : "flex-end";
+      var sh = m.querySelector(".sheet"); if (sh) sh.style.width = "min(calc(100% - " + gap + "px), 860px)";
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* a sync file opened in Import or Restore (or Restore from GitHub, whose file sync wrote) offers "Merge with mine" first again.
+   17.5's Restore backup dialog (aksm_a) wrapped offerRestore after ak11_e did, so a sync file went straight to Add / Merge by
+   name / Replace, and its by-name merge keeps your copy of every song: edits from the other device were left out. */
+(function () {
+  var o1 = offerRestore;
+  offerRestore = function (t) {
+    var d = null; try { d = JSON.parse(t); } catch (e) {}
+    if (!d || !d.sync) return o1.apply(this, arguments);
+    var args = arguments, self = this;
+    modal("A sync file from your " + (d.sync.dev || "other device"), h("div", null,
+      h("p", null, "Saved " + new Date(d.sync.at).toLocaleString() + "."),
+      h("p", { class: "hint" }, "“Merge with mine” keeps the changes from both devices: new and edited songs, setlists, shows and history from there are added here, and play counts add up. The other choices are the usual add, merge by name or replace.")),
+      [{ label: "Other choices…", onClick: function () { setTimeout(function () { o1.apply(self, args); }, 0); } }, { label: "Merge with mine", primary: true, onClick: function () { akSyncMergeText(t); } }]);
+  };
+})();
 
 /* ================================================================ akgfx_l: Graphics studio, part 12 (version 17.9; numbered after 17.8): undo that works, text tools together
    Undo: the ↶ in the top bar was the app's own undo (songs, setlists...), which skips the studio on purpose, so tapping it after
