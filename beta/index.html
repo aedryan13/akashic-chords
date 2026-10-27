@@ -39686,7 +39686,7 @@ function akGfxFlyApply(D, id) {
 function akGfxLayoutSwitch(D, old, id) {
   if (old === id) return;
   D.editBy = D.editBy || {}; D.editBy[old] = D.edit || {}; D.edit = D.editBy[id] || {}; delete D.editBy[id];
-  if (D.kind === "flyer") akGfxFlyApply(D, id);
+  if (D.kind === "flyer" || (D.kind === "week" && (akGfxFlySpec(id) || akGfxFlySpec(old)))) akGfxFlyApply(D, id);
 }
 function akGfxFlyWords(id) {
   var spec = akGfxFlySpec(id); if (!spec) return null;
@@ -39731,7 +39731,7 @@ function akGfxExtras(D, P) {
 (function () {
   var L0 = akGfxLayers;
   akGfxLayers = function (D) {
-    var spec = D.kind === "flyer" ? akGfxFlySpec(D.layout) : null;
+    var spec = D.kind === "flyer" || D.kind === "week" ? akGfxFlySpec(D.layout) : null;
     var P = spec ? akGfxFlyBuild(D, spec) : L0.apply(this, arguments);
     akGfxExtras(D, P);
     return P;
@@ -39757,11 +39757,11 @@ akCss("akgfx-d", ".akg-gal .akg-galgrid{display:grid;grid-template-columns:repea
   ".akg-sub{margin:10px 0 4px;font-weight:700}.akg-two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.akg-pedit select{max-width:100%}");
 function akGfxThumbDesign(D, id) {
   var Dc = JSON.parse(JSON.stringify(D));
-  if (id !== D.layout) { Dc.layout = id; Dc.edit = (D.editBy || {})[id] || {}; if (D.kind === "flyer") akGfxFlyApply(Dc, id); if (D.kind === "tip" && id === "jar") Dc.size = "jar"; if (id === "cal") Dc.size = "letter"; }
+  if (id !== D.layout) { Dc.layout = id; Dc.edit = (D.editBy || {})[id] || {}; if (D.kind === "flyer" || (D.kind === "week" && (akGfxFlySpec(id) || akGfxFlySpec(D.layout)))) akGfxFlyApply(Dc, id); if (D.kind === "tip" && id === "jar") Dc.size = "jar"; if (id === "cal") Dc.size = "letter"; }
   return Dc;
 }
 function akGfxGallery(D, kind, pick) {
-  var list = AKG_LAYOUTS[kind], st = akGfxState(), tags = kind === "flyer" ? [["", "All"], ["photo", "Photo"], ["paper", "Paper"], ["bold", "Bold"], ["retro", "Retro"], ["night", "Night"], ["elegant", "Elegant"], ["minimal", "Minimal"]] : null;
+  var list = AKG_LAYOUTS[kind], st = akGfxState(), tags = kind === "flyer" ? [["", "All"], ["side", "Off-center"], ["photo", "Photo"], ["paper", "Paper"], ["bold", "Bold"], ["retro", "Retro"], ["night", "Night"], ["elegant", "Elegant"], ["minimal", "Minimal"]] : null;
   var grid = h("div", { class: "akg-galgrid", role: "group", "aria-label": "Layouts" }), wrap = h("div", { class: "akg-gal" });
   function tagOf(id) { var s = akGfxFlySpec(id); return s ? s.tags : AKG_FLY_OLD_TAGS[id] || ""; }
   if (tags) wrap.appendChild(h("div", { class: "chips akg-chips", role: "group", "aria-label": "Show layouts that are" }, tags.map(function (t) { return h("button", { class: "chip" + ((st.galTag || "") === t[0] ? " on" : ""), "aria-pressed": (st.galTag || "") === t[0] ? "true" : "false", onClick: function () { st.galTag = t[0]; var n = akGfxGallery(D, kind, pick); wrap.replaceWith(n); } }, t[1]); })));
@@ -45644,7 +45644,7 @@ var AKG_THEMES = [
 function akGfxTheme(id) { return (AKG_THEMES.filter(function (t) { return t[0] === id; })[0] || [])[2] || null; }
 function akGfxThemeApply(D, id, t) {
   t = t || akGfxTheme(id); if (!t) return;
-  var spec = D.kind === "flyer" && typeof akGfxFlySpec === "function" ? akGfxFlySpec(D.layout) : null, onPhoto = spec ? !!spec.p.full : D.bg && D.bg.src !== "color";
+  var spec = (D.kind === "flyer" || D.kind === "week") && typeof akGfxFlySpec === "function" ? akGfxFlySpec(D.layout) : null, onPhoto = spec ? !!spec.p.full : D.bg && D.bg.src !== "color";
   D.fg = onPhoto ? "auto" : t.fg; D.accent = t.a1; D.accent2 = t.a2 || ""; D.accent3 = t.a3 || ""; D.paper = t.paper || "";
   if (D.bg && D.bg.src === "color") { D.bg.color = t.bg; D.bg.color2 = t.bg2 || ""; }
   if (D.panel) D.panel.color = "";
@@ -46788,6 +46788,564 @@ akCss("akgfx-i", [
   ".akg-pop2 .akg-popmore{border-top:1px solid #e3e0e8;flex-wrap:wrap}",
   ".akg-pop2 .akg-popt{flex-direction:row;font-size:11.5px;min-height:32px!important;padding:2px 7px!important}"
 ].join("\n"));
+
+/* ================================================================ akgfx_j: Graphics studio, part 10 (version 17.3): more variety
+   Off-center layouts: 14 more show flyer layouts (AKGJ_FLY, in AKG_FLY, tag "side") and 7 more shows poster layouts (AKGJ_WEEK; built
+   by the flyer layout builder too: akGfxFlySpec finds them, akgfx_d builds "week" designs from a spec, AKGJ.D is the design being built).
+   Each layout has its own overlays (AKGJ_LAY_OVL, put in D.ovl when you pick it, so the gallery pictures no longer all carry the
+   overlay of the current design). 6 more overlay patterns (chevrons, dashes, diamonds, rain, fish scales, blocks) and 16 more presets.
+   Where the words sit: D.tpos = { h: left|center|right, v: top|middle|bottom } moves all the words (and the logo, name, rows) as one
+   group into a column on that side (akGfxTpos, after every other step and before your own moves). Only layouts where the
+   words sit over the whole background (akGfxTposOk).
+   🎲 Randomize (top bar and 💡 Ideas, akGfxRoll): layout, colors, overlays, fonts, background art and filter, where the words sit,
+   border and title effect. akGfxCfg().rlock = { layout, colors, ovl, fonts, photo, words, extras } keeps those as they are. Your own
+   photo, words and moved parts always stay. Every roll is one ↶ Undo step. Ideas › Surprise me rolls the same way. */
+
+AK_VERSION = "17.3";
+AK_WHATS_NEW = [
+  "Graphics studio: 14 new off-center show flyer layouts (photo on one side and the words on the other, photo on top or at the bottom, offset blocks, round photo in a corner, info box over a photo, color strip, big type down the side, name standing up the edge, three bands, diagonal band, gallery frame, four blocks). Tap “Off-center” in the layout gallery to see just those.",
+  "Graphics studio: 7 new Shows poster layouts the same way (photo beside or above the list, title standing up the side, big title, list in a box over a photo, color column, offset photo).",
+  "Graphics studio: every layout now comes with its own overlay (or none), so they don't all show the same fading dots. 6 new overlay patterns (chevrons, dashes, diamonds, rain, fish scales, blocks) and 16 more ready-made overlays.",
+  "Graphics studio: 🎲 in the top bar throws together a new layout, colors, overlay, fonts, background, border and where the words sit. Keep rolling; ↶ Undo goes back. In 💡 Ideas, tick what to keep (for example your fonts or your photo).",
+  "Graphics studio: Layout › “Where the words sit” moves all the words to the left, right, top, bottom or a corner."
+].concat(AK_WHATS_NEW);
+
+var AKGJ = { D: null };
+
+/* ---------------------------------------------------------------- more overlays */
+AKG_OVL_PATS.push(["chevrons", "Chevrons", "el"], ["dashes", "Dashes", "el"], ["diamonds", "Diamonds", "el"], ["rain", "Rain", "el"], ["scales", "Fish scales", "el"], ["blocks", "Blocks", "el"]);
+AKG_OVL_PRESETS.push(
+  ["cornerrings", "Rings from a corner", { p: "rings", gap: 26, thick: 8, ox: 0, oy: 0, op: 45, fade: "corner2", reach: 90 }],
+  ["sideripples", "Ripples from the side", { p: "rings", gap: 34, thick: 10, ox: 100, oy: 50, op: 40, fade: "right", reach: 80 }],
+  ["sidestripes", "Side stripes", { p: "lines", gap: 22, thick: 22, angle: 90, op: 35, fade: "left", reach: 55 }],
+  ["bigdotsright", "Big dots on the right", { p: "dots", size: 90, gap: 60, fade: "right", reach: 60, op: 70 }],
+  ["halfbottom", "Halftone bottom", { p: "dots", size: 80, gap: 20, fade: "bottom", reach: 50 }],
+  ["diaghalf", "Diagonal halftone", { p: "dots", size: 75, gap: 26, angle: 45, fade: "corner2", reach: 75 }],
+  ["wavyside", "Waves down the side", { p: "waves", size: 45, gap: 34, thick: 14, angle: 90, fade: "left", reach: 50, op: 55 }],
+  ["chevrons", "Chevrons", { p: "chevrons", size: 50, gap: 45, thick: 30, op: 45, fade: "bottom", reach: 65 }],
+  ["dashes", "Dashes", { p: "dashes", size: 45, gap: 40, thick: 25, angle: -30, op: 50, fade: "edges", reach: 60 }],
+  ["diamonds", "Diamonds", { p: "diamonds", size: 55, gap: 45, fill: 0, thick: 18, op: 50, fade: "top", reach: 60 }],
+  ["rain", "Rain", { p: "rain", size: 45, gap: 40, thick: 12, angle: 20, op: 45, fade: "top", reach: 75 }],
+  ["scales", "Fish scales", { p: "scales", size: 50, gap: 40, thick: 12, op: 40, fade: "bottom", reach: 60 }],
+  ["blocks", "Mid-century blocks", { p: "blocks", size: 70, gap: 70, vary: 60, op: 40 }],
+  ["orbitcorner", "Orbits in a corner", { p: "orbits", size: 60, gap: 40, thick: 8, ox: 85, oy: 15, op: 55 }],
+  ["burstcorner", "Sunburst from a corner", { p: "rays", size: 45, gap: 40, ox: 0, oy: 100, op: 28 }],
+  ["gridfade", "Grid fading right", { p: "grid", gap: 34, thick: 6, op: 35, fade: "left", reach: 70 }]);
+(function () {
+  var NEW = { chevrons: 1, dashes: 1, diamonds: 1, rain: 1, scales: 1, blocks: 1 }, r0 = akGfxOvlRender;
+  akGfxOvlRender = function (o, W, H, sc, col, P) {
+    if (!NEW[o.p]) return r0.apply(this, arguments);
+    var cv = akGfxCv(W * sc, H * sc), c = cv.getContext("2d"); c.scale(sc, sc);
+    var k = Math.min(W, H) / 1080, S = o.size == null ? 50 : o.size, G = o.gap == null ? 50 : o.gap, Th = o.thick == null ? 30 : o.thick, V = (o.vary || 0) / 100;
+    var A = (o.angle || 0) * Math.PI / 180, ca = Math.cos(A), sa = Math.sin(A), rng = akRng((o.seed || 1) * 7919 + 13), fill = o.fill !== 0 && o.fill !== false;
+    var cell = (12 + G * 2.2) * k, R = (1 + S * 0.55) * k * (cell / (12 + 50 * 2.2) / k) * 2.2, lw = Math.max(0.6, (0.4 + Th * 0.16) * k);
+    var fade = akGfxOvlFade(o, W, H), bySize = o.fs !== 0 && o.fs !== false && !!o.fade, D2 = Math.hypot(W, H) / 2 + cell * 2, p = o.p, i, j, u, v, r;
+    c.fillStyle = col; c.strokeStyle = col; c.lineWidth = lw; c.lineCap = "round"; c.lineJoin = "round";
+    function size(base, px, py) { var s = base * (1 - V * rng()); if (bySize) s *= fade(px, py); return s; }
+    function grid(step, stagger, fn) {
+      for (v = -D2, j = 0; v <= D2; v += step, j++) for (u = -D2 + (stagger && j % 2 ? step / 2 : 0); u <= D2; u += step) {
+        var x = W / 2 + u * ca - v * sa, y = H / 2 + u * sa + v * ca;
+        if (x < -step || y < -step || x > W + step || y > H + step) continue;
+        fn(x, y);
+      }
+    }
+    function at(px, py, rot, fn) { c.save(); c.translate(px, py); c.rotate(rot); fn(); c.restore(); }
+    if (p === "chevrons") grid(cell, true, function (px, py) { r = size(R * 0.5, px, py); if (r < 0.5) return; at(px, py, A, function () { c.lineWidth = Math.max(lw, r * 0.3); c.beginPath(); c.moveTo(-r, -r * 0.5); c.lineTo(0, r * 0.5); c.lineTo(r, -r * 0.5); c.stroke(); }); });
+    else if (p === "dashes") grid(cell, true, function (px, py) { r = size(R * 0.6, px, py); if (r < 0.5) return; at(px, py, A, function () { c.lineWidth = Math.max(lw, r * 0.25); c.beginPath(); c.moveTo(-r, 0); c.lineTo(r, 0); c.stroke(); }); });
+    else if (p === "diamonds") grid(cell, true, function (px, py) { r = size(R * 0.5, px, py); if (r < 0.4) return; at(px, py, A, function () { c.beginPath(); c.moveTo(0, -r); c.lineTo(r * 0.7, 0); c.lineTo(0, r); c.lineTo(-r * 0.7, 0); c.closePath(); if (fill) c.fill(); else c.stroke(); }); });
+    else if (p === "rain") { var n = Math.round(W * H / (cell * cell) * 0.8); for (i = 0; i < n; i++) { var x = rng() * W, y = rng() * H; r = size(R * 0.9, x, y); if (r < 0.5) continue; c.globalAlpha = 0.4 + rng() * 0.6; c.beginPath(); c.moveTo(x - Math.sin(A) * r, y - Math.cos(A) * r); c.lineTo(x + Math.sin(A) * r, y + Math.cos(A) * r); c.stroke(); } c.globalAlpha = 1; }
+    else if (p === "scales") { var sr = cell * 0.5; for (v = -sr, j = 0; v <= H + sr; v += sr * 0.75, j++) for (u = (j % 2 ? sr : 0) - sr; u <= W + sr; u += sr * 2) { r = size(sr * (0.5 + S / 100 * 0.5), u, v); if (r < 0.5) continue; c.beginPath(); c.arc(u, v, r, 0, Math.PI); c.stroke(); } }
+    else if (p === "blocks") { var nb = Math.round(W * H / (cell * cell) * 0.35); for (i = 0; i < nb; i++) { var bx = rng() * W, by = rng() * H, bw = size(R * (0.6 + rng() * 1.6), bx, by), bh = bw * (0.3 + rng() * 1.2); if (bw < 1) continue; c.globalAlpha = 0.35 + rng() * 0.65; c.fillStyle = rng() < 0.3 ? (o.color2 || (P && P.accent2) || col) : col; if (rng() < 0.3) { c.beginPath(); c.arc(bx, by, bw / 2, 0, Math.PI * 2); c.fill(); } else c.fillRect(bx - bw / 2, by - bh / 2, bw, bh); } c.globalAlpha = 1; }
+    if (o.color2 && p !== "blocks") { c.save(); c.globalCompositeOperation = "source-atop"; var g2 = c.createLinearGradient(W / 2 + sa * W / 2, H / 2 - ca * H / 2, W / 2 - sa * W / 2, H / 2 + ca * H / 2); g2.addColorStop(0, col); g2.addColorStop(1, o.color2); c.fillStyle = g2; c.fillRect(0, 0, W, H); c.restore(); }
+    if (o.fade && !bySize) {
+      var mw = 72, mh = Math.max(8, Math.round(72 * H / W)), m = akGfxCv(mw, mh), mc = m.getContext("2d"), id = mc.createImageData(mw, mh);
+      for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) id.data[(j * mw + i) * 4 + 3] = Math.round(fade((i + 0.5) / mw * W, (j + 0.5) / mh * H) * 255);
+      mc.putImageData(id, 0, 0); c.save(); c.globalCompositeOperation = "destination-in"; c.drawImage(m, 0, 0, W, H); c.restore();
+    }
+    return cv;
+  };
+})();
+
+/* ---------------------------------------------------------------- off-center show flyer layouts */
+function akGfxJSide(B, left, o) {
+  /* photo on one side, the words in a column on the other */
+  var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U, pw = (o.pw || 46) * X, x0 = left ? pw + 6 * X : 6 * X, tw = W - pw - 12 * X;
+  B.BG();
+  if (o.arch) B.PH(left ? 4 * X : W - pw + 2 * X, 5 * Y, pw - 6 * X, 90 * Y, { clip: "arch" });
+  else B.PH(left ? 0 : W - pw, 0, pw, B.H);
+  if (!o.arch) B.SH("edge", "Line by the photo", "rect", left ? pw : W - pw - 0.8 * m, 0, 0.8 * m, B.H, { color: C.a1 });
+  B.TS("kicker", "Small heading", U(I.kick("Live music")), x0, 10 * Y, 2.8 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.5 * m, fit: 1, maxW: tw });
+  B.TT("artist", "Name", U(I.artist), x0, 14 * Y, 8.5 * m, { align: "left", valign: "top", fit: 3, maxW: tw, maxH: 27 * Y, lh: 0.95 });
+  B.SH("rule", "Line", "rect", x0, 45 * Y, Math.min(tw, 14 * X), 0.6 * m, { color: C.a1 });
+  B.T("title", "Venue", I.venue, x0, 49 * Y, 5.4 * m, { align: "left", valign: "top", fit: 2, maxW: tw, maxH: 13 * Y });
+  B.T("date", "Date", U(I.date), x0, 66 * Y, 3.3 * m, { align: "left", weight: 700, fit: 2, maxW: tw, maxH: 8 * Y });
+  B.T("time", "Time", U(I.time), x0, 74 * Y, 3.4 * m, { align: "left", color: C.a1, weight: 700, fit: 1, maxW: tw });
+  B.TS("town", "Town", U(I.town), x0, 79.5 * Y, 2.6 * m, { align: "left", spacing: 0.3 * m, fit: 1, maxW: tw });
+  B.TS("note", "Note", I.note, x0, 85 * Y, 2.4 * m, { align: "left", fit: 2, maxW: tw });
+  B.TS("footer1", "Website", I.site, x0, 94 * Y, 2.4 * m, { align: "left", fit: 1, maxW: tw * 0.75 });
+  B.LOGO(x0 + tw - 2.5 * m, 93 * Y, 6 * m);
+}
+var AKGJ_FLY = [
+  { id: "photoleft", name: "Photo left, words right", tags: "side photo bold",
+    p: { paper: "#16121c", ink: "#f4efe6", a1: "#e8a33d", photo: true, art: "a_inferno", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 800, mw: 500, sw: 500 },
+    b: function (B) { akGfxJSide(B, true, {}); } },
+  { id: "photoright", name: "Words left, arch photo right", tags: "side photo elegant paper",
+    p: { paper: "#f3efe6", ink: "#151515", a1: "#c8452f", photo: true, art: "a_aurora", fonts: { title: GSX("Playfair Display"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 700, mw: 500, sw: 500 },
+    b: function (B) { akGfxJSide(B, false, { arch: true, pw: 50 }); } },
+  { id: "phototop", name: "Photo on top, words below", tags: "side photo bold",
+    p: { paper: "#101418", ink: "#f2f2f2", a1: "#4fc3f7", photo: true, art: "a_orion", fonts: { title: GSX("Bebas Neue"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      if (B.W > B.H * 1.15) return akGfxJSide(B, true, { pw: 50 });
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U;
+      B.BG(); B.PH(0, 0, W, 52 * Y);
+      B.SH("band", "Line under the photo", "rect", 0, 52 * Y, W, 0.9 * m, { color: C.a1 });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 58 * Y, 2.8 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.5 * m, fit: 1, maxW: 60 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 61 * Y, 9 * m, { align: "left", valign: "top", fit: 2, maxW: 62 * X, maxH: 17 * Y, lh: 0.92 });
+      B.T("title", "Venue", U(I.venue), 6 * X, 80 * Y, 4.4 * m, { align: "left", fit: 2, maxW: 62 * X, maxH: 8 * Y });
+      B.T("town", "Town", U(I.town), 6 * X, 86 * Y, 2.8 * m, { align: "left", weight: 500, spacing: 0.3 * m, fit: 1, maxW: 62 * X });
+      B.TS("footer1", "Website", I.site, 6 * X, 94 * Y, 2.4 * m, { align: "left", fit: 1, maxW: 50 * X });
+      B.T("weekday", "Weekday", U(I.wd3), 94 * X, 59 * Y, 3.6 * m, { align: "right", weight: 700, fit: 1, maxW: 26 * X });
+      B.TT("day", "Day number", I.day || "", 94 * X, 61.5 * Y, 20 * m, { align: "right", valign: "top", color: C.a1, fit: 1, maxW: 28 * X, maxH: 18 * Y, lh: 0.9 });
+      B.T("month", "Month", U(I.mon3), 94 * X, 82 * Y, 4.6 * m, { align: "right", weight: 700, fit: 1, maxW: 26 * X });
+      B.T("time", "Time", U(I.time), 94 * X, 88 * Y, 2.8 * m, { align: "right", weight: 600, fit: 1, maxW: 30 * X });
+      B.TS("note", "Note", I.note, 94 * X, 94 * Y, 2.2 * m, { align: "right", fit: 1, maxW: 40 * X });
+    } },
+  { id: "photobottom", name: "Big name on top, photo below", tags: "side photo bold",
+    p: { paper: "#f1ebe0", ink: "#1b1b1b", a1: "#e4572e", a2: "#1b1b1b", photo: true, art: "a_autumn", fonts: { title: GSX("League Spartan"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U;
+      B.BG(); B.PH(0, 44 * Y, W, 56 * Y, { clip: "poly", pts: [[0, 0.2], [1, 0], [1, 1], [0, 1]] });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 6 * Y, 2.8 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.5 * m, fit: 1, maxW: 50 * X });
+      B.TS("date", "Date", U(I.dshort), 94 * X, 6 * Y, 2.8 * m, { align: "right", weight: 800, spacing: 0.3 * m, fit: 1, maxW: 40 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 10 * Y, 12 * m, { align: "left", valign: "top", fit: 2, maxW: 88 * X, maxH: 22 * Y, lh: 0.88 });
+      B.T("title", "Venue", U(I.venue), 6 * X, 35 * Y, 4.6 * m, { align: "left", color: C.a1, fit: 1, maxW: 70 * X });
+      B.T("time", "Time and town", U(I.time + (I.town ? "  ·  " + I.town : "")), 6 * X, 40 * Y, 2.8 * m, { align: "left", weight: 600, fit: 1, maxW: 60 * X });
+      B.T("note", "Note", I.note, 94 * X, 88 * Y, 2.6 * m, { align: "right", color: C.paper, behind: { kind: "box", color: C.a2, pad: 0.4 }, fit: 1, maxW: 60 * X });
+      B.TS("footer1", "Website", I.site, 94 * X, 94 * Y, 2.4 * m, { align: "right", color: C.paper, behind: { kind: "box", color: C.a1, pad: 0.4 }, fit: 1, maxW: 60 * X });
+    } },
+  { id: "offset", name: "Offset blocks", tags: "side photo bold retro",
+    p: { paper: "#fbf6ee", ink: "#1d1d1d", a1: "#2f6fdb", photo: true, art: "a_ember", fonts: { title: GSX("Righteous"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U;
+      B.BG();
+      B.SH("block", "Color block", "rect", 12 * X, 9 * Y, 62 * X, 50 * Y, { color: C.a1 });
+      B.PH(6 * X, 4 * Y, 62 * X, 50 * Y);
+      B.T("weekday", "Weekday", U(I.wd3), 94 * X, 8 * Y, 3.6 * m, { align: "right", weight: 700, fit: 1, maxW: 22 * X });
+      B.TT("day", "Day number", I.day || "", 94 * X, 11 * Y, 16 * m, { align: "right", valign: "top", color: C.a1, fit: 1, maxW: 22 * X, maxH: 16 * Y, lh: 0.9 });
+      B.T("month", "Month", U(I.mon3), 94 * X, 30 * Y, 4 * m, { align: "right", weight: 700, fit: 1, maxW: 22 * X });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 64 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.4 * m, fit: 1, maxW: 60 * X });
+      B.TT("artist", "Name", I.artist, 6 * X, 67 * Y, 9 * m, { align: "left", valign: "top", fit: 2, maxW: 88 * X, maxH: 15 * Y, lh: 0.95 });
+      B.T("title", "Venue", I.venue, 6 * X, 85 * Y, 4.4 * m, { align: "left", color: C.a1, fit: 1, maxW: 88 * X });
+      B.T("time", "Time and town", U(I.time + (I.town ? "  ·  " + I.town : "")), 6 * X, 90 * Y, 2.8 * m, { align: "left", weight: 600, fit: 1, maxW: 70 * X });
+      B.TS("footer1", "Website", I.site, 94 * X, 95 * Y, 2.3 * m, { align: "right", fit: 1, maxW: 40 * X });
+      B.TS("note", "Note", I.note, 6 * X, 95 * Y, 2.3 * m, { align: "left", fit: 1, maxW: 46 * X });
+    } },
+  { id: "roundphoto", name: "Round photo in a corner", tags: "side photo elegant night",
+    p: { paper: "#0f1b2d", ink: "#f3f0e8", a1: "#f2b84b", photo: true, art: "a_aurora", fonts: { title: GSX("Cinzel"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 700, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, U = B.U, d = Math.min(W * 0.82, H * 0.6), px = W - d * 0.8, py = -d * 0.12;
+      B.BG();
+      B.SH("ring", "Ring around the photo", "ring", px - 2.5 * m, py - 2.5 * m, d + 5 * m, d + 5 * m, { color: C.a1, lw: 0.5 * m });
+      B.PH(px, py, d, d, { clip: "circle" });
+      B.LOGO(9 * X, 9 * Y, 8 * m);
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 57 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.6 * m, fit: 1, maxW: 80 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 60 * Y, 8 * m, { align: "left", valign: "top", fit: 2, maxW: 84 * X, maxH: 17 * Y, lh: 1 });
+      B.T("title", "Venue", I.venue, 6 * X, 80.5 * Y, 4.4 * m, { align: "left", color: C.a1, fit: 1, maxW: 84 * X });
+      B.T("date", "Date", I.date, 6 * X, 86 * Y, 3 * m, { align: "left", weight: 600, fit: 1, maxW: 84 * X });
+      B.T("time", "Time and town", I.time + (I.town ? "  ·  " + I.town : ""), 6 * X, 90.5 * Y, 2.8 * m, { align: "left", fit: 1, maxW: 84 * X });
+      B.TS("footer1", "Website", I.site, 94 * X, 95.5 * Y, 2.2 * m, { align: "right", fit: 1, maxW: 40 * X });
+      B.TS("note", "Note", I.note, 6 * X, 95.5 * Y, 2.2 * m, { align: "left", fit: 1, maxW: 46 * X });
+    } },
+  { id: "cornerbox", name: "Info box over the photo", tags: "side photo minimal",
+    p: { paper: "#f7f4ee", ink: "#141414", a1: "#d94f30", photo: true, full: true, art: "a_tide", fonts: { title: GSX("Montserrat"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 800, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, U = B.U, bw = B.W > B.H * 1.15 ? 46 * X : 70 * X;
+      B.BG();
+      B.SH("box", "Box behind the words", "rect", 0, 57 * Y, bw, 43 * Y, { color: C.paper, alpha: 0.94 });
+      B.SH("strip", "Line on the box", "rect", 0, 57 * Y, bw, 0.8 * m, { color: C.a1 });
+      B.LOGO(B.W - 8 * X, 9 * Y, 8 * m);
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 5 * X, 62 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.5 * m, fit: 1, maxW: bw - 10 * X });
+      B.TT("artist", "Name", U(I.artist), 5 * X, 65 * Y, 7.5 * m, { align: "left", valign: "top", fit: 2, maxW: bw - 10 * X, maxH: 13 * Y, lh: 0.95 });
+      B.T("title", "Venue", I.venue, 5 * X, 81 * Y, 4 * m, { align: "left", weight: 700, fit: 1, maxW: bw - 10 * X });
+      B.T("date", "Date", I.date, 5 * X, 86 * Y, 2.8 * m, { align: "left", fit: 1, maxW: bw - 10 * X });
+      B.T("time", "Time and town", U(I.time + (I.town ? "  ·  " + I.town : "")), 5 * X, 90 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 700, fit: 1, maxW: bw - 10 * X });
+      B.TS("footer1", "Website", I.site, 5 * X, 95 * Y, 2.2 * m, { align: "left", fit: 1, maxW: bw - 10 * X });
+    } },
+  { id: "strip", name: "Color strip with the date", tags: "side photo bold",
+    p: { paper: "#141414", ink: "#ffffff", a1: "#f2c94c", photo: true, full: true, art: "a_smoke", fonts: { title: GSX("Bebas Neue"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, U = B.U, sx = 70 * X, cx = 85 * X;
+      B.BG();
+      B.SH("shade", "Dark fade", "rect", 0, 50 * Y, sx, 50 * Y, { color: "rgba(0,0,0,0)", fill2: "rgba(0,0,0,0.85)" });
+      B.SH("strip", "Color strip", "rect", sx, 0, W - sx, H, { color: C.a1 });
+      B.T("weekday", "Weekday", U(I.wd3), cx, 9 * Y, 4 * m, { color: C.paper, weight: 800, fit: 1, maxW: 26 * X });
+      B.TT("day", "Day number", I.day || "", cx, 12 * Y, 17 * m, { valign: "top", color: C.paper, fit: 1, maxW: 26 * X, maxH: 18 * Y, lh: 0.9 });
+      B.T("month", "Month", U(I.mon3), cx, 33 * Y, 5 * m, { color: C.paper, weight: 800, fit: 1, maxW: 26 * X });
+      B.T("time", "Time", U(I.time), cx, 40 * Y, 2.8 * m, { color: C.paper, weight: 700, fit: 2, maxW: 26 * X });
+      B.TT("title", "Venue", U(I.venue), cx, 72 * Y, 5.5 * m, { color: C.paper, rot: -90, fit: 1, maxW: 50 * Y });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 74 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.5 * m, fit: 1, maxW: 58 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 77 * Y, 9 * m, { align: "left", valign: "top", fit: 2, maxW: 60 * X, maxH: 13 * Y, lh: 0.92 });
+      B.TS("footer1", "Website", I.site + (I.town ? "  ·  " + I.town : ""), 6 * X, 95 * Y, 2.3 * m, { align: "left", fit: 1, maxW: 60 * X });
+    } },
+  { id: "typeleft", name: "Big type down the left", tags: "side paper bold minimal",
+    p: { paper: "#ece6da", ink: "#141414", a1: "#d6452f", fonts: { title: GSX("Bebas Neue"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U, words = U(I.artist).trim().split(/\s+/).filter(Boolean).slice(0, 4), n = Math.max(1, words.length), area = 56 * Y;
+      B.BG(); B.DECO("grain", 20);
+      B.SH("circle", "Big circle", "circle", -18 * X, 66 * Y, 46 * m, 46 * m, { color: C.a1 });
+      words.forEach(function (t, i) { B.TT("name" + (i + 1), "Name, line " + (i + 1), t, 5 * X, 5 * Y + i * area / n, area / n * 1.05, { align: "left", valign: "top", fit: 1, maxW: 62 * X, lh: 0.88 }); });
+      B.LOGO(W - 8 * X, 8 * Y, 7 * m);
+      B.SH("vline", "Line (up and down)", "rect", 66 * X, 64 * Y, 0.3 * m, 30 * Y, { color: C.ink });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 69 * X, 65 * Y, 2.2 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.3 * m, fit: 1, maxW: 26 * X });
+      B.T("date", "Date", U(I.dshort), 69 * X, 69 * Y, 3.2 * m, { align: "left", weight: 800, fit: 2, maxW: 26 * X });
+      B.T("time", "Time", U(I.time), 69 * X, 74 * Y, 2.8 * m, { align: "left", fit: 1, maxW: 26 * X });
+      B.TT("title", "Venue", U(I.venue), 69 * X, 78 * Y, 4.4 * m, { align: "left", valign: "top", color: C.a1, fit: 3, maxW: 26 * X, maxH: 11 * Y, lh: 0.95 });
+      B.TS("town", "Town", U(I.town), 69 * X, 91 * Y, 2.2 * m, { align: "left", fit: 1, maxW: 26 * X });
+      B.TS("footer1", "Website", I.site, 94 * X, 96 * Y, 2 * m, { align: "right", fit: 1, maxW: 40 * X });
+    } },
+  { id: "standup", name: "Name up the edge", tags: "side photo bold",
+    p: { paper: "#fbf8f2", ink: "#1a1a1a", a1: "#7b3fe4", photo: true, art: "a_eclipse", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 900, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, U = B.U, sw = 24 * X, x0 = 30 * X, tw = 64 * X;
+      B.BG();
+      B.SH("strip", "Color strip", "rect", 0, 0, sw, H, { color: C.a1 });
+      B.TT("artist", "Name", U(I.artist), sw / 2, 50 * Y, Math.min(sw * 0.62, 16 * m), { color: C.paper, rot: -90, fit: 1, maxW: 92 * Y, lh: 0.9 });
+      B.PH(x0, 5 * Y, tw, 52 * Y);
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), x0, 62 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.5 * m, fit: 1, maxW: tw });
+      B.TT("title", "Venue", I.venue, x0, 65.5 * Y, 7 * m, { align: "left", valign: "top", fit: 2, maxW: tw, maxH: 14 * Y, lh: 0.95 });
+      B.T("date", "Date", I.date, x0, 83 * Y, 3 * m, { align: "left", weight: 700, fit: 1, maxW: tw });
+      B.T("time", "Time", U(I.time), x0, 87.5 * Y, 3 * m, { align: "left", color: C.a1, weight: 700, fit: 1, maxW: tw });
+      B.TS("town", "Town", I.town, x0, 91.5 * Y, 2.4 * m, { align: "left", fit: 1, maxW: tw });
+      B.TS("footer1", "Website", I.site, 94 * X, 96 * Y, 2.2 * m, { align: "right", fit: 1, maxW: 40 * X });
+    } },
+  { id: "threebands", name: "Three bands", tags: "side photo bold",
+    p: { paper: "#f4efe4", ink: "#1c1c1c", a1: "#127a6b", photo: true, art: "a_forest", fonts: { title: GSX("League Spartan"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 900, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U;
+      B.BG(); B.PH(0, 0, W, 40 * Y);
+      B.SH("band", "Color band", "rect", 0, 40 * Y, W, 22 * Y, { color: C.a1 });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 51 * Y, 10 * m, { align: "left", color: C.paper, fit: 2, maxW: 66 * X, maxH: 18 * Y, lh: 0.92 });
+      B.TT("day", "Day number", I.day || "", 94 * X, 49 * Y, 13 * m, { align: "right", color: C.paper, fit: 1, maxW: 20 * X, lh: 0.9 });
+      B.T("month", "Month", U(I.mon3), 94 * X, 57.5 * Y, 3 * m, { align: "right", color: C.paper, weight: 700, fit: 1, maxW: 20 * X });
+      B.TT("title", "Venue", I.venue, 6 * X, 67 * Y, 5.5 * m, { align: "left", valign: "top", fit: 2, maxW: 50 * X, maxH: 12 * Y, lh: 1 });
+      B.TS("town", "Town", U(I.town), 6 * X, 83 * Y, 2.6 * m, { align: "left", spacing: 0.3 * m, fit: 1, maxW: 50 * X });
+      B.T("date", "Date", I.date, 60 * X, 67 * Y, 3 * m, { align: "left", valign: "top", weight: 700, fit: 2, maxW: 34 * X, maxH: 8 * Y });
+      B.T("time", "Time", U(I.time), 60 * X, 79 * Y, 3.6 * m, { align: "left", color: C.a1, weight: 800, fit: 1, maxW: 34 * X });
+      B.TS("note", "Note", I.note, 60 * X, 85 * Y, 2.3 * m, { align: "left", fit: 2, maxW: 34 * X });
+      B.TS("footer1", "Website", I.site, 6 * X, 94 * Y, 2.3 * m, { align: "left", fit: 1, maxW: 60 * X });
+      B.LOGO(91 * X, 92 * Y, 7 * m);
+    } },
+  { id: "diagband", name: "Diagonal band", tags: "side photo bold night",
+    p: { paper: "#111111", ink: "#ffffff", a1: "#ff3d6e", photo: true, full: true, art: "a_inferno", fonts: { title: GSX("Bebas Neue"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 400, mw: 700, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, U = B.U, ang = Math.atan2(-0.2 * H, W) * 180 / Math.PI;
+      B.BG();
+      B.SH("shade", "Dark fade", "rect", 0, 60 * Y, W, 40 * Y, { color: "rgba(0,0,0,0)", fill2: "rgba(0,0,0,0.8)" });
+      B.SH("band", "Diagonal band", "poly", 0, 0, W, H, { color: C.a1, pts: [[0, 0.6], [1, 0.4], [1, 0.56], [0, 0.76]] });
+      B.TT("title", "Venue", U(I.venue), W / 2, 58 * Y, 8 * m, { color: C.paper, rot: ang, fit: 1, maxW: 86 * X });
+      B.T("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 7 * Y, 2.6 * m, { align: "left", color: C.paper, behind: { kind: "pill", color: C.a1, pad: 0.45 }, weight: 800, spacing: 0.3 * m, fit: 1, maxW: 60 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 11 * Y, 11 * m, { align: "left", valign: "top", fit: 2, maxW: 80 * X, maxH: 20 * Y, lh: 0.9, shadow: { c: "rgba(0,0,0,0.5)", b: m, x: 0, y: 0.3 * m } });
+      B.T("date", "Date", U(I.date), 94 * X, 84 * Y, 3.4 * m, { align: "right", weight: 800, fit: 1, maxW: 80 * X });
+      B.T("time", "Time and town", U(I.time + (I.town ? "  ·  " + I.town : "")), 94 * X, 89 * Y, 2.8 * m, { align: "right", color: C.a1, weight: 700, fit: 1, maxW: 80 * X });
+      B.TS("footer1", "Website", I.site, 94 * X, 95 * Y, 2.3 * m, { align: "right", fit: 1, maxW: 60 * X });
+      B.LOGO(9 * X, 91 * Y, 7 * m);
+    } },
+  { id: "gallery", name: "Gallery frame", tags: "side photo paper elegant",
+    p: { paper: "#efeae2", ink: "#202020", a1: "#b0813a", photo: true, art: "a_fern", fonts: { title: GSX("Playfair Display"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 800, mw: 400, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, U = B.U;
+      B.BG();
+      B.SH("frame", "Frame behind the photo", "frame", 10 * X, 8 * Y, 66 * X, 54 * Y, { color: C.a1, lw: 0.5 * m });
+      B.PH(6 * X, 5 * Y, 66 * X, 54 * Y, { shadow: { c: "rgba(0,0,0,0.3)", b: 2 * m, x: 0, y: 0.6 * m } });
+      B.T("when", "Day and date", U(I.wd + "  " + I.mon3 + " " + I.day), 87 * X, 32 * Y, 3.4 * m, { rot: 90, weight: 600, spacing: 0.8 * m, fit: 1, maxW: 52 * Y });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 94 * X, 67 * Y, 2.4 * m, { align: "right", color: C.a1, weight: 700, spacing: 0.6 * m, fit: 1, maxW: 70 * X });
+      B.TT("artist", "Name", I.artist, 94 * X, 70 * Y, 8.5 * m, { align: "right", valign: "top", fit: 2, maxW: 86 * X, maxH: 14 * Y, lh: 1 });
+      B.T("title", "Venue", I.venue, 94 * X, 87 * Y, 3.8 * m, { align: "right", color: C.a1, weight: 600, fit: 1, maxW: 80 * X });
+      B.T("time", "Time and town", I.time + (I.town ? "  ·  " + I.town : ""), 94 * X, 91.5 * Y, 2.6 * m, { align: "right", fit: 1, maxW: 80 * X });
+      B.TS("footer1", "Website", I.site, 6 * X, 95.5 * Y, 2.2 * m, { align: "left", fit: 1, maxW: 40 * X });
+    } },
+  { id: "fourblocks", name: "Four blocks", tags: "side photo bold retro",
+    p: { paper: "#f5f0e6", ink: "#1b1b1b", a1: "#e8543a", a2: "#24324a", photo: true, art: "a_opal", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 900, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, U = B.U;
+      B.BG(); B.PH(0, 0, 55 * X, 55 * Y);
+      B.SH("dateblock", "Date block", "rect", 55 * X, 0, 45 * X, 55 * Y, { color: C.a1 });
+      B.SH("nameblock", "Name block", "rect", 0, 55 * Y, 55 * X, 45 * Y, { color: C.a2 });
+      B.T("weekday", "Weekday", U(I.wd), 77.5 * X, 10 * Y, 3.6 * m, { color: C.paper, weight: 800, spacing: 0.3 * m, fit: 1, maxW: 38 * X });
+      B.TT("day", "Day number", I.day || "", 77.5 * X, 14 * Y, 20 * m, { valign: "top", color: C.paper, fit: 1, maxW: 38 * X, maxH: 24 * Y, lh: 0.9 });
+      B.T("month", "Month", U(I.mon), 77.5 * X, 43 * Y, 4.4 * m, { color: C.paper, weight: 800, fit: 1, maxW: 38 * X });
+      B.TS("kicker", "Small heading", U(I.kick("Live music")), 6 * X, 61 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.4 * m, fit: 1, maxW: 45 * X });
+      B.TT("artist", "Name", U(I.artist), 6 * X, 64.5 * Y, 7.5 * m, { align: "left", valign: "top", color: C.paper, fit: 3, maxW: 45 * X, maxH: 30 * Y, lh: 0.95 });
+      B.TT("title", "Venue", I.venue, 60 * X, 61 * Y, 5 * m, { align: "left", valign: "top", fit: 3, maxW: 35 * X, maxH: 17 * Y, lh: 1 });
+      B.T("time", "Time", U(I.time), 60 * X, 82 * Y, 3.2 * m, { align: "left", color: C.a1, weight: 800, fit: 1, maxW: 35 * X });
+      B.TS("town", "Town", I.town, 60 * X, 87 * Y, 2.4 * m, { align: "left", fit: 1, maxW: 35 * X });
+      B.TS("footer1", "Website", I.site, 96 * X, 95 * Y, 2.1 * m, { align: "right", fit: 1, maxW: 38 * X });
+    } }
+];
+AKGJ_FLY.forEach(function (f) { AKG_FLY.push(f); AKG_LAYOUTS.flyer.push([f.id, f.name]); });
+AKG_FLY.forEach(function (f) { if (/^(swiss|diagonal|magazine|bigtype|polaroid)$/.test(f.id)) f.tags += " side"; });
+
+/* ---------------------------------------------------------------- off-center shows poster layouts */
+function akGfxJRows(B, x, y, w, hh, o) {
+  var D = AKGJ.D, rows = akGfxRows(D), n = Math.max(1, rows.length), m = B.m, pitch = Math.min((o && o.maxP || 11) * m, hh / n);
+  if (!rows.length) return B.T("norows", "No shows note", "MORE SHOWS SOON", x + w / 2, y + Math.min(hh, 20 * m) / 2, 4 * m, { weight: 700, fit: 1, maxW: w });
+  B.lay.push({ id: "rows", name: "Show rows", type: "grows", style: "list", x: x, y: y, w: w, h: pitch * n, rows: rows, font: AKGJ.D.fonts.main, weight: 700, size: Math.min(3.8 * m, pitch * 0.3), pitch: pitch,
+    color: (o && o.color) || B.C.ink, accent: (o && o.accent) || B.C.a1, shadow: o && o.shadow ? { c: "rgba(0,0,0,0.5)", b: 0.4 * m, x: 0.15 * m, y: 0.25 * m } : null });
+}
+function akGfxJTitle(one) { var R = akGfxRange(AKGJ.D), T = AKGJ.D.text || {}, t = T.title != null && T.title !== "" ? T.title : R.title; return one ? t.replace(/\n/g, " ") : t; }
+function akGfxJSub() { var R = akGfxRange(AKGJ.D), T = AKGJ.D.text || {}; return T.sub != null && T.sub !== "" ? T.sub : R.sub.toUpperCase(); }
+var AKGJ_WEEK = [
+  { id: "w_photoleft", name: "Photo left, list right",
+    p: { paper: "#15121b", ink: "#f4efe6", a1: "#e8a33d", photo: true, art: "a_inferno", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, x0 = 45 * X, tw = 50 * X;
+      B.BG(); B.PH(0, 0, 40 * X, B.H); B.SH("edge", "Line by the photo", "rect", 40 * X, 0, 0.8 * m, B.H, { color: C.a1 });
+      B.WM(x0 + tw / 2, 5 * Y, tw * 0.9);
+      B.TS("subtitle", "Dates", akGfxJSub(), x0, 11 * Y, 2.6 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.4 * m, fit: 1, maxW: tw });
+      B.TT("title", "Title", akGfxJTitle(), x0, 14 * Y, 8 * m, { align: "left", valign: "top", fit: 2, maxW: tw, maxH: 19 * Y, lh: 0.95 });
+      B.SH("rule", "Line", "rect", x0, 35 * Y, 12 * X, 0.6 * m, { color: C.a1 });
+      akGfxJRows(B, x0, 38 * Y, tw, 50 * Y);
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), x0, 94 * Y, 2.4 * m, { align: "left", fit: 1, maxW: tw });
+      B.LOGO(20 * X, 91 * Y, 8 * m);
+    } },
+  { id: "w_phototop", name: "Photo on top, list below",
+    p: { paper: "#0f1418", ink: "#f1f1f1", a1: "#4fc3f7", photo: true, art: "a_orion", fonts: { title: GSX("Bebas Neue"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I;
+      B.BG(); B.PH(0, 0, W, 36 * Y);
+      B.SH("band", "Title band", "rect", 0, 33 * Y, W, 10 * Y, { color: C.a1 });
+      B.WM(28 * X, 5 * Y, 46 * X);
+      B.TT("title", "Title", akGfxJTitle(true), 6 * X, 38 * Y, 7 * m, { align: "left", color: C.paper, fit: 1, maxW: 88 * X });
+      akGfxJRows(B, 6 * X, 47 * Y, 88 * X, 42 * Y);
+      B.TS("subtitle", "Dates", akGfxJSub(), 6 * X, 94 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 700, spacing: 0.3 * m, fit: 1, maxW: 50 * X });
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 94 * X, 94 * Y, 2.4 * m, { align: "right", fit: 1, maxW: 40 * X });
+    } },
+  { id: "w_sidetitle", name: "Title up the side",
+    p: { paper: "#f4efe4", ink: "#1c1c1c", a1: "#c8452f", fonts: { title: GSX("Bebas Neue"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I;
+      B.BG(); B.DECO("grain", 18);
+      B.SH("strip", "Color strip", "rect", 0, 0, 26 * X, H, { color: C.a1 });
+      B.TT("title", "Title", akGfxJTitle(true), 13 * X, 50 * Y, 15 * m, { color: C.paper, rot: -90, fit: 1, maxW: 92 * Y, lh: 0.9 });
+      B.WM(63 * X, 6 * Y, 58 * X);
+      akGfxJRows(B, 32 * X, 13 * Y, 62 * X, 72 * Y);
+      B.TS("subtitle", "Dates", akGfxJSub(), 32 * X, 90 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.3 * m, fit: 1, maxW: 50 * X });
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 32 * X, 95 * Y, 2.3 * m, { align: "left", fit: 1, maxW: 50 * X });
+      B.LOGO(91 * X, 92 * Y, 7 * m);
+    } },
+  { id: "w_bigtitle", name: "Big title, list to the right",
+    p: { ink: "#ffffff", a1: "#ffcc33", photo: true, full: true, art: "a_ember", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, tl = akGfxJTitle().split("\n").slice(0, 3);
+      B.BG();
+      B.SH("shade", "Dark fade", "rect", 0, 0, W, H, { color: "rgba(0,0,0,0.25)", fill2: "rgba(0,0,0,0.8)" });
+      tl.forEach(function (t, i) { B.TT("title" + (i ? i + 1 : ""), i ? "Title, line " + (i + 1) : "Title", t, 6 * X, 5 * Y + i * 12 * m, 13 * m, { align: "left", valign: "top", fit: 1, maxW: 88 * X, lh: 0.9 }); });
+      B.TS("subtitle", "Dates", akGfxJSub(), 6 * X, 7 * Y + tl.length * 12 * m, 2.8 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.4 * m, fit: 1, maxW: 60 * X });
+      akGfxJRows(B, 34 * X, 44 * Y, 60 * X, 44 * Y, { shadow: true, color: "#ffffff" });
+      B.WM(22 * X, 94 * Y, 34 * X);
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 94 * X, 95 * Y, 2.3 * m, { align: "right", fit: 1, maxW: 40 * X });
+    } },
+  { id: "w_box", name: "List in a box over a photo",
+    p: { paper: "#f7f4ee", ink: "#141414", a1: "#d94f30", photo: true, full: true, art: "a_tide", fonts: { title: GSX("Montserrat"), main: GSX("Montserrat"), small: GSX("Montserrat") }, tw: 800, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I;
+      B.BG();
+      B.SH("shade2", "Top fade", "rect", 0, 0, W, 30 * Y, { color: "rgba(0,0,0,0.55)", fill2: "rgba(0,0,0,0)" });
+      B.TT("title", "Title", akGfxJTitle(), 6 * X, 5 * Y, 8 * m, { align: "left", valign: "top", color: "#ffffff", fit: 2, maxW: 70 * X, maxH: 19 * Y, lh: 0.95 });
+      B.SH("box", "Box behind the list", "rect", 30 * X, 30 * Y, 70 * X, 70 * Y, { color: C.paper, alpha: 0.94 });
+      B.SH("strip", "Line on the box", "rect", 30 * X, 30 * Y, 70 * X, 0.8 * m, { color: C.a1 });
+      B.TS("subtitle", "Dates", akGfxJSub(), 35 * X, 35 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.3 * m, fit: 1, maxW: 58 * X });
+      akGfxJRows(B, 35 * X, 39 * Y, 60 * X, 49 * Y);
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 95 * X, 95 * Y, 2.3 * m, { align: "right", fit: 1, maxW: 55 * X });
+      B.WM(15 * X, 95 * Y, 26 * X);
+      B.LOGO(B.W - 8 * X, 8 * Y, 8 * m);
+    } },
+  { id: "w_column", name: "Color column",
+    p: { paper: "#f6f1e7", ink: "#1b1b1b", a1: "#e8543a", a2: "#24324a", fonts: { title: GSX("Righteous"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, H = B.H, C = B.C, I = B.I;
+      B.BG();
+      B.SH("column", "Color column", "rect", 0, 0, 38 * X, H, { color: C.a2 });
+      B.SH("circle", "Circle", "circle", -8 * X, 72 * Y, 32 * m, 32 * m, { color: C.a1 });
+      B.TT("title", "Title", akGfxJTitle(), 5 * X, 8 * Y, 7 * m, { align: "left", valign: "top", color: C.paper, fit: 3, maxW: 30 * X, maxH: 36 * Y, lh: 1 });
+      B.TS("subtitle", "Dates", akGfxJSub(), 5 * X, 48 * Y, 2.4 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.3 * m, fit: 2, maxW: 30 * X });
+      B.LOGO(19 * X, 84 * Y, 10 * m);
+      B.WM(68 * X, 5 * Y, 52 * X);
+      akGfxJRows(B, 43 * X, 11 * Y, 52 * X, 76 * Y);
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 43 * X, 94 * Y, 2.3 * m, { align: "left", fit: 1, maxW: 52 * X });
+    } },
+  { id: "w_offset", name: "Offset photo",
+    p: { paper: "#fbf6ee", ink: "#1d1d1d", a1: "#2f6fdb", photo: true, art: "a_celestial", fonts: { title: GSX("League Spartan"), main: GSX("Outfit"), small: GSX("Outfit") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I;
+      B.BG();
+      B.SH("block", "Color block", "rect", 11 * X, 7 * Y, 58 * X, 38 * Y, { color: C.a1 });
+      B.PH(6 * X, 4 * Y, 58 * X, 38 * Y);
+      B.TS("subtitle", "Dates", akGfxJSub(), 82 * X, 24 * Y, 2.8 * m, { rot: 90, weight: 800, spacing: 0.6 * m, fit: 1, maxW: 38 * Y });
+      B.TT("title", "Title", akGfxJTitle(true), 6 * X, 49 * Y, 8 * m, { align: "left", valign: "top", fit: 1, maxW: 88 * X, lh: 0.95 });
+      akGfxJRows(B, 6 * X, 60 * Y, 88 * X, 30 * Y, { maxP: 9 });
+      B.WM(24 * X, 95 * Y, 36 * X);
+      B.TS("footer1", "Website", I.tx("footer1", akGfxSite()), 94 * X, 95 * Y, 2.3 * m, { align: "right", fit: 1, maxW: 44 * X });
+    } }
+];
+AKGJ_WEEK.forEach(function (f) { AKG_LAYOUTS.week.push([f.id, f.name]); });
+(function () {
+  var fs0 = akGfxFlySpec, fb0 = akGfxFlyBuild;
+  akGfxFlySpec = function (id) { return fs0(id) || AKGJ_WEEK.filter(function (f) { return f.id === id; })[0] || null; };
+  akGfxFlyBuild = function (D) { AKGJ.D = D; return fb0.apply(this, arguments); };
+})();
+
+/* ---------------------------------------------------------------- each layout its own overlays */
+var AKGJ_LAY_OVL = { spot: ["bokeh"], band: ["diag"], swiss: ["gridfade"], psych: ["ripples"], jazz: ["streaks"], neon: ["rain"], deco: ["burstcorner"], sunset: ["waves"],
+  ticket: ["dotgrid"], festival: ["confetti"], marquee: ["bokeh"], polaroid: ["dashes"], vinyl: ["sideripples"], chalk: ["speckle"], punk: ["speckle"], celestial: ["starfield"],
+  magazine: ["diaghalf"], diagonal: ["chevrons"], bigtype: ["bigdotsright"], duotone: ["scales"], invite: ["staff"],
+  photoleft: ["cornerrings"], photoright: ["scales"], phototop: ["blocks"], photobottom: ["sidestripes"], offset: ["dashes"], roundphoto: ["orbitcorner"], cornerbox: ["rain"],
+  strip: ["wavyside"], typeleft: ["burstcorner"], standup: ["diamonds"], threebands: ["chevrons"], diagband: ["streaks"], gallery: ["gridfade"], fourblocks: ["dotgrid"],
+  list: ["pinstripe"], w_photoleft: ["sideripples"], w_phototop: ["cornerrings"], w_sidetitle: ["speckle"], w_bigtitle: ["bokeh"], w_box: ["cornerrings"], w_column: ["diamonds"], w_offset: ["gridfade"] };
+(function () {
+  var a0 = akGfxFlyApply;
+  akGfxFlyApply = function (D, id) { a0.apply(this, arguments); D.ovl = (AKGJ_LAY_OVL[id] || []).map(function (p) { return akGfxOvlNew(p, { seed: 7 }); }); };
+})();
+
+/* ---------------------------------------------------------------- where the words sit */
+var AKGJ_TPOS = [["", "Layout's own"], ["left", "Left"], ["right", "Right"], ["top", "Top"], ["bottom", "Bottom"], ["tl", "Top left"], ["tr", "Top right"], ["bl", "Bottom left"], ["br", "Bottom right"]];
+function akGfxTposOf(k) { return { left: ["left", "middle"], right: ["right", "middle"], top: ["center", "top"], bottom: ["center", "bottom"], tl: ["left", "top"], tr: ["right", "top"], bl: ["left", "bottom"], br: ["right", "bottom"] }[k] || null; }
+function akGfxTposOk(D) {
+  if (D.kind === "invoice" || (D.kind === "week" && D.layout === "cal") || (D.kind === "flyer" && D.layout === "band")) return false;
+  var spec = (D.kind === "flyer" || D.kind === "week") ? akGfxFlySpec(D.layout) : null;
+  return !spec || !!spec.p.full;
+}
+function akGfxTpos(D, P) {
+  var hv = akGfxTposOf(D.tpos); if (!hv || !akGfxTposOk(D)) return;
+  var W = P.W, H = P.H, side = hv[0] !== "center", cw = side ? W * 0.58 : W * 0.84, x0 = hv[0] === "left" ? W * 0.06 : hv[0] === "right" ? W * 0.94 - cw : (W - cw) / 2, k = cw / W;
+  var MOVE = { text: 1, gpic: 1, grows: 1, gbadge: 1, gstairs: 1, gspiral: 1, qr: 1, gshape: 1, grect: 1 };
+  var L = P.layers.filter(function (l) {
+    if (!MOVE[l.type] || l.fixed || l.nohit || /^(uf_|us_|uo_)/.test(l.id) || (l.type === "qr" && D.kind === "flyer")) return false;
+    if ((l.type === "gshape" || l.type === "grect") && (l.id !== "panel" && l.w > W * 0.8)) return false;
+    return true;
+  });
+  if (!L.length) return;
+  var y0 = Infinity, y1 = -Infinity;
+  L.forEach(function (l) { var b = l.type === "text" ? akGfxTextBox(l) : { y: l.y, h: l.type === "qr" ? l.s : l.h || 0 }; y0 = Math.min(y0, b.y); y1 = Math.max(y1, b.y + b.h); });
+  var gh = (y1 - y0) * k, top = hv[1] === "top" ? H * 0.05 : hv[1] === "bottom" ? H * 0.95 - gh : (H - gh) / 2;
+  function ty(y) { return top + (y - y0) * k; }
+  L.forEach(function (l) {
+    if (l.type === "text") {
+      l.size *= k; if (l.maxH) l.maxH *= k; if (l.spacing) l.spacing *= k; if (l.stroke) l.stroke *= k;
+      l.maxW = Math.min(l.maxW * k, cw); l.y = ty(l.y);
+      if (l.rot) l.x = x0 + l.x * k;
+      else if (hv[0] === "left") { l.align = "left"; l.x = x0; }
+      else if (hv[0] === "right") { l.align = "right"; l.x = x0 + cw; }
+      else l.x = x0 + l.x * k;
+      return;
+    }
+    if (l.type === "qr") { var s0 = l.s; l.s *= k; l.y = ty(l.y); l.x = x0 + (l.x + s0 / 2) * k - l.s / 2; return; }
+    var cx = l.x + l.w / 2, mid = Math.abs(cx - W / 2) < W * 0.08 && l.w < W * 0.8;
+    l.w *= k; l.h *= k; l.y = ty(l.y); ["size", "pitch", "r"].forEach(function (q) { if (l[q]) l[q] *= k; });
+    if (mid && hv[0] === "left") l.x = x0; else if (mid && hv[0] === "right") l.x = x0 + cw - l.w; else l.x = x0 + cx * k - l.w / 2;
+  });
+}
+(function () {
+  var L0 = akGfxLayers;
+  akGfxLayers = function (D) { var P = L0.apply(this, arguments); try { akGfxTpos(D, P); } catch (e) {} return P; };
+  /* the gallery: pictures of each layout, then where the words sit */
+  var g0 = akGfxGallery;
+  akGfxGallery = function (D, kind, pick) {
+    var wrap = g0.apply(this, arguments);
+    if (kind === "invoice") return wrap;
+    var box = h("div", { class: "akg-tpos" }, h("div", { class: "akg-sub" }, "Where the words sit"));
+    if (!akGfxTposOk(D)) box.appendChild(h("p", { class: "hint" }, "This layout already puts the words in their own place."));
+    else box.appendChild(h("div", { class: "chips akg-chips", role: "group", "aria-label": "Where the words sit" }, AKGJ_TPOS.map(function (t) {
+      var on = (D.tpos || "") === t[0];
+      return h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "data-tpos": t[0], onClick: function () { var X = akGfxState().X; D.tpos = t[0]; if (X) X.ch(true); } }, t[1]);
+    })));
+    wrap.appendChild(box);
+    return wrap;
+  };
+})();
+
+/* ---------------------------------------------------------------- 🎲 randomize */
+var AKGJ_LOCKS = [["layout", "Layout"], ["colors", "Colors"], ["ovl", "Overlays"], ["fonts", "Fonts"], ["photo", "Background"], ["words", "Where the words sit"], ["extras", "Border and effects"]];
+var AKGJ_FONTPAIRS = [["Bebas Neue", "Montserrat", "Montserrat"], ["Playfair Display", "Outfit", "Outfit"], ["League Spartan", "League Spartan", "Quicksand"], ["Righteous", "Outfit", "Quicksand"],
+  ["Cinzel", "Montserrat", "Montserrat"], ["Pacifico", "League Spartan", "Outfit"], ["Poiret One", "League Spartan", "Quicksand"], ["Syncopate", "Outfit", "Outfit"], ["Montserrat", "Montserrat", "Montserrat"], ["Megrim", "Outfit", "Outfit"]];
+function akGfxLocks() { var c = akGfxCfg(); if (!c.rlock || typeof c.rlock !== "object") c.rlock = {}; return c.rlock; }
+function akGfxRoll(D) {
+  var lk = akGfxLocks(), R = Math.random;
+  function pick(a) { return a[Math.floor(R() * a.length)]; }
+  var keep = JSON.parse(JSON.stringify({ fonts: D.fonts, ovl: D.ovl || [], bg: D.bg, filt: D.filt || null, fg: D.fg, accent: D.accent, accent2: D.accent2 || "", accent3: D.accent3 || "", paper: D.paper || "", theme: D.theme || "",
+    panel: D.panel, deco: akGfxDecoCfg(D), tfx: D.tfx || {}, tbeh: D.tbeh || null, tpos: D.tpos || "" }));
+  /* layout */
+  if (!lk.layout && (D.kind === "flyer" || D.kind === "week")) {
+    var mine = (D.kind === "flyer" ? AKGJ_FLY : AKGJ_WEEK).map(function (f) { return f.id; }), all = AKG_LAYOUTS[D.kind].map(function (l) { return l[0]; }).filter(function (id) { return id !== "cal" && id !== D.layout; });
+    var pool = R() < 0.6 ? mine.filter(function (id) { return id !== D.layout; }) : all, id = pick(pool.length ? pool : all), old = D.layout;
+    if (id) { D.layout = id; akGfxLayoutSwitch(D, old, id); }
+  }
+  /* colors, overlays, fonts, background, words, extras */
+  if (!lk.colors && R() < 0.75) akGfxThemeApply(D, pick(AKG_THEMES)[0]);
+  if (!lk.ovl) {
+    var n = R() < 0.15 ? 0 : R() < 0.7 ? 1 : 2;
+    D.ovl = [];
+    for (var i = 0; i < n; i++) {
+      var o = akGfxOvlNew(pick(AKG_OVL_PRESETS)[0]);
+      if (R() < 0.5) o.fade = pick(["top", "bottom", "left", "right", "corner", "corner2", "middle", "edges"]);
+      if (R() < 0.4) o.angle = pick([0, 15, 30, 45, -20, 90]);
+      o.op = Math.round(30 + R() * 45);
+      D.ovl.push(o);
+    }
+  }
+  if (!lk.fonts && R() < 0.6) { var fp = pick(AKGJ_FONTPAIRS); D.fonts = { title: akGfxStack(fp[0]), main: akGfxStack(fp[1]), small: akGfxStack(fp[2]) }; }
+  if (!lk.photo) {
+    var art = akGfxArtIds();
+    if (D.bg && D.bg.src === "art" && art.length && R() < 0.5) { D.bg.id = pick(art); D.bg.zoom = 1; D.bg.fx = 0.5; D.bg.fy = 0.5; }
+    if (D.kind !== "invoice") D.filt = R() < 0.25 ? { mode: pick(["warm", "cool", "fade", "vivid", "bw", "duo"]), c1: "#1d1446", c2: "#ff8a5c" } : (akGfxFlySpec(D.layout) || {}).p && akGfxFlySpec(D.layout).p.filt ? clone(akGfxFlySpec(D.layout).p.filt) : { mode: "none" };
+  }
+  if (!lk.words) D.tpos = akGfxTposOk(D) && R() < 0.65 ? pick(AKGJ_TPOS.slice(1))[0] : "";
+  if (!lk.extras) {
+    var dc = akGfxDecoCfg(D);
+    dc.border.style = R() < 0.55 ? "none" : pick(["line", "double", "rounded", "corners", "deco", "scallop", "brackets", "triple", "cornerdots", "dotsdash", "notch"]); if (!dc.border.lw) dc.border.lw = 8;
+    D.tfx = D.tfx || {}; D.tfx.title = { fx: R() < 0.4 ? pick(["glow", "outline", "lift", "shadow", "retro", "block", "neon", "gold"]) : "layout" };
+    D.tbeh = R() < 0.12 ? { kind: pick(["box", "pill", "brush", "marker"]), alpha: 100 } : null;
+  }
+  /* put back what is kept */
+  if (lk.fonts) D.fonts = keep.fonts;
+  if (lk.ovl) D.ovl = keep.ovl;
+  if (lk.photo) { D.bg = keep.bg; D.filt = keep.filt; }
+  if (lk.colors) { ["fg", "accent", "accent2", "accent3", "paper", "theme", "panel"].forEach(function (k) { D[k] = keep[k]; }); D.bg.color = keep.bg.color; D.bg.color2 = keep.bg.color2; akGfxDecoCfg(D).gc = keep.deco.gc; }
+  if (lk.words) D.tpos = keep.tpos;
+  if (lk.extras) { D.deco.border = keep.deco.border; D.tfx = keep.tfx; D.tbeh = keep.tbeh; }
+  D.recipe = "";
+}
+akGfxSurprise = function (D) { akGfxRoll(D); };
+function akGfxRollGo(X) {
+  if (!X || X.D.kind === "invoice") return;
+  akGfxRoll(X.D); akGfxState().sel = ""; X.ch(true);
+  var c = akGfxCfg(); if (!c.rollTold) { c.rollTold = 1; save(); toast("🎲 A new mix. Tap again for another; ↶ Undo goes back. 💡 Ideas: choose what to keep."); }
+}
+function akGfxLocksBox() {
+  var lk = akGfxLocks();
+  return h("div", { class: "akg-qs akg-locks" }, h("span", { class: "hint" }, "🎲 keeps:"), AKGJ_LOCKS.map(function (x) {
+    return h("label", { class: "chk" }, h("input", { type: "checkbox", "data-lock": x[0], checked: !!lk[x[0]], onChange: function () { akGfxLocks()[x[0]] = this.checked; save(); } }), x[1]);
+  }));
+}
+(function () {
+  var f0 = akGfxIdeasFill;
+  akGfxIdeasFill = function (d, X) {
+    f0.apply(this, arguments);
+    var b = d.querySelector("button.primary");
+    if (b && /Surprise/.test(b.textContent)) b.textContent = "🎲 Randomize";
+    var row = b && b.parentNode; if (row) row.parentNode.insertBefore(akGfxLocksBox(), row.nextSibling);
+  };
+  var v0 = AK_VIEWS.gfx;
+  AK_VIEWS.gfx = function () {
+    var wrap = v0.apply(this, arguments);
+    try {
+      var X = akGfxState().X, done = wrap.querySelector(".topbar .akg-done");
+      if (done && S.gfxKind !== "invoice") done.parentNode.insertBefore(h("button", { class: "icon akg-dice", "aria-label": "Randomize the design", title: "Randomize: a new layout, colors, overlay, fonts… (↶ Undo goes back)", onClick: function () { akGfxRollGo(akGfxState().X); } }, "🎲"), done);
+    } catch (e) {}
+    return wrap;
+  };
+})();
+akCss("akgfx-j", ".akg-tpos{margin-top:8px}.akg-locks{margin:6px 0 2px}.akg-shell>.topbar button.akg-dice{font-size:16px;padding:0 3px;min-width:28px}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
