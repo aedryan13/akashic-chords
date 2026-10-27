@@ -1818,7 +1818,8 @@ function backViaUI() {
 window.addEventListener("popstate", function () {
   if (ignorePop > 0) { ignorePop--; return; }
   if (histDepth > 0) histDepth--;
-  if (document.querySelector(".modal")) { closeMenu(); document.querySelectorAll(".modal").forEach(function (m) { m.remove(); }); return; }
+  /* Back with a menu or window open closes just that one and stays on this screen (akx_close.js) */
+  if (akxTop()) { akxCloseTop(); histPush(); return; }
   if (S.view !== "play" && !navPeek()) return;
   S.popping = true; try { backViaUI(); } finally { S.popping = false; }
 });
@@ -37577,6 +37578,7 @@ document.addEventListener("click", function (e) {
   if (bar) el = bar.parentNode && bar.parentNode.classList.contains("akfold") && bar.parentNode.firstElementChild === bar ? bar.parentNode : bar.nextElementSibling;
   else {
     var head = t.closest(".akfold-head > :first-child"); if (!head || t.closest("input,select,textarea,a")) return;
+    var inb = t.closest("button,label"); if (inb && inb !== head && head.contains(inb)) return; /* 15.9: a button inside a title does its own thing */
     el = head.parentNode;
   }
   if (!el || !el.getAttribute("data-akcol")) return;
@@ -37931,6 +37933,349 @@ akMarkApply = function (toks, everySong) {
     return r;
   };
 })();
+
+/* akx_close.js (version 15.5): every menu, drop-down and window can be closed without picking anything.
+   - ⋯ menus (menu()) get a "✕ Close" row pinned to their bottom.
+   - Every window made by modal() gets a ✕ in its top corner (the same as tapping outside it).
+   - Other pop-ups put on the page without a way out get a ✕ too (akxEnsure), and the chord fingering pop-up closes on a tap outside.
+   - The phone's Back button and the Escape key close the top pop-up only, and stay on the same screen. */
+AK_VERSION = "15.5";
+AK_WHATS_NEW = [
+  "Every ⋯ menu and drop-down has a ✕ Close at the bottom, and every window has a ✕ in its corner, so you can always get back without choosing anything.",
+  "Tapping outside a menu or window still closes it, and so does the phone's Back button: it closes just the pop-up and keeps you on the same screen."
+].concat(AK_WHATS_NEW);
+
+/* a button that already closes its window: Close, Cancel, Done, ✕... */
+var AKX_CLOSE_RX = /^(✕|×|close|cancel|done|not now|no thanks|got it|hide)\b/i;
+function akxIsCloser(b) {
+  var a = b.getAttribute("aria-label") || "";
+  if (/^close/i.test(a)) return true;
+  if (/remove|delete/i.test(a)) return false;
+  return AKX_CLOSE_RX.test((b.textContent || "").trim());
+}
+function akxXBtn(label, fn) {
+  return h("button", { class: "icon sm akx-x", "aria-label": label || "Close", title: "Close", onClick: function (e) { e.stopPropagation(); fn(); } }, "✕");
+}
+
+/* menus: a Close row at the bottom (stays in view when a long menu scrolls) */
+(function () {
+  var m0 = menu;
+  menu = function (anchor, items) {
+    var r = m0.apply(this, arguments);
+    try {
+      var m = openMenuEl;
+      if (m && !m.querySelector(".akx-mclose")) {
+        m.appendChild(h("button", { class: "akx-mclose", "aria-label": "Close this menu", onClick: function () { closeMenu(); } }, "✕ Close"));
+        /* the menu may have grown past the bottom of the screen: nudge it back up */
+        var rc = m.getBoundingClientRect();
+        if (rc.bottom > window.innerHeight - 8) m.style.top = Math.max(8, window.innerHeight - 8 - m.offsetHeight) + "px";
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* windows from modal(): a ✕ in the corner that does what a tap outside does */
+(function () {
+  var md0 = modal;
+  modal = function () {
+    var close = md0.apply(this, arguments);
+    try { var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1]; if (m) akxModalX(m); } catch (e) {}
+    return close;
+  };
+})();
+function akxModalX(m) {
+  var sh = m.querySelector(":scope > .sheet"); if (!sh || sh.querySelector(":scope > .akx-x")) return;
+  sh.classList.add("akx-has"); if (!sh.querySelector(":scope > h2")) sh.classList.add("akx-notitle");
+  sh.insertBefore(akxXBtn("Close this window", function () { akxCloseEl(m); }), sh.firstChild);
+}
+
+/* close one pop-up the way its own controls would */
+function akxCloseEl(el) {
+  if (!el || !el.isConnected) return false;
+  if (el.classList.contains("menu")) { if (el === openMenuEl) closeMenu(); else el.remove(); return true; }
+  if (el.classList.contains("modal")) {
+    /* the same as tapping the dark area around the window (runs its onClose) */
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    if (el.isConnected) { var d = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); }); if (d) d.click(); }
+    if (el.isConnected) el.remove();
+    return true;
+  }
+  var own = Array.prototype.find.call(el.querySelectorAll("button"), function (b) { return !b.classList.contains("akx-x") && akxIsCloser(b); });
+  if (own) own.click();
+  if (el.isConnected) el.remove();
+  return true;
+}
+
+/* the pop-up on top: an open menu first, then the newest window, then other pop-ups (not the floating tool windows, which have their own ✕) */
+var AKX_POPS = ".ak15-ipop, .chordpop, .listpanel, .akws-over";
+function akxTop() {
+  if (openMenuEl && openMenuEl.isConnected) return openMenuEl;
+  var ms = document.querySelectorAll(".modal"); if (ms.length) return ms[ms.length - 1];
+  var ps = document.querySelectorAll(AKX_POPS); return ps.length ? ps[ps.length - 1] : null;
+}
+function akxCloseTop() { var t = akxTop(); return t ? akxCloseEl(t) : false; }
+
+/* other pop-ups with no way out get a ✕ (checked as they appear) */
+function akxEnsure(el) {
+  if (!el || el.nodeType !== 1 || el.akxDone) return;
+  if (!el.matches || !el.matches('[role="dialog"]:not(.modal):not(.menu):not(.akfloat)')) return;
+  el.akxDone = true;
+  if (Array.prototype.some.call(el.querySelectorAll("button"), akxIsCloser)) return;
+  el.classList.add("akx-has", "akx-gen"); if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  el.insertBefore(akxXBtn("Close", function () { el.remove(); }), el.firstChild);
+}
+(function () {
+  if (typeof MutationObserver === "undefined") return;
+  new MutationObserver(function (list) {
+    list.forEach(function (r) {
+      Array.prototype.forEach.call(r.addedNodes, function (n) {
+        if (n.nodeType !== 1) return;
+        if (n.classList.contains("modal")) akxModalX(n);
+        akxEnsure(n);
+      });
+    });
+  }).observe(document.body, { childList: true, subtree: true });
+})();
+
+/* a tap outside the chord fingering pop-up closes it */
+document.addEventListener("pointerdown", function (e) {
+  var p = document.querySelector(".chordpop"); if (!p) return;
+  var t = e.target;
+  if (p.contains(t) || (t.closest && t.closest(".modal, .menu, [data-shape]"))) return;
+  p.remove();
+}, true);
+
+/* Escape closes the top pop-up (the phone's Back button is handled in ui.js's popstate, through akxCloseTop) */
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape" || S.learning) return;
+  if (akxCloseTop()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+
+(function () {
+  var css = ".menu .akx-mclose{position:sticky;bottom:-6px;margin:4px -6px -6px;padding:0 12px;min-height:44px;text-align:center;font-weight:600;background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 12px 12px;color:var(--muted)}" +
+    ".menu .akx-mclose:hover{color:var(--fg)}" +
+    ".sheet.akx-has{position:relative}" +
+    ".akx-has > .akx-x{position:absolute;top:8px;right:8px;z-index:2;min-width:36px;min-height:36px;padding:0;border-radius:50%;font-size:1rem;line-height:1;background:var(--panel);border:1px solid var(--line);color:var(--fg);opacity:.85}" +
+    ".akx-has > .akx-x:hover{opacity:1}" +
+    ".sheet.akx-has > h2{padding-right:44px}" +
+    ".sheet.akx-notitle > .body{margin-top:38px}" +
+    ".akx-gen{padding-top:40px !important}";
+  document.head.appendChild(h("style", { id: "akx-css" }, css));
+})();
+
+/* ================================================================ akfold_b: fold sections on every screen, tidy button piles (version 15.9)
+   Builds on akcol_a (15.3): same akfold classes, same remembered map settings().akCol.
+   - Any box on a screen or in a window whose first line is a heading (Show page: Setlist, Photos, Recordings, What was played,
+     Requests; Artist info, Logs and stats, Build a setlist, Settings boxes...) folds: tap its title. Keys "c:<screen>:<name>".
+   - The setlist page's helper buttons (✦ Setlist helper, ⚡ ...) fold under a slim bar.
+   - Folding sections that were already there (▸ sections of the song editor, Settings, Import, Guide, Graphics studio...) now stay
+     open or closed after the app is closed: S.layOpen is kept in settings().akOpen, and plain sections are kept in akCol "d:...".
+   - ⊟ Fold all / ⊞ Open all: a slim row at the top of any screen with 3 or more folding sections (settings().foldAllBtn).
+   - Song editor: the pile of buttons above the words (Find lyrics ... Make chord, and the hint, cut to two lines until tapped) is one 🛠 Song tools box that folds,
+     shown as a small grid (default), one scrolling row, or big buttons as before: settings().toolsLook, ⚙ on the box. */
+AK_VERSION = "15.9";
+AK_WHATS_NEW = [
+  "Fold any section: on the show page (Setlist, Photos, Recordings, What was played, Requests), the setlist page (the helper buttons), Artist info, Logs and stats, Build a setlist and the boxes in windows, tap a section's title to fold it to one line. Sections stay folded or open after you close the app, including the ones in the song editor and Settings.",
+  "⊟ Fold all and ⊞ Open all at the top of any screen with several sections (Settings › Arrange the pages can hide it).",
+  "Song editor: the buttons above the words (Find lyrics, Place chords, + Section, Lucky guess...) are now one 🛠 Song tools box in a small grid, so the words are right there. Tap its title to fold it, or ⚙ to show the tools as one scrolling row or as big buttons like before."
+].concat(AK_WHATS_NEW);
+DEFAULTS.toolsLook = "grid";
+DEFAULTS.foldAllBtn = true;
+
+function akFoldSlug(s) { return String(s || "").replace(/\(?\d[\d,.:]*\)?/g, " ").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40); }
+/* the first words of a heading (its own text, not the buttons inside it) */
+function akFoldText(el) {
+  var t = [].map.call(el.childNodes, function (n) { return n.nodeType === 3 ? n.textContent : n.nodeType === 1 && !/^(BUTTON|SELECT|INPUT)$/.test(n.tagName) ? n.textContent : ""; }).join(" ");
+  return t.replace(/\s+/g, " ").trim();
+}
+/* where a section is: the screen, or the window's title */
+function akFoldWhere(el) {
+  var m = el.closest && el.closest(".modal");
+  if (m) { var t = m.querySelector(".sheet > h2"); return "m-" + akFoldSlug(t ? t.textContent : "window"); }
+  return S.view || "app";
+}
+var AKFOLD_SKIP = ".list,.item,.akrr-win,.akrp-in,.akw9-card,.akfold,.akfold-tgt,.menu,.tabbar,.topbar,.laybanner,summary";
+
+/* ---------------------------------------------------------------- boxes with a heading */
+function akFoldCards(root) {
+  Array.prototype.forEach.call(root.querySelectorAll(".card:not(details):not([data-akcol])"), function (c) {
+    if (c.parentElement && c.parentElement.closest(AKFOLD_SKIP)) return;
+    if (c.classList.contains("akfold") || c.children.length < 2) return;
+    var f = c.firstElementChild; if (!f) return;
+    var head = /^H[2-4]$/.test(f.tagName) || (/^(STRONG|B)$/.test(f.tagName) && c.children.length >= 3 && !c.querySelector(":scope > .list"));
+    if (!head) return;
+    var name = akFoldText(f); if (!name || name.length > 60) return;
+    var key = "c:" + akFoldWhere(c) + ":" + (c.getAttribute("data-bk") || akFoldSlug(name));
+    c.setAttribute("data-akcol", key); c.classList.add("akfold", "akfold-head", "akfold-gen");
+    akColPaint(c, null, akColShut(key, false));
+  });
+}
+
+/* ---------------------------------------------------------------- plain folding sections remember open or closed */
+function akFoldDetails(root) {
+  Array.prototype.forEach.call(root.querySelectorAll("details:not([data-akcold])"), function (d) {
+    if (d._layInit || d.closest(".akrr-win,.menu")) return;
+    var s = d.querySelector(":scope > summary"); if (!s) return;
+    var name = akFoldText(s.querySelector(".st") || s); if (!name) return;
+    var key = "d:" + akFoldWhere(d) + ":" + (d.getAttribute("data-bk") || akFoldSlug(name));
+    d.setAttribute("data-akcold", "1"); d.setAttribute("data-akfd", key);
+    var m = akColMap(); if (Object.prototype.hasOwnProperty.call(m, key)) d.open = !m[key];
+    d.addEventListener("toggle", function () { akColSet(key, !d.open); });
+  });
+}
+/* sections the page layout opens and closes (song editor, Settings, Import...): S.layOpen is kept between visits */
+function akFoldKeepLay() {
+  if (S._akLO) return; S._akLO = true;
+  var st = settings(), keep = st.akOpen && typeof st.akOpen === "object" ? st.akOpen : {};
+  S.layOpen = S.layOpen || {};
+  Object.keys(keep).forEach(function (k) { if (!(k in S.layOpen)) S.layOpen[k] = !!keep[k]; });
+}
+var AKFOLD_LT = 0;
+document.addEventListener("toggle", function (e) {
+  var d = e.target; if (!d || d.tagName !== "DETAILS" || !d._layInit) return;
+  clearTimeout(AKFOLD_LT);
+  AKFOLD_LT = setTimeout(function () {
+    if (!S.layOpen) return;
+    var st = settings(), was = JSON.stringify(st.akOpen || {}), now = JSON.stringify(S.layOpen);
+    if (was === now) return;
+    st.akOpen = JSON.parse(now); save(); store.changes = Math.max(0, (store.changes || 1) - 1);
+  }, 120);
+}, true);
+
+/* ---------------------------------------------------------------- the song editor's buttons: 🛠 Song tools */
+var AKFT_LOOKS = [["grid", "Small buttons in a grid"], ["strip", "One row you scroll sideways"], ["big", "Big buttons (as before)"]];
+function akFtLook() { var v = settings().toolsLook; return AKFT_LOOKS.some(function (x) { return x[0] === v; }) ? v : "grid"; }
+function akFtPaint(box) { AKFT_LOOKS.forEach(function (x) { box.classList.toggle("akft-" + x[0], akFtLook() === x[0]); }); }
+function akFtBtnRow(el) {
+  if (!el || el.tagName !== "DIV" || !el.classList.contains("row") || el.hasAttribute("data-blocks")) return false;
+  var kids = [].slice.call(el.children);
+  return kids.length >= 1 && kids.every(function (k) { return /^(BUTTON|A)$/.test(k.tagName) || k.classList.contains("filebtn"); });
+}
+/* wrap the hint and the button rows at the top of a section body into one folding tools box */
+function akFtWrap(body, key, title) {
+  if (!body || body.querySelector(":scope > .akft")) return null;
+  var lead = [], n = body.firstElementChild;
+  while (n && (akFtBtnRow(n) || (n.tagName === "P" && n.classList.contains("hint")))) { lead.push(n); n = n.nextElementSibling; }
+  var rows = lead.filter(akFtBtnRow), count = rows.reduce(function (a, r) { return a + r.children.length; }, 0);
+  if (rows.length < 1 || count < 5) return null;
+  var btns = h("div", { class: "akft-btns" }), hints = h("div", { class: "akft-hints", title: "Tap to read it all", onClick: function () { hints.classList.toggle("open"); } });
+  var box = h("div", { class: "akft akfold", "data-akcol": key },
+    h("div", { class: "akft-head" },
+      h("button", { type: "button", class: "akft-bar", "aria-expanded": "true", onClick: function () { var shut = !box.classList.contains("akfold-shut"); akColSet(key, shut); akFtShut(box, shut); } },
+        h("span", { class: "akfold-arr" }), title, h("span", { class: "muted" }, " (" + count + ")")),
+      h("button", { type: "button", class: "icon sm akft-gear", "aria-label": "How to show the tools", title: "How to show the tools", onClick: function () { akFtMenu(this); } }, "⚙")),
+    h("div", { class: "akft-body" }, hints, btns));
+  body.insertBefore(box, lead[0]);
+  lead.forEach(function (x) { (akFtBtnRow(x) ? btns : hints).appendChild(x); });
+  if (!hints.firstChild) hints.remove();
+  akFtPaint(box); akFtShut(box, akColShut(key, false));
+  return box;
+}
+function akFtShut(box, shut) { akColPaint(box, null, shut); var b = box.querySelector(".akft-bar"); if (b) b.setAttribute("aria-expanded", shut ? "false" : "true"); }
+function akFtMenu(anchor) {
+  menu(anchor, AKFT_LOOKS.map(function (x) {
+    return { label: (akFtLook() === x[0] ? "✓ " : "") + x[1], onClick: function () { settings().toolsLook = x[0]; save(); Array.prototype.forEach.call(document.querySelectorAll(".akft"), akFtPaint); } };
+  }));
+}
+function akFtSong(root) {
+  if (S.view !== "song") return;
+  var body = root.querySelector('[data-bk="lyrics-and-chords"] > .secbody');
+  if (body) akFtWrap(body, "ft:song", "🛠 Song tools");
+}
+
+/* ---------------------------------------------------------------- setlist page: the helper buttons fold */
+AKCOL_RULES.push({ sel: ".main .akset-bar", mode: "bar", key: "sl:helper", title: "Setlist helper" });
+
+/* ---------------------------------------------------------------- ⊟ Fold all / ⊞ Open all */
+function akFoldTops(main) {
+  var all = [].slice.call(main.querySelectorAll("details, .akfold, .akfold-tgt"));
+  return all.filter(function (el) {
+    if (el.closest(".akfold-all") || el.classList.contains("lay-hidden")) return false;
+    var p = el.parentElement && el.parentElement.closest("details, .akfold, .akfold-tgt");
+    return !p || !main.contains(p);
+  });
+}
+function akFoldAll(main, shut) {
+  akFoldTops(main).forEach(function (el) {
+    if (el.tagName === "DETAILS") { if (el.open === shut) el.open = !shut; return; }
+    var key = el.getAttribute("data-akcol"); if (!key) return;
+    akColSet(key, shut);
+    var bar = el.classList.contains("akfold-tgt") ? el.previousElementSibling : el.firstElementChild;
+    if (el.classList.contains("akft")) akFtShut(el, shut);
+    else akColPaint(el, bar && bar.classList.contains("akfold-bar") ? bar : null, shut);
+  });  /* the setlist page: its sets fold too */
+  var sh = S.view === "show" && typeof findShow === "function" ? findShow(S.showId) : null;
+  if (sh && sh.sets && sh.sets.some(function (x) { return !!x.collapsed !== shut; })) { sh.sets.forEach(function (x) { x.collapsed = shut; }); save(); rerenderKeepScroll(); }
+}
+function akFoldAllRow(app) {
+  var main = app.querySelector(".main"); if (!main) return;
+  var old = main.querySelector(":scope > .akfold-all");
+  var want = settings().foldAllBtn !== false && !S.arrange && S.view !== "play" && akFoldTops(main).length >= 3;
+  if (!want) { if (old) old.remove(); return; }
+  if (old) return;
+  main.insertBefore(h("div", { class: "akfold-all" },
+    h("button", { type: "button", class: "akfold-allb", onClick: function () { akFoldAll(main, true); } }, "⊟ Fold all"),
+    h("button", { type: "button", class: "akfold-allb", onClick: function () { akFoldAll(main, false); } }, "⊞ Open all")), main.firstChild);
+}
+
+/* ---------------------------------------------------------------- run it with the folds from 15.3 */
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    root = root || document.body; if (!root || !root.querySelectorAll) return;
+    run(root);
+    if (S.arrange || S.akCustBuild) return;
+    try { akFtSong(root); } catch (e) { if (window.console) console.warn("akfold tools", e); }
+    try { akFoldCards(root); } catch (e) { if (window.console) console.warn("akfold cards", e); }
+    try { akFoldDetails(root); } catch (e) { if (window.console) console.warn("akfold details", e); }
+    try { var app = $("app"); if (app && (root === document.body || root === app)) akFoldAllRow(app); } catch (e) {}
+  };
+  /* the folds go in before the screen puts back its scroll position */
+  var lr = layRun;
+  layRun = function (root) {
+    try { akFoldKeepLay(); } catch (e) {}
+    var out = lr.apply(this, arguments);
+    try { if (root && root.id === "app") akColRun(root); } catch (e) {}
+    return out;
+  };
+})();
+/* ---------------------------------------------------------------- Settings › Arrange the pages: the Fold all row and the tools look */
+(function () {
+  var ac = layArrangeCard;
+  layArrangeCard = function (out) {
+    ac.apply(this, arguments);
+    var s = settings();
+    out.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: s.foldAllBtn !== false, onChange: function () { s.foldAllBtn = this.checked; save(); } }), "Show ⊟ Fold all and ⊞ Open all at the top of pages with several sections"));
+    out.appendChild(h("label", { class: "fld" }, "Song tools in the song editor",
+      h("select", { "aria-label": "How to show the song tools", onChange: function () { s.toolsLook = this.value; save(); } },
+        AKFT_LOOKS.map(function (x) { return h("option", { value: x[0], selected: akFtLook() === x[0] }, x[1]); }))));
+  };
+})();
+
+akCss("akfold-b", [
+  ".akfold-gen > :first-child{cursor:pointer}",
+  ".akfold-gen.akfold-shut{padding-top:8px !important;padding-bottom:8px !important}",
+  ".akfold-gen.akfold-shut > :first-child{margin:0 !important}",
+  ".akfold-all{display:flex;justify-content:flex-end;gap:4px;margin:0 0 2px}",
+  "html body .akfold-allb{min-height:28px !important;padding:0 8px !important;margin:0 !important;width:auto !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:var(--muted,#999) !important;font-size:.78rem !important;font-weight:600;display:inline-flex;align-items:center}",
+  /* the tools box */
+  ".akft{margin:4px 0 8px}",
+  ".akft-head{display:flex;align-items:center;gap:4px}",
+  "html body .akft-bar{flex:1;display:flex;align-items:center;gap:4px;min-height:30px !important;margin:0 !important;padding:0 4px !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:var(--fg,inherit);font-weight:700;font-size:.9rem;text-align:left;justify-content:flex-start;width:auto}",
+  ".akft-bar .akfold-arr::before{content:'▾'}.akft.akfold-shut .akft-bar .akfold-arr::before{content:'▸'}",
+  "html body .akft-gear{min-height:30px !important;min-width:34px !important;margin:0 !important}",
+  ".akft-hints{cursor:pointer}.akft-hints > p.hint{margin:2px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+  ".akft-hints.open > p.hint{display:block}",
+  ".akft-btns > .row{margin:0}",
+  ".akft-grid .akft-btns{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:5px}",
+  ".akft-strip .akft-btns{display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}",
+  ".akft-grid .akft-btns > .row,.akft-strip .akft-btns > .row{display:contents}",
+  "html body .akft-grid .akft-btns > .row > *,html body .akft-strip .akft-btns > .row > *{min-height:34px !important;margin:0 !important;padding:3px 7px !important;font-size:.8rem !important;line-height:1.15;border-radius:9px}",
+  "html body .akft-grid .akft-btns > .row > *{width:100% !important;white-space:normal;text-align:center;justify-content:center;display:flex;align-items:center}",
+  "html body .akft-strip .akft-btns > .row > *{flex:none;white-space:nowrap;width:auto !important}",
+  ".akft-big .akft-btns > .row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}"
+].join(""));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
