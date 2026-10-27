@@ -38063,6 +38063,431 @@ document.addEventListener("keydown", function (e) {
   document.head.appendChild(h("style", { id: "akx-css" }, css));
 })();
 
+/* ================================================================ akch_a: chord options, requests, randomize, originals, fret shapes (version 16.3)
+   - 115 Song editor › 🎸 Chord options card (akChHubCard, painted after "Key, time, tempo and length"): every chord in the song
+     (as you hold it, after transpose) with its fret shapes and the other names that shape has; tap one for all its fingerings
+     (openChordPop). Other ways to play the same sound: every capo 0–7 with the shapes it gives, easiest first (akPlayOptions).
+     Show chords as names / fret shapes / both, the chord toolkit, and Fix fret shapes written in the text (akFixOpen).
+   - 121 Fret shapes instead of names: settings().akFret {mode: names|frets|both, sep: auto|always}. chordTr shows the shape you
+     hold (your default fingering first, allVoicings) as one character per string, low string first (x32010); a fret of 10 or more
+     puts a dash between every string (x-10-12-12-11-10), the usual way tab sites and chord books write it. "Both" adds the shape
+     small after the name. Switch: Button bar / side button "Frets" (akfret), hold a chord for a moment, or the editor card.
+     Piano and unknown chords keep their names. The text itself is never changed, so switching back is instant.
+   - 116 song.noReq: "Not available for requests right now" (song editor, Playing section; Settings › Requests › choose songs).
+     The request page shows them greyed with "Not available right now" (profile songs get n: 1). Random next skips them too.
+   - 117 Request page: "Book" tab with an Inquire about booking form (when, where, kind of event, who, budget, contact, note). It
+     goes as a message titled "Booking inquiry" (works with the Firebase rules people already have); the app keeps each one in
+     lib().bookings (Shows › ⋯ › 📅 Booking inquiries). A short "About Akashic Chords" blurb (Akashic Records, a storehouse for
+     your musical memories) can show on the page. settings().akBook {on, line, about, aboutText}. Booking is on by default
+     in the Personal edition only. Nothing here shows an email address unless the performer types one.
+   - 119 Randomize: Add songs › 🎲 Pick at random (N from the songs shown, after search and tags); setlist page › 🎲 Shuffle (each
+     set, the whole setlist, one set; undo). Playing screen: 🎲 Random next (akrand) picks a song not played tonight and not off
+     limits (not available for requests, inactive, works in progress), from the setlist or the whole library
+     (settings().akRand.pool: auto|setlist|library|originals).
+   - 120 Playing screen song list: ★ Originals tab lists just your originals (Originals list or tagged original); tapping one adds
+     it to tonight's list (set "Added"), so it counts in play counts and stats exactly like a cover. Button "Originals" (akorig). */
+AK_VERSION = "16.3";
+AK_WHATS_NEW = [
+  "🎸 Chord options in the song editor: each chord's fret shapes and other names, and every capo way to play the song with the shapes it gives, in one card.",
+  "x32010: show chords as fret shapes instead of names (or both). Switch with the Frets button, by holding a chord, or in Chord options. Frets 10 and up are written with dashes: x-10-12-12-11-10.",
+  "🚫 Mark songs not available for requests (like your end-of-show songs). They show greyed on the request page as “Not available right now”.",
+  "📅 Booking inquiries from your request page (when, where, what kind of event, budget, contact), plus a short “About Akashic Chords” note. They land in Shows › ⋯ › Booking inquiries.",
+  "🎲 Random: pick songs at random in Add songs, shuffle a set or the whole setlist, and a Random next button that skips songs already played and songs not available.",
+  "★ Originals tab in the playing screen's song list: add an original during a covers set; it counts just like any other song."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- settings */
+function akFretCfg() { var s = settings(), c = s.akFret = s.akFret || {}; if (!c.mode) c.mode = "names"; if (!c.sep) c.sep = "auto"; return c; }
+function akRandCfg() { var s = settings(), c = s.akRand = s.akRand || {}; if (!c.pool) c.pool = "auto"; return c; }
+var AKCH_ABOUT = "In old spiritual traditions, the Akashic Records are a library of everything: every word, song and moment, kept forever. Akashic Chords borrows the idea. It is a storehouse for all your musical memories and song information: every song, chord, lyric, setlist and show night, in one place and always at hand.";
+function akBookCfg() {
+  var s = settings(), c = s.akBook = s.akBook || {};
+  if (c.on === undefined) c.on = akPersonal();
+  if (c.about === undefined) c.about = true;
+  if (c.line === undefined) c.line = "Weddings, parties, restaurants, private events: tell me about yours.";
+  if (!c.aboutText) c.aboutText = AKCH_ABOUT;
+  return c;
+}
+function akChPush() { try { if (akLive().on && AKL.conn) akLivePublish().catch(function () {}); } catch (e) {} }
+
+/* ---------------------------------------------------------------- 121 fret shapes */
+var AKCH_FC = { k: "", m: {} };
+function akFretFor(name) {
+  var ins = settings().instrument;
+  if (ins !== "guitar" && ins !== "ukulele") return "";
+  var k = ins + "|" + akFretCfg().sep; if (AKCH_FC.k !== k) AKCH_FC = { k: k, m: {} };
+  if (AKCH_FC.m[name] !== undefined) return AKCH_FC.m[name];
+  var out = "";
+  try { var v = allVoicings(ins, name), f = v && v.list[0] && v.list[0].frets; if (f) out = akFretText(f); } catch (e) {}
+  AKCH_FC.m[name] = out; setTimeout(function () { AKCH_FC.m = {}; }, 0);
+  return out;
+}
+function akFretText(frets) {
+  if (akFretCfg().sep === "always") return frets.map(function (f) { return f < 0 ? "x" : String(f); }).join("-");
+  return akShapeText(frets);
+}
+function akFretMode() { return akFretCfg().mode; }
+function akFretSet(mode) {
+  akFretCfg().mode = mode; save(); AKCH_FC.m = {};
+  if (S.view === "play") { try { keepAutoRender(); } catch (e) { render(); } } else render();
+}
+function akFretToggle() {
+  var m = akFretMode(), nx = m === "names" ? "frets" : "names";
+  akFretSet(nx);
+  toast(nx === "frets" ? "Chords show as fret shapes (low string first)." : "Chords show as names.");
+}
+(function () {
+  var ct = chordTr;
+  chordTr = function (c, o) {
+    var r = ct.apply(this, arguments);
+    if (akFretMode() !== "frets" || (o.deg && o.deg.mode === "numerals")) return r;
+    var f = akFretFor(transposeChord(c, o.n, o.acc));
+    if (f) r.shown = f;
+    return r;
+  };
+  var ce = chEl;
+  chEl = function (c, o) {
+    var el = ce.apply(this, arguments);
+    if (akFretMode() === "both") { var f = akFretFor(transposeChord(c, o.n, o.acc)); if (f) el.appendChild(h("sup", { class: "akfret" }, f)); }
+    return el;
+  };
+})();
+/* hold a chord for a moment: names ⇄ fret shapes */
+(function () {
+  var t = 0, held = false, x0 = 0, y0 = 0;
+  document.addEventListener("pointerdown", function (e) {
+    var ch = e.target && e.target.closest && e.target.closest(".chart .ch, .rawchart .ch, .chordrow .ch");
+    held = false; clearTimeout(t); if (!ch || settings().akFretHold === false) return;
+    x0 = e.clientX; y0 = e.clientY;
+    t = setTimeout(function () { held = true; akFretToggle(); }, 650);
+  }, true);
+  document.addEventListener("pointermove", function (e) { if (t && (Math.abs(e.clientX - x0) > 10 || Math.abs(e.clientY - y0) > 10)) clearTimeout(t); }, true);
+  document.addEventListener("pointerup", function () { clearTimeout(t); }, true);
+  document.addEventListener("pointercancel", function () { clearTimeout(t); }, true);
+  document.addEventListener("click", function (e) { if (held) { held = false; e.stopPropagation(); e.preventDefault(); } }, true);
+})();
+
+/* ---------------------------------------------------------------- 115 chord options card in the song editor */
+function akChSongShapes(s) {
+  var n = s.transpose || 0, acc = accFor(s, n, s.accPref || settings().acc), seen = {}, out = [];
+  akSongChords(s).forEach(function (c) { var sh = transposeChord(c, n, acc); if (!seen[sh]) { seen[sh] = 1; out.push(sh); } });
+  return out;
+}
+var AKCH_ENH = { "C#": "Db", "Db": "C#", "D#": "Eb", "Eb": "D#", "F#": "Gb", "Gb": "F#", "G#": "Ab", "Ab": "G#", "A#": "Bb", "Bb": "A#" };
+/* the same chord spelled the other way: F#m = Gbm, Bb/D = A#/D */
+function akChEnh(name) {
+  var m = /^([A-G][#b]?)([^\/]*)(?:\/([A-G][#b]?))?$/.exec(name); if (!m || (!AKCH_ENH[m[1]] && !(m[3] && AKCH_ENH[m[3]]))) return [];
+  return [(AKCH_ENH[m[1]] || m[1]) + m[2] + (m[3] ? "/" + (AKCH_ENH[m[3]] || m[3]) : "")];
+}
+function akChHubCard(s) {
+  var ins = settings().instrument, piano = ins !== "guitar" && ins !== "ukulele";
+  var det = h("details", { class: "card akch-hub", "data-bk": "chord-options" }), body = h("div");
+  det.appendChild(h("summary", { style: "cursor:pointer;font-weight:700" }, "🎸 Chord options", h("span", { class: "muted", style: "font-weight:400" }, "  ·  shapes, other names, capo ways")));
+  det.appendChild(body);
+  function draw() {
+    body.textContent = "";
+    var st = styleOf(), C = akFretCfg();
+    /* show chords as */
+    var seg = h("div", { class: "row akch-seg", role: "group", "aria-label": "Show chords as" }, h("span", { class: "muted" }, "Show chords as"));
+    [["names", "Names (G)"], ["frets", "Fret shapes (320003)"], ["both", "Both"]].forEach(function (m) {
+      seg.appendChild(h("button", { class: "sm" + (C.mode === m[0] ? " on" : ""), "aria-pressed": C.mode === m[0] ? "true" : "false", disabled: piano && m[0] !== "names", onClick: function () { akFretSet(m[0]); } }, m[1]));
+    });
+    body.appendChild(seg);
+    body.appendChild(h("p", { class: "hint", style: "margin:2px 0 8px" }, piano ? "Fret shapes are for guitar and ukulele. Switch the instrument in Settings to use them." : "Everywhere the song shows, on the playing screen too. Low string first, x = not played. Frets 10 and up get dashes: x-10-12-12-11-10. Hold any chord to switch."));
+    /* the song's chords */
+    var shapes = akChSongShapes(s);
+    body.appendChild(h("h3", { class: "cph" }, "Chords in this song" + (Number(s.capo) ? " (as you hold them, capo " + s.capo + ")" : "")));
+    if (!shapes.length) body.appendChild(h("p", { class: "hint" }, "No chords yet. Put chords in the song and they show here."));
+    var grid = h("div", { class: "akch-grid" });
+    shapes.slice(0, 40).forEach(function (sh) {
+      var vs = piano ? [] : (allVoicings(ins, sh).list || []), first = vs[0];
+      var others = akChEnh(sh).concat(first ? akShapeNames(first.frets).filter(function (x) { return x.exact; }).map(function (x) { return x.name; }).filter(function (nm) { return nm.replace(/maj7/, "M7") !== sh.replace(/maj7/, "M7") && nm !== sh; }) : []).slice(0, 3);
+      var tile = h("button", { class: "akch-tile", "aria-label": "More ways to play " + sh, onClick: function () { var fake = h("span", { class: "ch", "data-shape": sh }, sh); openChordPop(document.querySelector("#app") || document.body, fake); } },
+        h("b", { class: "akch-nm" }, styleChord(sh, st)),
+        vs.length ? h("span", { class: "akch-fr" }, vs.slice(0, 2).map(function (v, i) { return h("span", { class: i ? "muted" : "" }, akFretText(v.frets)); })) : h("span", { class: "muted" }, piano ? "" : "no shape yet"),
+        others.length ? h("span", { class: "muted akch-also" }, "also " + others.join(", ")) : null);
+      grid.appendChild(tile);
+    });
+    body.appendChild(grid);
+    /* other ways to play it */
+    var ck = akChartKey(s);
+    if (ck && shapes.length && !piano) {
+      var cur = akMod(ck.pc + (s.transpose || 0) + tuningOffset() + (Number(s.capo) || 0)), opts = akPlayOptions(s, cur);
+      body.appendChild(h("h3", { class: "cph" }, "Other ways to play it (same sound)"));
+      body.appendChild(h("p", { class: "hint", style: "margin:0 0 4px" }, "Each capo fret with the shapes it gives, easiest first. Use this changes this song's capo and shapes; the song sounds the same."));
+      var more = !!S.akChAllWays;
+      opts.slice(0, more ? 8 : 4).forEach(function (o) { body.appendChild(akOptionRow(s, o, "", function () { render(); })); });
+      if (opts.length > 4) body.appendChild(h("button", { class: "sm", onClick: function () { S.akChAllWays = !more; draw(); } }, more ? "Fewer" : "Every capo fret (" + opts.length + ")"));
+    }
+    body.appendChild(h("div", { class: "row", style: "margin-top:8px;flex-wrap:wrap" },
+      h("button", { class: "sm", onClick: function () { openChordTools("library", { song: s }); } }, "🧰 Chord toolkit"),
+      piano ? null : h("button", { class: "sm", onClick: function () { openChordTools("name", { song: s }); } }, "Shape ⇄ name"),
+      h("button", { class: "sm", onClick: function () { akFixOpen(s.id); } }, "Fix fret shapes written in the text")));
+  }
+  if (S.akChOpen === s.id) { det.open = true; draw(); }
+  det.addEventListener("toggle", function () { S.akChOpen = det.open ? s.id : null; if (det.open) draw(); });
+  return det;
+}
+function akChHubPaint() {
+  if (S.view !== "song" || !S.songId || settings().akChHub === false) return;
+  var s = findSong(S.songId); if (!s || document.querySelector("#app .akch-hub")) return;
+  var meta = Array.prototype.filter.call(document.querySelectorAll("#app details.card"), function (d) { var su = d.querySelector("summary"); return su && /^Key, time, tempo/.test(su.textContent); })[0];
+  if (!meta || !meta.parentNode) return;
+  meta.parentNode.insertBefore(akChHubCard(s), meta.nextSibling);
+}
+(function () { var r = render; render = function () { var x = r.apply(this, arguments); try { akChHubPaint(); } catch (e) {} return x; }; })();
+
+/* ---------------------------------------------------------------- 116 not available for requests */
+function akNoReq(s) { return !!(s && s.noReq); }
+(function () {
+  var pe = akSongPlayingExtra;
+  akSongPlayingExtra = function (s, later) {
+    var el = pe.apply(this, arguments);
+    var ck = h("label", { class: "chk akch-noreq" }, h("input", { type: "checkbox", checked: !!s.noReq, onChange: function () { if (this.checked) s.noReq = true; else delete s.noReq; later(); akChPush(); } }),
+      "🚫 Not available for requests right now (greyed on the request page)");
+    return h("div", null, el, ck);
+  };
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = pp.apply(this, arguments), B = akBookCfg();
+    if (Array.isArray(p.songs)) p.songs.forEach(function (x) { var s = findSong(x.i); if (akNoReq(s)) x.n = 1; });
+    p.booking = B.on ? { on: true, line: String(B.line || "").slice(0, 200) } : null;
+    p.about = B.about ? String(B.aboutText || AKCH_ABOUT).slice(0, 900) : "";
+    return p;
+  };
+})();
+function akNoReqPicker() {
+  var q = "", list = h("div", { class: "list" }), count = h("span");
+  function fill() {
+    list.textContent = ""; var n = 0;
+    sortedSongs().forEach(function (s) {
+      if (s.noReq) n++;
+      if (q && (s.title + " " + (s.artist || "")).toLowerCase().indexOf(q) < 0) return;
+      list.appendChild(h("label", { class: "chk card", style: "margin:0;cursor:pointer" }, h("input", { type: "checkbox", checked: !!s.noReq, onChange: function () { if (this.checked) s.noReq = true; else delete s.noReq; save(); fill(); } }),
+        h("span", null, h("strong", null, s.title || "Untitled"), s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null)));
+    });
+    count.textContent = n + " not available";
+  }
+  fill();
+  modal("Not available for requests", h("div", null,
+    h("p", { class: "hint" }, "Ticked songs show greyed on the request page as “Not available right now”, and Random next skips them. Good for the songs you save for the end of the night."),
+    h("input", { type: "search", placeholder: "Search songs", "aria-label": "Search songs", onInput: function () { q = this.value.trim().toLowerCase(); fill(); } }),
+    h("div", { class: "row" }, count, h("button", { class: "sm", onClick: function () { lib().songs.forEach(function (s) { delete s.noReq; }); save(); fill(); } }, "Make all available")), list),
+    [{ label: "Done", primary: true, onClick: function () { akChPush(); render(); } }], { wide: true, onClose: function () { akChPush(); } });
+}
+
+/* ---------------------------------------------------------------- 117 booking inquiries */
+function akBookings() { var l = lib(); if (!Array.isArray(l.bookings)) l.bookings = []; return l.bookings; }
+(function () {
+  var inc = akLiveIncoming;
+  akLiveIncoming = function (list) {
+    var fresh = 0;
+    (list || []).forEach(function (r) {
+      if (!r || r.kind !== "message" || r.title !== "Booking inquiry" || !r.id) return;
+      var B = akBookings(); if (B.some(function (b) { return b.id === r.id; })) return;
+      B.unshift({ id: r.id, at: r.at && r.at.toMillis ? r.at.toMillis() : Number(r.at) || Date.now(), name: r.name || "", note: r.note || "", done: false }); fresh++;
+    });
+    if (fresh) { save(); setTimeout(function () { toast("📅 New booking inquiry.", { label: "Open", fn: akBookingsOpen }); }, 50); }
+    return inc.apply(this, arguments);
+  };
+})();
+function akBookingsOpen() {
+  var box = h("div");
+  function draw() {
+    box.textContent = ""; var B = akBookings();
+    if (!B.length) box.appendChild(h("p", { class: "hint" }, "No booking inquiries yet. People send them from the Book tab of your request page (turn it on in Settings › Requests)."));
+    B.forEach(function (b) {
+      box.appendChild(h("div", { class: "card akch-book" + (b.done ? " done" : "") },
+        h("div", { class: "row", style: "margin:0;align-items:center" }, h("strong", { class: "grow" }, b.name || "Someone"), h("span", { class: "muted" }, new Date(b.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))),
+        h("div", { class: "akch-note" }, b.note),
+        h("div", { class: "row", style: "margin:6px 0 0" },
+          h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText((b.name ? b.name + "\n" : "") + b.note).then(function () { toast("Copied."); }); } catch (e) {} } }, "Copy"),
+          h("button", { class: "sm" + (b.done ? " on" : ""), "aria-pressed": b.done ? "true" : "false", onClick: function () { b.done = !b.done; save(); draw(); } }, b.done ? "✓ Answered" : "Mark answered"),
+          h("button", { class: "sm danger", onClick: function () { snap("delete booking inquiry"); lib().bookings = akBookings().filter(function (x) { return x !== b; }); save(); draw(); toastUndo("Deleted."); } }, "Delete"))));
+    });
+  }
+  draw();
+  modal("📅 Booking inquiries", box, [{ label: "Done", primary: true }], { wide: true });
+}
+(function () {
+  var vs = viewShows;
+  viewShows = function () {
+    var el = vs.apply(this, arguments);
+    try {
+      var bar = el.querySelector(".topbar"), more = bar && Array.prototype.filter.call(bar.querySelectorAll("button"), function (b) { return (b.textContent || "").trim() === "⋯"; })[0];
+      if (more) akMenuPlus(more, function () { var n = akBookings().filter(function (b) { return !b.done; }).length; return [{ label: "📅 Booking inquiries" + (n ? " (" + n + " new)" : "") + "…", onClick: akBookingsOpen }]; });
+    } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- 119 randomize */
+function akShuffle(a) { for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function akShuffleShow(sh, how, si) {
+  snap("shuffle setlist");
+  if (how === "whole") {
+    var all = [], sizes = sh.sets.map(function (st) { return st.songIds.length; });
+    sh.sets.forEach(function (st) { all = all.concat(st.songIds); });
+    akShuffle(all); var k = 0;
+    sh.sets.forEach(function (st, i) { st.songIds = all.slice(k, k + sizes[i]); k += sizes[i]; });
+  } else sh.sets.forEach(function (st, i) { if (how === "each" || i === si) akShuffle(st.songIds); });
+  save(); render(); toastUndo(how === "whole" ? "Shuffled the whole setlist." : how === "each" ? "Shuffled every set." : "Shuffled " + (sh.sets[si].name || "the set") + ".");
+}
+function akShuffleMenu(btn, sh) {
+  var items = [{ label: "🎲 Shuffle every set (songs stay in their set)", onClick: function () { akShuffleShow(sh, "each"); } }];
+  if (sh.sets.length > 1) {
+    items.push({ label: "🎲 Shuffle the whole setlist (songs move between sets)", onClick: function () { akShuffleShow(sh, "whole"); } });
+    sh.sets.forEach(function (st, i) { if (st.songIds.length > 1) items.push({ label: "Shuffle just " + (st.name || "set " + (i + 1)), onClick: function () { akShuffleShow(sh, "one", i); } }); });
+  }
+  menu(btn, items);
+}
+(function () {
+  var sb = akSetBar;
+  akSetBar = function (sh) {
+    var el = sb.apply(this, arguments);
+    try { if (sh.sets.some(function (st) { return st.songIds.length > 1; })) el.appendChild(h("button", { class: "akch-shuf", onClick: function () { akShuffleMenu(this, sh); } }, "🎲 Shuffle")); } catch (e) {}
+    return el;
+  };
+  var ps = pickSongs;
+  pickSongs = function () {
+    var r = ps.apply(this, arguments);
+    try {
+      var ms = document.querySelectorAll(".modal .sheet"), sheet = ms[ms.length - 1], body = sheet && sheet.querySelector(".body");
+      if (body && !body.querySelector(".akch-rand")) {
+        var n = h("input", { type: "number", min: 1, max: 99, value: S.akRandN || 10, inputmode: "numeric", "aria-label": "How many songs", style: "width:4.5em" });
+        var row = h("div", { class: "row akch-rand", style: "margin:0 0 6px;align-items:center" }, h("button", { onClick: function () {
+          var want = Math.max(1, Math.min(99, Number(n.value) || 10)); S.akRandN = want;
+          var boxes = Array.prototype.filter.call(body.querySelectorAll(".list input[type=checkbox]"), function (c) { return !c.checked; });
+          akShuffle(boxes).slice(0, want).forEach(function (c) { c.click(); });
+          toast(boxes.length ? "Picked " + Math.min(want, boxes.length) + " at random. Search or tags first to pick from fewer." : "No more songs to pick.");
+        } }, "🎲 Pick at random"), n, h("span", { class: "muted" }, "from the songs shown"));
+        var list = body.querySelector(".list"), par = list ? list.parentNode : body; par.insertBefore(row, list && list.previousSibling ? list.previousSibling : par.firstChild);
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+function akIsOriginal(s) { return !!s && (akShelfOf(s) === "orig" || (s.tags || []).some(akIsOrigTag)); }
+function akOffLimits(s) { return !s || s.deleted || s.active === false || akNoReq(s) || akShelfOf(s) === "wip"; }
+function akPlayedTonight(id, real) {
+  var p = S.play, sh = p && p.list[p.idx] && p.list[p.idx].showId ? findShow(p.list[p.idx].showId) : null, s = findSong(id);
+  if (sh && sh.played && sh.played[id]) return true;
+  if (!real && S.akRandSeen && S.akRandSeen[id]) return true;
+  return !!(s && s.lastPlayed && Date.now() - s.lastPlayed < 6 * 3600e3);
+}
+function akRandNext() {
+  var p = S.play; if (!p) return;
+  var root = document.querySelector(".play"), cur = curItem() && curItem().songId, pool = akRandCfg().pool;
+  S.akRandSeen = S.akRandSeen || {}; if (cur) S.akRandSeen[cur] = 1;
+  var fromSet = p.list.map(function (x) { return x.songId; });
+  function ok(id) { var s = findSong(id); return id !== cur && !akOffLimits(s) && !akPlayedTonight(id); }
+  var lib0 = lib().songs.map(function (s) { return s.id; }), cand, where;
+  if (pool === "originals") { cand = lib0.filter(function (id) { return akIsOriginal(findSong(id)) && ok(id); }); where = "your originals"; }
+  else if (pool === "library" || (pool === "auto" && fromSet.length < 2)) { cand = lib0.filter(ok); where = "your library"; }
+  else { cand = fromSet.filter(ok); where = "this setlist"; if (!cand.length && pool === "auto") { cand = lib0.filter(ok); where = "your library (the setlist is all played)"; } }
+  if (!cand.length) { toast("Every song in " + where + " has been played or is off limits."); return; }
+  var id = cand[Math.floor(Math.random() * cand.length)];
+  loadSongById(id, root); toast("🎲 " + (findSong(id).title || "") + " (from " + where + ")");
+}
+
+/* ---------------------------------------------------------------- 120 originals tab in the song list */
+(function () {
+  var osl = openSongList;
+  openSongList = function (root) {
+    var r = osl.apply(this, arguments);
+    try {
+      var panel = root.querySelector(".listpanel"), head = panel && panel.querySelector("header"), body = panel && panel.querySelector(".body"), strip = panel && panel.querySelector(".azstrip");
+      if (!head || head.querySelector(".akch-origb")) return r;
+      var on = false, d0 = panel._draw;
+      var b = h("button", { class: "akch-origb", "aria-pressed": "false", onClick: function () { on = !on; paint(); } }, "★ Originals");
+      function paint() {
+        b.setAttribute("aria-pressed", on ? "true" : "false"); panel.classList.toggle("akch-origon", on);
+        if (!on) { d0(); return; }
+        body.textContent = ""; if (strip) strip.textContent = "";
+        var L = sortedSongs().filter(akIsOriginal);
+        body.appendChild(h("div", { class: "setname" }, "My originals (" + L.length + ")"));
+        if (!L.length) body.appendChild(h("div", { class: "empty" }, "No originals yet. Put songs on the Originals list (Songs › Originals) or tag them “original”."));
+        L.forEach(function (s) {
+          var pl = akPlayedTonight(s.id, true);
+          body.appendChild(h("div", { class: "li" + (pl ? " played" : "") }, h("button", { class: "lbtn", onClick: function () { loadSongById(s.id, root); } }, h("div", { class: "t" }, s.title), h("div", { class: "s" }, [s.key, pl ? "played tonight" : ""].filter(Boolean).join(" · ") || " "))));
+        });
+        body.scrollTop = 0;
+      }
+      panel._draw = function () { if (on) paint(); else d0.apply(this, arguments); };
+      Array.prototype.forEach.call(head.querySelectorAll("button"), function (x) { if (x !== b) x.addEventListener("click", function () { if (on) { on = false; b.setAttribute("aria-pressed", "false"); panel.classList.remove("akch-origon"); } }, true); });
+      Array.prototype.forEach.call(panel.querySelectorAll("input.qsearch, .kb"), function (x) { x.addEventListener(x.tagName === "INPUT" ? "input" : "click", function () { if (on) { on = false; b.setAttribute("aria-pressed", "false"); panel.classList.remove("akch-origon"); } }, true); });
+      head.insertBefore(b, head.children[1] || null);
+      if (S.akOrigOpen) { S.akOrigOpen = false; on = true; paint(); }
+    } catch (e) {}
+    return r;
+  };
+})();
+function akOrigOpen() { var r = document.querySelector(".play"); if (!r) return; closeList(r); S.akOrigOpen = true; openSongList(r); }
+
+/* ---------------------------------------------------------------- buttons */
+AK_IC.akrand = "M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M8.5 8.5h.01 M15.5 8.5h.01 M12 12h.01 M8.5 15.5h.01 M15.5 15.5h.01";
+AK_IC.akfret = "M4 6h16 M4 10h16 M4 14h16 M4 18h16 M8 4v16 M14 4v16";
+AK_IC.akorig = "M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z";
+TB_ITEMS.push(["akrand", "🎲 Random next song (skips played and not available)"], ["akorig", "★ Originals (pick an original to add)"], ["akfret", "x32010 Chord names ⇄ fret shapes"]);
+TB_SHORT.akrand = "Random"; TB_SHORT.akorig = "Originals"; TB_SHORT.akfret = "Frets";
+FAB_ITEMS.push(["akrand", "🎲 Random next song"], ["akorig", "★ Originals"], ["akfret", "Chord names ⇄ fret shapes"]);
+FAB_OFF.akrand = 1; FAB_OFF.akorig = 1; FAB_OFF.akfret = 1; FAB_SHORT.akrand = "Random"; FAB_SHORT.akorig = "Originals"; FAB_SHORT.akfret = "Frets";
+(function () {
+  var A = { akrand: ["Random next song", akRandNext], akorig: ["Originals", akOrigOpen], akfret: ["Chord names or fret shapes", akFretToggle] };
+  var tb = akExtraTb25, fb = akExtraFab12;
+  akExtraTb25 = function (id) { var a = A[id]; if (a) return h("button", { "aria-label": a[0], onClick: function () { a[1](); this.blur(); } }, akIcon(id)); return tb.apply(this, arguments); };
+  akExtraFab12 = function () { var o = fb.apply(this, arguments) || {}; Object.keys(A).forEach(function (id) { o[id] = function () { return h("button", { class: "fb", "aria-label": A[id][0], onClick: function () { A[id][1](); this.blur(); } }, akIcon(id)); }; }); return o; };
+})();
+
+/* ---------------------------------------------------------------- Settings */
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("playing-screen");
+    c.section("Chord names or fret shapes", "Show chords as x32010 shapes, names, or both");
+    var F = akFretCfg();
+    var sel = h("select", { "aria-label": "Show chords as", onChange: function () { F.mode = this.value; save(); AKCH_FC.m = {}; } }, [["names", "Names (G, Am7)"], ["frets", "Fret shapes (320003, x02010)"], ["both", "Both (name, shape small after it)"]].map(function (o) { return h("option", { value: o[0], selected: F.mode === o[0] }, o[1]); }));
+    c.out.appendChild(h("label", { class: "fld" }, "Show chords as", sel));
+    var sep = h("select", { "aria-label": "Dashes between strings", onChange: function () { F.sep = this.value; save(); AKCH_FC.m = {}; } }, [["auto", "Only when a fret is 10 or more (x-10-12-12-11-10)"], ["always", "Always (x-3-2-0-1-0)"]].map(function (o) { return h("option", { value: o[0], selected: F.sep === o[0] }, o[1]); }));
+    c.out.appendChild(h("label", { class: "fld" }, "Dashes between strings", sep));
+    c.check("Hold a chord for a moment to switch", function () { return settings().akFretHold !== false; }, function (v) { settings().akFretHold = v; });
+    c.out.appendChild(h("p", { class: "hint" }, "Shapes use your default fingering for each chord (tap a chord, pick one, Make default). Low string first; x = not played, 0 = open. Guitar and ukulele."));
+    c.check("Chord options card in the song editor", function () { return settings().akChHub !== false; }, function (v) { settings().akChHub = v; });
+    c.section("Random next song", "The 🎲 Random button on the playing screen");
+    var R = akRandCfg();
+    c.out.appendChild(h("label", { class: "fld" }, "Pick from", h("select", { onChange: function () { R.pool = this.value; save(); } }, [["auto", "The setlist I'm playing (else my library)"], ["setlist", "Only the setlist I'm playing"], ["library", "My whole library"], ["originals", "My originals"]].map(function (o) { return h("option", { value: o[0], selected: R.pool === o[0] }, o[1]); }))));
+    c.out.appendChild(h("p", { class: "hint" }, "It skips the song on screen, songs played tonight (or in the last 6 hours), songs not available for requests, inactive songs and works in progress. Add the button: Buttons › Random."));
+    c.again("requests-and-tips");
+    c.section("Booking and not-available songs", "Booking inquiries, the About note, songs you don't take requests for");
+    var B = akBookCfg();
+    c.check("Book tab on my request page (Inquire about booking)", function () { return B.on; }, function (v) { B.on = v; akChPush(); });
+    c.out.appendChild(h("label", { class: "fld" }, "Line above the booking form", h("input", { type: "text", value: B.line || "", maxlength: 200, onChange: function () { B.line = this.value; save(); akChPush(); } })));
+    c.check("“About Akashic Chords” note on my request page", function () { return B.about; }, function (v) { B.about = v; akChPush(); });
+    c.out.appendChild(h("label", { class: "fld" }, "About note", h("textarea", { rows: 4, maxlength: 900, value: B.aboutText || "", onChange: function () { B.aboutText = this.value.trim() || AKCH_ABOUT; save(); akChPush(); } })));
+    var nb = akBookings().filter(function (b) { return !b.done; }).length, nr = lib().songs.filter(akNoReq).length;
+    c.out.appendChild(h("div", { class: "row", style: "flex-wrap:wrap" },
+      h("button", { onClick: akBookingsOpen }, "📅 Booking inquiries" + (nb ? " (" + nb + " new)" : "")),
+      h("button", { onClick: akNoReqPicker }, "🚫 Songs not available for requests" + (nr ? " (" + nr + ")" : "") + "…")));
+    c.out.appendChild(h("p", { class: "hint" }, "Inquiries come in like messages and are kept under Shows › ⋯ › Booking inquiries. The page only shows what you type here, never your email."));
+  };
+})();
+
+try {
+  AK_FEAT.push({ id: "chhub", cat: "Songs", name: "Chord options", desc: "In the song editor: each chord's fret shapes and other names, every capo way to play the song with the shapes it gives, and names ⇄ fret shapes.", where: "Song editor, under Key, time, tempo and length", modes: "", go: null, sel: ".akch-hub", area: "editor", links: [], tour: false },
+    { id: "akrand", cat: "Shows", name: "Random", desc: "Pick songs at random in Add songs, shuffle a set or the whole setlist, and a Random next button that skips played and not-available songs.", where: "Setlist page 🎲 Shuffle, Add songs, Buttons › Random", modes: "", go: null, sel: null, area: "play", links: [], tour: false });
+} catch (e) {}
+
+akCss("akch-a", [
+  ".akch-seg{align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 0}.akch-seg .on{background:var(--accent);color:var(--on,#fff);border-color:var(--accent)}",
+  ".akch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:6px;margin:4px 0 8px}",
+  ".akch-tile{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;padding:6px 8px;min-height:0}",
+  ".akch-nm{font-size:1.15rem}.akch-fr{font-family:var(--mono,monospace);font-size:.9rem;display:flex;flex-direction:column}.akch-also{font-size:.75rem}",
+  "sup.akfret{font-family:var(--mono,monospace);font-size:.55em;font-weight:400;opacity:.8;margin-left:.2em}",
+  ".akch-note{white-space:pre-wrap;margin:4px 0}.akch-book.done{opacity:.6}",
+  ".akch-origb[aria-pressed=true]{background:var(--accent);color:var(--on,#fff)}"
+].join("\n"));
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
