@@ -2345,7 +2345,7 @@ function songInfoLine(s, o) {
   if (o.length && s.duration) out.push(fmtTime(s.duration));
   if (o.tempo && s.tempo) out.push(s.tempo + " bpm");
   if (o.timeSig && s.timeSig) out.push(s.timeSig);
-  if (o.capo && Number(s.capo)) out.push("capo " + s.capo);
+  if (o.capo) { var cpn = typeof akCapoNum === "function" ? akCapoNum(s) : Number(s.capo) || 0; if (cpn) out.push("capo " + cpn); }
   if (o.retune && typeof akRetuneOf === "function" && akRetuneOf(s)) out.push("⚠ " + akRetuneOf(s));
   if (o.year && s.year) out.push(String(s.year));
   if (o.origArtist && s.origArtist) out.push("orig. " + s.origArtist);
@@ -12154,7 +12154,7 @@ function nextUpEl(p, song) {
   var nx = p.list[p.idx + 1]; if (!nx) return null;
   var ns = findSong(nx.songId); if (!ns) return null;
   var bits = [ns.title || "Untitled"]; if (ns.key) bits.push(ns.key);
-  var c1 = Number(song.capo) || 0, c2 = Number(ns.capo) || 0, warn = c1 !== c2;
+  var c1 = typeof akCapoNum === "function" ? akCapoNum(song) : Number(song.capo) || 0, c2 = typeof akCapoNum === "function" ? akCapoNum(ns) : Number(ns.capo) || 0, warn = c1 !== c2;
   if (c2) bits.push("capo " + c2); else if (warn) bits.push("no capo");
   var r1 = typeof akRetuneOf === "function" ? akRetuneOf(song) : "", r2 = typeof akRetuneOf === "function" ? akRetuneOf(ns) : "";
   if (r1 !== r2) { warn = true; bits.push(r2 ? r2 : "back to " + akBaseTuningName()); } else if (r2) bits.push(r2);
@@ -17113,7 +17113,7 @@ function akNextItems() {
   try { suggestCandidates("like", false, []).slice(0, 3).forEach(function (x) { if (!out.some(function (o) { return o.s === x.s; })) out.push({ s: x.s, why: (x.why || []).slice(0, 1).join("") }); }); } catch (e) {}
   return out;
 }
-function akSongBits(s) { return [s.key ? "Key " + s.key : "", Number(s.capo) ? "Capo " + s.capo : "", typeof akRetuneOf === "function" && akRetuneOf(s) ? "⚠ " + akRetuneOf(s) : ""].filter(Boolean).join(" · "); }
+function akSongBits(s) { return [s.key ? "Key " + s.key : "", (typeof akCapoNum === "function" ? akCapoNum(s) : Number(s.capo)) ? "Capo " + (typeof akCapoNum === "function" ? akCapoNum(s) : s.capo) : "", typeof akRetuneOf === "function" && akRetuneOf(s) ? "⚠ " + akRetuneOf(s) : ""].filter(Boolean).join(" · "); }
 /* one kind of info as an element (short = for the top bar) */
 function akInfoBody(kind, song, short) {
   var box = h("div", { class: "akinfo-b" });
@@ -37600,6 +37600,7 @@ document.addEventListener("click", function (e) {
   if (bar) el = bar.parentNode && bar.parentNode.classList.contains("akfold") && bar.parentNode.firstElementChild === bar ? bar.parentNode : bar.nextElementSibling;
   else {
     var head = t.closest(".akfold-head > :first-child"); if (!head || t.closest("input,select,textarea,a")) return;
+    var inb = t.closest("button,label"); if (inb && inb !== head && head.contains(inb)) return; /* 15.9: a button inside a title does its own thing */
     el = head.parentNode;
   }
   if (!el || !el.getAttribute("data-akcol")) return;
@@ -38084,6 +38085,223 @@ document.addEventListener("keydown", function (e) {
     ".akx-gen{padding-top:40px !important}";
   document.head.appendChild(h("style", { id: "akx-css" }, css));
 })();
+
+/* ================================================================ akfb_a: build a chord on a fretboard (version 15.6)
+   The chord keyboard (akckb) gets a 🎸 Build key. It opens a guitar (or ukulele) neck: tap the fret on each string where a finger
+   goes, the top row switches a string between open (○) and not played (×). The app names the chord as you tap (akShapeNames, the
+   same naming as Chord toolkit › Name a shape), with the other names it could be; tap one to pick it. "Use this chord" puts the
+   name into the box you were typing in, at the cursor, and clears the neck for the next chord; Done goes back to that box.
+   - Start fret (◀ ▶) and how many frets show; a capo, so the open strings sound at the capo. With a capo the chord is named as
+     the shape you hold (like a chart written for capo); "Sounding" names it as it sounds.
+   - Tapping a fret plays that note, 🔊 plays the chord (your recorded guitar when you have one).
+   - In your tuning: a drop or open tuning changes the names, a plain tune-down doesn't (as everywhere else in the app).
+   settings().fb = { ins: "guitar" | "ukulele", from (start fret), n (frets shown), capo, sound (name as it sounds) } */
+function akFbCfg() {
+  var s = settings(); if (!s.fb || typeof s.fb !== "object") s.fb = {};
+  var c = s.fb;
+  if (c.ins !== "guitar" && c.ins !== "ukulele") c.ins = s.instrument === "ukulele" ? "ukulele" : "guitar";
+  if (!(c.from >= 1 && c.from <= 20)) c.from = 1;
+  if (!(c.n >= 4 && c.n <= 12)) c.n = 5;
+  if (!(c.capo >= 0 && c.capo <= 12)) c.capo = 0;
+  return c;
+}
+var AKFB_DOTS = { guitar: [3, 5, 7, 9, 15, 17, 19, 21], ukulele: [5, 7, 10, 15, 17, 19] };
+/* frets: one per string, low string first; -1 = not played, 0 = open (at the capo when there is one) */
+function akFbSound(frets, capo) { return frets.map(function (f) { return f < 0 ? -1 : f === 0 ? capo : f; }); }
+function akFbShape(frets, capo) { return frets.map(function (f) { return f < 0 ? -1 : f === 0 ? 0 : f - capo; }); }
+function akFbNames(frets, ins, capo, sound) {
+  if (frets.filter(function (f) { return f >= 0; }).length < 2) return [];
+  try { return akShapeNames(sound || !capo ? akFbSound(frets, capo) : akFbShape(frets, capo), ins); } catch (e) { return []; }
+}
+/* put a chord name in the box at the cursor, with a space on each side where it needs one */
+function akFbInsert(t, pos, name) {
+  if (!t || !t.isConnected) return pos;
+  var v = t.value, a = Math.max(0, Math.min(pos == null ? v.length : pos, v.length));
+  var before = a > 0 && !/[\s(\[|\/\-]/.test(v.charAt(a - 1)) ? " " : "", after = a < v.length && /\S/.test(v.charAt(a)) ? " " : (a === v.length ? " " : "");
+  var txt = before + name + after;
+  if (t.maxLength > 0 && (v.length + txt.length) > t.maxLength) { txt = before + name; if (v.length + txt.length > t.maxLength) return a; }
+  t.value = v.slice(0, a) + txt + v.slice(a);
+  var at = a + txt.length;
+  try { t.setSelectionRange(at, at); } catch (e) {}
+  t.dispatchEvent(new Event("input", { bubbles: true }));
+  return at;
+}
+function akFbOff(ins) { return Number((settings().tuning || {})[ins]) || 0; }
+function akFbHear(frets, ins) {
+  var notes = akShapeNotes(ins), list = [];
+  frets.forEach(function (f, i) { if (f >= 0) list.push({ m: notes[i] + f + akFbOff(ins), s: i }); });
+  if (!list.length) return;
+  try { akHearStrum(list, {}); } catch (e) { try { list.forEach(function (x, i) { akTone(x.m, 1.2, i * 0.03, "pluck"); }); } catch (e2) {} }
+}
+function akFbNote(m, s, ins) { m += akFbOff(ins); try { akGtrNote(m, { str: s, vol: 0.5 }); } catch (e) { try { akTone(m, 0.6, 0, "pluck"); } catch (e2) {} } }
+
+/* the window. target: the box to type into (may be null: then "Use this chord" copies the name) */
+function akFbOpen(target, pos) {
+  var c = akFbCfg(), frets = null, pick = null, added = [], close = null;
+  if (target && pos == null) pos = oskSel(target)[0];
+  function reset() { frets = new Array(akShapeNotes(c.ins).length).fill(-1); pick = null; }
+  reset();
+  var host = h("div", { class: "akfb" });
+  function draw() {
+    var ins = c.ins, notes = akShapeNotes(ins), ns = notes.length, labs = akStringLabels(ins), capo = c.capo;
+    if (frets.length !== ns) reset();
+    if (c.from <= capo) c.from = capo + 1;
+    host.textContent = "";
+    /* instrument, frets shown, capo */
+    host.appendChild(h("div", { class: "akfb-top" },
+      h("span", { class: "akfb-seg", role: "group", "aria-label": "Instrument" }, ["guitar", "ukulele"].map(function (x) {
+        return h("button", { class: "sm" + (ins === x ? " on" : ""), "aria-pressed": ins === x ? "true" : "false", onClick: function () { if (c.ins === x) return; c.ins = x; save(); reset(); draw(); } }, x === "guitar" ? "🎸 Guitar" : "Ukulele");
+      })),
+      h("span", { class: "akfb-pos" },
+        h("button", { class: "sm", "aria-label": "Frets lower", disabled: c.from <= Math.max(1, capo + 1), onClick: function () { c.from = Math.max(capo + 1, c.from - 1); save(); draw(); } }, "◀"),
+        h("b", { class: "akfb-from" }, "Frets " + c.from + "–" + (c.from + c.n - 1)),
+        h("button", { class: "sm", "aria-label": "Frets higher", disabled: c.from >= 20, onClick: function () { c.from = Math.min(20, c.from + 1); save(); draw(); } }, "▶")),
+      h("label", { class: "akfb-sel" }, "Show ", h("select", { "aria-label": "Frets shown", onChange: function () { c.n = Number(this.value); save(); draw(); } }, [4, 5, 6, 7, 8, 10, 12].map(function (n) { return h("option", { value: String(n), selected: n === c.n }, n + " frets"); }))),
+      h("label", { class: "akfb-sel" }, "Capo ", h("select", { "aria-label": "Capo", onChange: function () {
+        var was = c.capo; c.capo = Number(this.value);
+        frets = frets.map(function (f) { return f > 0 && f <= c.capo ? -1 : f; });
+        if (c.from <= c.capo || c.from === was + 1) c.from = c.capo + 1;
+        pick = null; save(); draw();
+      } }, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return h("option", { value: String(n), selected: n === capo }, n ? String(n) : "none"); })))));
+
+    /* the neck: strings across (low string on the left, like a chord chart), the nut at the top */
+    var cols = "2.2em repeat(" + ns + ", minmax(2.4em, 1fr))";
+    var neck = h("div", { class: "akfb-neck" + (c.from === 1 && !capo ? " nut" : "") + (capo && c.from === capo + 1 ? " capo" : ""), style: "grid-template-columns:" + cols });
+    neck.appendChild(h("div", { class: "akfb-lab" }, capo ? "capo " + capo : ""));
+    for (var i = 0; i < ns; i++) (function (i) {
+      var f = frets[i];
+      neck.appendChild(h("button", { class: "akfb-oc" + (f === 0 ? " open" : f < 0 ? " mute" : ""), "aria-label": "String " + labs[i] + ": " + (f < 0 ? "not played, tap for open" : f === 0 ? "open, tap for not played" : "fret " + f + ", tap for open"),
+        onClick: function () { frets[i] = frets[i] === 0 ? -1 : 0; pick = null; if (frets[i] === 0) akFbNote(notes[i] + capo, i, ins); draw(); } }, f < 0 ? "×" : f === 0 ? "○" : h("span", { class: "akfb-sn" }, labs[i])));
+    })(i);
+    for (var r = 0; r < c.n; r++) (function (fr) {
+      var dot = AKFB_DOTS[ins].indexOf(fr) >= 0 ? "•" : fr === 12 || fr === 24 ? "••" : "";
+      neck.appendChild(h("div", { class: "akfb-lab" }, h("b", null, String(fr)), dot ? h("span", { class: "akfb-dot" }, dot) : null));
+      for (var i = 0; i < ns; i++) (function (i) {
+        var on = frets[i] === fr, below = fr <= capo;
+        neck.appendChild(h("button", { class: "akfb-cell" + (on ? " hit" : "") + (below ? " off" : "") + (i === 0 ? " first" : "") + (i === ns - 1 ? " last" : ""), disabled: below,
+          "aria-label": "String " + labs[i] + ", fret " + fr, "aria-pressed": on ? "true" : "false",
+          onClick: function () { frets[i] = on ? -1 : fr; pick = null; if (!on) akFbNote(notes[i] + fr, i, ins); draw(); } }, on ? h("span", { class: "akfb-fing" }) : null));
+      })(i);
+    })(c.from + r);
+    var held = frets.map(function (f, i) { return f > 0 && (f < c.from || f >= c.from + c.n) ? labs[i] + " fret " + f : null; }).filter(Boolean);
+
+    /* the name */
+    var res = akFbNames(frets, ins, capo, c.sound).filter(function (x, i) { return !i || x.exact; }), side = h("div", { class: "akfb-side", "aria-live": "polite" });
+    if (pick && !res.some(function (x) { return x.name === pick; })) pick = null;
+    var best = pick || (res[0] && res[0].name) || "";
+    var played = frets.filter(function (f) { return f >= 0; }).length;
+    if (!played) side.appendChild(h("p", { class: "hint akfb-help" }, "Tap the frets where your fingers go. Tap ○ / × above a string for open or not played."));
+    else if (played < 2) side.appendChild(h("p", { class: "hint akfb-help" }, "Add another string to make a chord."));
+    else if (!res.length) side.appendChild(h("p", { class: "hint akfb-help" }, "Not a chord I know. Try adding or taking off a note."));
+    else {
+      var cur = res.filter(function (x) { return x.name === best; })[0] || res[0];
+      side.appendChild(h("div", { class: "akfb-name" }, styleChord(best, styleOf())));
+      side.appendChild(h("div", { class: "hint akfb-long" }, cur.long + (cur.exact ? "" : " (a note left out)")));
+      if (capo) side.appendChild(h("div", { class: "akfb-capo" },
+        h("span", { class: "hint" }, "With capo " + capo + ", name it as: "),
+        h("span", { class: "akfb-seg" },
+          h("button", { class: "sm" + (!c.sound ? " on" : ""), onClick: function () { c.sound = false; pick = null; save(); draw(); } }, "Shape " + ((akFbNames(frets, ins, capo, false)[0] || {}).name || "")),
+          h("button", { class: "sm" + (c.sound ? " on" : ""), onClick: function () { c.sound = true; pick = null; save(); draw(); } }, "Sounding " + ((akFbNames(frets, ins, capo, true)[0] || {}).name || "")))));
+      if (res.length > 1) {
+        side.appendChild(h("div", { class: "hint", style: "margin-top:6px" }, "It could also be:"));
+        side.appendChild(h("div", { class: "akfb-alts" }, res.slice(0, 6).map(function (x) {
+          return h("button", { class: "chip" + (x.name === best ? " on" : ""), "aria-pressed": x.name === best ? "true" : "false", title: x.long, onClick: function () { pick = x.name; draw(); } }, styleChord(x.name, styleOf()));
+        })));
+      }
+    }
+    side.appendChild(h("div", { class: "hint akfb-shape" }, "Shape: " + akShapeText(capo && !c.sound ? akFbShape(frets, capo) : akFbSound(frets, capo)) + (held.length ? " · also held: " + held.join(", ") : "")));
+    side.appendChild(h("div", { class: "row akfb-acts" },
+      h("button", { class: "primary akfb-use", disabled: !best, onClick: use }, best ? "✓ Use " + best : "✓ Use this chord"),
+      h("button", { "aria-label": "Play the chord", disabled: !played, onClick: function () { akFbHear(capo ? akFbSound(frets, capo) : frets, ins); } }, "🔊"),
+      h("button", { onClick: function () { reset(); draw(); } }, "Clear")));
+    if (added.length) side.appendChild(h("p", { class: "hint akfb-added" }, "Added: " + added.join("  ")));
+    host.appendChild(h("div", { class: "akfb-wrap" }, h("div", { class: "akfb-neckbox" }, neck), side));
+    if (target && target.isConnected) host.appendChild(h("p", { class: "hint", style: "margin:6px 0 0" }, "Goes into: " + oskLabel(target)));
+  }
+  function use() {
+    var res = akFbNames(frets, c.ins, c.capo, c.sound), name = pick || (res[0] && res[0].name);
+    if (!name) return;
+    if (target && target.isConnected) pos = akFbInsert(target, pos, name);
+    else { try { navigator.clipboard.writeText(name); } catch (e) {} }
+    added.push(name);
+    toast(target && target.isConnected ? "Added " + name : "Copied " + name);
+    reset(); draw();
+  }
+  draw();
+  close = modal("Build a chord", host, [{ label: "Done", primary: true }], { wide: true, onClose: function () {
+    if (target && target.isConnected) setTimeout(function () { try { target.focus({ preventScroll: true }); if (pos != null) target.setSelectionRange(pos, pos); } catch (e) {} }, 40);
+  } });
+  return close;
+}
+/* from the chord keyboard: remember the box and the cursor, put the keyboard away, open the neck */
+function akFbFromKeyboard() {
+  var t = OSK.target, pos = t ? oskSel(t)[0] : null;
+  oskClose();
+  akFbOpen(t, pos);
+}
+
+/* the 🎸 Build key on the chord keyboard (letters, endings, and the ♪ layer of the app keyboard) */
+(function () {
+  var rowsWas = akCkbRows, pressWas = oskPress, drawWas = oskDraw;
+  akCkbRows = function () {
+    var rows = rowsWas.apply(this, arguments), last = rows[rows.length - 1];
+    last.forEach(function (k) { if (k.v === " ") k.w = 2.4; });
+    last.splice(last.length - 3, 0, { t: "🎸 Build", k: "ckbFret", w: 1.7 });
+    return rows;
+  };
+  oskPress = function (k) { if (k && k.k === "ckbFret") { akFbFromKeyboard(); return; } return pressWas.apply(this, arguments); };
+  oskDraw = function () {
+    var r = drawWas.apply(this, arguments);
+    try { if (OSK.el) Array.prototype.forEach.call(OSK.el.querySelectorAll(".oskkeys button.k"), function (b) { if (b.textContent === "🎸 Build") { b.classList.add("akfb-key"); b.setAttribute("aria-label", "Build a chord on the fretboard"); } }); } catch (e) {}
+    return r;
+  };
+})();
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("data-and-extras");
+    c.out.appendChild(h("p", { class: "hint" }, "🎸 Build on the chord keyboard opens a guitar or ukulele neck: tap where your fingers go, the app names the chord, and Use puts it in the box."));
+    c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akFbOpen(null); } }, "🎸 Build a chord on the fretboard")));
+  };
+})();
+AK_FEAT.push({ id: "fbbuild", cat: "Songs", name: "Build a chord on the fretboard", desc: "🎸 Build on the chord keyboard: tap the frets where your fingers go on a guitar or ukulele neck, see the chord's name (and what else it could be) as you tap, and put it in the box you're typing in. Start fret, capo, open and muted strings.", where: "Chord keyboard › 🎸 Build (Chord chart box, Key box, ♪ on the app keyboard)", modes: "", go: "settings", sel: '[data-bk="chord-keyboard"]', area: "editor", links: ["ckb", "editor"], tour: false });
+
+AK_VERSION = "15.6";
+AK_WHATS_NEW = [
+  "🎸 Build a chord: the chord keyboard has a 🎸 Build key. Tap the frets where your fingers go on a guitar or ukulele neck (○ open, × not played, start fret, capo), the app names the chord as you tap, and ✓ Use puts it in the box you were typing in. Keep building, then Done."
+].concat(AK_WHATS_NEW);
+
+akCss("akfb", [
+  ".osk .k.akfb-key{background:color-mix(in srgb,var(--accent) 30%,transparent);border-color:var(--accent);font-weight:700}",
+  ".akfb-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-bottom:8px}",
+  ".akfb-seg{display:inline-flex;gap:0}.akfb-seg button{border-radius:0;margin:0}.akfb-seg button:first-child{border-radius:8px 0 0 8px}.akfb-seg button:last-child{border-radius:0 8px 8px 0}",
+  ".akfb-seg button.on{background:var(--accent);color:var(--accent-ink,#fff);border-color:var(--accent)}",
+  ".akfb-pos{display:inline-flex;align-items:center;gap:4px}.akfb-from{min-width:6.5em;text-align:center}",
+  ".akfb-sel{display:inline-flex;align-items:center;gap:4px;font-size:.9rem}.akfb-sel select{width:auto;min-height:32px;padding:2px 6px}",
+  ".akfb-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}",
+  ".akfb-neckbox{flex:1 1 240px;max-width:420px}",
+  ".akfb-side{flex:1 1 200px;min-width:0}",
+  ".akfb-neck{display:grid;gap:0;user-select:none;-webkit-user-select:none}",
+  ".akfb-lab{display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:.8rem;opacity:.8;line-height:1}",
+  ".akfb-dot{color:var(--accent);font-size:.9rem}",
+  ".akfb-oc{min-height:36px;padding:0;margin:0 0 4px;border:0;background:transparent;font-size:1.25rem;font-weight:700;color:inherit;box-shadow:none}",
+  ".akfb-oc.open{color:var(--accent)}.akfb-oc.mute{color:var(--muted,#999)}.akfb-sn{font-size:.8rem;opacity:.6}",
+  /* each cell: wood, the string down the middle, the fret wire at the bottom */
+  ".akfb-cell,.akfb-cell.hit,.akfb-cell[aria-pressed=true]{position:relative;min-height:48px;margin:0;padding:0;border:0;border-radius:0;box-shadow:none;background:#6a4327 !important;background-image:linear-gradient(180deg,#0000 0,#ffffff0d 50%,#0000) !important;border-bottom:3px solid #c9c2b2;color:inherit}",
+  ".akfb-cell.first{border-radius:0}.akfb-cell::before{content:'';position:absolute;left:50%;top:0;bottom:-3px;width:2px;margin-left:-1px;background:linear-gradient(90deg,#e8e2d0,#9a927f);z-index:1}",
+  ".akfb-cell.off{filter:brightness(.55)}",
+  ".akfb-neck.nut .akfb-oc{border-bottom:7px solid #efe8d6;margin-bottom:0;border-radius:0}",
+  ".akfb-neck.capo .akfb-oc{border-bottom:9px solid #333;margin-bottom:0;border-radius:0}",
+  ".akfb-fing{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:var(--accent);box-shadow:0 1px 4px #0008;z-index:2}",
+  ".akfb-cell:focus-visible{outline:3px solid var(--accent);outline-offset:-3px}",
+  ".akfb-name{font-size:2.4rem;font-weight:800;line-height:1.1;color:var(--chord,var(--accent))}",
+  ".akfb-long{margin:2px 0 4px}.akfb-alts{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}",
+  ".akfb-alts .chip.on{background:var(--accent);color:var(--accent-ink,#fff)}",
+  ".akfb-capo{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0}",
+  ".akfb-shape{margin:6px 0;font-family:monospace}.akfb-acts{margin:6px 0 0;flex-wrap:wrap}.akfb-use{font-size:1.05rem}",
+  ".akfb-help{margin-top:0}"
+].join("\n"));
 
 /* ================================================================ akgfx_c: Graphics studio, part 3: drawing tools (version 15.7)
    Text in studio designs (P.gfx) is drawn here (akGfxText): shrink-to-fit (l.fit = most lines, l.maxH), turn (l.rot, degrees),
@@ -39584,7 +39802,426 @@ akCss("akven", [
   ".akven-chk input{margin-top:3px;flex:none}"
 ].join("\n"));
 
-/* ================================================================ akcal_a: several calendars, private shows (version 15.8; this build also carries the 15.7 flyers and the venues)
+/* ================================================================ akcapo: capo badge (version 15.6)
+   - Most songs keep their capo as text ("Capo 8" as the first line of the chord chart), not in the Capo fret field, so the
+     Song header (which only read the field) showed nothing. akCapoOf(song) reads the field first, else the first lines of the
+     chord chart, then of the lyrics ("Capo 4", "Capo4w Heart", "capo on 4th fret", "Capo 2?"). akCapoNum(song) is just the fret.
+     Text capos are shown only: the sounding key and Hear it still use the field until "Use capo N as this song's capo fret".
+   - Playing screen: a CAPO badge at the start of the Song header (switch: settings().capoInfo, as before) and one pinned in the
+     top corner of the song words (or the chord pane). Tap it: change the capo, keep a text capo as the field, badge settings.
+   - Song editor: a Capo box right above Change key (top of the lyrics box), with − / + and the text it found.
+   - Settings › Playing screen › Capo badge: where, stays while scrolling, side, size, color, "No capo" badge, editor box, and
+     fill in the capo fret from the chord text for every song at once.
+   settings().capoBadge = { pane: "words" | "chords" | "off", stick, side: "right" | "left", size: "s" | "m" | "l", color, none, edit } */
+AK_VERSION = "15.6";
+AK_WHATS_NEW = [
+  "Capo badge: the capo is now easy to see. A CAPO badge sits at the start of the Song header and in the top corner of the song words on the playing screen, and a Capo box is right above Change key in the song editor. It also reads a capo written in the chord text (like “Capo 8” on the first line). Tap the badge to change it or to choose its place, size and color (Settings › Playing screen › Capo badge)."
+].concat(AK_WHATS_NEW);
+
+var AKCAPO_RX = /\bcapo\s*(?:on\s*(?:the\s*)?)?(?:fret\s*)?(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:\s*fret\b)?/i;
+var AKCAPO_COLORS = [["accent", "Theme color"], ["gold", "Gold"], ["red", "Red"], ["green", "Green"], ["plain", "Plain"]];
+
+function akCapoCfg() {
+  var st = settings(), c = st.capoBadge;
+  if (!c || typeof c !== "object") c = st.capoBadge = {};
+  if (!c.pane) c.pane = "words"; if (c.stick === undefined) c.stick = true; if (!c.side) c.side = "right";
+  if (!c.size) c.size = "m"; if (!c.color) c.color = "accent"; if (c.none === undefined) c.none = false; if (c.edit === undefined) c.edit = true;
+  return c;
+}
+/* the capo written in the first few lines of a text: { n, note, line } or null */
+function akCapoInText(text) {
+  var lines = String(text || "").split(/\r?\n/).filter(function (l) { return l.trim(); }).slice(0, 6);
+  for (var i = 0; i < lines.length; i++) {
+    var m = AKCAPO_RX.exec(lines[i]); if (!m) continue;
+    var n = Number(m[1]); if (!(n > 0 && n <= 12)) continue;
+    var note = lines[i].slice(m.index + m[0].length).replace(/^[\s,.;:\-–—]+/, "").trim();
+    if (note.length > 28 || /[\[\]:]|^(intro|verse|chorus|bridge|outro)/i.test(note)) note = "";
+    return { n: n, note: note, line: lines[i].trim() };
+  }
+  return null;
+}
+/* { n, from: "field" | "text", note, line } or null */
+function akCapoOf(song) {
+  if (!song) return null;
+  var t = akCapoInText(song.chords) || akCapoInText(song.lyrics), f = Number(song.capo) || 0;
+  if (f > 0) return { n: f, from: "field", note: t && t.n === f ? t.note : "", line: t ? t.line : "" };
+  return t ? { n: t.n, from: "text", note: t.note, line: t.line } : null;
+}
+function akCapoNum(song) { var c = akCapoOf(song); return c ? c.n : 0; }
+
+function akCapoBadge(song, where) {
+  var c = akCapoCfg(), cp = akCapoOf(song);
+  if (!cp && !c.none) return null;
+  var b = h("button", { type: "button", class: "akcapob akcapob-" + c.size + " akcapob-c-" + c.color + (cp ? "" : " none") + (cp && cp.from === "text" ? " fromtext" : ""),
+    "data-capo-where": where, "aria-label": cp ? "Capo " + cp.n + (cp.note ? " " + cp.note : "") + ". Tap to change" : "No capo. Tap to change",
+    onClick: function (e) { e.stopPropagation(); akCapoMenu(b, song); } },
+    cp ? [h("span", { class: "akcapob-k" }, "CAPO"), h("b", null, String(cp.n)), cp.note ? h("span", { class: "akcapob-n" }, cp.note) : null] : h("span", { class: "akcapob-k" }, "NO CAPO"));
+  b.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+  return b;
+}
+function akCapoRedraw() { if (S.view === "play" && typeof keepAutoRender === "function") keepAutoRender(); else render(); }
+function akCapoSet(song, n) { n = Math.max(0, Math.min(12, Number(n) || 0)); song.capo = n; song.updated = Date.now(); save(); }
+function akCapoMenu(btn, song) {
+  var cp = akCapoOf(song), items = [];
+  items.push({ head: cp ? "Capo " + cp.n + (cp.from === "text" ? " (written in the song: “" + cp.line.slice(0, 40) + "”)" : " (this song's capo fret)") : "No capo on this song" });
+  if (cp && cp.from === "text") items.push({ label: "✓ Use capo " + cp.n + " as this song's capo fret (sounding key and ▶ Hear it count it)", onClick: function () { akCapoSet(song, cp.n); akCapoRedraw(); toast("Capo " + cp.n + " saved for this song."); } });
+  items.push({ label: "✎ Change the capo…", onClick: function () {
+    askText("Capo fret (0 = no capo)", String(cp ? cp.n : 0), "Save", function (v) { var n = parseInt(v, 10); if (isNaN(n) || n < 0 || n > 12) { toast("Type a fret from 0 to 12."); return; } akCapoSet(song, n); akCapoRedraw(); toast(n ? "Capo " + n + "." : "No capo."); });
+  } });
+  if (cp && cp.from === "field") items.push({ label: "Take the capo off this song", onClick: function () { akCapoSet(song, 0); akCapoRedraw(); } });
+  items.push({ sep: true }, { label: "⚙ Capo badge: place, size, color…", onClick: akCapoSettingsBox });
+  menu(btn, items);
+}
+
+/* songs whose capo is only written in the text */
+function akCapoTextOnly() { return (lib().songs || []).filter(function (s) { var cp = akCapoOf(s); return cp && cp.from === "text"; }); }
+function akCapoFillAll(done) {
+  var list = akCapoTextOnly();
+  if (!list.length) { toast("Every song with a capo in its text already has its capo fret."); return; }
+  confirmBox("Fill in the capo fret of " + list.length + " song" + (list.length === 1 ? "" : "s") + " from the capo written in their chords or lyrics? Their sounding key and ▶ Hear it will then count the capo. You can change any of them in the song editor.", "Fill in " + list.length, function () {
+    list.forEach(function (s) { akCapoSet(s, akCapoOf(s).n); }); toast("Capo fret filled in for " + list.length + " songs."); if (done) done();
+  });
+}
+function akCapoControls(out, redraw) {
+  var c = akCapoCfg();
+  function sel(label, key, opts) {
+    var s = h("select", { "aria-label": label, onChange: function () { c[key] = this.value; save(); redraw(); } }, opts.map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+    s.value = c[key]; out.appendChild(h("label", { class: "fld" }, label, s));
+  }
+  function chk(label, get, set) {
+    var i = h("input", { type: "checkbox" }); i.checked = !!get();
+    i.addEventListener("change", function () { set(i.checked); save(); redraw(); });
+    out.appendChild(h("label", { class: "chk" }, i, label));
+  }
+  chk("Show it at the start of the Song header", function () { return settings().capoInfo !== false; }, function (v) { settings().capoInfo = v; });
+  sel("Badge on the song", "pane", [["words", "Top corner of the song words"], ["chords", "Top corner of the chord pane"], ["off", "Not on the song"]]);
+  chk("Stays in the corner while the song scrolls", function () { return c.stick; }, function (v) { c.stick = v; });
+  sel("Side", "side", [["right", "Right"], ["left", "Left"]]);
+  sel("Size", "size", [["s", "Small"], ["m", "Medium"], ["l", "Large"]]);
+  sel("Color", "color", AKCAPO_COLORS);
+  chk("Show “No capo” on songs without one", function () { return c.none; }, function (v) { c.none = v; });
+  chk("Capo box above Change key in the song editor", function () { return c.edit; }, function (v) { c.edit = v; });
+  var n = akCapoTextOnly().length;
+  out.appendChild(h("p", { class: "hint" }, "The badge reads the song's Capo fret, or else a capo written in the first lines of its chords or lyrics (like “Capo 8”). A written capo is only shown: tap the badge to keep it as the capo fret so the sounding key counts it."));
+  if (n) out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akCapoFillAll(redraw); } }, "Fill in the capo fret from the text (" + n + " song" + (n === 1 ? "" : "s") + ")")));
+}
+function akCapoSettingsBox() {
+  var body = h("div", { class: "akcapo-set" });
+  function draw() { body.textContent = ""; akCapoControls(body, function () { draw(); if (S.view === "play") akCapoPaint(); }); }
+  draw();
+  modal("Capo badge", body, [{ label: "Done", primary: true, onClick: function () { akCapoRedraw(); } }]);
+}
+
+/* playing screen */
+function akCapoPaint(root) {
+  root = root || document.querySelector(".play"); if (!root || !S.play) return;
+  var song = curSong(); if (!song) return;
+  var c = akCapoCfg();
+  /* Song header: the old "Capo N" text goes; the tuning warning stays */
+  var old = root.querySelector(".pbottom .akcapo");
+  if (old) { old.textContent = old.textContent.split(" · ").filter(function (x) { return !/^Capo \d/.test(x); }).join(" · "); if (!old.textContent) old.remove(); }
+  Array.prototype.forEach.call(root.querySelectorAll(".akcapob"), function (x) { if (!x.closest(".akcapo-pin")) x.remove(); });
+  var tt = root.querySelector(".pbottom .tt > div");
+  if (tt && settings().capoInfo !== false) { var hb = akCapoBadge(song, "header"); if (hb) tt.insertBefore(hb, tt.firstChild); }
+  akCapoPin();
+}
+function akCapoPin() {
+  var c = akCapoCfg(), old = document.querySelector(".play .akcapo-pin"); if (old) old.remove();
+  if (c.pane === "off" || !S.play) return;
+  var pane = c.pane === "chords" ? $("chPane") || $("lyrPane") : $("lyrPane") || $("chPane"); if (!pane) return;
+  var b = akCapoBadge(curSong(), "pane"); if (!b) return;
+  pane.insertBefore(h("div", { class: "akcapo-pin " + (c.stick ? "stick" : "") + " " + c.side }, b), pane.firstChild);
+}
+(function () {
+  var rp = renderPlay;
+  renderPlay = function () { var root = rp.apply(this, arguments); try { akCapoPaint(root); } catch (e) {} return root; };
+  var fc = fillCharts;
+  fillCharts = function () { var r = fc.apply(this, arguments); try { akCapoPin(); } catch (e) {} return r; };
+})();
+
+/* song editor: the Capo box above Change key */
+function akCapoEditCard(s, changed) {
+  var cp = akCapoOf(s), f = Number(s.capo) || 0;
+  function set(n) { akCapoSet(s, n); changed(); }
+  var row = h("div", { class: "row", style: "margin:0;align-items:center;flex-wrap:wrap" },
+    h("span", { class: "akcapob akcapob-m akcapob-c-" + akCapoCfg().color + (cp ? "" : " none") + " static" }, h("span", { class: "akcapob-k" }, cp ? "CAPO" : "NO CAPO"), cp ? h("b", null, String(cp.n)) : null),
+    h("span", { class: "grow" }),
+    h("button", { "aria-label": "Capo down one fret", disabled: !cp, onClick: function () { set((cp ? cp.n : 0) - 1); } }, "−"),
+    h("button", { "aria-label": "Capo up one fret", onClick: function () { set((cp ? cp.n : 0) + 1); } }, "+"),
+    h("button", { "aria-label": "Capo badge settings", onClick: akCapoSettingsBox }, "⚙"));
+  var card = h("div", { class: "card akcapo-ed" }, row);
+  if (cp && cp.from === "text") card.appendChild(h("p", { class: "hint", style: "margin:6px 0 0" }, "Written in the song: “" + cp.line.slice(0, 60) + "”. ",
+    h("button", { class: "sm", onClick: function () { set(cp.n); toast("Capo " + cp.n + " saved for this song."); } }, "Use it as the capo fret")));
+  else if (cp && cp.note) card.appendChild(h("p", { class: "hint", style: "margin:6px 0 0" }, cp.note));
+  return card;
+}
+(function () {
+  if (typeof akTr17Card !== "function") return;
+  var kc = akTr17Card;
+  akTr17Card = function (s, onText, onShift) {
+    var card = kc.apply(this, arguments);
+    if (!akCapoCfg().edit) return card;
+    return h("div", { class: "akcapo-edwrap" }, akCapoEditCard(s, onText), card);
+  };
+})();
+
+/* song editor: the badge next to the title in the top bar too */
+function akCapoEdTitle() {
+  if (S.view !== "song" || !akCapoCfg().edit || settings().capoInfo === false) return;
+  var s = findSong(S.songId), h1 = document.querySelector(".shell > .topbar > h1"); if (!s || !h1 || h1.parentNode.querySelector(".akcapob")) return;
+  var b = akCapoBadge(s, "editor"); if (b) h1.parentNode.insertBefore(b, h1.nextSibling);
+}
+(function () {
+  var ar = typeof akAfterRender2 === "function" ? akAfterRender2 : null;
+  akAfterRender2 = function () { if (ar) ar.apply(this, arguments); try { akCapoEdTitle(); } catch (e) {} };
+})();
+
+/* Settings › Playing screen */
+(function () {
+  var prev = typeof akSettingsExtra27 === "function" ? akSettingsExtra27 : null;
+  akSettingsExtra27 = function (c) {
+    if (prev) prev(c);
+    c.again("playing-screen");
+    c.section("Capo badge", "Where and how the capo shows on the playing screen and in the song editor");
+    akCapoControls(c.out, function () {});
+  };
+})();
+
+akCss("akcapo", [
+  ".akcapob{display:inline-flex;align-items:baseline;gap:.3em;padding:.12em .55em;border-radius:.5em;border:2px solid var(--accent);background:var(--accent);color:var(--bg,#111);font-weight:800;line-height:1.2;white-space:nowrap;min-height:0;cursor:pointer;vertical-align:middle;margin-right:.5em;box-shadow:0 1px 4px rgba(0,0,0,.35)}",
+  ".akcapob .akcapob-k{font-size:.7em;letter-spacing:.08em;font-weight:800}",
+  ".akcapob b{font-size:1.25em;font-weight:900}",
+  ".akcapob .akcapob-n{font-size:.75em;font-weight:600;opacity:.9}",
+  ".akcapob-s{font-size:.8rem}.akcapob-m{font-size:1rem}.akcapob-l{font-size:1.45rem}",
+  ".akcapob-c-gold{background:#E5B800;border-color:#E5B800;color:#1a1400}",
+  ".akcapob-c-red{background:#E5484D;border-color:#E5484D;color:#fff}",
+  ".akcapob-c-green{background:#30A46C;border-color:#30A46C;color:#fff}",
+  ".akcapob-c-plain{background:var(--panel);border-color:var(--fg);color:var(--fg)}",
+  ".akcapob.none{background:var(--panel);border-color:var(--line);color:var(--muted);box-shadow:none}",
+  ".akcapob.static{cursor:default}",
+  ".pbottom .tt .akcapob{font-size:max(.85em,.85rem)}",
+  ".akcapo-pin{position:relative;height:0;z-index:6;overflow:visible}",
+  ".akcapo-pin.stick{position:sticky;top:0}",
+  ".akcapo-pin .akcapob{position:absolute;top:6px;margin:0}",
+  ".akcapo-pin.right .akcapob{right:6px}.akcapo-pin.left .akcapob{left:6px}",
+  ".shell > .topbar > .akcapob{flex:none;margin:0 6px;align-self:center}",
+  ".akcapo-ed{display:block}.akcapo-ed .row button{min-width:2.6em}"
+].join("\n"));
+
+/* ================================================================ akfold_b: fold sections on every screen, tidy button piles (version 15.9)
+   Builds on akcol_a (15.3): same akfold classes, same remembered map settings().akCol.
+   - Any box on a screen or in a window whose first line is a heading (Show page: Setlist, Photos, Recordings, What was played,
+     Requests; Artist info, Logs and stats, Build a setlist, Settings boxes...) folds: tap its title. Keys "c:<screen>:<name>".
+   - The setlist page's helper buttons (✦ Setlist helper, ⚡ ...) fold under a slim bar.
+   - Folding sections that were already there (▸ sections of the song editor, Settings, Import, Guide, Graphics studio...) now stay
+     open or closed after the app is closed: S.layOpen is kept in settings().akOpen, and plain sections are kept in akCol "d:...".
+   - ⊟ Fold all / ⊞ Open all: a slim row at the top of any screen with 3 or more folding sections (settings().foldAllBtn).
+   - Song editor: the pile of buttons above the words (Find lyrics ... Make chord, and the hint, cut to two lines until tapped) is one 🛠 Song tools box that folds,
+     shown as a small grid (default), one scrolling row, or big buttons as before: settings().toolsLook, ⚙ on the box. */
+AK_VERSION = "15.9";
+AK_WHATS_NEW = [
+  "Fold any section: on the show page (Setlist, Photos, Recordings, What was played, Requests), the setlist page (the helper buttons), Artist info, Logs and stats, Build a setlist and the boxes in windows, tap a section's title to fold it to one line. Sections stay folded or open after you close the app, including the ones in the song editor and Settings.",
+  "⊟ Fold all and ⊞ Open all at the top of any screen with several sections (Settings › Arrange the pages can hide it).",
+  "Song editor: the buttons above the words (Find lyrics, Place chords, + Section, Lucky guess...) are now one 🛠 Song tools box in a small grid, so the words are right there. Tap its title to fold it, or ⚙ to show the tools as one scrolling row or as big buttons like before."
+].concat(AK_WHATS_NEW);
+DEFAULTS.toolsLook = "grid";
+DEFAULTS.foldAllBtn = true;
+
+function akFoldSlug(s) { return String(s || "").replace(/\(?\d[\d,.:]*\)?/g, " ").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40); }
+/* the first words of a heading (its own text, not the buttons inside it) */
+function akFoldText(el) {
+  var t = [].map.call(el.childNodes, function (n) { return n.nodeType === 3 ? n.textContent : n.nodeType === 1 && !/^(BUTTON|SELECT|INPUT)$/.test(n.tagName) ? n.textContent : ""; }).join(" ");
+  return t.replace(/\s+/g, " ").trim();
+}
+/* where a section is: the screen, or the window's title */
+function akFoldWhere(el) {
+  var m = el.closest && el.closest(".modal");
+  if (m) { var t = m.querySelector(".sheet > h2"); return "m-" + akFoldSlug(t ? t.textContent : "window"); }
+  return S.view || "app";
+}
+var AKFOLD_SKIP = ".list,.item,.akrr-win,.akrp-in,.akw9-card,.akfold,.akfold-tgt,.menu,.tabbar,.topbar,.laybanner,summary";
+
+/* ---------------------------------------------------------------- boxes with a heading */
+function akFoldCards(root) {
+  Array.prototype.forEach.call(root.querySelectorAll(".card:not(details):not([data-akcol])"), function (c) {
+    if (c.parentElement && c.parentElement.closest(AKFOLD_SKIP)) return;
+    if (c.classList.contains("akfold") || c.children.length < 2) return;
+    var f = c.firstElementChild; if (!f) return;
+    var head = /^H[2-4]$/.test(f.tagName) || (/^(STRONG|B)$/.test(f.tagName) && c.children.length >= 3 && !c.querySelector(":scope > .list"));
+    if (!head) return;
+    var name = akFoldText(f); if (!name || name.length > 60) return;
+    var key = "c:" + akFoldWhere(c) + ":" + (c.getAttribute("data-bk") || akFoldSlug(name));
+    c.setAttribute("data-akcol", key); c.classList.add("akfold", "akfold-head", "akfold-gen");
+    akColPaint(c, null, akColShut(key, false));
+  });
+}
+
+/* ---------------------------------------------------------------- plain folding sections remember open or closed */
+function akFoldDetails(root) {
+  Array.prototype.forEach.call(root.querySelectorAll("details:not([data-akcold])"), function (d) {
+    if (d._layInit || d.closest(".akrr-win,.menu")) return;
+    var s = d.querySelector(":scope > summary"); if (!s) return;
+    var name = akFoldText(s.querySelector(".st") || s); if (!name) return;
+    var key = "d:" + akFoldWhere(d) + ":" + (d.getAttribute("data-bk") || akFoldSlug(name));
+    d.setAttribute("data-akcold", "1"); d.setAttribute("data-akfd", key);
+    var m = akColMap(); if (Object.prototype.hasOwnProperty.call(m, key)) d.open = !m[key];
+    d.addEventListener("toggle", function () { akColSet(key, !d.open); });
+  });
+}
+/* sections the page layout opens and closes (song editor, Settings, Import...): S.layOpen is kept between visits */
+function akFoldKeepLay() {
+  if (S._akLO) return; S._akLO = true;
+  var st = settings(), keep = st.akOpen && typeof st.akOpen === "object" ? st.akOpen : {};
+  S.layOpen = S.layOpen || {};
+  Object.keys(keep).forEach(function (k) { if (!(k in S.layOpen)) S.layOpen[k] = !!keep[k]; });
+}
+var AKFOLD_LT = 0;
+document.addEventListener("toggle", function (e) {
+  var d = e.target; if (!d || d.tagName !== "DETAILS" || !d._layInit) return;
+  clearTimeout(AKFOLD_LT);
+  AKFOLD_LT = setTimeout(function () {
+    if (!S.layOpen) return;
+    var st = settings(), was = JSON.stringify(st.akOpen || {}), now = JSON.stringify(S.layOpen);
+    if (was === now) return;
+    st.akOpen = JSON.parse(now); save(); store.changes = Math.max(0, (store.changes || 1) - 1);
+  }, 120);
+}, true);
+
+/* ---------------------------------------------------------------- the song editor's buttons: 🛠 Song tools */
+var AKFT_LOOKS = [["grid", "Small buttons in a grid"], ["strip", "One row you scroll sideways"], ["big", "Big buttons (as before)"]];
+function akFtLook() { var v = settings().toolsLook; return AKFT_LOOKS.some(function (x) { return x[0] === v; }) ? v : "grid"; }
+function akFtPaint(box) { AKFT_LOOKS.forEach(function (x) { box.classList.toggle("akft-" + x[0], akFtLook() === x[0]); }); }
+function akFtBtnRow(el) {
+  if (!el || el.tagName !== "DIV" || !el.classList.contains("row") || el.hasAttribute("data-blocks")) return false;
+  var kids = [].slice.call(el.children);
+  return kids.length >= 1 && kids.every(function (k) { return /^(BUTTON|A)$/.test(k.tagName) || k.classList.contains("filebtn"); });
+}
+/* wrap the hint and the button rows at the top of a section body into one folding tools box */
+function akFtWrap(body, key, title) {
+  if (!body || body.querySelector(":scope > .akft")) return null;
+  var lead = [], n = body.firstElementChild;
+  while (n && (akFtBtnRow(n) || (n.tagName === "P" && n.classList.contains("hint")))) { lead.push(n); n = n.nextElementSibling; }
+  var rows = lead.filter(akFtBtnRow), count = rows.reduce(function (a, r) { return a + r.children.length; }, 0);
+  if (rows.length < 1 || count < 5) return null;
+  var btns = h("div", { class: "akft-btns" }), hints = h("div", { class: "akft-hints", title: "Tap to read it all", onClick: function () { hints.classList.toggle("open"); } });
+  var box = h("div", { class: "akft akfold", "data-akcol": key },
+    h("div", { class: "akft-head" },
+      h("button", { type: "button", class: "akft-bar", "aria-expanded": "true", onClick: function () { var shut = !box.classList.contains("akfold-shut"); akColSet(key, shut); akFtShut(box, shut); } },
+        h("span", { class: "akfold-arr" }), title, h("span", { class: "muted" }, " (" + count + ")")),
+      h("button", { type: "button", class: "icon sm akft-gear", "aria-label": "How to show the tools", title: "How to show the tools", onClick: function () { akFtMenu(this); } }, "⚙")),
+    h("div", { class: "akft-body" }, hints, btns));
+  body.insertBefore(box, lead[0]);
+  lead.forEach(function (x) { (akFtBtnRow(x) ? btns : hints).appendChild(x); });
+  if (!hints.firstChild) hints.remove();
+  akFtPaint(box); akFtShut(box, akColShut(key, false));
+  return box;
+}
+function akFtShut(box, shut) { akColPaint(box, null, shut); var b = box.querySelector(".akft-bar"); if (b) b.setAttribute("aria-expanded", shut ? "false" : "true"); }
+function akFtMenu(anchor) {
+  menu(anchor, AKFT_LOOKS.map(function (x) {
+    return { label: (akFtLook() === x[0] ? "✓ " : "") + x[1], onClick: function () { settings().toolsLook = x[0]; save(); Array.prototype.forEach.call(document.querySelectorAll(".akft"), akFtPaint); } };
+  }));
+}
+function akFtSong(root) {
+  if (S.view !== "song") return;
+  var body = root.querySelector('[data-bk="lyrics-and-chords"] > .secbody');
+  if (body) akFtWrap(body, "ft:song", "🛠 Song tools");
+}
+
+/* ---------------------------------------------------------------- setlist page: the helper buttons fold */
+AKCOL_RULES.push({ sel: ".main .akset-bar", mode: "bar", key: "sl:helper", title: "Setlist helper" });
+
+/* ---------------------------------------------------------------- ⊟ Fold all / ⊞ Open all */
+function akFoldTops(main) {
+  var all = [].slice.call(main.querySelectorAll("details, .akfold, .akfold-tgt"));
+  return all.filter(function (el) {
+    if (el.closest(".akfold-all") || el.classList.contains("lay-hidden")) return false;
+    var p = el.parentElement && el.parentElement.closest("details, .akfold, .akfold-tgt");
+    return !p || !main.contains(p);
+  });
+}
+function akFoldAll(main, shut) {
+  akFoldTops(main).forEach(function (el) {
+    if (el.tagName === "DETAILS") { if (el.open === shut) el.open = !shut; return; }
+    var key = el.getAttribute("data-akcol"); if (!key) return;
+    akColSet(key, shut);
+    var bar = el.classList.contains("akfold-tgt") ? el.previousElementSibling : el.firstElementChild;
+    if (el.classList.contains("akft")) akFtShut(el, shut);
+    else akColPaint(el, bar && bar.classList.contains("akfold-bar") ? bar : null, shut);
+  });  /* the setlist page: its sets fold too */
+  var sh = S.view === "show" && typeof findShow === "function" ? findShow(S.showId) : null;
+  if (sh && sh.sets && sh.sets.some(function (x) { return !!x.collapsed !== shut; })) { sh.sets.forEach(function (x) { x.collapsed = shut; }); save(); rerenderKeepScroll(); }
+}
+function akFoldAllRow(app) {
+  var main = app.querySelector(".main"); if (!main) return;
+  var old = main.querySelector(":scope > .akfold-all");
+  var want = settings().foldAllBtn !== false && !S.arrange && S.view !== "play" && akFoldTops(main).length >= 3;
+  if (!want) { if (old) old.remove(); return; }
+  if (old) return;
+  main.insertBefore(h("div", { class: "akfold-all" },
+    h("button", { type: "button", class: "akfold-allb", onClick: function () { akFoldAll(main, true); } }, "⊟ Fold all"),
+    h("button", { type: "button", class: "akfold-allb", onClick: function () { akFoldAll(main, false); } }, "⊞ Open all")), main.firstChild);
+}
+
+/* ---------------------------------------------------------------- run it with the folds from 15.3 */
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    root = root || document.body; if (!root || !root.querySelectorAll) return;
+    run(root);
+    if (S.arrange || S.akCustBuild) return;
+    try { akFtSong(root); } catch (e) { if (window.console) console.warn("akfold tools", e); }
+    try { akFoldCards(root); } catch (e) { if (window.console) console.warn("akfold cards", e); }
+    try { akFoldDetails(root); } catch (e) { if (window.console) console.warn("akfold details", e); }
+    try { var app = $("app"); if (app && (root === document.body || root === app)) akFoldAllRow(app); } catch (e) {}
+  };
+  /* the folds go in before the screen puts back its scroll position */
+  var lr = layRun;
+  layRun = function (root) {
+    try { akFoldKeepLay(); } catch (e) {}
+    var out = lr.apply(this, arguments);
+    try { if (root && root.id === "app") akColRun(root); } catch (e) {}
+    return out;
+  };
+})();
+/* ---------------------------------------------------------------- Settings › Arrange the pages: the Fold all row and the tools look */
+(function () {
+  var ac = layArrangeCard;
+  layArrangeCard = function (out) {
+    ac.apply(this, arguments);
+    var s = settings();
+    out.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: s.foldAllBtn !== false, onChange: function () { s.foldAllBtn = this.checked; save(); } }), "Show ⊟ Fold all and ⊞ Open all at the top of pages with several sections"));
+    out.appendChild(h("label", { class: "fld" }, "Song tools in the song editor",
+      h("select", { "aria-label": "How to show the song tools", onChange: function () { s.toolsLook = this.value; save(); } },
+        AKFT_LOOKS.map(function (x) { return h("option", { value: x[0], selected: akFtLook() === x[0] }, x[1]); }))));
+  };
+})();
+
+akCss("akfold-b", [
+  ".akfold-gen > :first-child{cursor:pointer}",
+  ".akfold-gen.akfold-shut{padding-top:8px !important;padding-bottom:8px !important}",
+  ".akfold-gen.akfold-shut > :first-child{margin:0 !important}",
+  ".akfold-all{display:flex;justify-content:flex-end;gap:4px;margin:0 0 2px}",
+  "html body .akfold-allb{min-height:28px !important;padding:0 8px !important;margin:0 !important;width:auto !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:var(--muted,#999) !important;font-size:.78rem !important;font-weight:600;display:inline-flex;align-items:center}",
+  /* the tools box */
+  ".akft{margin:4px 0 8px}",
+  ".akft-head{display:flex;align-items:center;gap:4px}",
+  "html body .akft-bar{flex:1;display:flex;align-items:center;gap:4px;min-height:30px !important;margin:0 !important;padding:0 4px !important;border:0 !important;background:transparent !important;box-shadow:none !important;color:var(--fg,inherit);font-weight:700;font-size:.9rem;text-align:left;justify-content:flex-start;width:auto}",
+  ".akft-bar .akfold-arr::before{content:'▾'}.akft.akfold-shut .akft-bar .akfold-arr::before{content:'▸'}",
+  "html body .akft-gear{min-height:30px !important;min-width:34px !important;margin:0 !important}",
+  ".akft-hints{cursor:pointer}.akft-hints > p.hint{margin:2px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}",
+  ".akft-hints.open > p.hint{display:block}",
+  ".akft-btns > .row{margin:0}",
+  ".akft-grid .akft-btns{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:5px}",
+  ".akft-strip .akft-btns{display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}",
+  ".akft-grid .akft-btns > .row,.akft-strip .akft-btns > .row{display:contents}",
+  "html body .akft-grid .akft-btns > .row > *,html body .akft-strip .akft-btns > .row > *{min-height:34px !important;margin:0 !important;padding:3px 7px !important;font-size:.8rem !important;line-height:1.15;border-radius:9px}",
+  "html body .akft-grid .akft-btns > .row > *{width:100% !important;white-space:normal;text-align:center;justify-content:center;display:flex;align-items:center}",
+  "html body .akft-strip .akft-btns > .row > *{flex:none;white-space:nowrap;width:auto !important}",
+  ".akft-big .akft-btns > .row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px}"
+].join(""));
+
+/* ================================================================ akcal_a: several calendars, private shows (combined version 16.0: also carries flyers, venues, capo badge, fretboard builder and fold everything)
    - Sign in with Google (Settings > Calendar > Calendars from my Google account) lists every calendar in that account, including
      the ones another email shares with it. Tick the ones to show; each gets a name, a color and Public or 🔒 Private.
      Google Identity Services token client, scope calendar.readonly (read only, nothing is ever written). It needs his own OAuth
@@ -39599,7 +40236,7 @@ akCss("akven", [
      skips them unless asked), not on the press kit. Invoices, setlists, pay and tips work as usual. A flyer for a private show asks first.
    - A calendar that is not ticked makes no new shows; shows it already made stay (they are not removed).
    - settings().cal.privShow === false hides private shows on the Shows screen (🔒 chip there). */
-AK_VERSION = "15.8";
+AK_VERSION = "16.0";
 AK_WHATS_NEW = [
   "Private shows: sign in with Google in Settings › Calendar and pick which of your calendars show in the app, including ones from another email. Mark each one Public or 🔒 Private and give it a color. Private shows get setlists, invoices, pay and tips like any show, but they never go on flyers, posters, Shows this week or your request page."
 ].concat(AK_WHATS_NEW);
