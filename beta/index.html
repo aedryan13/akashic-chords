@@ -36375,8 +36375,9 @@ function viewGfx() {
   if (S.gfxGig) { D.gigId = S.gfxGig; S.gfxGig = ""; }
   akGfxGig(D);
   if (typeof akGfxJson === "function") { st.snap = st.snap || {}; if (st.snap[kind] == null) st.snap[kind] = akGfxJson(D); }
+  if (typeof akGfxUndoStart === "function") akGfxUndoStart(D, kind);
   var cv = h("canvas", { class: "akg-cv", role: "img", "aria-label": "Preview. Drag a part to move it." }), prevWrap = h("div", { class: "akg-prev" }, cv);
-  var status = h("div", { class: "hint akg-status", role: "status" }), panel = h("div", { class: "akg-panel" });
+  var status = h("div", { class: "hint akg-status", role: "status" }), panel = h("div", { class: "akg-panel" }), edbar = h("div", { class: "akg-edbar" });
   var base = null, seq = 0, drag = null;
 
   function ch(again) { save(); rebuild(); if (again) drawPanel(); }
@@ -36389,36 +36390,79 @@ function viewGfx() {
   function paint() {
     if (!base) return;
     var P = akGfxBake(base, D.edit); st.P = P;
-    var bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(260, window.innerHeight * (window.innerWidth > 900 ? 0.78 : 0.6));
+    var bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(260, window.innerHeight * (st.big ? 0.86 : window.innerWidth > 900 ? 0.78 : 0.6));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1);
     cv.width = Math.max(1, Math.round(P.W * k * dpr)); cv.height = Math.max(1, Math.round(P.H * k * dpr)); cv.style.width = Math.round(P.W * k) + "px"; cv.style.height = Math.round(P.H * k) + "px";
     var ctx = cv.getContext("2d"); ctx.setTransform(k * dpr, 0, 0, k * dpr, 0, 0); ctx.clearRect(0, 0, P.W, P.H);
     P.layers.forEach(function (l) { try { akDrawLayer(ctx, l, P); } catch (e) {} });
-    var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
-    if (L) { var b = akLayerBox(L, P); ctx.setLineDash([8 / k, 6 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = "#00B7FF"; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); }
+    if (typeof akGfxPaintSel === "function") akGfxPaintSel(ctx, P, st, k);
+    else { var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0]; if (L) { var b = akLayerBox(L, P); ctx.setLineDash([8 / k, 6 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = "#00B7FF"; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); } }
     cv._k = k;
+    edSync();
   }
+  /* the editor bar under the picture is drawn again only when the selection or the design changed */
+  function edSync(force) {
+    if (typeof akGfxEdBar !== "function") return;
+    var key = st.sel + "|" + seq + "|" + JSON.stringify(D.edit[st.sel] || {}) + "|" + (typeof akGfxCanUndo === "function" ? akGfxCanUndo() + "" + akGfxCanRedo() : "") + "|" + !!st.big;
+    if (!force && edbar._key === key) return;
+    edbar._key = key; akGfxEdBar(edbar, X);
+  }
+  st.edSync = function () { edSync(true); };
   st.paint = paint;
   function pt(e) { var r = cv.getBoundingClientRect(), k = cv._k || 1; return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k }; }
+  var lastTap = { id: "", t: 0 };
   cv.addEventListener("pointerdown", function (e) {
     if (!st.P) return;
-    var p = pt(e), hit = null;
-    st.P.layers.slice().reverse().some(function (l) { if (l.fixed || l.nohit) return false; var b = akLayerBox(l, st.P); if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { hit = l; return true; } return false; });
+    var p = pt(e), k = cv._k || 1, hd = typeof akGfxOnHandle === "function" ? akGfxOnHandle(st.P, st, p, k) : null;
+    if (hd) {
+      var E0 = D.edit[hd.L.id] = D.edit[hd.L.id] || {}, c = hd.H.c;
+      drag = { id: hd.L.id, kind: hd.kind, c: c, d0: Math.max(1, Math.hypot(p.x - c.x, p.y - c.y)), a0: Math.atan2(p.y - c.y, p.x - c.x), k0: Number(E0.k) || 1, r0: Number(hd.L.rot) || 0, moved: false };
+      try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+      e.preventDefault(); return;
+    }
+    var hit = typeof akGfxHit === "function" ? akGfxHit(st.P, p) : null;
+    if (typeof akGfxHit !== "function") st.P.layers.slice().reverse().some(function (l) { if (l.fixed || l.nohit) return false; var b = akLayerBox(l, st.P); if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { hit = l; return true; } return false; });
     if (!hit) { if (st.sel) { st.sel = ""; paint(); refill("parts"); } return; }
-    var E = D.edit[hit.id] = D.edit[hit.id] || {};
-    st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false };
+    var E = D.edit[hit.id] = D.edit[hit.id] || {}, now = Date.now(), twice = lastTap.id === hit.id && now - lastTap.t < 400;
+    lastTap = { id: hit.id, t: now };
+    st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false, twice: twice, box: akLayerBox(hit, st.P) };
     try { cv.setPointerCapture(e.pointerId); } catch (er) {}
     e.preventDefault(); paint();
   });
   cv.addEventListener("pointermove", function (e) {
     if (!drag) return;
-    var p = pt(e), E = D.edit[drag.id], nx = drag.dx + p.x - drag.x, ny = drag.dy + p.y - drag.y;
-    /* snap to the middle */
-    var L = base.layers.filter(function (l) { return l.id === drag.id; })[0];
-    if (L) { var b = akLayerBox(L, base), mid = b.x + b.w / 2 + nx - base.W / 2; if (Math.abs(mid) < base.W * 0.012) nx -= mid; }
+    var p = pt(e), E = D.edit[drag.id];
+    if (drag.kind === "size") {
+      var kk = Math.max(0.1, Math.min(8, drag.k0 * Math.hypot(p.x - drag.c.x, p.y - drag.c.y) / drag.d0));
+      if (Math.abs(kk - (E.k || 1)) > 0.003) { E.k = Math.round(kk * 1000) / 1000; drag.moved = true; paint(); }
+      return;
+    }
+    if (drag.kind === "turn") {
+      var r = drag.r0 + (Math.atan2(p.y - drag.c.y, p.x - drag.c.x) - drag.a0) * 180 / Math.PI;
+      r = ((r + 540) % 360) - 180; var sn = Math.round(r / 45) * 45; if (Math.abs(r - sn) < 4) r = sn;
+      r = Math.round(r); if (r !== E.rot) { E.rot = r; drag.moved = true; paint(); }
+      return;
+    }
+    var nx = drag.dx + p.x - drag.x, ny = drag.dy + p.y - drag.y;
+    if (typeof akGfxSnap === "function" && drag.box) {
+      var sp = akGfxSnap(st.P, drag.id, drag.box, nx - drag.dx, ny - drag.dy); nx = drag.dx + sp.mx; ny = drag.dy + sp.my; st.guides = sp.guides;
+    } else {
+      /* snap to the middle */
+      var L = base.layers.filter(function (l) { return l.id === drag.id; })[0];
+      if (L) { var b = akLayerBox(L, base), mid = b.x + b.w / 2 + nx - base.W / 2; if (Math.abs(mid) < base.W * 0.012) nx -= mid; }
+    }
     if (Math.abs(nx - (E.dx || 0)) + Math.abs(ny - (E.dy || 0)) > 0.5) { drag.moved = true; E.dx = Math.round(nx); E.dy = Math.round(ny); paint(); }
   });
-  function endDrag() { if (!drag) return; var moved = drag.moved; drag = null; if (moved) save(); if (!moved && !st.open.parts) { st.open.parts = true; if (secs.parts) secs.parts.open = true; } refill("parts"); }
+  function endDrag() {
+    if (!drag) return; var moved = drag.moved, twice = drag.twice && !moved, id = drag.id; drag = null; st.guides = [];
+    if (moved) save(); else paint();
+    if (twice && typeof akGfxWordsAsk === "function" && st.P) {
+      var L = st.P.layers.filter(function (l) { return l.id === id; })[0], fr = typeof akGfxFreeOf === "function" ? akGfxFreeOf(D, id) : null;
+      if (L && L.type === "text") akGfxWordsAsk(L.text, function (t) { if (fr) { fr.text = t; if (D.edit[id]) delete D.edit[id].text; } else { D.edit[id] = D.edit[id] || {}; D.edit[id].text = t; } ch(true); });
+    }
+    if (!moved && !twice && !st.open.parts) { st.open.parts = true; if (secs.parts) secs.parts.open = true; }
+    refill("parts");
+  }
   cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
 
   /* ---- the sections ---- */
@@ -36678,7 +36722,11 @@ function viewGfx() {
     if (typeof akGfxDraftsFill === "function") panel.appendChild(sec("drafts", "📝 Drafts", function (d) { akGfxDraftsFill(d, X); }));
   }
 
-  var X = { D: D, kind: kind, ch: ch, rebuild: rebuild, paint: paint, chips: chips, slider: slider, check: check, drawPanel: function () { drawPanel(); }, refillParts: function () { refill("parts"); } };
+  var X = { D: D, kind: kind, ch: ch, rebuild: rebuild, paint: paint, chips: chips, slider: slider, check: check, drawPanel: function () { drawPanel(); }, refillParts: function () { refill("parts"); },
+    status: function (t) { status.textContent = t || ""; },
+    big: function () { body.classList.toggle("akg-big", !!st.big); paint(); edSync(true); try { prevWrap.scrollIntoView({ block: "start" }); } catch (e) {} },
+    openParts: function () { st.open.parts = true; if (secs.parts) { secs.parts.open = true; refill("parts"); try { secs.parts.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {} } } };
+  st.X = X;
 
   /* ---- saving ---- */
   function full() { if (!base) return null; return akGfxBake(base, D.edit); }
@@ -36687,9 +36735,10 @@ function viewGfx() {
   var acts = h("div", { class: "row akg-acts" },
     h("button", { class: "primary", onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/png").then(function (b) { akRecDownload(b, name() + ".png"); }); }); } }, "⬇ Save picture"),
     h("button", { onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/png").then(function (b) { return akGfxShare(b, name() + ".png"); }); }); } }, "↗ Share"),
-    h("button", { onClick: function () { busy(function (P) { return akPosterPdf(P).then(function (b) { akRecDownload(b, name() + ".pdf"); }); }); } }, "PDF"),
+    h("button", { title: "PDF with the words as real text", onClick: function () { busy(function (P) { return typeof akGfxPdfSave === "function" ? akGfxPdfSave(P, name()) : akPosterPdf(P).then(function (b) { akRecDownload(b, name() + ".pdf"); }); }); } }, "PDF"),
     h("button", { "aria-label": "More ways to save", onClick: function () { menu(this, [
       { label: "JPG (smaller file)", onClick: function () { busy(function (P) { return akCanvasBlob(akPosterCanvas(P), "image/jpeg", 0.9).then(function (b) { akRecDownload(b, name() + ".jpg"); }); }); } },
+      { label: "PDF as one picture (older way)", onClick: function () { busy(function (P) { return akPosterPdf(P).then(function (b) { akRecDownload(b, name() + " (picture).pdf"); }); }); } },
       { label: "PDF with layers (one part per layer)", onClick: function () { busy(function (P) { return akGfxPdfLayers(P).then(function (b) { akRecDownload(b, name() + " (layers).pdf"); }); }); } },
       { label: "Layers for Canva (.zip)", onClick: function () { busy(function (P) { return akGfxZip(P, D, name()).then(function (b) { akRecDownload(b, name() + " (layers).zip"); }); }); } },
       { label: "SVG with layers (Inkscape, Illustrator, Affinity)", onClick: function () { busy(function (P) { return akPosterSvg(P).then(function (t) { akRecDownload(new Blob([t], { type: "image/svg+xml" }), name() + " (layers).svg"); }); }); } },
@@ -36706,7 +36755,7 @@ function viewGfx() {
     { label: "How the files work…", onClick: akGfxHelp },
     { label: "Older signs and posters (request QR, setlist board, press kit)…", onClick: function () { akPosterDialog("request"); } },
     { label: "Shows CSV for Canva Bulk Create", onClick: function () { akShowsCsv(); } }]); } }, "⋯");
-  var body = h("div", { class: "akg" }, kinds, h("div", { class: "akg-grid" }, h("div", { class: "akg-left" }, prevWrap, status, acts), panel));
+  var body = h("div", { class: "akg" + (st.big ? " akg-big" : "") }, kinds, h("div", { class: "akg-grid" }, h("div", { class: "akg-left" }, prevWrap, edbar, status, acts), panel));
   function leave(next) { if (typeof akGfxLeave === "function") akGfxLeave(next); else { saveNow(); next(); } }
   function back() { leave(function () { if (!navBack()) go("shows"); }); }
   var done = h("button", { class: "primary sm akg-done", "aria-label": "Done, close the studio", onClick: back }, "✓ Done");
@@ -36804,7 +36853,7 @@ function akGfxPrint(P, nm) {
 function akGfxHelp() {
   modal("Saving your graphics", h("ul", null,
     h("li", null, h("b", null, "Save picture"), ": a PNG, ready to post on Instagram or Facebook."),
-    h("li", null, h("b", null, "PDF"), ": print at home or at a print shop (letter, quarter page, frames and the jar label print at their real size)."),
+    h("li", null, h("b", null, "PDF"), ": print at home or at a print shop (letter, quarter page, frames and the jar label print at their real size). The words are real text in your fonts, so they stay sharp at any size and can be selected or changed in Acrobat, Illustrator or Affinity; photos go in as real pictures. More ▾ › PDF as one picture makes the older kind."),
     h("li", null, h("b", null, "PDF with layers"), ": each part (background, title, rows, logo…) is its own picture in the PDF, so you can move them apart in Illustrator, Affinity or Acrobat."),
     h("li", null, h("b", null, "Layers for Canva"), ": a zip with one see-through picture per part, all the same size, plus the finished picture, a layout guide and the words."),
     h("li", null, h("b", null, "SVG with layers"), ": words stay real text, each part is a layer in Inkscape, Illustrator, Affinity or Figma."),
@@ -43829,6 +43878,636 @@ akCss("akloop-b", [
   ".akpat-wave{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:6px 0;touch-action:pan-x}.akpat-wave canvas{display:block;touch-action:none;cursor:ew-resize}",
   ".akpat-offs{display:flex;flex-wrap:wrap;gap:3px}.akpat-offs .off{text-decoration:line-through;opacity:.5}"
 ].join("\n"));
+
+/* ================================================================ akgfx_e: Graphics studio, part 5: the poster editor and the real-text PDF (version 16.8, item 122)
+   Editor (used by viewGfx in akgfx_b.js):
+     - the selected part gets handles on the picture: the corner one resizes (D.edit[id].k), the round one on top turns it (D.edit[id].rot).
+       A tap respects turned parts (akGfxHit) and skips locked ones (D.edit[id].lock). Two taps on words open "Change the words".
+     - dragging snaps to the page middle and edges and to the other parts' edges and middles, with guide lines (akGfxSnap, st.guides).
+     - a bar under the picture (akGfxEdBar): ＋ Words, ＋ Picture, ＋ Shape, undo / redo, big view; for the selected part: words, color,
+       copy, forward / back, see-through, lock, hide / delete.
+     - parts you add: D.free = [{ id, t: "text" | "pic", ... }] -> layers "uf_<id>" (words are normal text layers, role "free";
+       pictures are type gfree: IMG id, corners, frame, shadow, flip). D.zord = the order of the movable parts (akGfxZApply).
+     - undo / redo: AKGU keeps JSON copies of the design (akGfxJson) taken 0.4 s after each save() on this screen.
+     - see-through for any part: D.edit[id].op -> l.op (the akDrawLayer wrapper lowers globalAlpha).
+   PDF (real text) (akGfxPdfReal): each part goes in on its own. Photos and the background go in as pictures (JPEG when not see-through),
+     QR codes as vector squares, and the words as real text in the real font (embedded, so they print sharp and can be selected,
+     searched and edited in Acrobat / Illustrator / Affinity). The effects around words (glow, outline, shadows, shapes behind) stay
+     a picture under the words. How: each part is drawn twice; the first time records every fillText (akPdfRecord), the faces of the
+     words are picked (the last fill of each line for text parts, every solid fill for rows, calendars and invoices), and the second
+     drawing leaves those faces out (their shadows are kept by drawing the words far off with the shadow moved back). Fonts:
+     graphics fonts come from gfx/pdf/*.woff (made by vendor/gfx/make_pdf_fonts.py, one file per weight for the variable ones),
+     app fonts, font packs and your own fonts from their @font-face data. A font that can't go in (or a gradient face) stays a
+     picture with invisible text on top, so it can still be selected and searched. fontkit: gfx/pdf/fontkit.min.js (MIT). */
+AK_VERSION = "16.8";
+AK_WHATS_NEW = [
+  "Graphics studio: a real poster editor. Tap a part, then drag the corner handle to resize it or the round handle to turn it. Parts snap to the middle, the edges and each other, with guide lines.",
+  "Add your own words and pictures anywhere (＋ Words, ＋ Picture, ＋ Shape under the picture). Pictures can have round corners, a circle cut, a frame and a shadow, and can be flipped.",
+  "For the part you tapped: change the words or color, copy it, bring it forward or send it back, make it see-through, lock it so it can't be moved by accident, hide or delete it. Two taps on words change them.",
+  "Undo and redo in the studio (↶ ↷, or Ctrl+Z / Ctrl+Y on a keyboard; arrow keys nudge the part). ⛶ Big view makes the picture as big as the screen.",
+  "PDF flyers now keep the words as real text in your fonts (sharp at any size, and they can be selected and edited in other apps) and the photos as real pictures. The old one-picture PDF is under More ▾."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- parts you add */
+function akGfxFree(D) { if (!Array.isArray(D.free)) D.free = []; return D.free; }
+function akGfxFreeOf(D, lid) { var id = String(lid || "").replace(/^uf_/, ""); return akGfxFree(D).filter(function (f) { return f.id === id; })[0] || null; }
+function akGfxShort(t) { t = String(t || "").replace(/\s+/g, " ").trim(); return t.length > 22 ? t.slice(0, 21) + "…" : t || "(empty)"; }
+function akGfxFreeLayers(D, P) {
+  var W = P.W, H = P.H, M = Math.min(W, H), F = D.fonts || {};
+  akGfxFree(D).forEach(function (f) {
+    if (f.t === "text") P.layers.push({ id: "uf_" + f.id, name: "Words: " + akGfxShort(f.text), type: "text", role: "free", text: f.text || "", x: f.x * W, y: f.y * H, size: (f.size || 0.06) * M,
+      font: f.font || F.main || akGfxStack("Outfit"), weight: f.weight || 700, italic: !!f.italic, color: f.color || "#fff", fgAuto: !f.color, align: f.align || "center", valign: "middle",
+      maxW: (f.w || 0.8) * W, lh: 1.15, spacing: 0 });
+    else if (f.t === "pic") {
+      var w = (f.w || 0.4) * W, hh = w * (f.ar || 1);
+      P.layers.push({ id: "uf_" + f.id, name: "Picture" + (f.name ? ": " + akGfxShort(f.name) : ""), type: "gfree", img: f.img, src: IMG[f.img] && IMG[f.img].data, x: f.x * W - w / 2, y: f.y * H - hh / 2, w: w, h: hh,
+        rot: f.rot || 0, flip: !!f.flip, corner: f.corner || "", frame: f.frame || "", shadow: !!f.shadow });
+    }
+  });
+}
+/* D.zord: the movable parts in the order you put them; they trade places only among themselves (the background stays at the back) */
+function akGfxZApply(D, P) {
+  var z = D.zord; if (!Array.isArray(z) || !z.length) return;
+  var pos = {}, slots = [], items = [];
+  z.forEach(function (id, i) { pos[id] = i; });
+  P.layers.forEach(function (l, i) { if (!l.fixed && pos[l.id] != null) { slots.push(i); items.push(l); } });
+  items.sort(function (a, b) { return pos[a.id] - pos[b.id]; });
+  slots.forEach(function (s, i) { P.layers[s] = items[i]; });
+}
+function akGfxMovable(P) { return P.layers.filter(function (l) { return !l.fixed; }).map(function (l) { return l.id; }); }
+/* how: "up" | "down" | "top" | "bottom" */
+function akGfxZMove(D, P, id, how) {
+  var ids = akGfxMovable(P), i = ids.indexOf(id); if (i < 0) return false;
+  ids.splice(i, 1);
+  var j = how === "top" ? ids.length : how === "bottom" ? 0 : how === "up" ? Math.min(ids.length, i + 1) : Math.max(0, i - 1);
+  ids.splice(j, 0, id); D.zord = ids;
+  return j !== i;
+}
+(function () {
+  var L0 = akGfxLayers;
+  akGfxLayers = function (D) { var P = L0.apply(this, arguments); akGfxFreeLayers(D, P); akGfxZApply(D, P); return P; };
+  var prep = akGfxPrepare;
+  akGfxPrepare = function (P, D) {
+    var jobs = P.layers.filter(function (l) { return l.type === "gfree"; }).map(function (l) { return akGfxImg(l.src).then(function (im) { l._im = im; }); });
+    return Promise.all(jobs).then(function () { return prep.call(this, P, D); });
+  };
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) {
+      var e = E[l.id]; if (!e || (e.op == null && e.flip == null && !e.lock)) return l;
+      var c = Object.assign({}, l);
+      if (e.op != null) c.op = e.op;
+      if (e.flip != null && c.type === "gfree") c.flip = !!e.flip !== !!l.flip;
+      if (e.lock) c.lock = true;
+      return c;
+    });
+    return out;
+  };
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    if (l.op != null && l.op < 1) { ctx.save(); ctx.globalAlpha *= Math.max(0, l.op); try { return l.type === "gfree" ? akGfxFreePic(ctx, l) : dl.apply(this, arguments); } finally { ctx.restore(); } }
+    if (l.type === "gfree") return akGfxFreePic(ctx, l);
+    return dl.apply(this, arguments);
+  };
+  var lb = akLayerBox;
+  akLayerBox = function (l, P) { if (l.type === "gfree") return { x: l.x, y: l.y, w: l.w, h: l.h }; return lb.apply(this, arguments); };
+  /* pictures you added stay when old pictures are cleaned up */
+  var inUse = imgIdsInUse;
+  imgIdsInUse = function () {
+    var ids = inUse.apply(this, arguments);
+    try {
+      var c = akGfxCfg(), all = [];
+      Object.keys(c.last || {}).forEach(function (k) { all.push(c.last[k]); });
+      (c.drafts || []).forEach(function (d) { all.push(d.d); });
+      (c.styles || []).forEach(function (s) { all.push(s); });
+      all.forEach(function (D) { ((D && D.free) || []).forEach(function (f) { if (f.img) ids[f.img] = 1; }); });
+    } catch (e) {}
+    return ids;
+  };
+})();
+function akGfxPicPath(ctx, x, y, w, hh, corner) {
+  ctx.beginPath();
+  if (corner === "circle") { ctx.ellipse(x + w / 2, y + hh / 2, w / 2, hh / 2, 0, 0, Math.PI * 2); return; }
+  var r = corner === "round" ? Math.min(w, hh) * 0.08 : 0;
+  if (r && ctx.roundRect) ctx.roundRect(x, y, w, hh, r); else ctx.rect(x, y, w, hh);
+}
+function akGfxFreePic(ctx, l) {
+  var im = l._im; if (!im) return;
+  ctx.save();
+  ctx.translate(l.x + l.w / 2, l.y + l.h / 2);
+  if (l.rot) ctx.rotate(l.rot * Math.PI / 180);
+  var w = l.w, hh = l.h, x = -w / 2, y = -hh / 2, fw = l.frame ? Math.min(w, hh) * 0.04 : 0;
+  if (l.shadow || l.frame) {
+    ctx.save();
+    if (l.shadow) { ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = Math.min(w, hh) * 0.05; ctx.shadowOffsetY = Math.min(w, hh) * 0.02; }
+    akGfxPicPath(ctx, x - fw, y - fw, w + fw * 2, hh + fw * 2, l.corner);
+    ctx.fillStyle = l.frame || "#000"; ctx.fill();
+    ctx.restore();
+  }
+  akGfxPicPath(ctx, x, y, w, hh, l.corner); ctx.clip();
+  if (l.flip) ctx.scale(-1, 1);
+  /* fill the box (cut the picture to fit, like a photo in a frame) */
+  var iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, k = Math.max(w / iw, hh / ih), dw = iw * k, dh = ih * k;
+  ctx.drawImage(im, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
+}
+/* a picture from the device: kept as PNG when it may be see-through (logos, cut-outs), else JPEG */
+function akGfxPicIn(file) {
+  return new Promise(function (res, rej) {
+    if (!file || !/^image\//.test(file.type || "image/")) { rej(new Error("That doesn't look like a picture.")); return; }
+    var url = URL.createObjectURL(file), im = new Image();
+    im.onload = function () {
+      try {
+        var k = Math.min(1, 2400 / Math.max(im.naturalWidth, im.naturalHeight)), cv = document.createElement("canvas"); cv.width = Math.round(im.naturalWidth * k); cv.height = Math.round(im.naturalHeight * k);
+        cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); URL.revokeObjectURL(url);
+        var png = /png|webp|gif|svg/i.test(file.type || ""), id = "gfxpic" + uid();
+        imgPut(id, { name: (file.name || "picture").replace(/\.[^.]+$/, ""), data: png ? cv.toDataURL("image/png") : cv.toDataURL("image/jpeg", 0.9) }).then(function () { res({ id: id, ar: cv.height / cv.width, name: (file.name || "").replace(/\.[^.]+$/, "") }); });
+      } catch (e) { URL.revokeObjectURL(url); rej(new Error("Couldn't read that picture.")); }
+    };
+    im.onerror = function () { URL.revokeObjectURL(url); rej(new Error("Couldn't read that picture.")); };
+    im.src = url;
+  });
+}
+
+/* ---------------------------------------------------------------- turned boxes, hits, handles, snapping */
+function akGfxCanTurn(l) { return l.type === "text" || l.type === "gshape" || l.type === "gphoto" || l.type === "gpic" || l.type === "gfree"; }
+function akGfxRotOf(l) { return akGfxCanTurn(l) ? (Number(l.rot) || 0) : 0; }
+/* a point in the part's own (unturned) frame */
+function akGfxUnturn(l, P, p) {
+  var b = akLayerBox(l, P), a = -akGfxRotOf(l) * Math.PI / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2, dx = p.x - cx, dy = p.y - cy;
+  return { x: cx + dx * Math.cos(a) - dy * Math.sin(a), y: cy + dx * Math.sin(a) + dy * Math.cos(a), b: b };
+}
+function akGfxHit(P, p, all) {
+  var hit = null;
+  P.layers.slice().reverse().some(function (l) {
+    if (l.fixed || l.nohit || (!all && l.lock)) return false;
+    var q = akGfxUnturn(l, P, p), b = q.b;
+    if (q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h) { hit = l; return true; }
+    return false;
+  });
+  return hit;
+}
+/* where the handles are (page units); k = page units per screen pixel inverse */
+function akGfxHandles(l, P, k) {
+  var b = akLayerBox(l, P), a = akGfxRotOf(l) * Math.PI / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2, ca = Math.cos(a), sa = Math.sin(a);
+  function at(dx, dy) { return { x: cx + dx * ca - dy * sa, y: cy + dx * sa + dy * ca }; }
+  var out = { c: { x: cx, y: cy }, size: at(b.w / 2, b.h / 2), box: b, a: a };
+  if (akGfxCanTurn(l)) out.turn = at(0, -b.h / 2 - 34 / k);
+  return out;
+}
+function akGfxPaintSel(ctx, P, st, k) {
+  (st.guides || []).forEach(function (g) {
+    ctx.save(); ctx.strokeStyle = "#FF3DA5"; ctx.lineWidth = 1.5 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.beginPath();
+    if (g.x != null) { ctx.moveTo(g.x, 0); ctx.lineTo(g.x, P.H); } else { ctx.moveTo(0, g.y); ctx.lineTo(P.W, g.y); }
+    ctx.stroke(); ctx.restore();
+  });
+  var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
+  if (!L) return;
+  var H = akGfxHandles(L, P, k), b = H.box;
+  ctx.save(); ctx.translate(H.c.x, H.c.y); ctx.rotate(H.a);
+  ctx.setLineDash([8 / k, 6 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = L.lock ? "#999" : "#00B7FF"; ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.setLineDash([]);
+  if (!L.lock && H.turn) { ctx.beginPath(); ctx.moveTo(0, -b.h / 2); ctx.lineTo(0, -b.h / 2 - 34 / k); ctx.stroke(); }
+  ctx.restore();
+  if (L.lock) return;
+  function dot(p, r, fill) { ctx.beginPath(); ctx.arc(p.x, p.y, r / k, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = 2 / k; ctx.strokeStyle = "#fff"; ctx.stroke(); }
+  dot(H.size, 9, "#00B7FF");
+  if (H.turn) dot(H.turn, 8, "#FF9F1C");
+}
+/* which handle a press is on, if any */
+function akGfxOnHandle(P, st, p, k) {
+  var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
+  if (!L || L.lock) return null;
+  var H = akGfxHandles(L, P, k), r = 24 / k;
+  function near(q) { return q && Math.abs(p.x - q.x) <= r && Math.abs(p.y - q.y) <= r; }
+  if (near(H.turn)) return { kind: "turn", L: L, H: H };
+  if (near(H.size)) return { kind: "size", L: L, H: H };
+  return null;
+}
+/* snapping a moved part: b = its box as it is now, (mx, my) = how far it is being moved. Returns the moves and the guide lines. */
+function akGfxSnap(P, id, b, mx, my) {
+  var t = Math.max(P.W, P.H) * 0.008, xs = [0, P.W / 2, P.W], ys = [0, P.H / 2, P.H], gs = [];
+  P.layers.forEach(function (l) {
+    if (l.id === id || l.fixed || l.type === "gbg") return;
+    var o = akLayerBox(l, P); if (o.w >= P.W * 0.98 && o.h >= P.H * 0.98) return;
+    xs.push(o.x, o.x + o.w / 2, o.x + o.w); ys.push(o.y, o.y + o.h / 2, o.y + o.h);
+  });
+  function best(edges, cands) {
+    var bd = t + 1, out = null;
+    edges.forEach(function (e) { cands.forEach(function (c) { var d = c - e; if (Math.abs(d) < Math.abs(bd)) { bd = d; out = { d: d, at: c }; } }); });
+    return out && Math.abs(out.d) <= t ? out : null;
+  }
+  var sx = best([b.x + mx, b.x + b.w / 2 + mx, b.x + b.w + mx], xs), sy = best([b.y + my, b.y + b.h / 2 + my, b.y + b.h + my], ys);
+  if (sx) { mx += sx.d; gs.push({ x: sx.at }); }
+  if (sy) { my += sy.d; gs.push({ y: sy.at }); }
+  return { mx: mx, my: my, guides: gs };
+}
+
+/* ---------------------------------------------------------------- undo and redo */
+var AKGU = { st: [], i: -1, kind: "", D: null, t: 0, quiet: false };
+function akGfxUndoStart(D, kind) {
+  if (AKGU.kind !== kind || !AKGU.st.length) { AKGU.kind = kind; AKGU.st = [akGfxJson(D)]; AKGU.i = 0; }
+  AKGU.D = D;
+}
+function akGfxUndoNote(now) {
+  clearTimeout(AKGU.t);
+  function take() {
+    if (!AKGU.D || AKGU.quiet) return;
+    var j = akGfxJson(AKGU.D); if (j === AKGU.st[AKGU.i]) return;
+    AKGU.st = AKGU.st.slice(0, AKGU.i + 1); AKGU.st.push(j);
+    if (AKGU.st.length > 80) AKGU.st.shift();
+    AKGU.i = AKGU.st.length - 1;
+    if (S.akg && S.akg.edSync) S.akg.edSync(true);
+  }
+  if (now) take(); else AKGU.t = setTimeout(take, 400);
+}
+function akGfxCanUndo() { return AKGU.i > 0; }
+function akGfxCanRedo() { return AKGU.i < AKGU.st.length - 1; }
+function akGfxUndoGo(step, X) {
+  akGfxUndoNote(true);
+  var i = AKGU.i + step; if (i < 0 || i >= AKGU.st.length || !AKGU.D) return;
+  AKGU.i = i;
+  var D = AKGU.D, keep = D.draftId, o = JSON.parse(AKGU.st[i]);
+  Object.keys(D).forEach(function (k) { delete D[k]; }); Object.assign(D, o); if (keep) D.draftId = keep;
+  AKGU.quiet = true; try { save(); } finally { AKGU.quiet = false; }
+  if (S.akg) { var P = S.akg.P; if (P && S.akg.sel && !P.layers.some(function (l) { return l.id === S.akg.sel; }) && !akGfxFreeOf(D, S.akg.sel)) S.akg.sel = ""; }
+  X.drawPanel(); X.rebuild();
+}
+(function () {
+  var s0 = save;
+  save = function () { var r = s0.apply(this, arguments); if (S.view === "gfx" && AKGU.D && !AKGU.quiet) akGfxUndoNote(); return r; };
+})();
+
+/* ---------------------------------------------------------------- the bar under the picture */
+akCss("akgfx-e", [
+  ".akg-edbar{display:flex;flex-direction:column;gap:6px;margin:6px 0}",
+  ".akg-edbar .row{margin:0;gap:6px;flex-wrap:wrap;align-items:center}",
+  ".akg-edbar button{min-height:36px;padding:4px 10px}",
+  ".akg-edbar select{width:auto;max-width:12em;min-height:36px;margin:0}",
+  ".akg-edbar .filebtn{min-height:36px;padding:4px 10px;font-size:13px;display:inline-flex;align-items:center;margin:0}",
+  ".akg-edbar .akg-edname{font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akg-edbar .akg-slider{flex:1;min-width:150px;margin:0}",
+  ".akg-cv{touch-action:none}",
+  ".akg.akg-big .akg-grid{display:block}",
+  ".akg.akg-big .akg-panel{margin-top:10px}",
+  ".akg.akg-big .akg-prev{display:flex;justify-content:center}"
+].join("\n"));
+function akGfxColorAsk(title, cur, done) {
+  var pick = cur || "";
+  modal(title, h("div", null, colorPicker(cur || "", function (c) { pick = c; done(c); })), [{ label: "Done", primary: true }]);
+}
+function akGfxWordsAsk(cur, done) {
+  var ta = h("textarea", { rows: 3, value: cur || "", "aria-label": "Words", style: "width:100%" });
+  modal("Change the words", ta, [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () { done(ta.value); } }]);
+  setTimeout(function () { try { ta.focus(); ta.select(); } catch (e) {} }, 30);
+}
+/* bar: the element; X: the studio's helpers (D, st, base(), paint, rebuild, ch, slider...) */
+function akGfxEdBar(bar, X) {
+  var D = X.D, st = akGfxState(), P = st.P;
+  bar.textContent = "";
+  function E(id) { return D.edit[id] = D.edit[id] || {}; }
+  function addRow() {
+    var shapeSel = h("select", { "aria-label": "Add a shape", onChange: function () {
+      var v = this.value; this.value = ""; if (!v) return;
+      var dc = akGfxDecoCfg(D), wide = /line|dline|wave|flourish|chevrons|banner|brush|tape|stripes|hills/.test(v), w = wide ? 0.5 : 0.22, hh = wide ? (v === "hills" ? 0.3 : v === "stripes" ? 0.2 : 0.06) : w, id = uid();
+      dc.shapes.push({ id: id, shape: v, x: 0.5 - w / 2, y: 0.4, w: w, h: hh, color: "", alpha: 100, rot: 0, front: true }); st.sel = "us_" + id; X.ch(true);
+    } }, [h("option", { value: "" }, "＋ Shape…")].concat(AKG_SHAPES.map(function (s) { return h("option", { value: s[0] }, s[1]); })));
+    var picIn = h("input", { type: "file", accept: "image/*", onChange: function () {
+      var f = this.files && this.files[0]; this.value = ""; if (!f) return;
+      X.status("Adding the picture…");
+      akGfxPicIn(f).then(function (r) {
+        var id = uid(), pw = P ? P.W : 1080, ph = P ? P.H : 1350, w = 0.42, hh = w * r.ar * pw / ph;
+        if (hh > 0.6) w = w * 0.6 / hh;
+        akGfxFree(D).push({ id: id, t: "pic", img: r.id, name: r.name, x: 0.5, y: 0.45, w: w, ar: r.ar }); st.sel = "uf_" + id; X.status(""); X.ch(true);
+      }, function (e) { X.status((e && e.message) || "Couldn't add that picture."); });
+    } });
+    return h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () {
+        akGfxWordsAsk("", function (t) { if (!t.trim()) return; var id = uid(); akGfxFree(D).push({ id: id, t: "text", text: t, x: 0.5, y: 0.5, size: 0.065, w: 0.8, weight: 700 }); st.sel = "uf_" + id; X.ch(true); });
+      } }, "＋ Words"),
+      fileBtn("＋ Picture", picIn), shapeSel,
+      h("button", { class: "sm", "aria-label": "Undo", title: "Undo", disabled: !akGfxCanUndo(), onClick: function () { akGfxUndoGo(-1, X); } }, "↶ Undo"),
+      h("button", { class: "sm", "aria-label": "Redo", title: "Redo", disabled: !akGfxCanRedo(), onClick: function () { akGfxUndoGo(1, X); } }, "↷ Redo"),
+      h("button", { class: "sm", "aria-pressed": st.big ? "true" : "false", onClick: function () { st.big = !st.big; X.big(); } }, st.big ? "⛶ Smaller" : "⛶ Big view"));
+  }
+  bar.appendChild(addRow());
+  var L = P && st.sel && P.layers.filter(function (l) { return l.id === st.sel; })[0];
+  if (!L) { bar.appendChild(h("div", { class: "hint" }, "Tap a part to move, resize, turn or change it.")); return; }
+  var e0 = D.edit[L.id] || {}, free = akGfxFreeOf(D, L.id), shape = /^us_/.test(L.id) ? akGfxDecoCfg(D).shapes.filter(function (s) { return "us_" + s.id === L.id; })[0] : null;
+  var r1 = h("div", { class: "row" }, h("span", { class: "akg-edname grow" }, (L.lock ? "🔒 " : "") + L.name));
+  if (L.type === "text") r1.appendChild(h("button", { class: "sm", onClick: function () {
+    akGfxWordsAsk(L.text, function (t) { if (free) { free.text = t; delete E(L.id).text; } else E(L.id).text = t; X.ch(true); });
+  } }, "✎ Words"));
+  if (L.color || L.fill || L.type === "gpic" || L.type === "text") r1.appendChild(h("button", { class: "sm", onClick: function () {
+    akGfxColorAsk("Color", e0.color || (free && free.color) || "", function (c) { if (free && free.t === "text") { free.color = c || ""; delete E(L.id).color; } else if (c) E(L.id).color = c; else delete E(L.id).color; X.ch(); });
+  } }, "🎨 Color"));
+  if (L.type === "text" || free || shape) r1.appendChild(h("button", { class: "sm", title: "Make a copy", onClick: function () {
+    var nid = uid(), e1 = JSON.parse(JSON.stringify(D.edit[L.id] || {})), off = 40;
+    e1.dx = (e1.dx || 0) + off; e1.dy = (e1.dy || 0) + off; delete e1.lock;
+    if (free) { var c = JSON.parse(JSON.stringify(free)); c.id = nid; akGfxFree(D).push(c); D.edit["uf_" + nid] = e1; st.sel = "uf_" + nid; }
+    else if (shape) { var s2 = JSON.parse(JSON.stringify(shape)); s2.id = nid; akGfxDecoCfg(D).shapes.push(s2); D.edit["us_" + nid] = e1; st.sel = "us_" + nid; }
+    else {
+      var M = Math.min(P.W, P.H);
+      akGfxFree(D).push({ id: nid, t: "text", text: L.text, x: (L.x + off) / P.W, y: (L.y + off) / P.H, size: L.size / M, w: L.maxW / P.W, font: L.font, weight: L.weight || 400, italic: !!L.italic, color: L.color || "", align: L.align || "center" });
+      st.sel = "uf_" + nid;
+    }
+    X.ch(true); toast("Copied. Drag the copy where you want it.");
+  } }, "⧉ Copy"));
+  bar.appendChild(r1);
+  var r2 = h("div", { class: "row" });
+  r2.appendChild(h("button", { class: "sm", title: "Bring forward (in front of the next part)", onClick: function () { if (akGfxZMove(D, P, L.id, "up")) X.ch(); } }, "⬆ Forward"));
+  r2.appendChild(h("button", { class: "sm", title: "Send back (behind the next part)", onClick: function () { if (akGfxZMove(D, P, L.id, "down")) X.ch(); } }, "⬇ Back"));
+  r2.appendChild(h("button", { class: "sm", "aria-label": "More for this part", onClick: function () { menu(this, [
+    { label: "Bring to the very front", onClick: function () { if (akGfxZMove(D, P, L.id, "top")) X.ch(); } },
+    { label: "Send to the very back", onClick: function () { if (akGfxZMove(D, P, L.id, "bottom")) X.ch(); } },
+    { label: "Put it back in the middle", onClick: function () { var b = akLayerBox(L, P), e = E(L.id); e.dx = (e.dx || 0) + Math.round(P.W / 2 - (b.x + b.w / 2)); X.ch(); } },
+    { label: "Straighten it (no turn)", onClick: function () { var e = E(L.id); e.rot = 0; X.ch(); } },
+    { label: "More settings (Parts)…", onClick: function () { X.openParts(); } }]); } }, "⋯"));
+  r2.appendChild(h("button", { class: "sm", "aria-pressed": e0.lock ? "true" : "false", title: "Lock: it can't be dragged on the picture", onClick: function () { var e = E(L.id); if (e.lock) delete e.lock; else e.lock = true; X.ch(); } }, e0.lock ? "🔓 Unlock" : "🔒 Lock"));
+  if (free || shape) r2.appendChild(h("button", { class: "sm danger", onClick: function () {
+    if (free) akGfxFree(D).splice(akGfxFree(D).indexOf(free), 1); else akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(shape), 1);
+    delete D.edit[L.id]; st.sel = ""; X.ch(true); toast("Deleted. ↶ Undo brings it back.");
+  } }, "🗑 Delete"));
+  else r2.appendChild(h("button", { class: "sm", onClick: function () { E(L.id).hide = true; st.sel = ""; X.ch(true); toast("Hidden. Tick it in Parts to bring it back."); } }, "👁 Hide"));
+  bar.appendChild(r2);
+  var r3 = h("div", { class: "row" });
+  r3.appendChild(X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = E(L.id); if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true));
+  if (free && free.t === "pic") {
+    r3.appendChild(X.chips([["", "Square"], ["round", "Rounded"], ["circle", "Circle"]], free.corner || "", function (v) { free.corner = v; X.ch(); }, "Corners"));
+    r3.appendChild(X.chips([["", "No frame"], ["#ffffff", "White frame"], ["#111111", "Black frame"]], free.frame || "", function (v) { free.frame = v; X.ch(); }, "Frame"));
+    r3.appendChild(h("button", { class: "sm", "aria-pressed": free.shadow ? "true" : "false", onClick: function () { free.shadow = !free.shadow; X.ch(); } }, free.shadow ? "Shadow ✓" : "Shadow"));
+    r3.appendChild(h("button", { class: "sm", onClick: function () { free.flip = !free.flip; X.ch(); } }, "⇆ Flip"));
+  }
+  if (free && free.t === "text") {
+    r3.appendChild(h("button", { class: "sm", "aria-pressed": (free.weight || 700) >= 700 ? "true" : "false", onClick: function () { free.weight = (free.weight || 700) >= 700 ? 400 : 700; X.ch(); } }, "Bold"));
+    r3.appendChild(h("button", { class: "sm", "aria-pressed": free.italic ? "true" : "false", onClick: function () { free.italic = !free.italic; X.ch(); } }, "Italic"));
+    var fs = h("select", { "aria-label": "Font", onChange: function () { free.font = this.value; X.ch(); } });
+    akGfxFontOpts().forEach(function (o) { fs.appendChild(h("option", { value: o[0], selected: o[0] === L.font }, o[1])); });
+    r3.appendChild(fs);
+  }
+  bar.appendChild(r3);
+}
+
+/* ---------------------------------------------------------------- PDF with real text */
+function akFontkitLib() {
+  if (window.fontkit) return Promise.resolve(window.fontkit);
+  return loadScript(AKG_BASE + "pdf/fontkit.min.js").then(function () { if (!window.fontkit) throw new Error("The font tool didn't load."); return window.fontkit; });
+}
+function akPdfFontParse(s) {
+  var m = /^(.*?)([\d.]+)px(?:\s*\/\s*\S+)?\s+(.+)$/.exec(String(s || "")); if (!m) return null;
+  var it = false, w = 400;
+  m[1].trim().split(/\s+/).forEach(function (t) { if (t === "italic" || t === "oblique") it = true; else if (t === "bold" || t === "bolder") w = 700; else if (t === "lighter") w = 300; else if (/^\d+$/.test(t)) w = Number(t); });
+  var fams = []; m[3].replace(/"([^"]+)"|'([^']+)'|([^,]+)/g, function (_, a, b, c) { var f = (a || b || c || "").trim(); if (f) fams.push(f); return _; });
+  return { size: Number(m[2]), w: w, it: it, fams: fams };
+}
+function akPdfWRange(v) {
+  var p = String(v || "400").trim().split(/\s+/).map(function (x) { return x === "normal" ? 400 : x === "bold" ? 700 : Number(x) || 400; });
+  return [p[0], p[1] == null ? p[0] : p[1]];
+}
+/* where a family's font file is: { url, lo, hi (declared weights), it (declared italic) } or null */
+function akPdfFontSrc(fam, w, it) {
+  var g = /^AKGFX (.+)$/.exec(fam), name = (g ? g[1] : fam).toLowerCase();
+  var mine = AKG_FONTS.filter(function (f) { return f[0].toLowerCase() === name; });
+  if (mine.length) {
+    var best = null, bd = 1e9;
+    mine.forEach(function (f) { var r = akPdfWRange(f[2]), d = w < r[0] ? r[0] - w : w > r[1] ? w - r[1] : 0; if (d < bd) { bd = d; best = { f: f, r: r }; } });
+    var base = best.f[1].replace(/\.woff2$/, ""), r = best.r, ww = Math.max(r[0], Math.min(r[1], Math.round(w / 100) * 100));
+    var variable = /^(league-spartan|montserrat|outfit|quicksand)$/.test(base);
+    return { url: AKG_BASE + "pdf/" + base + (variable ? "-" + ww : "") + ".woff", lo: r[0], hi: r[1], it: false };
+  }
+  if (g || /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-\w+|emoji|math)$/i.test(fam)) return null;
+  var cf = /^CF (.+)$/.exec(fam);
+  if (cf && typeof customFonts === "function") {
+    var one = customFonts().filter(function (f) { return f.id === cf[1]; })[0];
+    if (one) {
+      var fb = null, fd = 1e9;
+      (one.faces || []).forEach(function (fc) { var r = akPdfWRange(fc.w), d = (!!fc.i !== !!it ? 1000 : 0) + (w < r[0] ? r[0] - w : w > r[1] ? w - r[1] : 0); if (d < fd) { fd = d; fb = { fc: fc, r: r }; } });
+      var rec = fb && IMG[fontKey(one.id, fb.fc.w, fb.fc.i)];
+      if (rec && rec.data) return { url: rec.data, lo: fb.r[0], hi: fb.r[1], it: !!fb.fc.i };
+    }
+    return null;
+  }
+  var out = null, od = 1e9;
+  Array.prototype.forEach.call(document.styleSheets || [], function (sh) {
+    var rules; try { rules = sh.cssRules; } catch (e) { return; }
+    Array.prototype.forEach.call(rules || [], function (r) {
+      if (!r.style || !/font-face/i.test(r.cssText.slice(0, 12))) return;
+      var f = (r.style.getPropertyValue("font-family") || "").trim().replace(/^["']|["']$/g, "");
+      if (f.toLowerCase() !== name) return;
+      var rr = akPdfWRange(r.style.getPropertyValue("font-weight")), sti = /italic|oblique/.test(r.style.getPropertyValue("font-style") || ""), d = (sti !== !!it ? 1000 : 0) + (w < rr[0] ? rr[0] - w : w > rr[1] ? w - rr[1] : 0);
+      var u = /url\(\s*["']?([^"')]+)["']?\s*\)/.exec(r.style.getPropertyValue("src") || "");
+      if (u && d < od) { od = d; out = { url: u[1], lo: rr[0], hi: rr[1], it: sti }; }
+    });
+  });
+  return out;
+}
+function akPdfHex(c) { var m = /^#([0-9a-f]{6})$/i.exec(String(c || "")); return m ? [parseInt(m[1].slice(0, 2), 16) / 255, parseInt(m[1].slice(2, 4), 16) / 255, parseInt(m[1].slice(4, 6), 16) / 255] : null; }
+/* draws l on ctx and records every fillText; skip = { callIndex: true } leaves those out (their shadow stays) */
+function akPdfRecord(ctx, l, P, skip) {
+  var calls = [], of = ctx.fillText;
+  ctx.fillText = function (t, x, y, mw) {
+    var c = { t: String(t), i: calls.length, font: ctx.font, fs: ctx.fillStyle, ga: ctx.globalAlpha, m: ctx.getTransform(), ls: parseFloat(ctx.letterSpacing) || 0 };
+    calls.push(c);
+    if (!skip) {
+      var w = ctx.measureText(c.t).width, al = ctx.textAlign, bl = ctx.textBaseline, m1 = ctx.measureText(c.t);
+      ctx.textBaseline = "alphabetic"; var m2 = ctx.measureText(c.t); ctx.textBaseline = bl;
+      var a1 = m1.fontBoundingBoxAscent != null ? m1.fontBoundingBoxAscent : m1.actualBoundingBoxAscent, a2 = m2.fontBoundingBoxAscent != null ? m2.fontBoundingBoxAscent : m2.actualBoundingBoxAscent;
+      var dir = ctx.direction === "rtl", left = al === "center" ? x - w / 2 : (al === "right" || (al === "end" && !dir) || (al === "start" && dir)) ? x - w : x;
+      c.chars = Array.from(c.t); c.pos = [0];
+      for (var i = 1; i <= c.chars.length; i++) c.pos.push(i === c.chars.length ? w : ctx.measureText(c.chars.slice(0, i).join("")).width);
+      c.w = w; c.xl = left; c.ya = y - a1 + a2; c.hs = mw != null && w > mw && mw > 0 ? mw / w : 1;
+      if (c.hs !== 1) c.xl = al === "center" ? x - mw / 2 : al === "right" || al === "end" ? x - mw : x;
+    }
+    if (skip && skip[c.i]) {
+      var sc = ctx.shadowColor;
+      if (sc && !/^rgba\(.*,\s*0\)$/.test(sc) && sc !== "transparent" && (ctx.shadowBlur || ctx.shadowOffsetX || ctx.shadowOffsetY)) {
+        var inv = ctx.getTransform().inverse(), BIG = 30000;
+        ctx.save(); ctx.shadowOffsetX = ctx.shadowOffsetX + BIG;
+        if (mw != null) of.call(ctx, t, x - inv.a * BIG, y - inv.b * BIG, mw); else of.call(ctx, t, x - inv.a * BIG, y - inv.b * BIG);
+        ctx.restore();
+      }
+      return;
+    }
+    return mw != null ? of.call(ctx, t, x, y, mw) : of.call(ctx, t, x, y);
+  };
+  try { akDrawLayer(ctx, l, P); } finally { delete ctx.fillText; }
+  return calls;
+}
+/* which recorded calls are the faces of the words */
+function akPdfFaces(l, calls) {
+  var op = l.op != null ? l.op : 1;
+  function solid(c) { return typeof c.fs === "string" && /^#[0-9a-f]{6}$/i.test(c.fs) && Math.abs(c.ga - op) < 0.02; }
+  if (l.type === "text") {
+    var n = 1; try { n = akGfxTextFit(l).lines.length; } catch (e) {}
+    var last = calls.slice(-n);
+    return { faces: last.length === n ? last.filter(solid) : [], ghost: last.length === n ? last.filter(function (c) { return !solid(c); }) : [] };
+  }
+  var keep = {}, out = [];
+  calls.forEach(function (c) { if (!solid(c) || !c.t.trim()) return; keep[[c.t, Math.round(c.xl), Math.round(c.ya), c.font].join("|")] = c; });
+  Object.keys(keep).forEach(function (k) { out.push(keep[k]); });
+  return { faces: out.sort(function (a, b) { return a.i - b.i; }), ghost: [] };
+}
+function akPdfBox(cv) {
+  var s = 8, sw = Math.max(1, Math.ceil(cv.width / s)), sh = Math.max(1, Math.ceil(cv.height / s)), sm = document.createElement("canvas"); sm.width = sw; sm.height = sh;
+  var x = sm.getContext("2d"); x.drawImage(cv, 0, 0, sw, sh);
+  var d = x.getImageData(0, 0, sw, sh).data, x0 = sw, y0 = sh, x1 = -1, y1 = -1;
+  for (var y = 0; y < sh; y++) for (var i = 0; i < sw; i++) if (d[(y * sw + i) * 4 + 3] > 1) { if (i < x0) x0 = i; if (i > x1) x1 = i; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  sm.width = 1;
+  if (x1 < 0) return null;
+  var bx = Math.max(0, (x0 - 1) * s), by = Math.max(0, (y0 - 1) * s);
+  return { x: bx, y: by, w: Math.min(cv.width, (x1 + 2) * s) - bx, h: Math.min(cv.height, (y1 + 2) * s) - by };
+}
+function akGfxPdfReal(P, title) {
+  var PL, doc, pg, pw, ph, kx, fk, helv, fonts = {}, rep = { text: 0, pic: 0, still: 0 };
+  function num(v) { return PL.PDFNumber.of(Math.round(v * 10000) / 10000); }
+  function op(name, args) { return PL.PDFOperator.of(name, (args || []).map(function (a) { return typeof a === "number" ? num(a) : a; })); }
+  function font(cs) {
+    var f = akPdfFontParse(cs); if (!f) return Promise.resolve(null);
+    var src = null; for (var i = 0; i < f.fams.length && !src; i++) src = akPdfFontSrc(f.fams[i], f.w, f.it);
+    if (!src) return Promise.resolve(null);
+    var key = src.url.length > 200 ? src.url.slice(0, 120) + src.url.length + src.url.slice(-60) : src.url;
+    if (!fonts[key]) fonts[key] = fetch(src.url).then(function (r) { return r.ok ? r.arrayBuffer() : null; }).then(function (buf) {
+      if (!buf) return null;
+      var u8 = new Uint8Array(buf), F; try { F = fk.create(u8); } catch (e) { return null; }
+      var ax = F.variationAxes || {};
+      return PL.PDFDocument.create().then(function (t) { t.registerFontkit(fk); return t.embedFont(u8, { subset: true }).then(function (tf) { t.addPage([50, 50]).drawText("Ag 1", { font: tf, size: 10 }); return t.save(); }); })
+        .then(function () { return doc.embedFont(u8, { subset: true }); }).then(function (pf) { return { pf: pf, F: F, ax: ax }; }, function () { return null; });
+    }).catch(function () { return null; });
+    return fonts[key].then(function (o) {
+      if (!o) return null;
+      if (o.ax.wght && Math.abs(f.w - o.ax.wght.default) > 1) return null;
+      return { pf: o.pf, F: o.F, size: f.size, fakeB: f.w >= 600 && src.hi < 600, fakeI: f.it && !src.it };
+    });
+  }
+  function textOps(c, fo, invisible) {
+    var m = c.m, size = fo.size, sh = fo.fakeI ? 0.25 : 0, hs = c.hs || 1, a = m.a, b = m.b, cc = m.c, d = m.d, e = m.e, f = m.f;
+    var tm = [kx * a * hs, -kx * b * hs, kx * (a * sh - cc), kx * (d - b * sh), kx * (a * c.xl + cc * c.ya + e), ph - kx * (b * c.xl + d * c.ya + f)];
+    var arr = doc.context.obj([]), run = null;
+    /* shaped like the browser does it (joined script letters, ligatures, kerning) when the widths agree; else letter by letter at the browser's places */
+    if (fo.F && !invisible) try {
+      run = fo.F.layout(c.t);
+      var upm = fo.F.unitsPerEm, tot = 0, ng = run.glyphs.length, spG = ng ? (c.ls || 0) * c.chars.length / ng : 0;
+      run.positions.forEach(function (p) { tot += p.xAdvance; });
+      var hx = fo.pf.encodeText(c.t), hv = String(hx.value != null ? hx.value : hx.toString().replace(/^<|>$/g, ""));
+      if (!ng || hv.length !== ng * 4 || Math.abs(tot / upm * size + spG * ng - c.w) > Math.max(1, c.w * 0.006)) run = null;
+      else run.glyphs.forEach(function (g, i) {
+        arr.push(PL.PDFHexString.of(hv.slice(i * 4, i * 4 + 4)));
+        if (i < ng - 1) { var adj = -((run.positions[i].xAdvance - g.advanceWidth) / upm * 1000 + spG * 1000 / size); if (Math.abs(adj) > 0.05) arr.push(num(adj)); }
+      });
+    } catch (er) { run = null; arr = doc.context.obj([]); }
+    if (!run) c.chars.forEach(function (ch, i) {
+      var hex; try { hex = fo.pf.encodeText(ch); } catch (er) { hex = fo.pf.encodeText("?"); }
+      arr.push(hex);
+      if (i < c.chars.length - 1) {
+        var nat; try { nat = fo.pf.widthOfTextAtSize(ch, size); } catch (er) { nat = 0; }
+        var adj = -((c.pos[i + 1] - c.pos[i]) - nat) * 1000 / size;
+        if (Math.abs(adj) > 0.05) arr.push(num(adj));
+      }
+    });
+    var key = pg.node.newFontDictionary(fo.pf.name, fo.pf.ref), ops = [op("q")];
+    if (!invisible && c.ga < 0.99) ops.push(op("gs", [pg.node.newExtGState("GS", doc.context.obj({ Type: "ExtGState", ca: c.ga, CA: c.ga }))]));
+    var col = akPdfHex(c.fs) || [0, 0, 0];
+    ops.push(op("BT"), op("Tf", [key, size]));
+    if (invisible) ops.push(op("Tr", [3]));
+    else if (fo.fakeB) ops.push(op("rg", col), op("RG", col), op("w", [size / 16 * kx * Math.sqrt(a * a + b * b)]), op("j", [1]), op("Tr", [2]));
+    else ops.push(op("rg", col), op("Tr", [0]));
+    ops.push(op("Tm", tm), op("TJ", [arr]), op("ET"), op("Q"));
+    pg.pushOperators.apply(pg, ops);
+  }
+  function ghostText(c) {
+    /* invisible text so a picture of words can be selected and searched */
+    var t = c.chars.map(function (ch) { return /[\x20-\x7e\xa0-\xff]/.test(ch) ? ch : "?"; });
+    var size = (akPdfFontParse(c.font) || { size: 20 }).size, nat = 0; try { nat = helv.widthOfTextAtSize(t.join(""), size); } catch (e) { return; }
+    var cc = Object.assign({}, c, { chars: t, hs: nat > 0 ? c.w / nat : 1, pos: [] });
+    var x = 0; t.forEach(function (ch) { cc.pos.push(x); try { x += helv.widthOfTextAtSize(ch, size); } catch (e) {} }); cc.pos.push(x);
+    textOps(cc, { pf: helv, size: size }, true);
+  }
+  function image(cv, bx, jpg) {
+    var part = document.createElement("canvas"); part.width = bx.w; part.height = bx.h;
+    part.getContext("2d").drawImage(cv, bx.x, bx.y, bx.w, bx.h, 0, 0, bx.w, bx.h);
+    if (jpg === "maybe") {
+      jpg = true;
+      try { var dd = part.getContext("2d").getImageData(0, 0, bx.w, bx.h).data; for (var i = 3; i < dd.length; i += 4) if (dd[i] < 250) { jpg = false; break; } } catch (e) { jpg = false; }
+    }
+    return akCanvasBlob(part, jpg ? "image/jpeg" : "image/png", 0.92).then(function (bl) { part.width = 1; return bl.arrayBuffer(); }).then(function (buf) { return jpg ? doc.embedJpg(buf) : doc.embedPng(buf); })
+      .then(function (img) { pg.drawImage(img, { x: bx.x * kx, y: ph - (bx.y + bx.h) * kx, width: bx.w * kx, height: bx.h * kx }); rep.pic++; });
+  }
+  function qr(l) {
+    var q = qrcode(0, "M"); q.addData(l.url); q.make();
+    var n = q.getModuleCount(), pad = l.s * 0.06, cell = (l.s - pad * 2) / n;
+    pg.drawRectangle({ x: l.x * kx, y: ph - (l.y + l.s) * kx, width: l.s * kx, height: l.s * kx, color: PL.rgb(1, 1, 1) });
+    for (var r = 0; r < n; r++) for (var c = 0; c < n; c++) {
+      if (!q.isDark(r, c)) continue;
+      var run = 1; while (c + run < n && q.isDark(r, c + run)) run++;
+      pg.drawRectangle({ x: (l.x + pad + c * cell) * kx, y: ph - (l.y + pad + (r + 1) * cell) * kx, width: cell * run * kx + 0.01, height: cell * kx + 0.01, color: PL.rgb(0, 0, 0) });
+      c += run - 1;
+    }
+  }
+  function layer(l) {
+    if (l.type === "qr" && l.url && typeof qrcode === "function" && !(l.op != null && l.op < 1)) { qr(l); return Promise.resolve(); }
+    var photo = /^(gbg|gphoto|gfree|img|bg)$/.test(l.type), tiny = document.createElement("canvas"); tiny.width = 1; tiny.height = 1;
+    var calls = photo ? [] : akPdfRecord(tiny.getContext("2d"), l, P, null), pick = photo ? { faces: [], ghost: [] } : akPdfFaces(l, calls);
+    return Promise.all(pick.faces.map(function (c) { return font(c.font); })).then(function (fos) {
+      var skip = {}, real = [];
+      pick.faces.forEach(function (c, i) { if (fos[i]) { skip[c.i] = true; real.push([c, fos[i]]); } else pick.ghost.push(c); });
+      var cv = document.createElement("canvas"); cv.width = P.W; cv.height = P.H;
+      var ctx = cv.getContext("2d");
+      if (Object.keys(skip).length) akPdfRecord(ctx, l, P, skip); else akDrawLayer(ctx, l, P);
+      var bx = l.type === "gbg" || l.type === "bg" ? { x: 0, y: 0, w: P.W, h: P.H } : akPdfBox(cv);
+      return (bx ? image(cv, bx, l.type === "gbg" || l.type === "bg" ? true : photo ? "maybe" : false) : Promise.resolve()).then(function () {
+        cv.width = 1;
+        real.forEach(function (x) { textOps(x[0], x[1], false); rep.text++; });
+        pick.ghost.forEach(function (c) { if (c.chars) { ghostText(c); rep.still++; } });
+      });
+    });
+  }
+  return akPdfLib().then(function () { PL = window.PDFLib; return akFontkitLib(); }).then(function (k) { fk = k; return PL.PDFDocument.create(); }).then(function (d) {
+    doc = d; doc.registerFontkit(fk);
+    pw = P.size && P.size[4] ? P.size[4] * 72 : P.W / 150 * 72; ph = P.size && P.size[5] ? P.size[5] * 72 : P.H / 150 * 72; kx = pw / P.W;
+    pg = doc.addPage([pw, ph]);
+    return doc.embedFont(PL.StandardFonts.Helvetica);
+  }).then(function (hf) {
+    helv = hf;
+    return P.layers.reduce(function (pr, l) { return pr.then(function () { return layer(l); }); }, Promise.resolve());
+  }).then(function () {
+    doc.setTitle(title || akGfxName()); doc.setCreator("Akashic Chords"); doc.setSubject(P.layers.map(function (l) { return l.name; }).join(" | "));
+    return doc.save();
+  }).then(function (bytes) { var b = new Blob([bytes], { type: "application/pdf" }); b.akReport = rep; return b; });
+}
+/* the PDF button: real text, and if anything goes wrong, the one-picture PDF */
+function akGfxPdfSave(P, nm) {
+  return akGfxPdfReal(P, nm).then(function (b) {
+    akRecDownload(b, nm + ".pdf");
+    var r = b.akReport || {};
+    if (r.still) toast("Saved the PDF. " + r.still + (r.still === 1 ? " line uses" : " lines use") + " a font or effect that can't go in as text, so " + (r.still === 1 ? "it is" : "they are") + " a picture there (still searchable).");
+  }, function (e) {
+    try { console.warn("real-text PDF", e); } catch (er) {}
+    return akPosterPdf(P).then(function (b) { akRecDownload(b, nm + ".pdf"); toast("Saved the PDF as one picture (the text version didn't work on this device)."); });
+  });
+}
+/* keyboard: Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z), arrows nudge (Shift = 10 times more), Delete hides or deletes, Esc lets go */
+document.addEventListener("keydown", function (e) {
+  var st = S.akg; if (S.view !== "gfx" || !st || !st.X || document.querySelector(".modal")) return;
+  var t = e.target, tag = t && t.tagName; if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+  var X = st.X, D = X.D, k = e.key, mod = e.ctrlKey || e.metaKey;
+  if (mod && (k === "z" || k === "Z")) { e.preventDefault(); akGfxUndoGo(e.shiftKey ? 1 : -1, X); return; }
+  if (mod && (k === "y" || k === "Y")) { e.preventDefault(); akGfxUndoGo(1, X); return; }
+  if (!st.sel) return;
+  if (k === "Escape") { st.sel = ""; X.paint(); X.refillParts(); return; }
+  var dx = k === "ArrowLeft" ? -1 : k === "ArrowRight" ? 1 : 0, dy = k === "ArrowUp" ? -1 : k === "ArrowDown" ? 1 : 0;
+  if (dx || dy) {
+    e.preventDefault(); var n = e.shiftKey ? 10 : 1, E = D.edit[st.sel] = D.edit[st.sel] || {};
+    if (E.lock) return;
+    E.dx = (E.dx || 0) + dx * n * 2; E.dy = (E.dy || 0) + dy * n * 2; X.paint(); save(); return;
+  }
+  if (k === "Delete" || k === "Backspace") {
+    e.preventDefault();
+    var id = st.sel, f = akGfxFreeOf(D, id), dc = akGfxDecoCfg(D), sh = dc.shapes.filter(function (s) { return "us_" + s.id === id; })[0];
+    if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (sh) dc.shapes.splice(dc.shapes.indexOf(sh), 1); else { D.edit[id] = D.edit[id] || {}; D.edit[id].hide = true; }
+    if (f || sh) delete D.edit[id];
+    st.sel = ""; X.ch(true);
+  }
+});
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
