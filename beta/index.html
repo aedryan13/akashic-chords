@@ -33581,16 +33581,23 @@ var AK16F = { t: 0, busy: false, pv: null, pvStream: null, msg: "", big: false }
   try {
     var q = new URLSearchParams(location.search);
     if (q.get("rr") === "video" || q.get("rr") === "audio") { localStorage.setItem("akrr:link", location.href.replace(/&go=1/g, "")); return; }
-    if (q.get("app") || localStorage.getItem("akrr:auto") !== "1") return;
+    var md = localStorage.getItem("akrr:auto") || "";
+    if (q.get("app") || !/^(1|video|audio)$/.test(md)) return;
     var l = localStorage.getItem("akrr:link");
-    if (l && l.split(/[?#]/)[0] === location.href.split(/[?#]/)[0]) location.replace(l); /* 16.1: no "&go=1": opening the app never turns the camera on by itself */
+    /* 17.6: "video" / "audio" open that role, "1" the last one; the test and normal app each open their own recorder page */
+    if (l && md !== "1") l = l.replace(/([?&]rr=)(video|audio)/, "$1" + md);
+    if (l) l = location.href.split(/[?#]/)[0] + "?" + (l.split("?")[1] || "");
+    if (l && /[?&]rr=(video|audio)/.test(l)) location.replace(l); /* 16.1: no "&go=1": opening the app never turns the camera on by itself */
   } catch (e) {}
 })();
 function akRr141Link(role) {
   var l = ""; try { l = localStorage.getItem("akrr:link") || ""; } catch (e) {}
   return l ? l.replace(/([?&]rr=)(video|audio)/, "$1" + role) : "";
 }
-function akRr141Auto(v) { try { if (v === undefined) return localStorage.getItem("akrr:auto") === "1"; if (v) localStorage.setItem("akrr:auto", "1"); else localStorage.removeItem("akrr:auto"); } catch (e) {} return !!v; }
+function akRr141Auto(v) { try { if (v === undefined) return !!akRr141Mode(); if (v) localStorage.setItem("akrr:auto", v === true ? "1" : v); else localStorage.removeItem("akrr:auto"); } catch (e) {} return !!v; }
+/* which page the app opens on this phone (17.6): "" the normal app, "video" / "audio" that recorder page, "1" the recorder page it was last */
+function akRr141Mode() { var m = ""; try { m = localStorage.getItem("akrr:auto") || ""; } catch (e) {} return /^(1|video|audio)$/.test(m) ? m : ""; }
+var AKRR_OPEN = [["", "The normal app (as now)"], ["video", "🎥 The video phone recorder page"], ["audio", "🎙 The sound phone recorder page"], ["1", "The recorder page it was last"]];
 (function () {
   var dr = akRpDraw;
   akRpDraw = function () {
@@ -33603,7 +33610,7 @@ function akRp141Card() {
   var inn = AKRP.el.querySelector(".akrp-in"); if (!inn) return;
   var other = AKRP.role === "video" ? "audio" : "video", name = AKRP.role === "video" ? "video" : "sound";
   var card = h("div", { class: "akrp-cb card ak16f-keep" }, h("b", null, "📌 This phone"),
-    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: akRr141Auto(), onChange: function () { akRr141Auto(this.checked); toast(this.checked ? "This phone opens as the " + name + " recorder from now on." : "This phone opens the normal app again."); } }),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: akRr141Auto(), onChange: function () { akRr141Auto(this.checked ? AKRP.role : false); toast(this.checked ? "This phone opens as the " + name + " recorder from now on." : "This phone opens the normal app again."); } }),
       "Open this phone as the " + name + " recorder every time the app opens (no QR code needed)"),
     h("div", { class: "row" },
       h("button", { disabled: !!AKRP.cur, onClick: function () { var l = akRr141Link(other); if (l) location.href = l; } }, other === "video" ? "Switch to 🎥 video phone" : "Switch to 🎙 sound phone"),
@@ -33618,7 +33625,8 @@ function akSettingsExtra25(c) {
     c.out.appendChild(h("div", { class: "row" },
       h("button", { onClick: function () { location.href = akRr141Link("video"); } }, "🎥 Open as the video phone"),
       h("button", { onClick: function () { location.href = akRr141Link("audio"); } }, "🎙 Open as the sound phone")));
-    c.check("Open this phone as the recorder every time the app opens", function () { return akRr141Auto(); }, function (v) { akRr141Auto(v); });
+    c.select("When the app opens on this phone, go to", function () { return akRr141Mode(); }, function (v) { akRr141Auto(v || false); }, AKRR_OPEN);
+    c.out.appendChild(h("p", { class: "hint" }, "Each phone keeps its own choice. On the recorder page, “Open the normal app” still gets you to the app. The camera and microphone only start when you tap Get ready."));
   }
   if (typeof akSettingsExtra26 === "function") akSettingsExtra26(c);
 }
@@ -36739,7 +36747,6 @@ function viewGfx() {
       d.appendChild(slider("Zoom", Math.round((b.zoom || 1) * 100), 100, 300, 5, function (v) { b.zoom = v / 100; }, function (v) { return v + "%"; }));
       d.appendChild(slider("Left ↔ right", Math.round((b.fx == null ? 0.5 : b.fx) * 100), 0, 100, 1, function (v) { b.fx = v / 100; }));
       d.appendChild(slider("Up ↕ down", Math.round((b.fy == null ? 0.5 : b.fy) * 100), 0, 100, 1, function (v) { b.fy = v / 100; }));
-      d.appendChild(slider("Blur", b.blur || 0, 0, 30, 1, function (v) { b.blur = v; }));
     }
     if (typeof akGfxBgExtra === "function") akGfxBgExtra(d, X);
   }
@@ -44763,8 +44770,7 @@ function akGfxZoomIn(X) {
     var r = h("div", { class: "row" });
     r.appendChild(h("button", { class: "sm", title: "Copy, to paste here or in another design", onClick: function () { akGfxCopy(D, P, L.id); X.paint(); } }, "📋 Copy"));
     if (AKGFX.clip) r.appendChild(h("button", { class: "sm", onClick: function () { akGfxPaste(D, X); } }, "📥 Paste"));
-    r.appendChild(h("button", { class: "sm", onClick: function () { X.cat("fx"); } }, "✨ Effects"));
-    r.appendChild(h("button", { class: "sm", onClick: function () { X.cat("warp"); } }, "↗ Reshape"));
+    /* ✨ Effects and ↗ Reshape are their own sections right under this one (17.5): no second way in here */
     if (pic) r.appendChild(h("button", { class: "sm", title: "Put another picture in this place", onClick: function () { X.cat("pics"); } }, "🔁 Swap picture"));
     if (!(free && free.t === "pic")) r.appendChild(h("button", { class: "sm", title: "Mirror it", onClick: function () { var w = akGfxWarpOf(D, L.id); w.fx = !w.fx; save(); X.paint(); } }, "⇆ Flip"));
     if (L.type === "govl") r.appendChild(h("button", { class: "sm", onClick: function () { X.cat("ovl"); } }, "🌀 Change the pattern"));
@@ -48054,6 +48060,129 @@ function akTestersFeedback() {
     } catch (e) {}
   };
 })();
+
+/* ================================================================ akgfx_k: Graphics studio, part 11 (version 17.6): clear pictures, one place for effects
+   The blurred photo: the old Page › Background "Blur" slider (D.bg.blur, 15.0) blurred the photo but never showed in ✨ Effects, and it
+   stayed on through new photos and 🎲. The slider is gone; a blur left in a design moves once into Effects (D.edit[id].fxo.blur) on the
+   part that shows the photo (akGfxBlurMove), so it can be seen and taken off there.
+   ✨ Effects starts with "On this design": every part that has effects, the photo filter (🎲 can pick one, e.g. black and white)
+   and a warning when the photo is too small for its place (looks soft). Each has ✕ to take it off; tapping the name picks that part.
+   The ✨ Effects and ↗ Reshape buttons in "Selected" are gone (those sections sit right under it).
+   Every window inside a section (each heading: .akg-grp, .akg-sub, h4) folds open and shut; remembered in akGfxCfg().sub. */
+
+AK_VERSION = "17.6";
+AK_WHATS_NEW = [
+  "Graphics studio: fixed a blurred photo with no effect showing. An old Blur slider under Page › Background blurred the photo out of sight of ✨ Effects. It's gone; a blur already in a design now shows in Effects, where ✕ takes it off.",
+  "Graphics studio: ✨ Effects starts with “On this design”: every effect in use, the photo filter (🎲 sometimes picks black and white) and a note when a photo is too small for its place. ✕ takes any of them off.",
+  "Graphics studio: effects have one place: the ✨ Effects and ↗ Reshape buttons inside “Selected” are gone, since those sections sit right below it.",
+  "Graphics studio: every window inside the tool sections folds open and shut (tap its heading); the app remembers which ones you folded."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- the old background blur moves into Effects */
+function akGfxBlurMove(D, P) {
+  if (!D || !D.bg || !(D.bg.blur > 0) || !P || !P.layers) return;
+  var v = Math.min(100, Math.max(1, Math.round(D.bg.blur * 2.3))), ph = P.layers.filter(function (l) { return l.type === "gphoto" && l.src; })[0];
+  var bg = P.layers.filter(function (l) { return l.type === "gbg" && l.src; })[0], t = ph || bg;
+  D.bg.blur = 0;
+  if (!t) return;
+  var E = D.edit = D.edit || {}, e = E[t.id] = E[t.id] || {}; if (!e.fxo || typeof e.fxo !== "object") e.fxo = {};
+  if (!e.fxo.blur) e.fxo.blur = v;
+  P.layers.forEach(function (l) { if (l.type === "gphoto" || l.type === "gbg") l.blur = 0; });
+}
+(function () {
+  var L0 = akGfxLayers;
+  akGfxLayers = function (D) { var P = L0.apply(this, arguments); try { if (D && D.bg && D.bg.blur > 0) { akGfxBlurMove(D, P); P = L0.apply(this, arguments); } } catch (e) {} return P; };
+})();
+
+/* ---------------------------------------------------------------- "On this design": every effect in use, each with ✕ */
+var AKGK_FXN = {};
+AKG_FXO.forEach(function (x) { AKGK_FXN[x[0]] = x[1]; });
+function akGfxFxInUse(D) {
+  var st = akGfxState(), P = st.P, out = [];
+  if (!P || !P.layers) return out;
+  P.layers.forEach(function (l) {
+    var e = (D.edit || {})[l.id]; if (!e) return;
+    var f = e.fxo && typeof e.fxo === "object" ? e.fxo : {}, bits = Object.keys(f).filter(function (k) { return AKGK_FXN[k] && f[k]; }).map(function (k) { return AKGK_FXN[k].replace(/ \(.*\)$/, "") + " " + f[k]; });
+    if (f.invert) bits.push("Inverted colors");
+    if (e.op != null && e.op < 1) bits.push("See-through " + Math.round(100 - e.op * 100) + "%");
+    if (e.blend) bits.push("Blending: " + e.blend);
+    if (bits.length) out.push({ id: l.id, name: l.name, what: bits.join(", "), off: function () { delete e.fxo; delete e.op; delete e.blend; } });
+  });
+  var pl = P.layers.filter(function (l) { return (l.type === "gphoto" || l.type === "gbg") && l.src; });
+  pl.forEach(function (l) {
+    if (l.blur > 0) out.push({ id: l.id, name: l.name, what: "Blur " + l.blur + " (older setting)", off: function () { D.bg.blur = 0; } });
+  });
+  var fl = pl.filter(function (l) { return l.filt && l.filt.mode && l.filt.mode !== "none"; })[0];
+  if (fl) {
+    var fn = (AKG_FILTERS.filter(function (x) { return x[0] === fl.filt.mode; })[0] || ["", fl.filt.mode])[1];
+    out.push({ id: fl.id, name: fl.name, what: "Photo filter: " + fn, off: function () { D.filt = { mode: "none" }; } });
+  }
+  pl.forEach(function (l) {
+    var im = l._im, iw = im && (im.naturalWidth || im.width), ih = im && (im.naturalHeight || im.height);
+    if (!iw || !ih) return;
+    var k = Math.max(l.w / iw, l.h / ih) * (l.zoom || 1);
+    if (k > 2) out.push({ id: l.id, name: l.name, what: "This photo is small (" + iw + " × " + ih + "), so it looks soft this big. A bigger photo stays sharp.", warn: true });
+  });
+  return out;
+}
+function akGfxFxInUseBox(D, X) {
+  var list = akGfxFxInUse(D), st = akGfxState(), box = h("div", { class: "akg-fxuse" });
+  box.appendChild(h("div", { class: "akg-grp" }, "On this design"));
+  if (!list.length) { box.appendChild(h("p", { class: "hint akg-fxnone" }, "No effects or filters anywhere on this design.")); return box; }
+  list.forEach(function (x) {
+    box.appendChild(h("div", { class: "akg-fxrow" + (x.warn ? " warn" : "") },
+      h("button", { class: "akg-fxname", title: "Pick this part", onClick: function () { st.sel = x.id === "background" ? "" : x.id; X.paint(); X.refill("parts", true); X.refill("fx"); } }, h("b", null, x.name), " ", h("span", null, x.what)),
+      x.off ? h("button", { class: "sm akg-fxoff", "aria-label": "Take off: " + x.name + " " + x.what, onClick: function () { x.off(); save(); X.ch(true); setTimeout(function () { X.refill("fx"); }, 500); } }, "✕") : null));
+  });
+  if (list.filter(function (x) { return x.off; }).length > 1) box.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () {
+    list.forEach(function (x) { if (x.off) x.off(); }); save(); X.ch(true); setTimeout(function () { X.refill("fx"); }, 500); toast("Took every effect and filter off."); } }, "Take them all off")));
+  return box;
+}
+(function () {
+  var f0 = akGfxEffectsFill;
+  akGfxEffectsFill = function (d, X) {
+    f0.apply(this, arguments);
+    try { d.insertBefore(akGfxFxInUseBox(X.D, X), d.firstChild); } catch (e) {}
+  };
+})();
+
+/* ---------------------------------------------------------------- every window inside a section folds */
+var AKGK_HEADS = ".akg-grp, .akg-sub, h4";
+function akGfxSubFold(d, sid) {
+  var cfg = akGfxCfg(); if (!cfg.sub || typeof cfg.sub !== "object") cfg.sub = {};
+  Array.prototype.forEach.call(d.querySelectorAll(AKGK_HEADS), function (hd) {
+    if (hd.classList.contains("akg-subhd")) return;
+    var par = hd.parentNode, list = [], n = hd.nextSibling;
+    while (n && !(n.nodeType === 1 && n.matches(AKGK_HEADS))) { list.push(n); n = n.nextSibling; }
+    if (!list.length) return;
+    var key = sid + ":" + hd.textContent.trim().slice(0, 40), open = cfg.sub[key] !== false;
+    var box = h("div", { class: "akg-subb" + (open ? "" : " shut") });
+    par.insertBefore(box, n);
+    list.forEach(function (x) { box.appendChild(x); });
+    var ic = h("span", { class: "akg-subic", "aria-hidden": "true" }, open ? "▾" : "▸");
+    hd.classList.add("akg-subhd"); hd.setAttribute("role", "button"); hd.setAttribute("tabindex", "0"); hd.setAttribute("aria-expanded", open ? "true" : "false");
+    hd.appendChild(ic);
+    function tog() {
+      open = !open; if (open) delete cfg.sub[key]; else cfg.sub[key] = false; save();
+      box.classList.toggle("shut", !open); ic.textContent = open ? "▾" : "▸"; hd.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    hd.addEventListener("click", tog);
+    hd.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); tog(); } });
+  });
+}
+(function () {
+  var n0 = akGfxNav;
+  akGfxNav = function (o) {
+    var s0 = o.sec, o2 = Object.assign({}, o, { sec: function (id, title, fill) { return s0(id, title, function (d) { fill(d); try { akGfxSubFold(d, id); } catch (e) {} }); } });
+    return n0(o2);
+  };
+})();
+
+akCss("akgfx-k", ".akg-subhd{display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;-webkit-user-select:none;padding:4px 0;min-height:30px}" +
+  ".akg-subic{opacity:.6;font-weight:400;margin-left:8px}.akg-subb.shut{display:none}" +
+  ".akg-fxuse{margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(127,127,127,.25)}" +
+  ".akg-fxrow{display:flex;gap:6px;align-items:center;margin:4px 0}.akg-fxname{flex:1;text-align:left;background:none;border:1px solid rgba(127,127,127,.3);padding:6px 8px;color:inherit;font-size:13px}" +
+  ".akg-fxname span{opacity:.8}.akg-fxrow.warn .akg-fxname{border-color:#C8962E}.akg-fxoff{min-width:36px}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
