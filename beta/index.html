@@ -2476,7 +2476,8 @@ function viewSongs() {
     var songs = filteredSongs();
     if (sbar.setCount) sbar.setCount(songs.length);
     if (!songs.length) { list.appendChild(h("div", { class: "empty" }, lib().songs.length ? "No songs match." : "No songs yet. Add one, or import your library from the Import tab.")); az.update([]); return; }
-    if (S.groupBy) {
+    if (S.groupBy && typeof akGrpFill === "function") akGrpFill(list, songs, fill);
+    else if (S.groupBy) {
       var groups = {}, order = [];
       songs.forEach(function (s) { var ts = (s.tags || []).length ? s.tags : ["Untagged"]; ts.forEach(function (t) { if (!groups[t]) { groups[t] = []; order.push(t); } groups[t].push(s); }); });
       order.sort(function (a, b) { return a === "Untagged" ? 1 : b === "Untagged" ? -1 : a.localeCompare(b, undefined, { sensitivity: "base" }); });
@@ -2532,7 +2533,7 @@ function viewSongs() {
   var more = h("button", { class: "icon", "aria-label": "More", onClick: function () {
     menu(this, [
       { label: S.select ? "Done selecting" : "Select songs…", onClick: function () { S.select = !S.select; S.sel = {}; render(); } },
-      { label: S.groupBy ? "Show as one list" : "Group by tag", onClick: function () { S.groupBy = !S.groupBy; render(); } },
+      typeof akGrpMenu === "function" ? { label: "Group songs…", onClick: function () { var a = this; setTimeout(function () { akGrpMenu(document.querySelector(".topbar .icon[aria-label=More]") || a); }, 0); } } : { label: S.groupBy ? "Show as one list" : "Group by tag", onClick: function () { S.groupBy = !S.groupBy; render(); } },
       { label: "New setlist from the songs listed…", onClick: function () { var sm = smartActive(); makeShowDialog(filteredSongs(), sm ? sm.name : ""); } },
       { label: "Discover songs to learn…", onClick: function () { go("discover"); } },
       { label: "Build a setlist…", onClick: function () { go("build"); } },
@@ -5521,7 +5522,7 @@ function akSampleCard() {
     h("p", { class: "hint", style: "margin:4px 0 8px" }, "Eight public-domain songs and a small show, to look at the song, play and chord screens without loading anything."),
     h("div", { class: "row", style: "margin:0" },
       h("button", { onClick: function () { var n = akAddSamples(); S.sampleBannerHidden = false; save(); render(); toast(n ? "Added " + n + " sample songs and a sample show." : "The sample songs are already there."); } }, has ? "Add any that are missing" : "Add the sample songs"),
-      h("button", { class: "danger", disabled: !has, onClick: function () { confirmBox("Remove the sample songs and the sample show? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove them")));
+      h("button", { class: "danger", disabled: !has, onClick: function () { confirmBox("Remove the sample songs and the sample setlist? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove them")));
 }
 akCss("ak-hero", [
   ".akhero{margin:8px 0 14px;padding:14px;border-radius:20px;border:2px solid transparent;background:linear-gradient(var(--panel),var(--panel)) padding-box,var(--grad,linear-gradient(var(--accent),var(--accent))) border-box;box-shadow:0 0 28px color-mix(in srgb,var(--g1,var(--accent)) 28%,transparent)}",
@@ -6330,7 +6331,7 @@ function akSampleBanner() {
   return h("div", { class: "akhint banner" },
     h("div", { class: "grow" }, h("strong", null, "Sample songs"), " are in your list so you can try the app. Play one, open the Chords panel, try a few themes."),
     h("button", { class: "primary", onClick: function () { openThemePicker(function () { render(); }); } }, "Try themes"),
-    h("button", { onClick: function () { confirmBox("Remove the sample songs and the sample show? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove"),
+    h("button", { onClick: function () { confirmBox("Remove the sample songs and the sample setlist? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove"),
     h("button", { class: "icon sm", "aria-label": "Hide this note", onClick: function () { S.sampleBannerHidden = true; render(); } }, "✕"));
 }
 akCss("ak-samples", ".akhint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 14px 6px;padding:10px 12px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-bg);color:var(--fg)}.akhint .grow{flex:1;min-width:220px}");
@@ -8077,7 +8078,7 @@ function histSplit(songs, nSets) {
   return out.filter(function (x) { return x.length; });
 }
 function histMakeShow(name, setLists, place, note) {
-  snap("show from history");
+  snap("setlist from history");
   var sh = newShow(name); sh.venue = place || ""; sh.notes = note || "";
   sh.sets = setLists.map(function (x) { var ns = newSet(x.name); ns.songIds = x.ids; return ns; });
   if (!sh.sets.length) sh.sets = [newSet("Set 1")];
@@ -11379,7 +11380,7 @@ function openSharedImport(pack) {
   var rows = pack.songs.map(function (f) {
     var dup = findSongByTitle(f.title, f.artist);
     if (dup && normTitle(dup.title) !== normTitle(f.title)) dup = null;
-    return { f: f, dup: dup, action: "add", name: dup ? uniqueSongTitle(f.title) : (f.title || "Untitled") };
+    return { f: f, dup: dup, action: dup && sharedSame(f, dup) ? "skip" : "add", name: dup ? uniqueSongTitle(f.title) : (f.title || "Untitled") };
   });
   var list = h("div");
   function draw() {
@@ -11392,10 +11393,10 @@ function openSharedImport(pack) {
       if ((f.audio || []).length) card.appendChild(h("div", { class: "hint" }, "Comes with " + f.audio.length + (f.audio.length === 1 ? " recording or audio file." : " recordings or audio files.")));
       var sel = h("select", { "aria-label": "What to do with " + (f.title || "this song"), onChange: function () { r.action = this.value; draw(); } });
       if (r.dup) {
-        sel.appendChild(h("option", { value: "add" }, "Add it as another song (rename below)"));
-        sel.appendChild(h("option", { value: "replace" }, "Replace the one I have with theirs"));
-      } else sel.appendChild(h("option", { value: "add" }, "Add it"));
-      sel.appendChild(h("option", { value: "skip" }, "Don't add it"));
+        sel.appendChild(h("option", { value: "skip" }, "Keep mine"));
+        sel.appendChild(h("option", { value: "add" }, "Add theirs as a copy (name it below)"));
+        sel.appendChild(h("option", { value: "replace" }, "Use theirs instead of mine"));
+      } else { sel.appendChild(h("option", { value: "add" }, "Add it")); sel.appendChild(h("option", { value: "skip" }, "Don't add it")); }
       sel.value = r.action;
       card.appendChild(h("label", { class: "fld" }, "What to do", sel));
       if (r.action === "add") card.appendChild(h("label", { class: "fld" }, r.dup ? "Name for the new copy" : "Name", h("input", { type: "text", value: r.name, autocapitalize: "words", "aria-label": "Name for " + (f.title || "the song"), onInput: function () { r.name = this.value; } })));
@@ -14779,7 +14780,7 @@ function akEndShowAsk(after) {
 function akEndBtnClick() {
   if (akRunLive()) akEndShowAsk();
   else if (akRunJustEnded()) akRunResume();
-  else toast("No show is playing. Press Play on a show to start one.");
+  else toast("No show is playing. Press Play on a setlist to start one.");
 }
 /* the card for the show page and the timers panel; sh = this show only, or null for whichever show is running */
 function akRunCard(sh, redraw) {
@@ -17657,7 +17658,7 @@ function akSendTo(anchor, s, after) {
     { label: "🎯 Practice (measure chart)", onClick: function () { saveNow(); S.playMode = "practice"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, back); } },
     { label: "✍ Write (chart, scratch pad, rhymes)", onClick: function () { saveNow(); S.playMode = "write"; startPlay([{ songId: s.id, setName: "Songs", setNo: 1 }], 0, back); } },
     { label: "🎸 Solo scales", onClick: function () { openChordTools("scales", { song: s }); } },
-    { label: "☰ A show…", onClick: function () { S.sel = {}; S.sel[s.id] = 1; addSelectedToShow(); } },
+    { label: "☰ A setlist…", onClick: function () { S.sel = {}; S.sel[s.id] = 1; addSelectedToShow(); } },
     { label: "⇪ Share or export…", onClick: function () { shareDialog([s]); } },
     { label: "🕘 Its history…", onClick: function () { akVerDialog(s, redo); } }];
   if (akModeOn("write")) { items.push({ sep: true }); AK_SHELVES.forEach(function (x) { if (akShelfOf(s) !== x[0]) items.push({ label: "Move to " + x[1], onClick: function () { akShelfMove(s, x[0]); redo(); } }); }); }
@@ -19675,7 +19676,7 @@ countPlay = function (songId, showId, info, at) {
   var ps = playShow;
   playShow = function (sh, idx, back) {
     if (!akPracOn()) return ps.apply(this, arguments);
-    var f = showItems(sh); if (!f.length) { toast("That show has no songs yet."); return; }
+    var f = showItems(sh); if (!f.length) { toast("That setlist has no songs yet."); return; }
     saveNow(); startPlay(f, idx || 0, back || function () { go("shows"); });
   };
   var stp = startPlay;
@@ -26206,7 +26207,7 @@ function akRunUnpause(quiet) {
   akRunPaint();
   if (!quiet) toast(freshStart ? "The show is on." : "Show resumed.");
 }
-function akRunPauseToggle() { if (akRun10Paused()) akRunUnpause(); else if (akRunLive()) akRunPause(); else toast("No show is on. Press Play on a show to start one."); }
+function akRunPauseToggle() { if (akRun10Paused()) akRunUnpause(); else if (akRunLive()) akRunPause(); else toast("No show is on. Press Play on a setlist to start one."); }
 (function () {
   /* nothing counts while paused */
   var cp = countPlay;
@@ -34609,7 +34610,7 @@ function akBunImport(d) {
   var dest = h("select", { "aria-label": "Where to put it" }, store.libs.map(function (l) { return h("option", { value: l.id }, "This library: " + (l.name || "My songs")); }).concat([h("option", { value: "__new" }, "A new library")]));
   dest.value = d.kind === "library" ? "__new" : store.cur;
   var libName = h("input", { type: "text", autocapitalize: "words", "aria-label": "Name for the new library", value: akBunUniq(d.from || "Library from a file", function (t) { return store.libs.some(function (l) { return normTitle(l.name) === normTitle(t); }); }) });
-  var songsSel = h("select", { "aria-label": "Songs you already have" }, h("option", { value: "mine" }, "Use the ones I already have"), h("option", { value: "copy" }, "Add theirs as new songs, numbered"), h("option", { value: "theirs" }, "Replace mine with theirs"));
+  var songsSel = h("select", { "aria-label": "Songs you already have" }, h("option", { value: "mine" }, "Keep mine"), h("option", { value: "copy" }, "Add theirs as a copy, numbered like “Title (2)”"), h("option", { value: "theirs" }, "Use theirs instead of mine"));
   var namesSel = h("select", { "aria-label": "Same name" }, h("option", { value: "number" }, "Add it as new, numbered like “Name (2)”"), h("option", { value: "replace" }, "Replace the one I have with the same name"));
   var rename = single ? h("input", { type: "text", autocapitalize: "words", "aria-label": "Name", value: single }) : null;
   var info = h("div", { class: "hint" }), nameBox = h("div"), songsBox = h("div"), namesBox = h("div");
@@ -47346,6 +47347,713 @@ function akGfxLocksBox() {
   };
 })();
 akCss("akgfx-j", ".akg-tpos{margin-top:8px}.akg-locks{margin:6px 0 2px}.akg-shell>.topbar button.akg-dice{font-size:16px;padding:0 3px;min-width:28px}");
+
+/* ================================================================ aksm_a: smaller ideas, part 1 (version 17.5)
+   - 93 Full undo / redo with a history (AKUH). Every change to songs, setlists, shows, tags and libraries is kept, not only the
+     ones that called snap(): save() is watched, and when the library differs from the last kept state, the state before it
+     becomes a step ("Edited “Song”", "Changed the setlist “Name”"). Steps on the same thing within a minute are one step.
+     States are packed per song (akUhPack): each song is a JSON string, and equal strings are shared through AKUH.pool, so
+     100 steps cost little more than one copy of the library. snap() / undoLast() / akRedo() are replaced with packed ones
+     (same names, same labels). Settings › Data and extras › Undo history: how many steps (settings().undoLevels, 50 default).
+     🕘 Change history (↶ menu, Songs ⋯): every step with its time; go back to any step or forward again. Ctrl+Z / Ctrl+Y
+     (Ctrl+Shift+Z) outside text boxes; on the song editor and Write tab they step through that song's own history (AKSH).
+     The playing screen is not watched (play counts are not a change to undo) and Settings keeps its own ↶ Undo a setting.
+   - 82 Library group view (akGrpFill, called by viewSongs' fill when S.groupBy is on): group songs by tag, artist, key, energy,
+     decade, first letter or setlist (settings().grpBy); as folding rows (Fold all / Open all) or as tiles you open one at a
+     time (settings().grpLook "tiles", S.grpOpen). The on/off choice is kept (settings().grpOn).
+   - 88 Libraries: tapping the library name under the Songs title is a quick switcher (akLibMenu) with each library's song count;
+     Libraries… adds Duplicate and Merge into… (akMergeLib, with the clash choices below) and a color for each library.
+   - 90 One way to handle clashes (AK_CLASH_SONG, AK_CLASH_NAME, akClashSel): the same three choices with the same words for
+     songs you already have (Keep mine / Add theirs as a copy / Use theirs) and for setlists and shows with the same name, in
+     receiving a file, receiving songs, copying or moving songs to another library, merging libraries, and restoring a backup
+     (new: "Merge into my libraries"). Nothing of yours changes unless you pick "Use theirs" or "Replace", and it can be undone.
+   - 96 Simple mode, more: it now also shortens the Songs ⋯ menu (More… shows the rest), shows only the main Settings groups
+     (Show all settings), can hide the Learn and Write tabs and makes buttons bigger. Settings › Look › Simple mode lists each
+     part with a tick (settings().simpleParts). */
+AK_VERSION = "17.5";
+AK_WHATS_NEW = [
+  "Undo and redo for everything, with a history: ↶ in the top bar › 🕘 Change history shows every change with its time. Go back to any point, or forward again. Ctrl+Z and Ctrl+Y work on a keyboard.",
+  "Group your songs by tag, artist, key, energy, decade, first letter or setlist (Songs ⋯ › Group songs…), as folding rows or as tiles you open one at a time.",
+  "Libraries: tap the library name under the Songs title to switch in one tap. Libraries… can now duplicate a library, merge one into another and give each a color.",
+  "Songs you already have are handled the same way everywhere (receiving files, copying between libraries, merging, restoring a backup): Keep mine, Add theirs as a copy, or Use theirs. Restoring a backup can now merge into your libraries.",
+  "Simple mode does more: a shorter Songs menu, only the main Settings, bigger buttons, and it can hide the Learn and Write tabs. Pick what it does in Settings › Look › Simple mode."
+].concat(AK_WHATS_NEW);
+
+/* ================================================================ 93 undo history */
+var AKUH = { pool: new Map(), last: null, snapped: false, t: 0, busy: false, n: 0, input: 0 };
+/* only changes that follow a tap or a key count as steps; changes the app makes by itself (sync, tidying) just move the base */
+["pointerdown", "keydown", "input", "change"].forEach(function (ev) { document.addEventListener(ev, function () { AKUH.input = Date.now(); }, true); });
+var AKUH_SKIPV = { play: 1, settings: 1, gfx: 1 };
+function akUhI(str) { var p = AKUH.pool, x = p.get(str); if (x !== undefined) return x; p.set(str, str); return str; }
+function akUhPack() {
+  return { cur: store.cur, b: akUhI(JSON.stringify(store.banter || [])), f: akUhI(JSON.stringify(store.fingerings || {})),
+    libs: store.libs.map(function (l) {
+      var m = {}; Object.keys(l).forEach(function (k) { if (k !== "songs") m[k] = l[k]; });
+      return { m: akUhI(JSON.stringify(m)), s: (l.songs || []).map(function (s) { return akUhI(JSON.stringify(s)); }) };
+    }) };
+}
+function akUhSame(a, b) {
+  if (!a || !b || a.cur !== b.cur || a.b !== b.b || a.f !== b.f || a.libs.length !== b.libs.length) return false;
+  for (var i = 0; i < a.libs.length; i++) {
+    var x = a.libs[i], y = b.libs[i];
+    if (x.m !== y.m || x.s.length !== y.s.length) return false;
+    for (var j = 0; j < x.s.length; j++) if (x.s[j] !== y.s[j]) return false;
+  }
+  return true;
+}
+function akUhUnpack(p) {
+  store.libs = p.libs.map(function (l) { var o = JSON.parse(l.m); o.songs = l.s.map(function (s) { return JSON.parse(s); }); return o; });
+  store.cur = p.cur; store.banter = JSON.parse(p.b); store.fingerings = JSON.parse(p.f);
+}
+function akUhLevels() { var n = Number(settings().undoLevels); return n >= 5 && n <= 200 ? n : 50; }
+/* keep only the strings some step still uses */
+function akUhPrune() {
+  var keep = new Map(), add = function (p) { if (!p || !p.libs) return; [p.b, p.f].forEach(function (x) { keep.set(x, x); }); p.libs.forEach(function (l) { keep.set(l.m, l.m); l.s.forEach(function (x) { keep.set(x, x); }); }); };
+  undoStack.forEach(function (u) { add(u.data); }); akRedoStack.forEach(function (u) { add(u.data); }); add(AKUH.last);
+  AKUH.pool = keep;
+}
+function akUhPush(label, data, auto, key) {
+  var top = undoStack[undoStack.length - 1], now = Date.now();
+  if (auto && top && top.auto && top.key === key && now - (top.t2 || top.t) < 60000) { top.t2 = now; top.label = label || top.label; akRedoStack = []; return; }
+  undoStack.push({ label: label || "change", data: data, t: now, t2: now, auto: !!auto, key: key || "" });
+  akRedoStack = [];
+  while (undoStack.length > akUhLevels()) undoStack.shift();
+  if (++AKUH.n % 25 === 0) akUhPrune();
+}
+function akUhLabel() {
+  var v = S.view;
+  if (v === "song" || v === "write") { var s = v === "song" ? findSong(S.songId) : (typeof akW9Song === "function" ? akW9Song() : null); return s ? "Edited “" + (s.title || "Untitled") + "”" : "Edited a song"; }
+  if (v === "show") { var sh = typeof findShow === "function" ? findShow(S.showId) : null; return sh ? "Changed the setlist “" + (sh.name || "Setlist") + "”" : "Changed a setlist"; }
+  if (v === "gig") { var g = typeof akGig === "function" ? akGig(S.gigId) : null; return g ? "Changed the show " + (typeof akGigTitle === "function" ? "“" + akGigTitle(g) + "”" : "") : "Changed a show"; }
+  if (v === "shows") return "Changed the Shows list";
+  if (v === "songs") return "Changed the song list";
+  return "Change on the " + (v || "app") + " screen";
+}
+function akUhKey() { return S.view + ":" + (S.view === "song" ? S.songId : S.view === "show" ? S.showId : S.view === "gig" ? S.gigId : S.view === "write" && typeof akW9Song === "function" ? (akW9Song() || {}).id : ""); }
+function akUhCheck() {
+  clearTimeout(AKUH.t); AKUH.t = 0;
+  if (AKUH.busy) return;
+  if (AKUH_SKIPV[S.view]) { AKUH.last = null; return; }
+  var p; try { p = akUhPack(); } catch (e) { return; }
+  if (AKUH.last && !AKUH.snapped && Date.now() - AKUH.input < 5000 && !akUhSame(p, AKUH.last)) akUhPush(akUhLabel(), AKUH.last, true, akUhKey());
+  AKUH.last = p; AKUH.snapped = false;
+}
+function akUhFlush() { if (AKUH.t) akUhCheck(); }
+function akUhLater() { if (AKUH.busy) return; clearTimeout(AKUH.t); AKUH.t = setTimeout(akUhCheck, 700); }
+snap = function (label) {
+  if (AKUH.busy) return;
+  akUhFlush();
+  try { akUhPush(label, akUhPack(), false); } catch (e) {}
+  AKUH.snapped = true; akUhLater();
+};
+function akUhRestore(p, msg) {
+  AKUH.busy = true;
+  try { akUhUnpack(p); normalizeStore(); saveNow(); store.changes++; render(); }
+  finally { AKUH.busy = false; }
+  clearTimeout(AKUH.t); AKUH.t = 0; AKUH.snapped = false;
+  try { AKUH.last = AKUH_SKIPV[S.view] ? null : akUhPack(); } catch (e) { AKUH.last = null; }
+  if (msg) toast(msg);
+}
+undoLast = function () {
+  akUhFlush();
+  var u = undoStack.pop();
+  if (!u) { toast("Nothing to undo."); return; }
+  try { akRedoStack.push({ label: u.label, data: akUhPack(), t: u.t, t2: u.t2, auto: u.auto }); } catch (e) {}
+  akUhRestore(u.data, "Undid: " + u.label + ".");
+};
+akRedo = function () {
+  akUhFlush();
+  var r = akRedoStack.pop();
+  if (!r) { toast("Nothing to redo."); return; }
+  try { undoStack.push({ label: r.label, data: akUhPack(), t: r.t, t2: r.t2, auto: r.auto }); } catch (e) {}
+  akUhRestore(r.data, "Redid: " + r.label + ".");
+};
+/* go back n steps or forward n steps in one go (one restore, one redraw) */
+function akUhJump(n) {
+  akUhFlush();
+  var cur = akUhPack(), target = null, i;
+  if (n > 0) {
+    for (i = 0; i < n && undoStack.length; i++) { var u = undoStack.pop(); akRedoStack.push({ label: u.label, data: cur, t: u.t, t2: u.t2, auto: u.auto }); cur = u.data; target = u.data; }
+    if (target) akUhRestore(target, "Went back " + i + (i === 1 ? " step." : " steps."));
+  } else if (n < 0) {
+    for (i = 0; i < -n && akRedoStack.length; i++) { var r = akRedoStack.pop(); undoStack.push({ label: r.label, data: cur, t: r.t, t2: r.t2, auto: r.auto }); cur = r.data; target = r.data; }
+    if (target) akUhRestore(target, "Went forward " + i + (i === 1 ? " step." : " steps."));
+  }
+}
+akUndoN = function (n) {
+  if (n <= 1) { undoLast(); return; }
+  confirmBox("Going back to before “" + undoStack[undoStack.length - n].label + "” also undoes the " + (n - 1) + (n === 2 ? " change" : " changes") + " made after it. You can go forward again right after.", "Go back " + n + " steps", function () { akUhJump(n); });
+};
+function akUhAgo(t) {
+  if (!t) return "";
+  var s = Math.round((Date.now() - t) / 1000);
+  if (s < 50) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  return new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function akUhCap(l) { l = String(l || "change"); return l.charAt(0).toUpperCase() + l.slice(1); }
+function akUhHistory() {
+  akUhFlush();
+  var body = h("div", { class: "akuh-hist" }), close;
+  function draw() {
+    body.textContent = "";
+    body.appendChild(h("p", { class: "hint" }, "Every change to your songs, setlists, shows and libraries, newest at the top. Tap one to go back to just before it; everything after it is kept as steps you can go forward to again. Kept: up to " + akUhLevels() + " steps, until the app is closed."));
+    var any = false;
+    for (var k = 0; k < akRedoStack.length; k++) (function (i, r) {
+      any = true;
+      body.appendChild(h("button", { class: "akuh-row akuh-fwd", onClick: function () { close(); akUhJump(-(akRedoStack.length - i)); } },
+        h("span", { class: "akuh-l" }, "↷ " + akUhCap(r.label)), h("span", { class: "akuh-t" }, "undone · tap to redo")));
+    })(k, akRedoStack[k]);
+    body.appendChild(h("div", { class: "akuh-now" }, "● Now"));
+    for (var j = undoStack.length - 1; j >= 0; j--) (function (n, u) {
+      any = true;
+      body.appendChild(h("button", { class: "akuh-row", onClick: function () { close(); if (n === 1) undoLast(); else akUhJump(n); } },
+        h("span", { class: "akuh-l" }, "↶ " + akUhCap(u.label)), h("span", { class: "akuh-t" }, akUhAgo(u.t2 || u.t) + (n > 1 ? " · back " + n + " steps" : ""))));
+    })(undoStack.length - j, undoStack[j]);
+    if (!any) body.appendChild(h("p", { class: "muted" }, "No changes yet since the app was opened."));
+  }
+  draw();
+  close = modal("🕘 Change history", body, [{ label: "Close" }], { wide: true });
+}
+akUndoMenu = function (btn) {
+  akUhFlush();
+  var items = [];
+  if (undoStack.length) items.push({ label: "↶ Undo: " + akUhCap(undoStack[undoStack.length - 1].label), onClick: function () { undoLast(); } });
+  if (akRedoStack.length) items.push({ label: "↷ Redo: " + akUhCap(akRedoStack[akRedoStack.length - 1].label), onClick: akRedo });
+  for (var i = undoStack.length - 2, k = 2; i >= 0 && k <= 4; i--, k++) (function (n, u) { items.push({ label: "Back to before: " + akUhCap(u.label) + " (" + n + " steps)", onClick: function () { akUndoN(n); } }); })(k, undoStack[i]);
+  items.push({ label: "🕘 Change history (" + (undoStack.length + akRedoStack.length) + ")…", onClick: akUhHistory });
+  menu(btn, items);
+};
+(function () {
+  var sv = save;
+  save = function () { var r = sv.apply(this, arguments); if (!AKUH.busy) akUhLater(); return r; };
+  var g0 = go;
+  go = function () {
+    akUhFlush();
+    var from = S.view, r = g0.apply(this, arguments);
+    if (AKUH_SKIPV[from] && !AKUH_SKIPV[S.view]) setTimeout(function () { if (!AKUH.t && !AKUH.last) try { AKUH.last = akUhPack(); AKUH.snapped = false; } catch (e) {} }, 0);
+    return r;
+  };
+})();
+setTimeout(function () { try { if (!AKUH.last && !AKUH_SKIPV[S.view]) AKUH.last = akUhPack(); } catch (e) {} }, 1200);
+document.addEventListener("keydown", function (e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  var k = String(e.key || "").toLowerCase(); if (k !== "z" && k !== "y") return;
+  var t = e.target, tag = t && t.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+  if (S.view === "gfx" || S.view === "play" || S.view === "settings" || document.querySelector(".modal")) return;
+  var redo = k === "y" || e.shiftKey;
+  e.preventDefault();
+  if ((S.view === "song" || S.view === "write") && typeof akShUndo === "function") {
+    if (redo ? akShRedo() : akShUndo()) { toast(redo ? "Redone." : "Undone."); return; }
+  }
+  if (redo) akRedo(); else undoLast();
+});
+
+/* ================================================================ 90 one way to handle clashes */
+var AK_CLASH_SONG = [["mine", "Keep mine"], ["copy", "Add theirs as a copy, numbered like “Title (2)”"], ["theirs", "Use theirs instead of mine"]];
+var AK_CLASH_NAME = [["number", "Add it as new, numbered like “Name (2)”"], ["replace", "Replace the one I have with the same name"]];
+function akClashSel(kind, value, label) {
+  var opts = kind === "name" ? AK_CLASH_NAME : AK_CLASH_SONG;
+  var sel = h("select", { "aria-label": label || (kind === "name" ? "Same name as one I have" : "Songs I already have") }, opts.map(function (o) { return h("option", { value: o[0] }, o[1]); }));
+  sel.value = value || opts[0][0];
+  if (kind !== "name") sel.addEventListener("change", function () { if (this.value === "theirs") toast("Their chords, lyrics, key and info will replace yours for those songs. Your play counts stay. You can undo it right after."); });
+  return sel;
+}
+function akClashHint() { return h("p", { class: "hint" }, "A song with the same title and artist counts as one you already have. Nothing of yours changes unless you pick “Use theirs” or “Replace”, and ↶ Undo puts it back."); }
+function akUniqIn(arr, name, keyOf) { return akBunUniq(name, function (t) { return arr.some(function (x) { return normTitle(keyOf(x)) === normTitle(t); }); }); }
+/* put one song (a full copy) into library L, with the clash choice; returns the id it ended up with */
+function akPutSong(L, s, how, r) {
+  var dup = L.songs.filter(function (x) { return sameSong(x, s); })[0];
+  if (dup && how === "mine") { r.kept++; return dup.id; }
+  if (dup && how === "theirs") {
+    var keep = { id: dup.id, plays: dup.plays, lastPlayed: dup.lastPlayed, history: dup.history, fav: dup.fav };
+    Object.keys(dup).forEach(function (k) { delete dup[k]; }); Object.assign(dup, clone(s));
+    Object.keys(keep).forEach(function (k) { if (keep[k] !== undefined) dup[k] = keep[k]; else delete dup[k]; });
+    r.replaced++; return dup.id;
+  }
+  var c = clone(s); c.id = uid();
+  if (dup) c.title = akUniqIn(L.songs, c.title || "Untitled", function (x) { return x.title; });
+  L.songs.push(c); r.added++;
+  (c.tags || []).forEach(function (t) { if (!L.tags.some(function (x) { return x.name === t; })) L.tags.push({ name: t, color: tagColor(t) }); });
+  return c.id;
+}
+/* merge library src into library L: songs by the song choice, setlists and shows by the name choice */
+function akMergeLib(src, L, how, names) {
+  var r = { added: 0, kept: 0, replaced: 0, lists: 0, shows: 0 }, map = {}, lmap = {};
+  L.gigs = Array.isArray(L.gigs) ? L.gigs : [];
+  (src.songs || []).forEach(function (s) { map[s.id] = akPutSong(L, s, how, r); });
+  (src.tags || []).forEach(function (t) { if (!L.tags.some(function (x) { return x.name === t.name; })) L.tags.push(clone(t)); });
+  (src.shows || []).forEach(function (sh) {
+    var c = clone(sh), smap = {}, have = L.shows.filter(function (x) { return normTitle(x.name) === normTitle(sh.name); })[0];
+    c.id = have && names === "replace" ? have.id : uid(); c.group = "";
+    c.sets = (c.sets || []).map(function (st) { var n = uid(); smap[st.id] = n; st.id = n; st.songIds = (st.songIds || []).map(function (i) { return map[i]; }).filter(Boolean); return st; });
+    var pl = {}; Object.keys(c.played || {}).forEach(function (k) { if (map[k]) pl[map[k]] = c.played[k]; }); c.played = pl;
+    (c.announce || []).forEach(function (a) { if (a.songId) a.songId = map[a.songId] || a.songId; if (a.setId) a.setId = smap[a.setId] || a.setId; });
+    if (have && names === "replace") L.shows[L.shows.indexOf(have)] = c;
+    else { if (have) c.name = akUniqIn(L.shows, sh.name || "Setlist", function (x) { return x.name; }); L.shows.push(c); }
+    lmap[sh.id] = c.id; r.lists++;
+  });
+  (src.gigs || []).forEach(function (g) {
+    var c = clone(g), key = function (z) { return normTitle(z.name || z.venue || "") + "|" + (z.date || ""); };
+    var have = L.gigs.filter(function (z) { return key(z) === key(g); })[0];
+    c.setlists = (c.setlists || []).map(function (i) { return lmap[i]; }).filter(Boolean);
+    if (have && names === "replace") { c.id = have.id; L.gigs[L.gigs.indexOf(have)] = c; }
+    else { c.id = uid(); if (have) c.name = akUniqIn(L.gigs, g.name || g.venue || "Show", function (z) { return z.name || z.venue || ""; }); L.gigs.push(c); }
+    r.shows++;
+  });
+  return r;
+}
+function akMergeMsg(r) {
+  var a = [];
+  if (r.added) a.push(r.added + (r.added === 1 ? " song added" : " songs added"));
+  if (r.kept) a.push(r.kept + " kept as yours");
+  if (r.replaced) a.push(r.replaced + " replaced with theirs");
+  if (r.lists) a.push(r.lists + (r.lists === 1 ? " setlist" : " setlists"));
+  if (r.shows) a.push(r.shows + (r.shows === 1 ? " show" : " shows"));
+  return a.length ? a.join(", ") + "." : "Nothing to add.";
+}
+function akLibById(id) { return store.libs.filter(function (l) { return l.id === id; })[0] || null; }
+function akMergeDialog(src) {
+  var others = store.libs.filter(function (l) { return l !== src; });
+  if (!others.length) { toast("Make another library first."); return; }
+  var dest = h("select", { "aria-label": "Merge into" }, others.map(function (l) { return h("option", { value: l.id }, l.name + " (" + l.songs.length + " songs)"); }));
+  var songs = akClashSel("song", "mine"), names = akClashSel("name", "number"), del = h("input", { type: "checkbox" });
+  modal("Merge “" + src.name + "” into another library", h("div", null,
+    h("label", { class: "fld" }, "Into", dest), h("label", { class: "fld" }, "Songs that are in both", songs), h("label", { class: "fld" }, "Setlists and shows with the same name", names),
+    h("label", { class: "chk" }, del, "Then delete “" + src.name + "”"), akClashHint()),
+    [{ label: "Cancel" }, { label: "Merge", primary: true, onClick: function () {
+      var L = akLibById(dest.value); if (!L) return;
+      snap("merge library “" + src.name + "”");
+      var r = akMergeLib(src, L, songs.value, names.value);
+      if (del.checked) { store.libs = store.libs.filter(function (x) { return x !== src; }); if (store.cur === src.id) store.cur = L.id; }
+      normalizeStore(); save(); render(); toastUndo("Merged into " + L.name + ": " + akMergeMsg(r));
+    } }]);
+}
+
+/* copy or move songs to another library, with the same choices */
+copyMoveSelected = function () {
+  var songs = selectedSongs(), others = store.libs.filter(function (l) { return l.id !== store.cur; });
+  var dest = h("select", { "aria-label": "Destination library" }, others.map(function (l) { return h("option", { value: l.id }, l.name + " (" + l.songs.length + " songs)"); }).concat([h("option", { value: "__new" }, "+ New library…")]));
+  var how = akClashSel("song", "mine", "Songs that library already has");
+  var body = h("div", null, h("label", { class: "fld" }, "To library", dest), h("label", { class: "fld" }, "Songs that library already has", how), akClashHint(),
+    h("p", { class: "hint" }, "Each copy is its own song. You can change its key, capo, lyrics or tags in the new library without touching the original."));
+  function run(move) {
+    function doIt(target) {
+      snap(move ? "move songs" : "copy songs");
+      var r = { added: 0, kept: 0, replaced: 0 };
+      songs.forEach(function (s) { akPutSong(target, s, how.value, r); });
+      if (move) songs.forEach(function (s) { lib().songs = lib().songs.filter(function (x) { return x.id !== s.id; }); lib().shows.forEach(function (sh) { sh.sets.forEach(function (st) { st.songIds = st.songIds.filter(function (i) { return i !== s.id; }); }); }); });
+      S.select = false; S.sel = {}; save(); render(); toastUndo((move ? "Moved to " : "Copied to ") + target.name + ": " + akMergeMsg(r));
+    }
+    if (dest.value === "__new") askText("New library name", "", "Create", function (n) { var l = newLib(n); store.libs.push(l); doIt(l); });
+    else doIt(akLibById(dest.value));
+  }
+  modal("Copy or move " + songs.length + " songs", body, [{ label: "Cancel" }, { label: "Copy", primary: true, onClick: function () { run(false); } }, { label: "Move", onClick: function () { run(true); } }]);
+};
+
+/* restoring a backup: Add / Merge / Replace */
+(function () {
+  if (typeof offerRestore !== "function") return;
+  var o0 = offerRestore;
+  offerRestore = function (t) {
+    var d; try { d = parseBackup(t); } catch (e) { return o0.apply(this, arguments); }
+    if (!d || !Array.isArray(d.libs) || !d.libs.length) return o0.apply(this, arguments);
+    var n = 0; d.libs.forEach(function (l) { n += (l.songs || []).length; });
+    var songs = akClashSel("song", "mine"), names = akClashSel("name", "number"), box = h("div", { style: "display:none" }, h("label", { class: "fld" }, "Songs that are in both", songs), h("label", { class: "fld" }, "Setlists and shows with the same name", names), akClashHint());
+    var how = h("select", { "aria-label": "How to restore" },
+      h("option", { value: "add" }, "Add them as new libraries (nothing of mine changes)"),
+      h("option", { value: "merge" }, "Merge into my libraries with the same names"),
+      h("option", { value: "replace" }, "Replace everything I have with the file"));
+    how.addEventListener("change", function () { box.style.display = how.value === "merge" ? "" : "none"; });
+    modal("Restore backup", h("div", null,
+      h("p", null, d.libs.length + (d.libs.length === 1 ? " library" : " libraries") + " with " + n + " songs in this file: " + d.libs.map(function (l) { return l.name || "Library"; }).join(", ") + "."),
+      h("label", { class: "fld" }, "How", how), box,
+      h("p", { class: "hint" }, "“Replace everything” swaps all your songs, shows and settings for the file's (you can undo it right after).")),
+      [{ label: "Cancel" }, { label: "Restore", primary: true, onClick: function () {
+        if (how.value === "replace") {
+          confirmBox("Replace all your songs, shows and settings with the backup file?", "Replace everything", function () {
+            snap("restore backup"); store.libs = clone(d.libs); store.cur = store.libs[0].id; var gh0 = settings().github;
+            if (d.settings) store.settings = deepMerge(clone(DEFAULTS), d.settings); if (gh0) store.settings.github = gh0;
+            if (d.banter) store.banter = d.banter; if (d.fingerings) store.fingerings = d.fingerings;
+            imagesRestore(d.images); fontsRestore(d.fonts); normalizeStore(); applyLook(); saveNow(); render(); toastUndo("Backup restored.");
+          });
+          return;
+        }
+        snap("restore backup");
+        var msgs = [];
+        d.libs.forEach(function (l) {
+          var c = clone(l), mine = how.value === "merge" ? store.libs.filter(function (x) { return normTitle(x.name) === normTitle(l.name || ""); })[0] : null;
+          if (mine) { var r = akMergeLib(c, mine, songs.value, names.value); msgs.push(mine.name + ": " + akMergeMsg(r)); return; }
+          c.id = uid(); c.name = store.libs.some(function (x) { return x.name === c.name; }) ? (c.name || "Library") + " (restored)" : c.name || "Restored";
+          store.libs.push(c); msgs.push(c.name + ": added as a new library.");
+        });
+        if (d.banter) d.banter.forEach(function (j) { if (!store.banter.some(function (x) { return x.text === j.text; })) store.banter.push(j); });
+        imagesRestore(d.images); normalizeStore(); saveNow(); render(); toastUndo(msgs.join(" "));
+      } }]);
+  };
+})();
+
+/* ================================================================ 88 libraries */
+var AK_LIBCOLS = ["", "#e53935", "#fb8c00", "#fdd835", "#43a047", "#00acc1", "#1e88e5", "#8e24aa", "#d81b60"];
+function akLibDot(l) { return l.color ? h("span", { class: "aklib-dot", style: "background:" + l.color }) : null; }
+function akLibSwitch(l) { store.cur = l.id; S.q = ""; S.tagSel = []; S.select = false; S.sel = {}; S.grpOpen = ""; save(); render(); toast("Opened " + l.name + "."); }
+function akLibMenu(btn) {
+  var items = store.libs.map(function (l) { var cur = l.id === store.cur; return { label: (cur ? "✓ " : "　") + l.name + "  ·  " + l.songs.length + " songs", onClick: function () { if (!cur) akLibSwitch(l); } }; });
+  items.push({ sep: true });
+  items.push({ label: "+ New library…", onClick: function () { askText("New library name", "", "Create", function (n) { var l = newLib(n); snap("new library"); store.libs.push(l); akLibSwitch(l); }); } });
+  items.push({ label: "📚 Manage libraries…", onClick: openLibraries });
+  menu(btn, items);
+}
+libButton = function () {
+  var l = lib();
+  return h("button", { class: "libbtn", "aria-label": "Switch library", onClick: function () { if (store.libs.length > 1) akLibMenu(this); else openLibraries(); } }, akLibDot(l), h("span", { class: "lt" }, l.name), " ▾");
+};
+openLibraries = function () {
+  var body = h("div"), close;
+  function draw() {
+    body.textContent = "";
+    store.libs.forEach(function (l) {
+      var cur = l.id === store.cur;
+      var cols = h("div", { class: "row aklib-cols", style: "margin:8px 0 0;gap:6px" }, AK_LIBCOLS.map(function (c) {
+        return h("button", { class: "sw" + (c === (l.color || "") ? " on" : ""), "aria-label": c ? "Color " + c : "No color", style: c ? "background:" + c : "background:transparent;border:2px dashed var(--line)", onClick: function () { l.color = c; save(); draw(); render(); } });
+      }));
+      body.appendChild(h("div", { class: "card" + (cur ? " cur" : ""), style: l.color ? "border-left:6px solid " + l.color : null },
+        h("div", { class: "row", style: "margin:0" }, h("strong", { class: "grow" }, l.name + (cur ? "  (open)" : "")), h("span", { class: "muted" }, l.songs.length + " songs · " + l.shows.length + " setlists · " + (l.gigs || []).length + " shows")),
+        h("div", { class: "row", style: "margin:8px 0 0;flex-wrap:wrap" },
+          cur ? null : h("button", { class: "primary", onClick: function () { close(); akLibSwitch(l); } }, "Open"),
+          h("button", { onClick: function () { askText("Rename library", l.name, "Rename", function (v) { snap("rename library"); l.name = v; save(); draw(); render(); }); } }, "Rename"),
+          h("button", { onClick: function () { snap("duplicate library"); var c = clone(l); c.id = uid(); c.name = akUniqIn(store.libs, l.name + " copy", function (x) { return x.name; }); store.libs.splice(store.libs.indexOf(l) + 1, 0, c); save(); draw(); toastUndo("Made “" + c.name + "”."); } }, "Duplicate"),
+          store.libs.length > 1 ? h("button", { onClick: function () { close(); akMergeDialog(l); } }, "Merge into…") : null,
+          h("button", { onClick: function () { saveBackupFile([l.id], "chordbook-" + l.name.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase() + ".json"); } }, "Save as file"),
+          store.libs.length > 1 ? holdButton("Hold to delete", function () { snap("delete library"); store.libs = store.libs.filter(function (x) { return x !== l; }); if (store.cur === l.id) store.cur = store.libs[0].id; save(); draw(); render(); toastUndo("Library deleted."); }) : null),
+        cols));
+    });
+    body.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { askText("New library name", "", "Create", function (n) { snap("new library"); var l = newLib(n); store.libs.push(l); save(); draw(); }); } }, "+ New library")));
+    body.appendChild(h("p", { class: "hint" }, "Each library has its own songs, setlists, shows and tags, for example one for your own songs and one for a band. Switch by tapping the library name under the Songs title. Copy songs between libraries from the song list: ⋯, Select songs, then Copy / move."));
+  }
+  close = modal("Libraries", body, [{ label: "Done" }], { wide: true });
+  draw();
+};
+
+/* ================================================================ 82 library group view */
+var AK_GRP = [["tag", "Tag"], ["artist", "Artist"], ["key", "Key"], ["energy", "Energy"], ["decade", "Decade"], ["letter", "First letter"], ["setlist", "Setlist"]];
+var AK_GRP_NONE = { tag: "No tag", artist: "No artist", key: "No key", energy: "Energy not set", decade: "Year not known", letter: "#", setlist: "Not in a setlist" };
+function akGrpBy() { var g = settings().grpBy; return AK_GRP.some(function (x) { return x[0] === g; }) ? g : "tag"; }
+function akGrpName(by) { return (AK_GRP.filter(function (x) { return x[0] === by; })[0] || AK_GRP[0])[1]; }
+function akGrpKeys(s, by, ctx) {
+  var none = AK_GRP_NONE[by], k;
+  if (by === "tag") return (s.tags || []).length ? s.tags : [none];
+  if (by === "artist") return [String(s.artist || "").trim() || none];
+  if (by === "key") { k = String(s.key || "").trim(); return [k ? k.charAt(0).toUpperCase() + k.slice(1) : none]; }
+  if (by === "energy") { k = typeof akSetLevel === "function" ? akSetLevel(s) : ""; return [k ? akSetLvName(k) : none]; }
+  if (by === "decade") { var y = 0; try { y = typeof akSetDecade === "function" ? akSetDecade(s) : Math.floor((Number(s.year) || 0) / 10) * 10; } catch (e) { y = 0; } return [y ? y + "s" : none]; }
+  if (by === "letter") { k = azLetter(s.title || ""); return [/[A-Z]/.test(k) ? k : none]; }
+  if (by === "setlist") { var a = ctx.lists[s.id]; return a && a.length ? a : [none]; }
+  return [none];
+}
+function akGrpSort(by, order) {
+  var none = AK_GRP_NONE[by];
+  var rank = by === "energy" && typeof akSetLvName === "function" ? [akSetLvName("mellow"), akSetLvName("mid"), akSetLvName("up")] : null;
+  order.sort(function (a, b) {
+    if (a === none) return 1; if (b === none) return -1;
+    if (rank) return rank.indexOf(a) - rank.indexOf(b);
+    if (by === "decade") return parseInt(a, 10) - parseInt(b, 10);
+    return a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+  });
+}
+function akGrpColor(by, k) {
+  if (by === "tag") return tagColor(k) || "";
+  if (by === "setlist") { var sh = lib().shows.filter(function (x) { return x.name === k; })[0]; return sh && sh.color || ""; }
+  return "";
+}
+function akGrpMenu(btn) {
+  var by = akGrpBy(), on = !!S.groupBy, tiles = settings().grpLook === "tiles";
+  var items = [{ label: (on ? "　" : "✓ ") + "One list (no groups)", onClick: function () { S.groupBy = false; settings().grpOn = false; save(); render(); } }];
+  AK_GRP.forEach(function (g) { items.push({ label: (on && by === g[0] ? "✓ " : "　") + "By " + g[1].toLowerCase(), onClick: function () { S.groupBy = true; S.grpOpen = ""; settings().grpOn = true; settings().grpBy = g[0]; save(); render(); } }); });
+  items.push({ sep: true });
+  items.push({ label: (tiles ? "☰ Show groups as folding rows" : "▦ Show groups as tiles"), onClick: function () { settings().grpLook = tiles ? "rows" : "tiles"; S.groupBy = true; settings().grpOn = true; S.grpOpen = ""; save(); render(); } });
+  menu(btn, items);
+}
+function akGrpFill(list, songs, refill) {
+  var by = akGrpBy(), groups = {}, order = [], ctx = { lists: {} }, tiles = settings().grpLook === "tiles";
+  if (by === "setlist") lib().shows.forEach(function (sh) { (sh.sets || []).forEach(function (st) { st.songIds.forEach(function (id) { var a = ctx.lists[id] = ctx.lists[id] || []; if (a.indexOf(sh.name) < 0) a.push(sh.name || "Setlist"); }); }); });
+  songs.forEach(function (s) { akGrpKeys(s, by, ctx).forEach(function (k) { if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(s); }); });
+  akGrpSort(by, order);
+  var bar = h("div", { class: "row akgrp-bar", style: "margin:4px 0;flex-wrap:wrap;gap:6px" },
+    h("button", { class: "chip on", onClick: function () { akGrpMenu(this); } }, "Grouped by " + akGrpName(by).toLowerCase() + " ▾"),
+    h("button", { class: "chip", "aria-label": tiles ? "Show groups as rows" : "Show groups as tiles", onClick: function () { settings().grpLook = tiles ? "rows" : "tiles"; S.grpOpen = ""; save(); refill(); } }, tiles ? "☰ Rows" : "▦ Tiles"),
+    tiles ? null : h("button", { class: "chip", onClick: function () { var allShut = order.every(function (k) { return S.collapsed["g:" + by + ":" + k]; }); order.forEach(function (k) { S.collapsed["g:" + by + ":" + k] = !allShut; }); refill(); } }, order.every(function (k) { return S.collapsed["g:" + by + ":" + k]; }) ? "Open all" : "Fold all"),
+    h("span", { class: "muted" }, order.length + (order.length === 1 ? " group" : " groups")));
+  list.appendChild(bar);
+  if (tiles && S.grpOpen && groups[S.grpOpen]) {
+    var g = S.grpOpen, col = akGrpColor(by, g);
+    list.appendChild(h("button", { class: "grouphead akgrp-back", style: col ? "background:" + tint(col, 0.25) : null, onClick: function () { S.grpOpen = ""; refill(); } },
+      h("span", { class: "chev" }, "‹"), h("span", { class: "grow" }, "All groups  ·  " + g), h("span", { class: "muted" }, String(groups[g].length))));
+    groups[g].forEach(function (s) { list.appendChild(songRow(s, groups[g], groups[g].indexOf(s))); });
+    return;
+  }
+  if (tiles) {
+    var grid = h("div", { class: "akgrp-tiles" });
+    order.forEach(function (k) {
+      var col = akGrpColor(by, k), few = groups[k].slice(0, 3).map(function (s) { return s.title || "Untitled"; }).join(" · ");
+      grid.appendChild(h("button", { class: "akgrp-tile", style: col ? "border-top:5px solid " + col : null, onClick: function () { S.grpOpen = k; refill(); var m = list.closest(".main"); if (m) m.scrollTop = 0; } },
+        h("span", { class: "akgrp-n" }, k), h("span", { class: "akgrp-c" }, groups[k].length + (groups[k].length === 1 ? " song" : " songs")), h("span", { class: "akgrp-f" }, few)));
+    });
+    list.appendChild(grid);
+    return;
+  }
+  order.forEach(function (k) {
+    var key = "g:" + by + ":" + k, shut = S.collapsed[key], col = akGrpColor(by, k);
+    list.appendChild(h("button", { class: "grouphead", "aria-expanded": shut ? "false" : "true", style: col ? "background:" + tint(col, 0.25) : null, onClick: function () { S.collapsed[key] = !shut; refill(); } },
+      h("span", { class: "chev" }, shut ? "▸" : "▾"), h("span", { class: "grow" }, k), h("span", { class: "muted" }, String(groups[k].length))));
+    if (!shut) groups[k].forEach(function (s) { list.appendChild(songRow(s, songs, songs.indexOf(s))); });
+  });
+}
+setTimeout(function () { try { if (settings().grpOn) S.groupBy = true; } catch (e) {} }, 0);
+
+/* ================================================================ 96 Simple mode, more */
+var AK_SIMPLE_PARTS = [
+  ["extras", "Hide tips, shelves, a song's info and practice parts, setlist announcements and reminders, and customize buttons", true],
+  ["menus", "Shorter menus (the Songs ⋯ menu shows the main things; More… shows the rest)", true],
+  ["settings", "Only the main Settings (Look, Playing screen, Songs and shows, Data); a button shows all", true],
+  ["big", "Bigger buttons and fields", false],
+  ["learn", "Hide the Learn tab", false],
+  ["write", "Hide the Write tab", false]
+];
+function akSimpleOn(part) {
+  var s = settings(); if (!s.simple) return false;
+  var p = s.simpleParts || {}, d = AK_SIMPLE_PARTS.filter(function (x) { return x[0] === part; })[0];
+  return p[part] !== undefined ? !!p[part] : !!(d && d[2]);
+}
+var AK_SIMPLE_MENU = /^(Select songs|Done selecting|Group songs|Show as one list|New setlist from|Build a setlist|Song requests|Libraries|Recently deleted|Undo last change)/;
+(function () {
+  var st = document.createElement("style");
+  st.textContent = "html.aksm-simple-x .tipbar, html.aksm-simple-x [data-bk=\"library\"].akshelf, html.aksm-simple-x [data-bk=\"practice-and-songwriting\"], html.aksm-simple-x [data-bk=\"song-info-and-trivia\"]," +
+    " html.aksm-simple-x [data-bk=\"announce\"].akann-card, html.aksm-simple-x [data-bk=\"reminders\"].akann-card, html.aksm-simple-x .ak10-cust, html.aksm-simple-x .ak8-custbtn { display: none !important; }" +
+    " html.aksm-simple-set:not(.aksm-allset) [data-blocks=\"settings\"] > details.setsec:not([data-bk=\"look\"]):not([data-bk=\"playing-screen\"]):not([data-bk=\"songs-and-shows\"]):not([data-bk=\"data-and-extras\"]) { display: none !important; }" +
+    " html.aksm-simple-big .shell button:not(.sw):not(.icon):not(.chip):not(.tabbar button), html.aksm-simple-big .shell select, html.aksm-simple-big .shell input[type=text], html.aksm-simple-big .shell input[type=search] { min-height: 54px !important; font-size: 1.06em; }" +
+    " html.aksm-simple-big .shell .chip { min-height: 46px; }" +
+    " .akuh-hist .akuh-row { display: flex; width: 100%; justify-content: space-between; gap: 10px; text-align: left; margin: 4px 0; min-height: 46px; align-items: center; }" +
+    " .akuh-hist .akuh-fwd { opacity: .62; border-style: dashed; } .akuh-hist .akuh-t { color: var(--muted); font-weight: 400; font-size: .86em; white-space: nowrap; }" +
+    " .akuh-hist .akuh-now { margin: 8px 0; font-weight: 800; color: var(--accent); }" +
+    " .aklib-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; } .aklib-cols .sw { width: 28px; height: 28px; min-height: 28px; } .aklib-cols .sw.on { outline: 3px solid var(--accent); outline-offset: 1px; }" +
+    " .akgrp-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 6px 0; }" +
+    " .akgrp-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 12px; min-height: 96px; height: auto; background: var(--panel); }" +
+    " .akgrp-tile .akgrp-n { font-weight: 800; font-size: 1.05rem; } .akgrp-tile .akgrp-c { color: var(--accent); font-weight: 700; font-size: .9em; } .akgrp-tile .akgrp-f { color: var(--muted); font-weight: 400; font-size: .8em; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }" +
+    " .aksm-simplebar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }";
+  document.head.appendChild(st);
+})();
+function akSimpleApply() {
+  var de = document.documentElement, on = !!settings().simple;
+  de.classList.toggle("aksm-simple-x", on && akSimpleOn("extras"));
+  de.classList.toggle("aksm-simple-set", on && akSimpleOn("settings"));
+  de.classList.toggle("aksm-simple-big", on && akSimpleOn("big"));
+  de.classList.toggle("aksm-allset", !!S.akAllSet);
+  /* the 14.5 class hid everything at once; the parts above replace it */
+  de.classList.remove("ak17-simple");
+}
+(function () {
+  if (typeof akSimple17Apply === "function") { var a0 = akSimple17Apply; akSimple17Apply = function () { a0.apply(this, arguments); try { akSimpleApply(); } catch (e) {} }; }
+  var rd = render; render = function () { var r = rd.apply(this, arguments); try { akSimpleApply(); } catch (e) {} return r; };
+  /* hidden tabs */
+  if (typeof akTab16 === "function") { var t0 = akTab16; akTab16 = function (id) { if ((id === "learn" || id === "write") && akSimpleOn(id)) return false; return t0.apply(this, arguments); }; }
+  /* a shorter Songs ⋯ menu */
+  var m0 = menu;
+  menu = function (anchor, items, o) {
+    try {
+      if (akSimpleOn("menus") && S.view === "songs" && Array.isArray(items) && items.length > 12 && items.some(function (x) { return x && /^Smart lists/.test(x.label || ""); })) {
+        var main = items.filter(function (x) { return x && !x.sep && AK_SIMPLE_MENU.test(x.label || ""); });
+        if (main.length >= 3) return m0.call(this, anchor, main.concat([{ sep: true }, { label: "More…", onClick: function () { setTimeout(function () { m0.call(null, anchor, items, o); }, 0); } }]), o);
+      }
+    } catch (e) {}
+    return m0.apply(this, arguments);
+  };
+  /* Settings: a line on top in Simple mode */
+  var vs = viewSettings;
+  viewSettings = function () {
+    var w = vs.apply(this, arguments);
+    try {
+      if (settings().simple && akSimpleOn("settings")) {
+        var top = w.querySelector('[data-blocks="settings"]');
+        if (top) top.parentNode.insertBefore(h("div", { class: "card aksm-simplebar" }, h("span", { class: "grow" }, S.akAllSet ? "Simple mode is on. Showing all settings." : "Simple mode is on. Showing the main settings."),
+          h("button", { onClick: function () { S.akAllSet = !S.akAllSet; akSimpleApply(); go("settings"); } }, S.akAllSet ? "Main settings only" : "Show all settings"),
+          h("button", { onClick: function () { settings().simple = false; save(); akSimpleApply(); go("settings"); toast("Simple mode is off."); } }, "Turn Simple mode off")), top);
+      }
+    } catch (e) {}
+    return w;
+  };
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("look");
+      c.section("Simple mode: what it does", "Pick what Simple mode hides or changes");
+      AK_SIMPLE_PARTS.forEach(function (p) {
+        c.check(p[1], function () { var sp = settings().simpleParts || {}; return sp[p[0]] !== undefined ? !!sp[p[0]] : p[2]; }, function (v) { var s = settings(); s.simpleParts = s.simpleParts || {}; s.simpleParts[p[0]] = v; akSimpleApply(); });
+      });
+      c.out.appendChild(h("p", { class: "hint" }, "These work when Simple mode (above) is on. Everything is still there: turn Simple mode off to see it all again."));
+      c.again("data-and-extras");
+      c.section("Undo history", "How many changes ↶ Undo keeps");
+      c.select("Changes kept for undo and the change history", function () { return akUhLevels(); }, function (v) { settings().undoLevels = v; while (undoStack.length > v) undoStack.shift(); akUhPrune(); }, [[15, "15"], [30, "30"], [50, "50 (default)"], [100, "100"], [200, "200"]]);
+      c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: akUhHistory }, "🕘 Change history…")));
+      c.out.appendChild(h("p", { class: "hint" }, "Changes are kept until the app is closed. Each step only stores what changed, so more steps cost little."));
+    } catch (e) {}
+  };
+})();
+
+/* ================================================================ aksm_b: smaller ideas, part 2 (version 17.5)
+   - 80 Button shapes in the layout styles (ak_shape.js): token bsh = "plain" | "chamfer" (cut corners) | "3d" (raised, presses
+     down when tapped) | "chamfer3d"; blk = "round" | "chamfer" cuts the corners of blocks and list rows too; bplay = 1 also
+     shapes the playing screen's Button bar and side buttons. Cut corners use CSS corner-shape: bevel where the browser has it
+     (the border follows the cut), else a clip-path. New ready-made styles: Square, Chamfered, 3D buttons, Square 3D,
+     Chamfered 3D. Settings › Look › Layout style › "Button shape" (under the style tiles).
+   - 81 Neon strip lights (settings().neon): glowing strips along the screen edges, like LED strips. Where (all around, top and
+     bottom, top, bottom, the sides), color (the theme's accent, your color, or rainbow), motion (steady, breathe, chase, color
+     cycle) and speed, thickness, glow and brightness; off on the playing screen unless "Also while playing". One fixed layer
+     that never takes taps (.aksm-neon), animated with opacity / background-position / hue only. Settings › Look › Neon strip lights. */
+
+/* ================================================================ 80 button shapes */
+AK_LS_BASE.bsh = "plain"; AK_LS_BASE.blk = "round"; AK_LS_BASE.bplay = 0;
+AK_LS_PRESETS.push(
+  { id: "square", name: "Square", desc: "Square buttons, square blocks and a firm line. Neat and simple.", t: { rad: 0, brad: 0, bw: 1.5 } },
+  { id: "chamfer", name: "Chamfered", desc: "Cut corners on buttons and blocks, like a game menu.", t: { rad: 12, brad: 9, bw: 1.5, bsh: "chamfer", blk: "chamfer" } },
+  { id: "btn3d", name: "3D buttons", desc: "Raised buttons with an edge under them that press down when you tap.", t: { brad: 10, bsh: "3d", fill: "raised", sh: 1 } },
+  { id: "square3d", name: "Square 3D", desc: "Chunky square buttons that press down, on square blocks.", t: { rad: 0, brad: 0, bw: 2, bsh: "3d" } },
+  { id: "chamfer3d", name: "Chamfered 3D", desc: "Cut corners everywhere and raised buttons that press down.", t: { rad: 12, brad: 9, bw: 1.5, bsh: "chamfer3d", blk: "chamfer", fill: "raised", sh: 1 } }
+);
+var AK_BSH = [["plain", "Plain (the style's own roundness)"], ["chamfer", "Cut corners (chamfered)"], ["3d", "3D: raised, presses down when tapped"], ["chamfer3d", "Cut corners and 3D"]];
+function akBshCss(t) {
+  var q = "html[data-ls] ", o = "", sh = t.bsh || "plain", cut = sh === "chamfer" || sh === "chamfer3d", d3 = sh === "3d" || sh === "chamfer3d";
+  var btn = [q + ".shell button:not(.sw):not(.chip):not(.sm):not(.fb):not(.lstile):not(.tabbar button):not(.item .main-btn):not(.akuh-row)"];
+  if (t.bplay) btn.push(q + ".play .ptop button", q + ".fabwrap .fb");
+  var B = btn.join(","), A = btn.map(function (x) { return x + ":active:not(:disabled)"; }).join(",");
+  var cutR = Math.max(7, Math.min(16, t.brad >= 30 ? 14 : t.brad || 9));
+  function bevel(sel, r) {
+    var c = r + "px";
+    return "@supports (corner-shape: bevel){" + sel + "{corner-shape:bevel;border-radius:" + c + "}}" +
+      "@supports not (corner-shape: bevel){" + sel + "{border-radius:0;clip-path:polygon(" + c + " 0,calc(100% - " + c + ") 0,100% " + c + ",100% calc(100% - " + c + "),calc(100% - " + c + ") 100%," + c + " 100%,0 calc(100% - " + c + "),0 " + c + ")}}\n";
+  }
+  if (cut) o += bevel(B, cutR);
+  if (d3) {
+    var edge = "color-mix(in srgb,var(--panel) 50%,#000)", aedge = "color-mix(in srgb,var(--accent) 55%,#000)";
+    o += B + "{background-image:linear-gradient(to bottom,rgba(255,255,255,.13),rgba(0,0,0,.07));box-shadow:0 4px 0 " + edge + ",0 6px 10px rgba(0,0,0,.28);transition:transform .06s,box-shadow .06s;margin-bottom:4px}\n";
+    o += btn.map(function (x) { return x + ".primary," + x + "[aria-pressed=\"true\"]"; }).join(",") + "{box-shadow:0 4px 0 " + aedge + ",0 6px 10px rgba(0,0,0,.28)}\n";
+    o += A + "{transform:translateY(3px);box-shadow:0 1px 0 " + edge + ",0 2px 4px rgba(0,0,0,.25)}\n";
+    o += q + ".shell button:disabled{box-shadow:none}\n";
+  }
+  if (t.blk === "chamfer") {
+    var r = Math.max(8, Math.min(18, t.rad || 12));
+    o += bevel(q + ".card:not(details > .card)," + q + ".item .main-btn," + q + ".setblock," + q + ".grouphead," + q + ".akgrp-tile", r);
+  }
+  return o;
+}
+(function () {
+  var l0 = lsCss;
+  lsCss = function (t) { return l0.apply(this, arguments) + akBshCss(t); };
+  var c0 = lsControls;
+  lsControls = function (out, ctx) {
+    var r = c0.apply(this, arguments);
+    try {
+      var box = h("div");
+      var ov = function (k) { return lsCfg().c[k] !== undefined ? lsCfg().c[k] : lsTokens()[k]; };
+      var setOv = function (k, v) { ctx.mark(); lsCfg().c[k] = v; ctx.refresh(); akApply(); };
+      box.appendChild(h("p", { class: "hint" }, "Cut corners and 3D buttons work with any style above. The Square, Chamfered and 3D styles set them for you."));
+      box.appendChild(h("label", { class: "fld" }, "Button shape", h("select", { "aria-label": "Button shape", onChange: function () { setOv("bsh", this.value); } }, AK_BSH.map(function (o) { return h("option", { value: o[0], selected: ov("bsh") === o[0] }, o[1]); }))));
+      box.appendChild(h("label", { class: "fld" }, "Corners of blocks and list rows", h("select", { "aria-label": "Corners of blocks", onChange: function () { setOv("blk", this.value); } }, [["round", "Round (the style's roundness)"], ["chamfer", "Cut corners (chamfered)"]].map(function (o) { return h("option", { value: o[0], selected: ov("blk") === o[0] }, o[1]); }))));
+      box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!ov("bplay"), onChange: function () { setOv("bplay", this.checked ? 1 : 0); } }), "Also the playing screen's Button bar and side buttons"));
+      out.appendChild(h("details", { class: "card subsec", "data-bk": "button-shape" }, h("summary", null, h("span", { class: "st" }, "Button shape: square, cut corners, 3D")), h("div", { class: "secbody" }, box)));
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ================================================================ 81 neon strip lights */
+var AK_NEON_DEF = { on: false, where: "all", col: "accent", color: "#ff2bd6", motion: "breathe", speed: 4, w: 4, glow: 16, bright: 90, play: false };
+function akNeonCfg() { var s = settings(); if (!s.neon || typeof s.neon !== "object") s.neon = {}; Object.keys(AK_NEON_DEF).forEach(function (k) { if (s.neon[k] === undefined) s.neon[k] = AK_NEON_DEF[k]; }); return s.neon; }
+var AK_NEON_WHERE = [["all", "All around the screen"], ["tb", "Top and bottom"], ["top", "Top edge"], ["bottom", "Bottom edge"], ["sides", "Left and right sides"]];
+var AK_NEON_MOTION = [["steady", "Steady"], ["breathe", "Breathe (slowly brighter and dimmer)"], ["chase", "Chase (lights run along the strip)"], ["cycle", "Color cycle"], ["flicker", "Flicker like an old neon sign"]];
+function akNeonCss(c) {
+  var col = c.col === "mine" ? c.color : "var(--accent)", w = Math.max(2, Math.min(12, Number(c.w) || 4)), g = Math.max(0, Math.min(40, Number(c.glow) || 0));
+  var dur = (11 - Math.max(1, Math.min(10, Number(c.speed) || 4))) * 0.9 + 0.6, br = Math.max(20, Math.min(100, Number(c.bright) || 90)) / 100;
+  var rainbow = c.col === "rainbow", bg;
+  if (rainbow) bg = "linear-gradient(90deg,#ff004c,#ff8a00,#ffe600,#2bff4e,#00d5ff,#4b5bff,#d400ff,#ff004c)";
+  else if (c.motion === "chase") bg = "repeating-linear-gradient(90deg," + col + " 0 34px,color-mix(in srgb," + col + " 25%,transparent) 34px 58px)";
+  else bg = col;
+  var glowCol = rainbow ? "rgba(255,255,255,.55)" : col;
+  var o = ".aksm-neon{position:fixed;inset:0;pointer-events:none;z-index:19;opacity:" + br + "}" +
+    ".aksm-neon i{position:absolute;display:block;background:" + bg + ";background-size:" + (rainbow || c.motion === "chase" ? "400px 100%" : "auto") + ";box-shadow:0 0 " + g + "px " + Math.round(g / 4) + "px " + glowCol + ",0 0 " + Math.round(g * 2) + "px " + glowCol + ";border-radius:" + w + "px}" +
+    ".aksm-neon .nt,.aksm-neon .nb{left:0;right:0;height:" + w + "px}.aksm-neon .nt{top:0}.aksm-neon .nb{bottom:0}" +
+    ".aksm-neon .nl,.aksm-neon .nr{top:0;bottom:0;width:" + w + "px}.aksm-neon .nl{left:0}.aksm-neon .nr{right:0}" +
+    ".aksm-neon .nl,.aksm-neon .nr{background-size:100% 400px;" + (rainbow ? "background-image:linear-gradient(180deg,#ff004c,#ff8a00,#ffe600,#2bff4e,#00d5ff,#4b5bff,#d400ff,#ff004c)" : c.motion === "chase" ? "background-image:repeating-linear-gradient(180deg," + col + " 0 34px,color-mix(in srgb," + col + " 25%,transparent) 34px 58px)" : "") + "}" +
+    "@keyframes aksmNeonBr{0%,100%{opacity:1}50%{opacity:.45}}@keyframes aksmNeonRun{from{background-position:0 0}to{background-position:400px 400px}}" +
+    "@keyframes aksmNeonHue{from{filter:hue-rotate(0deg)}to{filter:hue-rotate(360deg)}}@keyframes aksmNeonFl{0%,18%,22%,25%,53%,57%,100%{opacity:1}20%,24%,55%{opacity:.25}}";
+  var anim = { breathe: "aksmNeonBr " + dur * 1.6 + "s ease-in-out infinite", chase: "aksmNeonRun " + dur * 1.5 + "s linear infinite", cycle: "aksmNeonHue " + dur * 3 + "s linear infinite", flicker: "aksmNeonFl " + Math.max(2, dur * 2) + "s step-end infinite" }[c.motion];
+  if (rainbow && c.motion !== "chase" && c.motion !== "cycle") anim = (anim ? anim + "," : "") + "aksmNeonRun " + dur * 3 + "s linear infinite";
+  if (anim) o += "@media (prefers-reduced-motion:no-preference){.aksm-neon i{animation:" + anim + "}}";
+  return o;
+}
+function akNeonApply() {
+  var c = akNeonCfg(), el = document.querySelector(".aksm-neon"), show = c.on && (c.play || S.view !== "play");
+  if (!show) { if (el) el.remove(); return; }
+  akCss("aksm-neon-css", akNeonCss(c));
+  var parts = { all: ["nt", "nb", "nl", "nr"], tb: ["nt", "nb"], top: ["nt"], bottom: ["nb"], sides: ["nl", "nr"] }[c.where] || ["nt", "nb", "nl", "nr"], key = parts.join(" ");
+  if (el && el.getAttribute("data-p") === key) return;
+  if (el) el.remove();
+  el = h("div", { class: "aksm-neon", "aria-hidden": "true", "data-p": key });
+  parts.forEach(function (p) { el.appendChild(h("i", { class: p })); });
+  document.body.appendChild(el);
+}
+(function () {
+  var rd = render; render = function () { var r = rd.apply(this, arguments); try { akNeonApply(); } catch (e) {} return r; };
+  var al = applyLook; applyLook = function () { var r = al.apply(this, arguments); try { akNeonApply(); } catch (e) {} return r; };
+  if (typeof DEFAULTS !== "undefined") DEFAULTS.neon = clone(AK_NEON_DEF);
+  if (typeof LOOK_KEYS !== "undefined" && LOOK_KEYS.indexOf("neon") < 0) LOOK_KEYS.push("neon");
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      var n = akNeonCfg();
+      c.again("look");
+      c.section("Neon strip lights", "Glowing light strips along the edges of the screen");
+      c.check("Neon strip lights on", function () { return !!akNeonCfg().on; }, function (v) { akNeonCfg().on = v; akNeonApply(); });
+      c.select("Where", function () { return akNeonCfg().where; }, function (v) { akNeonCfg().where = v; akNeonApply(); }, AK_NEON_WHERE);
+      c.select("Color", function () { return akNeonCfg().col; }, function (v) { akNeonCfg().col = v; akNeonApply(); }, [["accent", "The theme's accent color"], ["mine", "My color (pick below)"], ["rainbow", "Rainbow"]]);
+      var sw = h("button", { class: "sw custom", "aria-label": "Pick the neon color", style: "background:" + n.color, onClick: function () { colorDialog("Neon color", akNeonCfg().color, function (v) { if (!v) return; var cf = akNeonCfg(); cf.color = v; cf.col = "mine"; sw.style.background = v; save(); akNeonApply(); }); } });
+      c.out.appendChild(h("div", { class: "row", style: "margin:6px 0" }, h("div", { class: "grow" }, "My neon color"), sw));
+      c.select("Motion", function () { return akNeonCfg().motion; }, function (v) { akNeonCfg().motion = v; akNeonApply(); }, AK_NEON_MOTION);
+      c.range("Speed", function () { return akNeonCfg().speed; }, function (v) { akNeonCfg().speed = v; akNeonApply(); }, 1, 10, 1);
+      c.range("Thickness", function () { return akNeonCfg().w; }, function (v) { akNeonCfg().w = v; akNeonApply(); }, 2, 12, 1, function (v) { return v + " px"; });
+      c.range("Glow", function () { return akNeonCfg().glow; }, function (v) { akNeonCfg().glow = v; akNeonApply(); }, 0, 40, 1, function (v) { return v ? v + " px" : "None"; });
+      c.range("Brightness", function () { return akNeonCfg().bright; }, function (v) { akNeonCfg().bright = v; akNeonApply(); }, 20, 100, 5, function (v) { return v + "%"; });
+      c.check("Also while playing a song", function () { return !!akNeonCfg().play; }, function (v) { akNeonCfg().play = v; akNeonApply(); });
+      c.out.appendChild(h("p", { class: "hint" }, "The strips never cover a button you can tap. Phones set to reduce motion keep them steady."));
+    } catch (e) {}
+  };
+})();
+
+/* ================================================================ 111 testers copy (build_testers.py sets window.AK_TESTERS) */
+function akTestersFeedback() {
+  var ta = h("textarea", { rows: 6, "aria-label": "Your feedback", placeholder: "What worked, what didn't, what you'd like. Which screen, and what you tapped." });
+  function text() { return "Akashic Chords testers copy (" + AK_VERSION + ", built " + (window.AK_TESTERS.built || "") + ")\n" + navigator.userAgent + "\n\n" + ta.value; }
+  modal("Send feedback", h("div", null, h("p", { class: "hint" }, "Write it here, then Share sends it with any app on this device (text, email, chat), or Copy puts it on the clipboard."), ta,
+    h("p", { class: "hint" }, "Or reach the developer through ", h("a", { href: "https://aedryangantt.com", target: "_blank", rel: "noopener" }, "AEDRYANGANTT.com"), ".")),
+    [{ label: "Close" }, { label: "Copy", onClick: function () { try { navigator.clipboard.writeText(text()); toast("Copied."); } catch (e) { toast("Couldn't copy here."); } return false; } },
+     { label: "Share…", primary: true, onClick: function () { if (navigator.share) navigator.share({ title: "Akashic Chords feedback", text: text() }).catch(function () {}); else { try { navigator.clipboard.writeText(text()); toast("Sharing isn't available here, so it was copied."); } catch (e) {} } return false; } }]);
+}
+(function () {
+  if (!window.AK_TESTERS) return;
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("Testers copy", "You're testing an early version");
+      c.out.appendChild(h("p", { class: "hint" }, "Version " + AK_VERSION + ", built " + (window.AK_TESTERS.built || "") + ". It updates only when a new testers version is published. Your songs here are kept apart from any other copy of the app on this device."));
+      c.out.appendChild(h("div", { class: "row" }, h("button", { class: "primary", onClick: akTestersFeedback }, "💬 Send feedback…")));
+    } catch (e) {}
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
