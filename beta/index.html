@@ -29992,15 +29992,25 @@ function akRrPhoneRows() {
 }
 
 /* ---------------------------------------------------------------- the tablet: buttons and the Phones window */
-TB_ITEMS.push(["rrstart", "Start song (phone recorders)"], ["rrend", "End song (phone recorders)"], ["rrphones", "Phone recorders"]);
-TB_SHORT.rrstart = "Start song"; TB_SHORT.rrend = "End song"; TB_SHORT.rrphones = "Phones";
-FAB_ITEMS.push(["rrstart", "Start song (phone recorders)"], ["rrend", "End song (phone recorders)"], ["rrphones", "Phone recorders"]);
-FAB_OFF.rrstart = FAB_OFF.rrend = FAB_OFF.rrphones = 1; FAB_SHORT.rrstart = "Start song"; FAB_SHORT.rrend = "End song"; FAB_SHORT.rrphones = "Phones";
+/* 17.9: Start song and End song are one button (rrstart): press to start, it lights up; press again to end. An End song button
+   (rrend) saved on a bar turns into this one (normalizeStore drops ids that aren't listed). */
+TB_ITEMS.push(["rrstart", "Start / end song (phone recorders)"], ["rrphones", "Phone recorders"]);
+TB_SHORT.rrstart = "Song rec"; TB_SHORT.rrphones = "Phones";
+FAB_ITEMS.push(["rrstart", "Start / end song (phone recorders)"], ["rrphones", "Phone recorders"]);
+FAB_OFF.rrstart = FAB_OFF.rrend = FAB_OFF.rrphones = 1; FAB_SHORT.rrstart = "Song rec"; FAB_SHORT.rrphones = "Phones";
 AK_TB_MODES.rrstart = AK_TB_MODES.rrend = AK_TB_MODES.rrphones = "p";
 AK_IC.rrstart = "M7 3h10v18H7z M10 8l5 4-5 4z";
 AK_IC.rrend = "M7 3h10v18H7z M10 9h4v6h-4z";
 AK_IC.rrphones = "M3 5h7v14H3z M14 5h7v14h-7z M6.5 16h0 M17.5 16h0";
-var AK_RR_ACTS = { rrstart: akRrStartSong, rrend: function () { akRrEndSong(); }, rrphones: function () { akRrWin(); } };
+(function () {
+  var ns = normalizeStore;
+  normalizeStore = function () {
+    try { ["toolbar", "fab"].forEach(function (g) { var I = (store.settings[g] || {}).items || [], e = I.filter(function (it) { return it.id === "rrend" && it.on; })[0];
+      if (e) I.forEach(function (it) { if (it.id === "rrstart") it.on = true; }); }); } catch (e) {}
+    return ns.apply(this, arguments);
+  };
+})();
+var AK_RR_ACTS = { rrstart: function () { akRrToggleSong(); }, rrphones: function () { akRrWin(); } };
 function akExtraTb23(id, song, root) {
   if (AK_RR_ACTS[id]) { var b = h("button", { "aria-label": TB_SHORT[id], onClick: function () { AK_RR_ACTS[id](); } }, akIcon(id)); setTimeout(akRrPaint, 0); return b; }
   if (typeof akExtraTb24 === "function") return akExtraTb24(id, song, root);
@@ -30025,8 +30035,22 @@ var AK_PEDAL_MORE = [["rrsong", "Phone recorders: start or end a song (one butto
 })();
 function akRrPaint() {
   var on = AKRR.songOn;
-  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="rrstart"],[data-fab="rrstart"]'), function (b) { b.classList.toggle("on", on); b.classList.toggle("ak12-recon", on); });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="rrstart"],[data-fab="rrstart"]'), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("ak12-recon", on); b.setAttribute("aria-pressed", on ? "true" : "false"); b.setAttribute("aria-label", on ? "End song (phone recorders)" : "Start song (phone recorders)"); });
   var w = document.querySelector(".akrr-win"); if (w && w.akDraw) w.akDraw();
+}
+/* the one Start / End song button in the windows: lit (red) while a song is recording */
+function akRrToggleBtn(after) {
+  var on = AKRR.songOn;
+  return h("button", { class: "akrr-tog" + (on ? " on ak12-recon" : " primary"), "aria-pressed": on ? "true" : "false", onClick: function () { akRrToggleSong(); after(); } }, on ? "■ End song" : "● Start song");
+}
+/* 17.9: the "next song right away" choice (c.next), out where it can be seen: next to the button, in the playing-screen recorder and in Settings */
+var AK_RR_NEXT = [["1", "Seamless: the next song's file starts as one ends"], ["0", "Separate: I start each song myself"]];
+function akRrNextSel(after) {
+  var c = akRrCfg();
+  if (c.mode !== "split") return null;
+  return h("label", { class: "fld akrr-next" }, "Between songs", h("select", { "aria-label": "Between songs", onChange: function () { c.next = this.value === "1"; save(); after(); } },
+    AK_RR_NEXT.map(function (o) { return h("option", { value: o[0], selected: (c.next ? "1" : "0") === o[0] }, o[1]); })));
 }
 function akRrWin() {
   var body = h("div", { class: "akrr-win" }), c = akRrCfg();
@@ -30057,9 +30081,9 @@ function akRrWin() {
     /* state and the big buttons */
     body.appendChild(h("div", { class: "akrr-state" + (AKRR.rec ? " rec" : "") }, AKRR.rec ? "● Recording: " + (AKRR.title || "") + (c.mode === "one" ? (AKRR.songOn ? " · song on" : " · between songs") : "") : "Not recording"));
     body.appendChild(h("div", { class: "row" },
-      h("button", { class: "primary", onClick: function () { akRrStartSong(); } }, "▶ Start song"),
-      h("button", { disabled: !AKRR.songOn, onClick: function () { akRrEndSong(); } }, "■ End song"),
+      akRrToggleBtn(function () {}),
       h("button", { class: "danger", disabled: !AKRR.rec, onClick: function () { akRrStopAll(); } }, "Stop the phones")));
+    var nx = akRrNextSel(draw); if (nx) body.appendChild(nx);
     /* phones */
     var rows = akRrPhoneRows(), box = h("div", { class: "card" }, h("strong", null, "Phones"));
     if (AKRR.stErr === "rules") box.appendChild(h("p", { class: "hint" }, "The phones record, but they can't tell the tablet how it's going until you add one block to your Firebase rules: Settings > Requests and tips > Copy rules, then paste them in Firebase (Firestore Database > Rules > Publish)."));
@@ -30088,7 +30112,6 @@ function akRrWin() {
     /* how */
     var how = det("How it records", false);
     how.appendChild(sel("Files", function () { return c.mode; }, function (v) { c.mode = v; }, [["split", "One file per song"], ["one", "One file for the whole show, with song marks"]]));
-    if (c.mode === "split") how.appendChild(ck("End song starts the next song's file right away (nothing between songs is lost)", function () { return c.next; }, function (v) { c.next = v; }));
     how.appendChild(ck("Starting auto-scroll = Start song", function () { return c.autoStart; }, function (v) { c.autoStart = v; }));
     how.appendChild(ck("Going to another song = End song", function () { return c.autoEnd; }, function (v) { c.autoEnd = v; }));
     how.appendChild(sel("Remind me to End a song after", function () { return c.maxMin; }, function (v) { c.maxMin = Number(v) || 0; }, [[0, "Never"], [8, "8 minutes"], [10, "10 minutes"], [15, "15 minutes"], [20, "20 minutes"], [30, "30 minutes"]]));
@@ -30135,9 +30158,10 @@ function akSettingsExtra21(c) {
   c.again("songs-and-shows");
   c.section("Two-phone recording", "Two phones record (video, sound), the tablet tells them when");
   var r = akRrCfg();
-  c.check("Use phone recorders (adds the Start song / End song buttons to the list of buttons)", function () { return r.on; }, function (v) { r.on = v; });
+  c.check("Use phone recorders (adds the Start / end song button to the list of buttons)", function () { return r.on; }, function (v) { r.on = v; });
+  var nx = akRrNextSel(function () {}); if (nx) c.out.appendChild(nx);
   c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akRrWin(); } }, "Phone recorders…")));
-  c.out.appendChild(h("p", { class: "hint" }, "Each phone opens a link from this tablet in its browser and records there: their own camera and voice memo apps can't be controlled from here. Keep that page open on the phones with the screen on (the page can make it black). Put ▶ Start song and ■ End song on the Button bar or a pedal (Pedal > Learn)."));
+  c.out.appendChild(h("p", { class: "hint" }, "Each phone opens a link from this tablet in its browser and records there: their own camera and voice memo apps can't be controlled from here. Keep that page open on the phones with the screen on (the page can make it black). Put the ● Start / end song button on the Button bar or a pedal (Pedal > Learn). It lights up while a song records; press it again to end the song. Seamless keeps the phones recording into the next song's file so nothing between songs is lost; Separate stops them until you start the next song."));
   if (typeof akSettingsExtra22 === "function") akSettingsExtra22(c);
 }
 
@@ -33722,8 +33746,8 @@ function akRec141Snap() {
 function akRec141Buttons(el) {
   var r = akRrCfg(), row = h("div", { class: "row ak16f-btns" });
   if (r.on) {
-    row.appendChild(h("button", { class: "primary", onClick: function () { akRrStartSong(); akFloatFill("rec16"); } }, "▶ Start song"));
-    row.appendChild(h("button", { disabled: !AKRR.songOn, onClick: function () { akRrEndSong(); akFloatFill("rec16"); } }, "■ End song"));
+    row.appendChild(akRrToggleBtn(function () { akFloatFill("rec16"); }));
+    var nx = akRrNextSel(function () { akFloatFill("rec16"); });
     row.appendChild(h("button", { class: "danger", disabled: !AKRR.rec, onClick: function () { akRrStopAll(); akFloatFill("rec16"); } }, "Stop the phones"));
     row.appendChild(h("button", { onClick: function () { akRrWin(); } }, "Phones…"));
   }
@@ -33731,6 +33755,7 @@ function akRec141Buttons(el) {
   row.appendChild(h("button", { onClick: function () { go("recs"); } }, "My recordings"));
   el.appendChild(h("div", { class: "akrr-state" + (AKRR.rec ? " rec" : "") }, AKRR.rec ? "● Recording: " + (AKRR.title || "") : "Not recording"));
   el.appendChild(row);
+  if (nx) el.appendChild(nx);
 }
 (function () {
   var rp = akRrPaint;
@@ -48366,6 +48391,15 @@ akSySummary = function (n) {
       [{ label: "Other choices…", onClick: function () { setTimeout(function () { o1.apply(self, args); }, 0); } }, { label: "Merge with mine", primary: true, onClick: function () { akSyncMergeText(t); } }]);
   };
 })();
+
+/* ================================================================ akrr_t: version 17.9, phone recorders: one Start / end song button
+   The changes are in ak13_c (akRrToggleBtn, akRrNextSel, rrstart toggles) and ak16_f (the playing-screen recorder). */
+
+AK_VERSION = "17.9";
+AK_WHATS_NEW = [
+  "Phone recorders: Start song and End song are now one button. Press it to start the song (it lights up red), press it again to end it.",
+  "Phone recorders: “Between songs” is out where you can see it (next to the button, in the playing-screen recorder and in Settings): Seamless starts the next song's file as one ends, Separate waits for you to start the next song."
+].concat(AK_WHATS_NEW);
 
 /* ================================================================ akgfx_l: Graphics studio, part 12 (version 17.9; numbered after 17.8): undo that works, text tools together
    Undo: the ↶ in the top bar was the app's own undo (songs, setlists...), which skips the studio on purpose, so tapping it after
