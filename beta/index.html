@@ -36405,7 +36405,7 @@ function viewGfx() {
   function paint() {
     if (!base) return;
     var P = akGfxBake(base, D.edit); st.P = P;
-    var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(220, window.innerHeight * (st.big ? 0.86 : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
+    var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? 120 : 220, window.innerHeight * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(P.W * k), chh = Math.round(P.H * k);
     var z = Math.max(1, Math.min(8, st.zoom || 1)), s = k * z, zc = st.zc || { x: P.W / 2, y: P.H / 2 };
     var ox = Math.min(0, Math.max(cw - P.W * s, cw / 2 - zc.x * s)), oy = Math.min(0, Math.max(chh - P.H * s, chh / 2 - zc.y * s));
@@ -46606,6 +46606,187 @@ akCss("akgfx-h", [
   ".akg-pop .akg-popb{flex:0 0 auto;background:none;color:#1d1a24;border:0;border-right:1px solid #e3e0e8;border-radius:0!important;min-height:36px;padding:4px 8px;font-size:12px;white-space:nowrap}",
   ".akg-pop .akg-popb:last-child{border-right:0}.akg-pop .akg-popb.danger{color:#c0262d}",
   ".akg-navpick{display:flex;flex-direction:column;gap:4px}"
+].join("\n"));
+
+/* ================================================================ akgfx_i: Graphics studio, part 9 (version 17.2): more room
+   Top bar (wraps AK_VIEWS.gfx): the What-to-make chips are one dropdown button (akGfxKindBtn) in the top bar under a small
+   "Graphics studio" caption; ⌃ folds the whole top bar and the notices away (akGfxCfg().hdMin), ⌄ on the picture brings it back.
+   Divider under the picture (akGfxSplitEl): drag up for more tools (the picture shrinks in proportion), down for a bigger
+   picture; akGfxCfg().split = the picture's share of the screen height (akGfxSplitFrac, used by paint in akgfx_b.js). Double tap
+   or ⋯ › "Picture size back to normal" resets it. Phones and tablets in portrait only (wide screens have the tools beside it).
+   Layer order fix: akGfxZMove takes the order from D.zord, not from the picture it is handed (the popup kept an old copy, so a
+   second tap did nothing) and Forward / Back step past the next part that overlaps it (stepping past a part somewhere else changed nothing you
+   could see). Popup (akGfxPopSync): Copy, Paste, Delete, To front, Forward, Back, To back; ⋯ opens the rest (st.popMore). */
+
+AK_VERSION = "17.2";
+AK_WHATS_NEW = [
+  "Graphics studio: Shows poster, Show flyer, Tip sign and Invoice are one small dropdown in the top bar, and the title is smaller.",
+  "⌃ in the top bar folds it away for more room; ⌄ on the picture brings it back.",
+  "Drag the bar under the picture: up for more tools (the picture shrinks), down for a bigger picture. Double tap it for the normal size.",
+  "Fixed: Forward and Back (popup and Layers) didn't change the order. They now step past the next part that overlaps it.",
+  "The tap-a-part popup is smaller: Copy, Paste, Delete, To front, Forward, Back, To back. ⋯ opens the rest (words, color, duplicate, lock, effects)."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- layer order */
+function akGfxBoxHit(a, b) { if (!(isFinite(a.x) && isFinite(a.y) && isFinite(b.x) && isFinite(b.y))) return true; return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h; }
+akGfxZMove = function (D, P, id, how) {
+  var st = akGfxState(), cur = P && P.layers.some(function (l) { return l.id === id; }) ? P : st.P;
+  if (!cur) return false;
+  /* D.zord is the order you set; a picture drawn before the last move still has the old order */
+  var C = { layers: cur.layers.slice() }; akGfxZApply(D, C);
+  var ids = akGfxMovable(C), i = ids.indexOf(id); if (i < 0) return false;
+  var j;
+  if (how === "top") j = ids.length - 1;
+  else if (how === "bottom") j = 0;
+  else {
+    var by = {}; cur.layers.forEach(function (l) { by[l.id] = l; });
+    var me = akLayerBox(by[id], cur), step = how === "up" ? 1 : -1, k = i + step;
+    /* the next part that overlaps it; hidden parts don't count */
+    while (k >= 0 && k < ids.length) { var o = by[ids[k]]; if (o && !o.hide && akGfxBoxHit(me, akLayerBox(o, cur))) break; k += step; }
+    if (k < 0 || k >= ids.length) { toast(how === "up" ? "It's already in front of everything it touches." : "It's already behind everything it touches."); return false; }
+    j = k;
+  }
+  if (j === i) return false;
+  ids.splice(i, 1); ids.splice(j, 0, id); D.zord = ids;
+  return true;
+};
+
+/* ---------------------------------------------------------------- picture size (the divider) */
+function akGfxSplitFrac(st, wide) {
+  var def = st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42, s = akGfxCfg().split;
+  if (wide || typeof s !== "number") return def;
+  return st.min ? Math.max(s, 0.66) : s;
+}
+function akGfxSplitEl(X) {
+  var cfg = akGfxCfg(), st = akGfxState(), d = null, lastTap = 0;
+  function set(v) { cfg.split = Math.max(0.15, Math.min(0.85, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
+  function reset() { delete cfg.split; save(); X.paint(); toast("Picture size back to normal."); }
+  var el = h("div", { class: "akg-split", role: "separator", tabindex: "0", "aria-orientation": "horizontal", "aria-label": "Picture size: drag up for more tools, down for a bigger picture", title: "Drag up for more tools, down for a bigger picture. Double tap: normal size.",
+    onKeydown: function (e) {
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return; e.preventDefault();
+      set(akGfxSplitFrac(st, false) + (e.key === "ArrowUp" ? -0.05 : 0.05)); save();
+    } }, h("span", { class: "akg-grip" }));
+  el.addEventListener("pointerdown", function (e) {
+    var now = Date.now(); if (now - lastTap < 350) { lastTap = 0; reset(); return; } lastTap = now;
+    d = { y: e.clientY, s: akGfxSplitFrac(st, false) }; el.classList.add("on");
+    try { el.setPointerCapture(e.pointerId); } catch (x) {}
+    e.preventDefault();
+  });
+  el.addEventListener("pointermove", function (e) { if (d) set(d.s + (e.clientY - d.y) / Math.max(300, window.innerHeight)); });
+  function end() { if (!d) return; d = null; el.classList.remove("on"); save(); X.paint(); }
+  el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+  return el;
+}
+
+/* ---------------------------------------------------------------- the top bar */
+var AKG_KIND_SHORT = { week: "Poster", flyer: "Flyer", tip: "Tip sign", invoice: "Invoice" };
+function akGfxKindBtn(kind) {
+  var k0 = AKG_KINDS.filter(function (k) { return k[0] === kind; })[0] || AKG_KINDS[0];
+  return h("button", { class: "akg-kindb", "aria-label": "What to make: " + k0[1].replace(/^\S+\s/, "") + ". Tap to change", onClick: function () {
+    var st = akGfxState();
+    menu(this, AKG_KINDS.map(function (k) { return { label: (k[0] === kind ? "✓ " : "") + k[1], onClick: function () { if (k[0] === kind) return; S.gfxKind = k[0]; st.sel = ""; render(); } }; }));
+  } }, k0[1].split(" ")[0] + " " + (AKG_KIND_SHORT[k0[0]] || k0[1]) + " ▾");
+}
+(function () {
+  var v0 = AK_VIEWS.gfx;
+  AK_VIEWS.gfx = function () {
+    var wrap = v0.apply(this, arguments), cfg = akGfxCfg(), st = akGfxState(), X = st.X;
+    try {
+      var body = wrap.querySelector(".akg"), kinds = body && body.querySelector(".akg-kinds"), top = wrap.querySelector(".topbar"), h1 = top && top.querySelector("h1");
+      if (kinds) kinds.remove();
+      wrap.classList.add("akg-shell"); wrap.classList.toggle("akg-hdmin", !!cfg.hdMin);
+      if (h1) h1.replaceWith(h("div", { class: "akg-ttl" }, h("h1", null, "Graphics studio"), akGfxKindBtn(S.gfxKind)));
+      function fold(v) { cfg.hdMin = v; save(); wrap.classList.toggle("akg-hdmin", v); if (X) X.paint(); }
+      var done = top && top.querySelector(".akg-done");
+      if (done) done.parentNode.appendChild(h("button", { class: "icon akg-hdfold", "aria-label": "Fold the top bar away", title: "Fold the top bar away for more room", onClick: function () { fold(true); } }, "⌃"));
+      var prev = body && body.querySelector(".akg-prev");
+      if (prev && X) {
+        prev.appendChild(h("button", { class: "akg-hdshow", "aria-label": "Show the top bar", title: "Show the top bar", onClick: function () { fold(false); } }, "⌄"));
+        prev.parentNode.insertBefore(akGfxSplitEl(X), prev.nextSibling);
+      }
+    } catch (e) {}
+    return wrap;
+  };
+})();
+
+/* ---------------------------------------------------------------- the popup for a tapped part */
+akGfxPopSync = function (wrap, cv, X, busy) {
+  var st = akGfxState(), P = st.P, D = X.D, pop = wrap._pop;
+  if (!pop) { pop = wrap._pop = h("div", { class: "akg-pop akg-pop2", role: "toolbar", "aria-label": "Quick actions for the tapped part" }); wrap.appendChild(pop); }
+  var L = P && st.sel && P.layers.filter(function (l) { return l.id === st.sel; })[0];
+  if (!L || busy || akGfxCfg().pop === false || L.type === "gbg") { pop.hidden = true; return; }
+  var key = [st.sel, JSON.stringify(D.edit[st.sel] || {}), JSON.stringify(akGfxFreeOf(D, st.sel) || {}), !!L.lock, JSON.stringify(D.zord || null), !!AKGFX.clip, !!st.popMore].join("|");
+  if (pop._key !== key) {
+    pop._key = key; pop.textContent = "";
+    var id = L.id, fixed = !!L.fixed;
+    function E() { return D.edit[id] = D.edit[id] || {}; }
+    function b(ic, lab, fn, o) { o = o || {}; return h("button", { class: "akg-popb" + (o.cls ? " " + o.cls : ""), "aria-label": o.aria || lab, title: o.aria || lab, onClick: fn }, h("i", null, ic), h("span", null, lab)); }
+    function z(how) { return function () { if (akGfxZMove(D, st.P || P, id, how)) X.ch(); }; }
+    var row = h("div", { class: "akg-poprow" });
+    row.appendChild(b("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
+    if (AKGFX.clip) row.appendChild(b("📥", "Paste", function () { akGfxPaste(D, X); }));
+    row.appendChild(b("🗑", "Delete", function () {
+      var f = akGfxFreeOf(D, id), s = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id);
+      if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s), 1); else if (o) akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1);
+      if (f || s || o) { delete D.edit[id]; st.sel = ""; X.ch(true); toast("Deleted. ↶ Undo brings it back."); }
+      else { E().hide = true; st.sel = ""; X.ch(true); toast("Removed from the picture. 👁 in Layers brings it back."); }
+    }, { cls: "danger" }));
+    if (!fixed) {
+      row.appendChild(b("⤒", "To front", z("top"), { aria: "Bring to the very front" }));
+      row.appendChild(b("⬆", "Forward", z("up"), { aria: "Bring forward (in front of the next part it touches)" }));
+      row.appendChild(b("⬇", "Back", z("down"), { aria: "Send back (behind the next part it touches)" }));
+      row.appendChild(b("⤓", "To back", z("bottom"), { aria: "Send to the very back" }));
+    }
+    row.appendChild(b(st.popMore ? "▴" : "⋯", st.popMore ? "Less" : "More", function () { st.popMore = !st.popMore; pop._key = ""; X.paint(); }, { aria: st.popMore ? "Fewer actions" : "More actions" }));
+    pop.appendChild(row);
+    if (st.popMore) {
+      var more = h("div", { class: "akg-poprow akg-popmore" }), tmp = h("div");
+      akGfxEdBar(tmp, X);
+      /* the part bar's own buttons (akGfxEdBar): same jobs */
+      [].slice.call(tmp.querySelectorAll("button")).forEach(function (x) {
+        if (x.closest(".chips") || !/Words|Color|Duplicate|Lock|Unlock|Effects|Reshape|Flip/.test(x.textContent)) return;
+        x.className = (x.className + " akg-popb akg-popt").replace(/\bsm\b/, ""); more.appendChild(x);
+      });
+      if (/^(gfree|gpic|gphoto)$/.test(L.type)) more.appendChild(h("button", { class: "akg-popb akg-popt", onClick: function () { X.cat("pics"); toast("Tap a picture to put it in its place."); } }, "🔁 Replace"));
+      more.appendChild(h("button", { class: "akg-popb akg-popt", "aria-label": "All settings for this part", onClick: function () { X.cat("sel"); } }, "⚙ All settings"));
+      pop.appendChild(more);
+    }
+  }
+  pop.hidden = false;
+  try {
+    var k = cv._k || 1, bx = akLayerBox(L, P), left = cv.offsetLeft + (cv._ox || 0) + bx.x * k, top = cv.offsetTop + (cv._oy || 0) + bx.y * k, bh = bx.h * k;
+    var ph = pop.offsetHeight || 36, pw = pop.offsetWidth || 200, W = wrap.clientWidth, Hh = cv.offsetTop + cv.offsetHeight;
+    var y = top + bh + 12; if (y + ph > Hh) y = Math.max(cv.offsetTop, top - ph - 44);
+    var x = Math.max(0, Math.min(W - pw, left + bx.w * k / 2 - pw / 2));
+    pop.style.left = x + "px"; pop.style.top = Math.max(0, Math.min(y, Hh - ph)) + "px";
+  } catch (e) {}
+};
+
+akCss("akgfx-i", [
+  /* top bar: small caption + the What-to-make dropdown */
+  ".akg-shell>.topbar{padding:4px 10px 3px;gap:6px}",
+  ".akg-ttl{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px}",
+  ".akg-shell .akg-ttl h1{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.7;margin:0;flex:0 0 auto;max-width:100%}",
+  ".akg-kindb{font-size:14px;font-weight:700;padding:2px 8px!important;min-height:30px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akg-shell>.topbar .primary.sm,.akg-shell>.topbar button.icon{min-height:32px}",
+  ".akg-shell>.topbar button.icon{min-width:32px;width:auto;padding:0 6px}",
+  ".akg-shell>.topbar .row{gap:4px!important}",
+  ".akg-shell.akg-hdmin>*:not(.main):not(.tabbar){display:none!important}",
+  ".akg-hdshow{display:none;position:absolute;top:2px;left:2px;z-index:6;min-height:28px!important;min-width:34px;padding:0 6px!important;font-size:16px;line-height:1;background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.3)}",
+  ".akg-hdmin .akg-hdshow{display:block}",
+  /* the divider under the picture */
+  ".akg-split{display:flex;align-items:center;justify-content:center;height:18px;margin:2px 0 0;cursor:ns-resize;touch-action:none;user-select:none;-webkit-user-select:none}",
+  ".akg-grip{display:block;width:56px;height:5px;border-radius:3px;background:rgba(127,127,127,.6)}",
+  ".akg-split:hover .akg-grip,.akg-split.on .akg-grip,.akg-split:focus-visible .akg-grip{background:#C8962E;width:76px}",
+  "@media (min-width:900px){.akg-split{display:none}}",
+  ".akg-big .akg-split{display:none}",
+  /* the popup: small icon buttons, ⋯ for the rest */
+  ".akg-pop.akg-pop2{flex-direction:column;align-items:stretch;overflow:visible}",
+  ".akg-poprow{display:flex;overflow-x:auto;scrollbar-width:none}",
+  ".akg-pop2 .akg-popb{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:38px;min-height:38px!important;padding:2px 4px!important;font-size:9.5px;line-height:1.1}",
+  ".akg-pop2 .akg-popb i{font-style:normal;font-size:15px;line-height:1.1}",
+  ".akg-pop2 .akg-popmore{border-top:1px solid #e3e0e8;flex-wrap:wrap}",
+  ".akg-pop2 .akg-popt{flex-direction:row;font-size:11.5px;min-height:32px!important;padding:2px 7px!important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
