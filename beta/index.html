@@ -24048,8 +24048,8 @@ function akW9ClickStart(bpm) {
 }
 function akW9Tempo(song) {
   var c = akW9(), out = h("output", { class: "akw9-bpm", "aria-live": "polite" });
-  function bpm() { return Number(song && song.tempo) || c.bpm || 90; }
-  function setBpm(v) { v = Math.max(30, Math.min(260, Math.round(v))); if (song) { song.tempo = v; akW9Touch(song); } c.bpm = v; save(); paint(); if (AKW9.clickOn) akW9ClickStart(v); }
+  function bpm() { return typeof aklBpm === "function" ? aklBpm(song) : Number(song && song.tempo) || c.bpm || 90; }
+  function setBpm(v) { v = Math.max(30, Math.min(260, Math.round(v))); if (song) { song.tempo = v; if (song.wheel && typeof song.wheel === "object") song.wheel.bpm = v; akW9Touch(song); } c.bpm = v; save(); paint(); if (typeof aklSetTempo === "function") aklSetTempo(song, v); if (AKW9.clickOn) akW9ClickStart(v); }
   function paint() { out.textContent = "♩ = " + bpm(); }
   paint();
   var tap = h("button", { class: "sm", title: "Tap along four times or more", onClick: function () {
@@ -25625,8 +25625,13 @@ function akSmpLoad(id, cb) {
 /* one take into a loaded sound: a note, a strum (16.6: with its direction down | up | palm; strum takes win over the older single strums) or the chuck */
 function akSmpAdd(L, r, buf) {
   try { buf = akSmpEven(L.ac, buf, r.chuck ? null : r.dir === "palm" ? "palm" : r.dir === "up" ? "up" : r.chord ? "strum" : r.soft ? "soft" : "note"); } catch (e) {}
-  if (r.chuck) L.chuck = buf;
-  else if (r.chord) L.strums.push({ chord: r.chord, sig: r.sig || [], dir: r.dir || "down", kit: !!r.dir, buf: buf });
+  if (r.chuck) { L.chuck = L.chuck || buf; (L.chucks = L.chucks || []).push(buf); }
+  else if (r.chord) {
+    var st = { chord: r.chord, sig: r.sig || [], dir: r.dir || "down", kit: !!r.dir, tail: !!r.tail, buf: buf };
+    L.strums.push(st);
+    /* 16.7: the long ringing stroke at the end of a recorded pattern also lets shorter strokes ring on */
+    if (r.tail) (L.tails = L.tails || []).push(st);
+  }
   else L.notes.push({ k: r.k, m: r.m, det: r.det == null ? r.m : r.det, soft: !!r.soft, buf: buf });
 }
 /* 16.6 even out the volume: every take is brought to the same loudness and gently compressed (louder attacks pulled in, so
@@ -25729,13 +25734,35 @@ function akSmpNote(L, midi, o) {
 /* a recorded strum fits when the chord's notes are the same, or all moved by up to 2 semitones (a capo, a nearby key) */
 function akSmpStrumFor(L, notes, dir) {
   var ms = notes.map(function (x) { return x.m; }).sort(function (a, b) { return a - b; }), want = dir || "down";
-  var list = L.strums.filter(function (x) { return (x.dir || "down") === want; }).sort(function (a, b) { return (b.kit ? 1 : 0) - (a.kit ? 1 : 0); });
+  var list = L.strums.filter(function (x) { return (x.dir || "down") === want; }), hits = [];
   for (var i = 0; i < list.length; i++) {
-    var sg = list[i].sig.slice().sort(function (a, b) { return a - b; }); if (sg.length !== ms.length || !sg.length) continue;
-    var k = ms[0] - sg[0]; if (Math.abs(k) > 2) continue;
-    if (ms.every(function (m, j) { return m - sg[j] === k; })) return { st: list[i], k: k };
+    var k = akSmpSigShift(list[i].sig, ms); if (k != null) hits.push({ st: list[i], k: k });
   }
-  return null;
+  if (!hits.length) return null;
+  /* recorded strums (kit) win; with several takes of the same stroke, never the same one twice in a row */
+  var best = hits.filter(function (x) { return x.st.kit; }); if (!best.length) best = hits;
+  var near = Math.min.apply(null, best.map(function (x) { return Math.abs(x.k); })); best = best.filter(function (x) { return Math.abs(x.k) === near; });
+  var fresh = best.filter(function (x) { return x.st !== AKS.lastStrum; }); if (fresh.length) best = fresh;
+  var pick = best[Math.floor(Math.random() * best.length)]; AKS.lastStrum = pick.st;
+  return pick;
+}
+/* the semitones a recorded chord must move to match these notes (within 2), or null */
+function akSmpSigShift(sig0, ms) {
+  var sg = sig0.slice().sort(function (a, b) { return a - b; }); if (sg.length !== ms.length || !sg.length) return null;
+  var k = ms[0] - sg[0]; if (Math.abs(k) > 2) return null;
+  return ms.every(function (m, j) { return m - sg[j] === k; }) ? k : null;
+}
+/* 16.7: a stroke cut from a pattern is only as long as the gap after it; when it has to ring longer, the long ringing take of the
+   same chord carries on from the same moment (cross-faded), under the same damper, so the next stroke still stops it */
+function akSmpTail(L, st, k, rate, vol, t) {
+  if (!L.tails || st.tail || st.buf.duration > 1.6) return;
+  var tl = null; L.tails.forEach(function (x) { if (!tl && akSmpSigShift(x.sig, st.sig.map(function (m) { return m + k; }).sort(function (a, b) { return a - b; })) === k) tl = x; });
+  if (!tl || tl === st || tl.buf.duration <= st.buf.duration) return;
+  var ac = AKS.ac, fade = 0.04, at = t + st.buf.duration / rate - fade, off = Math.max(0, st.buf.duration - fade), src = ac.createBufferSource(), g = ac.createGain(), d = ac.createGain();
+  src.buffer = tl.buf; src.playbackRate.value = rate; g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + fade);
+  src.connect(g); g.connect(d); d.connect(akSmpBus().inp); src.start(at, off);
+  var v = { src: src, g: g, d: d }; src.onended = function () { try { d.disconnect(); } catch (e) {} if (AKS.voices.strumtail === v) delete AKS.voices.strumtail; };
+  AKS.voices.strumtail = v;
 }
 /* 16.6: the strum takes to use, best first: the chosen strum recording (settings().hear.kit[ins]), then the chord sound's own */
 function akSmpKitCfg() { var c = akHearCfg(); if (!c.kit || typeof c.kit !== "object") c.kit = {}; return c.kit; }
@@ -25751,8 +25778,8 @@ function akSmpDamp(t) { Object.keys(AKS.voices).forEach(function (k) { akSmpVoic
 function akSmpChuck(when, vol) {
   var ks = akSmpKits(), K = null; for (var i = 0; i < ks.length; i++) if (ks[i].chuck) { K = ks[i]; break; }
   if (!K) return false;
-  var ac = akAudio(), t = akSndAt(ac, when); akSmpBus(); akSmpDamp(t);
-  akSmpStart(K.chuck, 1, (vol == null ? 0.5 : vol) * (akHearCfg().vol / 100) * 1.6, t, "chuck", { len: 0.5 });
+  var ac = akAudio(), t = akSndAt(ac, when), all = K.chucks && K.chucks.length ? K.chucks : [K.chuck], b = all[Math.floor(Math.random() * all.length)]; akSmpBus(); akSmpDamp(t);
+  akSmpStart(b, 1, (vol == null ? 0.5 : vol) * (akHearCfg().vol / 100) * 1.6, t, "chuck", { len: 0.5 });
   return true;
 }
 (function () {
@@ -25769,6 +25796,7 @@ function akSmpChuck(when, vol) {
         /* off-beat strokes a little softer, and no two strokes exactly alike */
         var v = (o.vol == null ? 0.75 : o.vol) * (akHearCfg().vol / 100) * 1.25 * (0.94 + Math.random() * 0.12) * (want === "up" ? 1.25 : 1);
         akSmpStart(f.st.buf, Math.pow(2, f.k / 12), v, t, "strum", { len: o.len || (want === "palm" ? 0.6 : 0) });
+        if (want !== "palm") akSmpTail(ks[i], f.st, f.k, Math.pow(2, f.k / 12), v, t);
         return;
       }
     }
@@ -30828,7 +30856,7 @@ akProgWheel = function (o) {
   function transport(k) {
     var keySel = h("select", { "aria-label": "Key", onChange: function () { st.key = this.value; changed(true); } });
     ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"].forEach(function (r) { [r, r + "m"].forEach(function (v) { keySel.appendChild(h("option", { value: v, selected: st.key === v }, v.replace(/m$/, " minor").replace(/^([^ ]+)$/, "$1 major"))); }); });
-    var bpm = h("input", { type: "number", min: "30", max: "300", value: String(st.bpm), "aria-label": "Tempo, beats a minute", class: "akws-bpm", onChange: function () { st.bpm = Math.max(30, Math.min(300, Number(this.value) || 80)); save(); akWsReplay(st); } });
+    var bpm = h("input", { type: "number", min: "30", max: "300", value: String(st.bpm), "aria-label": "Tempo, beats a minute", class: "akws-bpm", onChange: function () { st.bpm = Math.max(30, Math.min(300, Number(this.value) || 80)); save(); try { var sg = akW9Song(); if (sg && sg.wheel === st) aklSetTempo(sg, st.bpm); } catch (e) {} akWsReplay(st); } });
     var L = ws.loop, n = sec().bars.length;
     var loopSel = h("select", { "aria-label": "What to play", onChange: function () { L.what = this.value; save(); draw(); akWsReplay(st); } },
       h("option", { value: "sec", selected: L.what === "sec" }, "This section"), h("option", { value: "all", selected: L.what === "all" }, "Whole song"), h("option", { value: "bars", selected: L.what === "bars" }, "Some bars"));
@@ -42830,7 +42858,24 @@ function aklCfg() {
 }
 function aklKey(song) { return song ? song.id : "general"; }
 function aklArr(song) { if (song) { if (!song.aloop || !Array.isArray(song.aloop.order)) song.aloop = { order: [] }; return song.aloop; } var c = aklCfg(); if (!c.gen || !Array.isArray(c.gen.order)) c.gen = { order: [] }; return c.gen; }
-function aklBpm(song) { return Number(song && song.tempo) || (typeof akW9 === "function" ? akW9().bpm : 0) || 90; }
+/* 16.7: one tempo for the song: the lyric pad, the chord workshop and the looper all read and set song.tempo (the workshop keeps a copy in song.wheel.bpm) */
+function aklBpm(song) { return Number(song && song.tempo) || Number(song && song.wheel && song.wheel.bpm) || (typeof akW9 === "function" ? akW9().bpm : 0) || 80; }
+function aklSetTempo(song, v) {
+  v = Math.max(30, Math.min(300, Math.round(Number(v) || 80)));
+  if (song) { song.tempo = v; if (song.wheel && typeof song.wheel === "object") song.wheel.bpm = v; if (typeof akW9Touch === "function") akW9Touch(song); }
+  if (typeof akW9 === "function") akW9().bpm = v; save();
+  /* the other tempo boxes on the screen show it at once */
+  Array.prototype.forEach.call(document.querySelectorAll(".akws-bpm"), function (el) { if (document.activeElement !== el) el.value = String(v); });
+  Array.prototype.forEach.call(document.querySelectorAll(".akw9-bpm"), function (el) { el.textContent = "♩ = " + v; });
+  Array.prototype.forEach.call(document.querySelectorAll(".akl-bpm"), function (el) { if (document.activeElement !== el) el.value = String(v); });
+  return v;
+}
+/* make the song's tempos agree when the Write tab opens (the workshop started at 80 while the song said 90) */
+function aklTempoSync(song) {
+  if (!song) return; var w = song.wheel && typeof song.wheel === "object" ? song.wheel : null, t = Number(song.tempo);
+  if (t && w && Number(w.bpm) !== t) w.bpm = t;
+  else if (!t && w && Number(w.bpm)) song.tempo = Number(w.bpm);
+}
 function aklBeats(song) { return song ? akSongBeats(song) : 4; }
 function aklLen(c) { return c.nb * 60 / c.bpm; }
 function aklLenName(c) { return c.nb % c.beats === 0 ? (c.nb / c.beats) + (c.nb === c.beats ? " bar" : " bars") : c.nb + " beats"; }
@@ -42862,9 +42907,13 @@ function aklFrame() {
   cancelAnimationFrame(AKLP.raf);
   var host = AKLP.host; if (!host) return;
   var ac = akAudio(), now = ac.currentTime - aklOutLat(), at = aklBeatAt(now), lights = host.querySelector(".akl-beats"), big = host.querySelector(".akl-big"), c = aklCfg();
+  /* only touch the page when something shows differently (a busy page is what makes a tablet's sound stutter) */
+  var key = at ? [at.k, c.flash !== false && at.frac < 0.25, !!AKLP.rec, AKLP.on].join() : "-";
+  if (key === AKLP.lastKey) { if (AKLP.on || AKLP.rec) AKLP.raf = requestAnimationFrame(aklFrame); return; }
+  AKLP.lastKey = key;
   if (lights) {
     var dots = lights.children;
-    for (var i = 0; i < dots.length; i++) dots[i].classList.toggle("on", !!at && c.flash !== false && at.frac < 0.35 && i === at.beat);
+    for (var i = 0; i < dots.length; i++) dots[i].classList.toggle("on", !!at && c.flash !== false && at.frac < 0.25 && i === at.beat);
   }
   if (big) {
     var b = AKLP.beat;
@@ -42883,32 +42932,55 @@ function aklFrame() {
 function aklOutLat() { var ac = akAudio(); return (ac && (ac.outputLatency || ac.baseLatency)) || 0; }
 
 /* ---------------------------------------------------------------- the microphone, on the app's sound clock */
+/* 16.7: the mic is read on the sound thread (AudioWorklet) in 4096-sample blocks stamped with the sound clock, instead of a
+   ScriptProcessor on the page's thread (that one made everything crackle on the tablet when the page was busy). The mic closes
+   after each recording. ScriptProcessor stays only as a fallback for browsers without AudioWorklet. */
+var AKL_WORKLET = "class P extends AudioWorkletProcessor{constructor(){super();this.on=false;this.b=new Float32Array(4096);this.n=0;this.t=0;this.pk=0;this.c=0;this.port.onmessage=e=>{this.on=!!e.data;this.n=0;};}" +
+  "process(i){var x=i[0]&&i[0][0];if(!x)return true;for(var k=0;k<x.length;k++){var a=x[k]<0?-x[k]:x[k];if(a>this.pk)this.pk=a;}" +
+  "if(this.on){if(this.n===0)this.t=currentTime;this.b.set(x,this.n);this.n+=x.length;if(this.n>=4096){this.port.postMessage({t:this.t,d:this.b,pk:this.pk});this.b=new Float32Array(4096);this.n=0;this.pk=0;}}" +
+  "else if(++this.c>=24){this.c=0;this.port.postMessage({pk:this.pk});this.pk=0;}return true;}}registerProcessor('akl-cap',P);";
+function aklWorklet(ac) {
+  if (!ac.audioWorklet || typeof AudioWorkletNode === "undefined") return Promise.reject(new Error("no worklet"));
+  if (!ac._aklW) ac._aklW = ac.audioWorklet.addModule(URL.createObjectURL(new Blob([AKL_WORKLET], { type: "application/javascript" })));
+  return ac._aklW;
+}
 function aklMic() {
   if (AKLP.M) return Promise.resolve(AKLP.M);
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(new Error("This browser can't use the microphone."));
   var ac = akAudio(), c = { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, dev = aklCfg().dev; if (dev) c.deviceId = { exact: dev };
   return navigator.mediaDevices.getUserMedia({ audio: c }).then(function (stream) {
-    var B = 2048, src = ac.createMediaStreamSource(stream), proc = ac.createScriptProcessor(B, 1, 1), mute = ac.createGain();
-    mute.gain.value = 0; src.connect(proc); proc.connect(mute); mute.connect(ac.destination);
-    var M = { stream: stream, sr: ac.sampleRate, on: false, stamp: null, blocks: [], level: 0, B: B };
-    proc.onaudioprocess = function (e) {
-      var x = e.inputBuffer.getChannelData(0), pk = 0; for (var i = 0; i < x.length; i += 4) { var a = Math.abs(x[i]); if (a > pk) pk = a; }
-      M.level = Math.max(pk, M.level * 0.8);
-      if (!M.on) return;
-      /* a block heard now went in about two blocks before it would come out */
-      if (M.stamp == null) M.stamp = (e.playbackTime || ac.currentTime) - 2 * B / M.sr;
-      M.blocks.push(new Float32Array(x));
-    };
-    M.start = function () { M.blocks = []; M.stamp = null; M.on = true; };
-    M.close = function () { M.on = false; try { proc.onaudioprocess = null; src.disconnect(); proc.disconnect(); stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} if (AKLP.M === M) AKLP.M = null; };
-    AKLP.M = M; return M;
+    var src = ac.createMediaStreamSource(stream), mute = ac.createGain(), M = { stream: stream, sr: ac.sampleRate, on: false, blocks: [], level: 0, B: 4096 };
+    mute.gain.value = 0; mute.connect(ac.destination);
+    function take(t, d, pk) { M.level = Math.max(pk || 0, M.level * 0.6); if (M.on && d) M.blocks.push({ t: t, d: d }); }
+    return aklWorklet(ac).then(function () {
+      var node = new AudioWorkletNode(ac, "akl-cap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      node.port.onmessage = function (e) { take(e.data.t, e.data.d, e.data.pk); };
+      src.connect(node); node.connect(mute);
+      M.start = function () { M.blocks = []; M.on = true; node.port.postMessage(true); };
+      M.pause = function () { M.on = false; node.port.postMessage(false); };
+      M.close = function () { M.pause(); try { node.port.onmessage = null; src.disconnect(); node.disconnect(); mute.disconnect(); stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} if (AKLP.M === M) AKLP.M = null; };
+      AKLP.M = M; return M;
+    }, function () {
+      var B = 4096, proc = ac.createScriptProcessor(B, 1, 1), at = null; src.connect(proc); proc.connect(mute);
+      proc.onaudioprocess = function (e) {
+        var x = e.inputBuffer.getChannelData(0), pk = 0; for (var i = 0; i < x.length; i += 4) { var a = Math.abs(x[i]); if (a > pk) pk = a; }
+        if (M.on && at == null) at = (e.playbackTime || ac.currentTime) - 2 * B / M.sr;
+        take(at, M.on ? new Float32Array(x) : null, pk); if (M.on) at += B / M.sr;
+      };
+      M.start = function () { M.blocks = []; at = null; M.on = true; };
+      M.pause = function () { M.on = false; };
+      M.close = function () { M.on = false; try { proc.onaudioprocess = null; src.disconnect(); proc.disconnect(); mute.disconnect(); stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} if (AKLP.M === M) AKLP.M = null; };
+      AKLP.M = M; return M;
+    });
   });
 }
-/* the recorded sound from time T (sound clock) for len seconds */
+/* the recorded sound from time T (sound clock) for len seconds; blocks keep their own times, so a late one lands in its place */
 function aklCut(M, T, len, lat) {
-  var n = M.blocks.length * M.B, all = new Float32Array(n); M.blocks.forEach(function (b, j) { all.set(b, j * M.B); });
-  var st = Math.round((T + lat - M.stamp) * M.sr), m = Math.round(len * M.sr), out = new Float32Array(m);
-  for (var i = 0; i < m; i++) { var j = st + i; if (j >= 0 && j < n) out[i] = all[j]; }
+  var m = Math.round(len * M.sr), out = new Float32Array(m), t0 = T + lat;
+  M.blocks.forEach(function (b) {
+    var off = Math.round((b.t - t0) * M.sr);
+    for (var i = 0; i < b.d.length; i++) { var j = off + i; if (j >= 0 && j < m) out[j] = b.d[i]; }
+  });
   return out;
 }
 function aklTo16(f) { var o = new Int16Array(f.length); for (var i = 0; i < f.length; i++) { var v = Math.max(-1, Math.min(1, f[i])); o[i] = v < 0 ? v * 32768 : v * 32767; } return o; }
@@ -42930,21 +43002,25 @@ function aklRecord(o) {
     AKLP.beat = { t0: t0, spb: spb, n: n, count: cnt };
     AKLP.clicks = [];
     for (var k = 0; k < cnt; k++) aklClick(t0 - (cnt - k) * spb, k === 0);
-    if (c.click) aklClicksTo(t0, spb, n, nb ? nb : 256);
+    AKLP.rec.click = c.click ? 0 : -1; /* the next beat to click (scheduled a moment ahead by aklWatch) */
     if (over) aklPlayClip(over, t0, 1);
     M.start();
     aklSay(nb ? "Count-in, then play " + aklLenName({ nb: nb, beats: n }) + "." : "Count-in, then play. Tap ■ (or the pedal) to end the loop.");
     aklPaintBtns(); aklFrame(); aklWatch();
   }, function (e) { aklSay((e && e.name === "NotAllowedError") ? "The microphone wasn't allowed. Allow it in the browser's site settings, then try again." : (e && e.message) || "The microphone didn't open."); });
 }
-function aklClicksTo(t0, spb, n, nb) { for (var k = 0; k < nb; k++) aklClick(t0 + k * spb, k % n === 0); }
+function aklClicksAhead(R) {
+  if (R.click < 0) return; var now = akAudio().currentTime, last = R.nb ? R.nb : 1e9;
+  while (R.click < last && R.t0 + R.click * R.spb < now + 0.5) { aklClick(R.t0 + R.click * R.spb, R.click % R.n === 0); R.click++; }
+}
 function aklKillClicks(after) { AKLP.clicks.forEach(function (o) { try { o.stop(after); } catch (e) {} }); AKLP.clicks = []; }
 /* checks the clock while recording: the end, the tail, then saves */
 function aklWatch() {
   clearTimeout(AKLP.wtimer);
   var R = AKLP.rec; if (!R) return;
   var now = akAudio().currentTime;
-  if (R.end && now > R.end + AKL_TAIL + aklLat() + 0.1) { aklFinish(); return; }
+  aklClicksAhead(R);
+  if (R.end && now > R.end + AKL_TAIL + aklLat() + 0.3) { aklFinish(); return; }
   AKLP.wtimer = setTimeout(aklWatch, 60);
 }
 /* end a free recording here (rounded to the nearest beat, or bar when close to one) */
@@ -42952,14 +43028,14 @@ function aklEndHere() {
   var R = AKLP.rec; if (!R || R.end) return;
   var now = akAudio().currentTime - aklOutLat(), beats = Math.max(1, Math.round((now - R.t0) / R.spb)), bars = Math.round(beats / R.n);
   if (bars >= 1 && Math.abs(beats - bars * R.n) <= 1) beats = bars * R.n;
-  R.nb = beats; R.end = R.t0 + beats * R.spb; aklKillClicks(R.end);
+  R.nb = beats; R.end = R.t0 + beats * R.spb; aklKillClicks(R.end); if (R.click > beats) R.click = beats;
   aklSay("Ending at " + aklLenName({ nb: beats, beats: R.n }) + "…");
   aklWatch();
 }
 function aklFinish() {
   var R = AKLP.rec; if (!R) return; AKLP.rec = null; clearTimeout(AKLP.wtimer);
-  var M = R.M; M.on = false; aklKillClicks(0); aklStopSrcs();
-  var len = R.nb * R.spb, f = aklCut(M, R.t0, len + AKL_TAIL, aklLat()), pk = 0, i;
+  var M = R.M; M.pause(); aklKillClicks(0); aklStopSrcs();
+  var len = R.nb * R.spb, f = aklCut(M, R.t0, len + AKL_TAIL, aklLat()), pk = 0, i; M.close();
   for (i = 0; i < f.length; i++) pk = Math.max(pk, Math.abs(f[i]));
   var fo = Math.round(AKL_TAIL * M.sr); for (i = 0; i < fo; i++) f[f.length - 1 - i] *= i / fo;
   var fi = Math.min(f.length, Math.round(0.004 * M.sr)); for (i = 0; i < fi; i++) f[i] *= i / fi;
@@ -42974,7 +43050,7 @@ function aklFinish() {
   var clip = { id: uid(), song: aklKey(o.song), name: o.name || "Section", col: AKL_COLS[Math.floor(Math.random() * AKL_COLS.length)], bpm: R.bpm, beats: R.n, nb: R.nb, sr: M.sr, at: Date.now(), layers: [layer] };
   aklPut(clip, function (ok) { if (!ok) { toast("Couldn't save the recording on this device."); return; } aklArr(o.song).order.push({ c: clip.id, x: 1 }); save(); done(clip); });
 }
-function aklCancelRec() { var R = AKLP.rec; if (!R) return; AKLP.rec = null; R.M.on = false; clearTimeout(AKLP.wtimer); aklKillClicks(0); aklStopSrcs(); AKLP.beat = null; aklSay("Recording cancelled."); aklPaintBtns(); }
+function aklCancelRec() { var R = AKLP.rec; if (!R) return; AKLP.rec = null; R.M.close(); clearTimeout(AKLP.wtimer); aklKillClicks(0); aklStopSrcs(); AKLP.beat = null; aklSay("Recording cancelled."); aklPaintBtns(); }
 
 /* ---------------------------------------------------------------- playing */
 function aklPlayClip(c, at, rate) {
@@ -43085,15 +43161,31 @@ function aklRecordVocal(o) {
 }
 function aklVocalStop() {
   var R = AKLP.rec; if (!R || !R.vocal) return; AKLP.rec = null;
-  var ac = akAudio(), M = R.M, len = Math.max(0.5, ac.currentTime - aklOutLat() - R.t0); M.on = false; aklStop(true); AKLP.beat = null;
-  var raw = aklCut(M, R.t0, len, aklLat()), fi = Math.round(0.05 * M.sr), i;
-  for (i = 0; i < fi && i < raw.length; i++) { raw[i] *= i / fi; raw[raw.length - 1 - i] *= i / fi; }
-  var o = R.o, v = { id: uid(), kind: "vocal", song: aklKey(o.song), name: "Vocal " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), sr: M.sr, at: Date.now(), len: len, bg: { only: o.only ? o.only.id : null }, raw: aklTo16(raw), vol: 1, hp: !!o.hp, useClean: true };
-  var save1 = function () { aklPut(v, function (ok) { if (!ok) { toast("Couldn't save the vocal on this device."); return; } aklSay("Saved “" + v.name + "”" + (v.clean ? " (guitar taken out; compare with ⋯ › Use the take as recorded)" : "") + "."); o.done && o.done(v); }); };
-  if (o.hp) { save1(); return; }
-  aklSay("Taking the guitar out of the vocal… (a few seconds)");
-  var ref = aklRender(R.log, R.t0, raw.length, M.sr), bar = R.n * R.spb;
-  aklUnmix(raw, ref, M.sr, bar, function (clean) { v.clean = aklTo16(clean); save1(); }, function (p) { aklSay("Taking the guitar out of the vocal… " + Math.round(p * 100) + "%"); });
+  var ac = akAudio(), M = R.M, len = Math.max(0.5, ac.currentTime - aklOutLat() - R.t0); aklStop(true); AKLP.beat = null;
+  aklSay("Keeping the vocal…");
+  /* the last block of sound is still on its way from the sound thread */
+  setTimeout(function () {
+    M.pause();
+    var raw = aklCut(M, R.t0, len, aklLat()), fi = Math.round(0.05 * M.sr), i; M.close();
+    for (i = 0; i < fi && i < raw.length; i++) { raw[i] *= i / fi; raw[raw.length - 1 - i] *= i / fi; }
+    var o = R.o, v = { id: uid(), kind: "vocal", song: aklKey(o.song), name: "Vocal " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), sr: M.sr, at: Date.now(), len: len, bg: { only: o.only ? o.only.id : null }, raw: aklTo16(raw), vol: 1, hp: !!o.hp, useClean: true,
+      log: R.log.map(function (e) { return { c: e.c.id, at: e.at - R.t0 }; }), learn: R.n * R.spb, amt: 1 };
+    var save1 = function () { aklPut(v, function (ok) { if (!ok) { toast("Couldn't save the vocal on this device."); return; } aklSay("Saved “" + v.name + "”" + (v.clean ? ". The guitar was taken out; ⋯ on the vocal has stronger, gentler, or the take as recorded." : ".")); o.done && o.done(v); }); };
+    if (o.hp) { save1(); return; }
+    aklVocalClean(v, o.clips, function () { save1(); });
+  }, 300);
+}
+/* (re)make the cleaned vocal from the raw take: v.amt 1 normal, 2 stronger, 0.5 gentler */
+function aklVocalClean(v, clips, done) {
+  var by = {}; (clips || []).forEach(function (c) { by[c.id] = c; });
+  var log = (v.log || []).map(function (e) { return { at: e.at, c: by[e.c] }; }).filter(function (e) { return e.c; });
+  if (!log.length) { toast("The sections this vocal was sung over are gone, so the guitar can't be taken out."); done && done(); return; }
+  var raw = new Float32Array(v.raw.length); for (var i = 0; i < raw.length; i++) raw[i] = v.raw[i] / 32768;
+  var ref = aklRender(log, 0, raw.length, v.sr);
+  aklSay("Taking the guitar out of the vocal…");
+  setTimeout(function () {
+    aklUnmix(raw, ref, v.sr, { amt: v.amt || 1, learn: v.learn || 2 }, function (clean, info) { v.clean = aklTo16(clean); v.lag = info.lag; delete AKLP.bufs[v.id + "|c"]; done && done(); }, function (p) { aklSay("Taking the guitar out of the vocal… " + Math.round(p * 100) + "%"); });
+  }, 30);
 }
 /* what the speaker played during a vocal take, on the same timeline as the recording */
 function aklRender(log, t0, n, sr) {
@@ -43104,30 +43196,80 @@ function aklRender(log, t0, n, sr) {
   });
   return out;
 }
-/* takes the loop's sound out of a vocal sung with the loop out loud: an adaptive filter (NLMS) learns how the speaker sounds at the mic,
-   fast during the first bar (you stay quiet) and slowly after (so the voice isn't eaten), and subtracts it. It removes most of the
-   direct guitar, not all of the room's echo; headphones give a clean take. Runs in pieces so the screen keeps moving. */
-function aklUnmix(mic, ref, sr, learn, done, prog) {
-  var L = 384, D = 48, n = mic.length, w = new Float64Array(L), out = new Float32Array(n), p = 1e-6, lrn = Math.round(learn * sr);
-  function x(i) { var j = i + D; return j >= 0 && j < n ? ref[j] : 0; }
-  /* two quick passes over the quiet first bar to settle the filter */
-  function pw(i) { var q = 0; for (var k = 0; k < L; k++) { var v = x(i - k); q += v * v; } return q; }
-  function run(a, b, mu, write) {
-    p = pw(a);
-    for (var i = a; i < b; i++) {
-      var y = 0, k; for (k = 0; k < L; k++) y += w[k] * x(i - k);
-      var e = mic[i] - y; if (write) out[i] = e;
-      var g = mu * e / (p + 1e-4 * L);
-      for (k = 0; k < L; k++) w[k] += g * x(i - k);
-      var xn = x(i + 1), xo = x(i + 1 - L); p = Math.max(0, p + xn * xn - xo * xo);
+/* ---- 16.7 taking the loop's sound out of a vocal sung with the loop out loud. The loop is known exactly, so:
+   1. line it up: find how late the speaker's sound reached the mic (cross-correlation, up to half a second either way);
+   2. learn how the room and speaker colour it: for every frequency, how much of the loop reaches the mic (averaged over the whole
+      take; your voice doesn't follow the loop, so it averages out), then subtract that;
+   3. whatever is left of the loop where you're not singing is turned down (strength v.amt).
+   It works in pieces of 4096 samples (about a tenth of a second) so the room's echo fits inside one piece. */
+function aklFft(re, im, inv) {
+  var n = re.length, i, j, k, l;
+  for (i = 1, j = 0; i < n; i++) { var bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { var t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (l = 2; l <= n; l <<= 1) {
+    var a = (inv ? 2 : -2) * Math.PI / l, wr = Math.cos(a), wi = Math.sin(a);
+    for (i = 0; i < n; i += l) {
+      var cr = 1, ci = 0;
+      for (k = 0; k < l / 2; k++) {
+        var p = i + k, q = p + l / 2, xr = re[q] * cr - im[q] * ci, xi = re[q] * ci + im[q] * cr;
+        re[q] = re[p] - xr; im[q] = im[p] - xi; re[p] += xr; im[p] += xi;
+        var nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
     }
   }
-  run(0, Math.min(n, lrn), 0.5, false); run(0, Math.min(n, lrn), 0.3, false);
-  var i = 0, step = 8192;
+  if (inv) for (i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
+/* how many samples later the loop shows up in the mic (-0.25 s .. +0.5 s), from the first 12 seconds, at a quarter of the rate */
+function aklLag(mic, ref, sr) {
+  var D = 4, len = Math.min(mic.length, ref.length, Math.round(sr * 12)), m = Math.floor(len / D), N = 1;
+  while (N < m * 2) N <<= 1;
+  var ar = new Float64Array(N), ai = new Float64Array(N), br = new Float64Array(N), bi = new Float64Array(N), i, k;
+  for (i = 0; i < m; i++) { var s1 = 0, s2 = 0; for (k = 0; k < D; k++) { s1 += mic[i * D + k]; s2 += ref[i * D + k]; } ar[i] = s1; br[i] = s2; }
+  aklFft(ar, ai); aklFft(br, bi);
+  /* only the timing matters, not how loud each note is (PHAT): a held note can't fake a match */
+  for (i = 0; i < N; i++) { var r = ar[i] * br[i] + ai[i] * bi[i], im = ai[i] * br[i] - ar[i] * bi[i], mg = Math.sqrt(r * r + im * im) + 1e-12; ar[i] = r / mg; ai[i] = im / mg; }
+  aklFft(ar, ai, true);
+  var best = -1e30, lag = 0, lo = -Math.round(0.25 * sr / D), hi = Math.round(0.5 * sr / D);
+  for (k = lo; k <= hi; k++) { var v = ar[(k + N) % N]; if (v > best) { best = v; lag = k; } }
+  /* the speaker's direct sound arrives first; echoes (and a loop that repeats) can make a later peak a little higher */
+  for (k = lo + 1; k < lag; k++) { var c = ar[(k + N) % N]; if (c >= best * 0.5 && c >= ar[(k - 1 + N) % N] && c >= ar[(k + 1) % N]) { lag = k; break; } }
+  return lag * D;
+}
+function aklUnmix(mic, ref, sr, o, done, prog) {
+  o = o || {}; var amt = o.amt == null ? 1 : o.amt, n = mic.length, lag = aklLag(mic, ref, sr) - 64;
+  var x = new Float32Array(n); for (var i = 0; i < n; i++) { var j = i - lag; x[i] = j >= 0 && j < n ? ref[j] : 0; }
+  var N = 4096, H = 1024, B = N / 2 + 1, win = new Float64Array(N);
+  for (i = 0; i < N; i++) win[i] = Math.sqrt(0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
+  var frames = Math.ceil((n + N) / H), sxyR = new Float64Array(B), sxyI = new Float64Array(B), sxx = new Float64Array(B);
+  var mr = new Float64Array(N), mi = new Float64Array(N), rr = new Float64Array(N), ri = new Float64Array(N);
+  function load(f) {
+    var st = f * H - N;
+    for (var k = 0; k < N; k++) { var p = st + k, w = win[k]; mr[k] = p >= 0 && p < n ? mic[p] * w : 0; rr[k] = p >= 0 && p < n ? x[p] * w : 0; mi[k] = 0; ri[k] = 0; }
+    aklFft(mr, mi); aklFft(rr, ri);
+  }
+  var out = new Float32Array(n), G = new Float64Array(B), f = 0, pass = 1, hr = new Float64Array(B), hi2 = new Float64Array(B);
   (function chunk() {
-    var b = Math.min(n, i + step); run(i, b, i < lrn ? 0.3 : 0.02, true); i = b;
-    if (prog) prog(i / n);
-    if (i < n) setTimeout(chunk, 0); else done(out);
+    var stop = Math.min(frames, f + 24);
+    for (; f < stop; f++) {
+      load(f);
+      if (pass === 1) { for (var k = 0; k < B; k++) { sxyR[k] += mr[k] * rr[k] + mi[k] * ri[k]; sxyI[k] += mi[k] * rr[k] - mr[k] * ri[k]; sxx[k] += rr[k] * rr[k] + ri[k] * ri[k]; } continue; }
+      for (var b = 0; b < B; b++) {
+        var yr = hr[b] * rr[b] - hi2[b] * ri[b], yi = hr[b] * ri[b] + hi2[b] * rr[b];
+        var er = mr[b] - yr, ei = mi[b] - yi, pe = er * er + ei * ei, py = yr * yr + yi * yi;
+        /* what is left of the loop is roughly a quarter of what came in: turn bins down where it would be heard */
+        var g = Math.max(0.06, 1 - amt * 0.35 * py / (pe + 1e-12)); g = 0.5 * G[b] + 0.5 * g; G[b] = g;
+        mr[b] = er * g; mi[b] = ei * g;
+        if (b > 0 && b < N / 2) { mr[N - b] = mr[b]; mi[N - b] = -mi[b]; }
+      }
+      aklFft(mr, mi, true);
+      var st = f * H - N;
+      for (var k2 = 0; k2 < N; k2++) { var p = st + k2; if (p >= 0 && p < n) out[p] += mr[k2] * win[k2] * 0.5; }
+    }
+    if (f >= frames && pass === 1) {
+      pass = 2; f = 0;
+      for (var k3 = 0; k3 < B; k3++) { var d = sxx[k3] + 1e-9; hr[k3] = sxyR[k3] / d; hi2[k3] = sxyI[k3] / d; }
+    }
+    if (prog) prog((pass - 1) * 0.5 + f / frames * 0.5);
+    if (pass === 2 && f >= frames) done(out, { lag: lag + 64 }); else setTimeout(chunk, 0);
   })();
 }
 
@@ -43141,8 +43283,8 @@ function aklLineUp(done) {
     for (var k = 0; k < n; k++) { var o = ac.createOscillator(), g = ac.createGain(), t = t0 + k * gap; o.frequency.value = 1400; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.9, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.05); }
     M.start();
     setTimeout(function () {
-      M.on = false;
-      var all = aklCut(M, t0 - 0.1, n * gap + 0.4, 0), sr = M.sr, found = [];
+      M.pause();
+      var all = aklCut(M, t0 - 0.1, n * gap + 0.4, 0), sr = M.sr, found = []; M.close();
       for (var k = 0; k < n; k++) {
         var a = Math.round((0.1 + k * gap) * sr), b = Math.min(all.length, a + Math.round(0.4 * sr)), pk = 0, i;
         for (i = a; i < b; i++) pk = Math.max(pk, Math.abs(all[i]));
@@ -43225,7 +43367,14 @@ function aklCard(song) {
     box.appendChild(h("p", { class: "hint" }, "Record sections of your guitar in time with the beat, then put them in any order and loop them. Recordings stay on this device (not in backups). Pedal: left records, closes the loop and stops; right ends the loop right there."));
     /* the beat */
     var lights = h("div", { class: "akl-beats", "aria-hidden": "true" }); for (var i = 0; i < n; i++) lights.appendChild(h("i", { class: i === 0 ? "one" : "" }));
-    box.appendChild(h("div", { class: "akl-beatrow" }, lights, h("div", { class: "akl-big", "aria-live": "off" }), h("span", { class: "muted akl-tempo" }, "♩ = " + bpm + " · " + n + " beats a bar")));
+    var bIn = h("input", { type: "number", class: "akl-bpm", min: "30", max: "300", value: String(bpm), "aria-label": "Tempo, beats a minute", onChange: function () { aklSetTempo(song, this.value); draw(); } });
+    var taps = [];
+    var tempo = h("span", { class: "row akl-tempo" }, "♩",
+      h("button", { class: "sm", "aria-label": "Slower", onClick: function () { aklSetTempo(song, aklBpm(song) - 1); bIn.value = String(aklBpm(song)); } }, "−"), bIn,
+      h("button", { class: "sm", "aria-label": "Faster", onClick: function () { aklSetTempo(song, aklBpm(song) + 1); bIn.value = String(aklBpm(song)); } }, "+"),
+      h("button", { class: "sm", title: "Tap along four times or more", onClick: function () { var t = Date.now(); if (taps.length && t - taps[taps.length - 1] > 2000) taps = []; taps.push(t); if (taps.length > 8) taps.shift(); if (taps.length >= 2) { aklSetTempo(song, 60000 / ((taps[taps.length - 1] - taps[0]) / (taps.length - 1))); bIn.value = String(aklBpm(song)); } } }, "Tap"),
+      h("span", { class: "muted" }, " · " + n + " beats a bar · same tempo as the chord workshop"));
+    box.appendChild(h("div", { class: "akl-beatrow" }, lights, h("div", { class: "akl-big", "aria-live": "off" }), tempo));
     /* recording */
     var nameSel = h("select", { "aria-label": "Section name", onChange: function () { if (this.value === "*") { var me = this; askText("Name this section", "", "OK", function (v) { c.name = v; save(); draw(); }); me.value = c.name; return; } c.name = this.value; save(); } },
       AKL_NAMES.concat(AKL_NAMES.indexOf(c.name) < 0 ? [c.name] : []).map(function (x) { return h("option", { value: x, selected: x === c.name }, x); }).concat([h("option", { value: "*" }, "Other name…")]));
@@ -43243,11 +43392,13 @@ function aklCard(song) {
       var shelf = h("div", { class: "akl-clips" });
       clips.forEach(function (cl) {
         shelf.appendChild(h("div", { class: "akl-clip", "data-id": cl.id, style: "--akl-c:" + cl.col },
-          h("b", null, cl.name), h("small", { class: "muted" }, aklLenName(cl) + (cl.layers.length > 1 ? " · " + cl.layers.length + " layers" : "")),
+          h("b", null, cl.name), h("small", { class: "muted" }, aklLenName(cl) + (cl.layers.length > 1 ? " · " + cl.layers.length + " layers" : "") + (Math.round(cl.bpm) !== aklBpm(song) ? " · ♩" + Math.round(cl.bpm) : "")),
+          Math.round(cl.bpm) !== aklBpm(song) ? h("button", { class: "sm linkish", onClick: function () { aklStretchClip(cl, aklBpm(song), function () { load(draw); }); } }, "Fit to ♩" + aklBpm(song)) : null,
           h("div", { class: "row" },
             h("button", { class: "sm akl-cplay", "data-id": cl.id, "aria-label": "Loop " + cl.name, onClick: function () { if (AKLP.on && AKLP.q && AKLP.q.only === cl) aklStop(); else aklPlay(song, clips, { only: cl }); } }, "▶"),
             h("button", { class: "sm", "aria-label": "Add " + cl.name + " to the order", onClick: function () { aklArr(song).order.push({ c: cl.id, x: 1 }); changed(); } }, "+ Order"),
-            h("button", { class: "sm", "aria-label": cl.name + " options", onClick: function () { clipMenu(this, cl); } }, "⋯"))));
+            h("button", { class: "sm", "aria-label": cl.name + " options", onClick: function () { clipMenu(this, cl); } }, "⋯"),
+            h("button", { class: "sm akl-del", "aria-label": "Delete " + cl.name, title: "Delete", onClick: function () { delClip(cl); } }, "🗑"))));
       });
       box.appendChild(h("h4", { class: "akl-h" }, "Sections"));
       box.appendChild(shelf);
@@ -43258,7 +43409,8 @@ function aklCard(song) {
       var cl = byId(it.c);
       var grip = h("span", { class: "akl-grip", "aria-label": "Drag to move" }, "⠿");
       var chip = h("div", { class: "akl-item" + (cl ? "" : " gone"), "data-i": String(i), style: cl ? "--akl-c:" + cl.col : "" }, grip,
-        h("button", { class: "akl-iname", onClick: function () { itemMenu(this, i); } }, cl ? cl.name : "(not on this device)", (it.x || 1) > 1 ? h("small", null, " ×" + it.x) : null));
+        h("button", { class: "akl-iname", onClick: function () { itemMenu(this, i); } }, cl ? cl.name : "(not on this device)", (it.x || 1) > 1 ? h("small", null, " ×" + it.x) : null),
+        h("button", { class: "akl-x", "aria-label": "Take out of the order", title: "Take out of the order", onClick: function () { var gone = A.order.splice(i, 1)[0]; changed(); toast("Taken out of the order.", { label: "Put it back", fn: function () { A.order.splice(Math.min(i, A.order.length), 0, gone); changed(); } }); } }, "×"));
       akwrHold(grip, { ms: 30, host: list, sel: ".akl-item", ghost: function () { return cl ? cl.name : "?"; }, lift: chip, onDrop: function (to) { var j = +to.getAttribute("data-i"), m = A.order.splice(i, 1)[0]; A.order.splice(j, 0, m); changed(); }, onHold: function () { toast("Drag the ⠿ handle onto another place in the order."); } });
       list.appendChild(chip);
     });
@@ -43284,15 +43436,26 @@ function aklCard(song) {
         box.appendChild(h("div", { class: "row akl-vocal" }, h("b", null, v.name), h("small", { class: "muted" }, " " + v.len.toFixed(1) + " s · over " + (bg ? bg.name : "the order") + (v.clean ? (v.useClean !== false ? " · guitar taken out" : " · as recorded") : "")),
           h("button", { class: "sm", onClick: function () { if (AKLP.on) { aklStop(); return; } aklPlay(song, clips, { only: bg, vocal: v }); } }, "▶ With the loop"),
           h("input", { type: "range", min: "0", max: "1.5", step: "0.05", value: String(v.vol == null ? 1 : v.vol), "aria-label": v.name + " volume", onChange: function () { v.vol = +this.value; aklPut(v); } }),
-          h("button", { class: "sm", "aria-label": v.name + " options", onClick: function () { vocalMenu(this, v, bg); } }, "⋯")));
+          h("button", { class: "sm", "aria-label": v.name + " options", onClick: function () { vocalMenu(this, v, bg); } }, "⋯"),
+          h("button", { class: "sm akl-del", "aria-label": "Delete " + v.name, title: "Delete", onClick: function () { delClip(v); } }, "🗑")));
       });
     }
     aklPaintBtns();
   }
+  /* delete at once, with Undo (the recording is kept in memory until the next delete) */
+  function delClip(cl) {
+    aklStop(true); var A = aklArr(song), was = A.order.slice();
+    aklDel(cl.id, function () {
+      A.order = A.order.filter(function (x) { return x.c !== cl.id; }); changed(); load(draw);
+      toast("Deleted “" + cl.name + "”.", { label: "Bring it back", fn: function () { aklPut(cl, function () { aklArr(song).order = was; changed(); load(draw); }); } });
+    });
+  }
   function vocalMenu(btn, v, bg) {
     menu(btn, [{ head: v.name },
       { label: "▶ Just the vocal", onClick: function () { aklStop(true); AKLP.on = true; aklPlayVocal(v, akAudio().currentTime + 0.1); aklPaintBtns(); } },
-      v.clean ? { label: (v.useClean !== false ? "Use the take as recorded" : "Use the take with the guitar taken out"), onClick: function () { v.useClean = v.useClean === false; aklPut(v, function () { draw(); }); } } : null,
+      v.clean ? { label: (v.useClean !== false ? "Use the take as recorded" : "Use the take with the guitar taken out"), onClick: function () { v.useClean = v.useClean === false; delete AKLP.bufs[v.id + "|c"]; aklPut(v, function () { draw(); }); } } : null,
+      !v.hp && v.log ? { label: "Take out more guitar" + (v.amt > 1 ? " (now: more)" : ""), onClick: function () { v.amt = Math.min(4, (v.amt || 1) * 2); v.useClean = true; aklVocalClean(v, clips, function () { aklPut(v, function () { aklSay("Done: more guitar taken out."); draw(); }); }); } } : null,
+      !v.hp && v.log ? { label: "Take out less (keeps the voice fuller)" + (v.amt < 1 ? " (now: less)" : ""), onClick: function () { v.amt = Math.max(0.25, (v.amt || 1) / 2); v.useClean = true; aklVocalClean(v, clips, function () { aklPut(v, function () { aklSay("Done: gentler."); draw(); }); }); } } : null,
       { label: "✎ Rename", onClick: function () { askText("Rename this vocal", v.name, "Rename", function (t) { v.name = t; aklPut(v, function () { draw(); }); }); } },
       { label: "⇩ Save the vocal as a WAV file", onClick: function () { var pcm = v.useClean !== false && v.clean ? v.clean : v.raw; saveFile(v.name.replace(/[\\\/:*?"<>|]+/g, "-") + ".wav", new Blob([akWavHeader(pcm.byteLength, v.sr, 1), pcm.buffer], { type: "audio/wav" }), "audio/wav"); } },
       { label: "Delete", danger: true, onClick: function () { confirmBox("Delete the vocal “" + v.name + "”?", "Delete", function () { aklStop(true); aklDel(v.id, function () { load(draw); }); }); } }]);
@@ -43356,6 +43519,7 @@ function aklCard(song) {
   if (typeof viewWrite !== "function") return;
   var vw = viewWrite;
   viewWrite = function () {
+    try { aklTempoSync(typeof akW9Song === "function" ? akW9Song() : null); } catch (e) {}
     var el = vw.apply(this, arguments);
     try {
       var song = typeof akW9Song === "function" ? akW9Song() : null, after = el.querySelector('[data-bk="wheel"]');
@@ -43392,9 +43556,278 @@ akCss("akloop-a", [
   ".akl-grip{padding:6px 8px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;opacity:.7;font-size:1.1rem}",
   ".akl-iname{border:0;background:transparent;padding:6px 10px 6px 2px;min-height:0}",
   ".akl-layer{gap:8px;align-items:center}",
+  ".akl-tempo{gap:4px;align-items:center;flex-wrap:wrap;margin:0}.akl-bpm{width:4.2em!important;padding:4px 6px;margin:0}",
+  ".akl-x{border:0;background:transparent;padding:4px 8px;min-height:0;opacity:.7}.akl-del{margin-left:auto}",
   ".akl-vrec.on{background:#E5484D;color:#fff;border-color:#E5484D}.akl-vocal{flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}",
   ".akws-grip{position:absolute;top:0;right:2px;height:18px;line-height:18px;padding:0 10px;font-size:.85rem;border-radius:6px;background:rgba(127,127,127,.18);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;z-index:1}",
   ".akws-bar>.akws-grip{top:2px;left:2px;right:auto}.akws-bar>.akwr-bn{left:36px}"
+].join("\n"));
+
+/* ================================================================ akloop_b: looper and strum fixes (version 16.7)
+   - Looper (akloop_a.js, edited): mic read on the sound thread (AudioWorklet), closed after each recording, clicks scheduled a
+     moment ahead, the beat lights only redrawn when they change (the crackle on the tablet); one tempo for the song (aklBpm /
+     aklSetTempo / aklTempoSync: lyric pad, chord workshop and looper agree) with −/+/Tap in the looper; 🗑 on every section and
+     vocal and × on every place in the order, all with a way back; vocals sung out loud: the guitar is taken out by lining the loop up
+     (aklLag) and subtracting it per frequency (aklUnmix), with "Take out more / less" to redo it.
+   - Fit to the tempo (aklStretchClip): a section recorded at another tempo is stretched (WSOLA: the sound is cut into short
+     overlapping pieces that are laid down closer or further apart, each nudged to where it lines up best, so the pitch stays).
+     The original is kept (layer.src, clip.bpm0), so it can be stretched again without losing quality.
+   - Strum patterns (item 98, his idea): "Record my strums" now records a whole pattern per chord shape in time with a click
+     (AK_PAT: down, up, palm mute, chuck and a last ringing down), finds each stroke by itself (akPatOnsets), shows the waveform
+     with a marker at each stroke to drag into place (akPatEditor), and keeps every stroke as its own take: several takes of each
+     stroke (played in turn, never the same twice in a row) and the long last one lets the others ring on (akSmpTail, ak9_e.js).
+   Tests ak_t330-332 (this thread used ak_t330-339). */
+AK_VERSION = "16.7";
+AK_WHATS_NEW = [
+  "Audio looper: no more crackle (the microphone is read on the sound thread and closes after each recording).",
+  "One tempo: the looper, the chord workshop and the lyric pad always show the same tempo. Change it in the looper with − + or Tap. A section recorded at another tempo can be fitted to the new one (pitch stays the same).",
+  "Deleting is one tap: 🗑 on each section and vocal, × on each place in the order, with a way back.",
+  "Vocals sung with the loop out loud: the guitar is lined up and taken out much better now. ⋯ on a vocal: take out more, take out less, or the take as recorded.",
+  "🎙 Record my strums, new way: play a whole strum pattern on each chord to a click. The app cuts out every stroke by itself; drag the markers on the picture of the sound to fix any. Every stroke is kept, so patterns play your real strokes in turn and ring on naturally."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- stretching to a tempo (WSOLA) */
+function aklWsola(x, alpha) {
+  var N = 2048, Hs = 512, Ha = Hs / alpha, tol = 512, outLen = Math.round(x.length * alpha), out = new Float32Array(outLen + N), ws = new Float32Array(outLen + N), win = new Float32Array(N), i, k;
+  for (i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  var prev = 0, xl = x.length;
+  for (var m = 0; m * Hs < outLen; m++) {
+    var pos = Math.round(m * Ha);
+    if (m) {
+      /* where the last piece would naturally carry on; find the nearby start that sounds most like it */
+      var tgt = prev + Hs, best = -1e30, bp = pos;
+      for (var d = -tol; d <= tol; d += 8) {
+        var p = pos + d; if (p < 0 || p + N > xl) continue; var c = 0;
+        for (k = 0; k < N / 2; k += 4) { var a = tgt + k < xl ? x[tgt + k] : 0; c += a * x[p + k]; }
+        if (c > best) { best = c; bp = p; }
+      }
+      pos = bp;
+    }
+    pos = Math.max(0, Math.min(Math.max(0, xl - 1), pos));
+    var o = m * Hs;
+    for (k = 0; k < N; k++) { var s = pos + k < xl ? x[pos + k] : 0; out[o + k] += s * win[k]; ws[o + k] += win[k]; }
+    prev = pos;
+  }
+  var r = new Float32Array(outLen); for (i = 0; i < outLen; i++) r[i] = ws[i] > 1e-3 ? out[i] / ws[i] : 0;
+  return r;
+}
+/* stretch a section's layers from their originals to a new tempo (the originals are kept) */
+function aklStretchClip(cl, bpm, done) {
+  aklStop(true);
+  cl.bpm0 = cl.bpm0 || cl.bpm;
+  var alpha = cl.bpm0 / bpm;
+  aklSay("Fitting “" + cl.name + "” to ♩" + bpm + "…");
+  setTimeout(function () {
+    cl.layers.forEach(function (L) {
+      if (!L.src) L.src = L.pcm;
+      var f = new Float32Array(L.src.length); for (var i = 0; i < f.length; i++) f[i] = L.src[i] / 32768;
+      L.pcm = Math.abs(alpha - 1) < 0.002 ? L.src : aklTo16(aklWsola(f, alpha));
+      delete AKLP.bufs[cl.id + "|" + L.id];
+    });
+    cl.bpm = bpm;
+    aklPut(cl, function () { aklSay("“" + cl.name + "” now plays at ♩" + bpm + "."); done && done(); });
+  }, 30);
+}
+
+/* ---------------------------------------------------------------- strum patterns (item 98) */
+/* the pattern played on each chord, in eighth notes: two bars, then one long ringing down stroke */
+var AK_PAT = "D U D U P U P U D U M U D U M U D".split(" ");
+var AK_PAT_DIR = { D: "down", U: "up", P: "palm" };
+function akPatGlyph(t) { return { D: "↓", U: "↑", P: "⤓", M: "✕" }[t]; }
+function akPatBpm() { var c = akHearCfg(); return Number(c.patBpm) || 72; }
+/* where each stroke starts in a recording. raw starts `pre` seconds before the first stroke should; exp = seconds after that.
+   1. an onset curve: how suddenly the sound gets louder (the pick hitting the strings is sharp and bright),
+   2. one shift for the whole take (you may play a little behind the click, and the device has its own delay),
+   3. each stroke: the sharpest rise near where it should be. -> seconds into raw */
+function akPatOnsets(raw, sr, exp, pre) {
+  var hop = Math.max(1, Math.round(sr * 0.002)), nF = Math.floor(raw.length / hop), E = new Float32Array(nF), O = new Float32Array(nF), i, k;
+  for (i = 0; i < nF; i++) { var e = 0; for (k = 1; k < hop; k++) { var d = raw[i * hop + k] - raw[i * hop + k - 1]; e += d * d; } E[i] = Math.log(e + 1e-9); }
+  for (i = 6; i < nF; i++) { var m = -1e9; for (k = 1; k <= 6; k++) m = Math.max(m, E[i - k]); O[i] = Math.max(0, E[i] - m); }
+  function peak(c, w) { var b = -1, bi = -1; for (var j = Math.max(0, c - w); j <= Math.min(nF - 1, c + w); j++) if (O[j] > b) { b = O[j]; bi = j; } return { v: b, i: bi }; }
+  var best = -1, shift = 0, fr = function (t) { return Math.round(t * sr / hop); };
+  for (var s = -0.15; s <= 0.35; s += 0.004) { var sc = 0; exp.forEach(function (t) { sc += peak(fr(pre + t + s), 6).v; }); if (sc > best) { best = sc; shift = s; } }
+  return exp.map(function (t) { var p = peak(fr(pre + t + shift), 25); return Math.max(0, (p.i - 1) * hop / sr); });
+}
+/* the strokes cut out: [{ tok, a, b (seconds into raw) }] -> sample data */
+function akPatSlice(raw, sr, a, b) {
+  var s0 = Math.max(0, Math.round(a * sr)), s1 = Math.min(raw.length, Math.round(b * sr)), d = raw.slice(s0, s1), n = d.length, i;
+  var fi = Math.min(n, Math.round(sr * 0.001)), fo = Math.min(n, Math.round(sr * 0.012));
+  for (i = 0; i < fi; i++) d[i] *= i / fi;
+  for (i = 0; i < fo; i++) d[n - 1 - i] *= i / fo;
+  return d;
+}
+/* the picture of the take with a marker at each stroke; drag a marker, tap between markers to hear that stroke */
+function akPatEditor(raw, sr, marks, onPlay) {
+  var wrap = h("div", { class: "akpat-wave" }), cv = h("canvas", { height: "150" }), zoom = 1;
+  wrap.appendChild(cv);
+  var dur = raw.length / sr;
+  function W() { return Math.max(320, (wrap.clientWidth || 600) * zoom); }
+  function x2t(x) { return x / cv.width * dur; }
+  function t2x(t) { return t / dur * cv.width; }
+  function draw() {
+    cv.width = W(); var g = cv.getContext("2d"), w = cv.width, H = cv.height, per = raw.length / w, css = getComputedStyle(wrap);
+    g.clearRect(0, 0, w, H); g.fillStyle = css.getPropertyValue("--fg") || "#888"; g.globalAlpha = 0.55;
+    for (var x = 0; x < w; x++) { var a = Math.floor(x * per), b = Math.floor((x + 1) * per), mx = 0; for (var i = a; i < b; i += 2) { var v = Math.abs(raw[i]); if (v > mx) mx = v; } var y = Math.min(1, mx * 2.2) * (H / 2 - 14); g.fillRect(x, H / 2 + 7 - y, 1, y * 2 || 1); }
+    g.globalAlpha = 1;
+    marks.forEach(function (m, j) {
+      var mx2 = t2x(m.a); g.fillStyle = m.tok === "M" ? "#E5484D" : m.tok === "P" ? "#E5B800" : m.tok === "U" ? "#3E9BF0" : "#30A46C";
+      g.fillRect(mx2 - 1, 14, 2, H - 14); g.font = "bold 13px sans-serif"; g.fillText(akPatGlyph(m.tok), mx2 + 3, 12);
+      if (m.off) { g.fillStyle = "rgba(127,127,127,.45)"; g.fillRect(mx2, 14, t2x((marks[j + 1] || { a: dur }).a) - mx2, H - 14); }
+    });
+  }
+  var drag = -1;
+  cv.addEventListener("pointerdown", function (e) {
+    var r = cv.getBoundingClientRect(), x = (e.clientX - r.left) * cv.width / r.width, near = -1, nd = 16;
+    marks.forEach(function (m, j) { var d = Math.abs(t2x(m.a) - x); if (d < nd) { nd = d; near = j; } });
+    if (near >= 0) { drag = near; try { cv.setPointerCapture(e.pointerId); } catch (x2) {} e.preventDefault(); return; }
+    var t = x2t(x), seg = -1; marks.forEach(function (m, j) { if (m.a <= t) seg = j; });
+    if (seg >= 0 && onPlay) onPlay(seg);
+  });
+  cv.addEventListener("pointermove", function (e) {
+    if (drag < 0) return; var r = cv.getBoundingClientRect(), t = x2t((e.clientX - r.left) * cv.width / r.width);
+    var lo = drag ? marks[drag - 1].a + 0.03 : 0, hi = marks[drag + 1] ? marks[drag + 1].a - 0.03 : dur - 0.05;
+    marks[drag].a = Math.max(lo, Math.min(hi, t)); draw();
+  });
+  function up() { drag = -1; }
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  wrap.akZoom = function (z) { zoom = z; draw(); };
+  wrap.akDraw = draw;
+  setTimeout(draw, 0);
+  return wrap;
+}
+/* the new "Record my strums": name and chord shapes first */
+akSmpKitRecorder = function () {
+  var name = h("input", { type: "text", value: "My strums", "aria-label": "Name of these strums" });
+  var chords = h("input", { type: "text", value: AK_SMP_KIT_CHORDS.join(" "), "aria-label": "Chord shapes to record" });
+  var info = h("p", { class: "hint" });
+  function list() { return chords.value.split(/[\s,]+/).map(function (x) { return x.trim(); }).filter(function (x, i, a) { return x && a.indexOf(x) === i && parseChordName(x); }); }
+  function count() { var n = list().length; info.textContent = n + " chord shapes, one short pattern each (about 15 seconds a shape), about " + Math.max(3, Math.round(n * 0.6)) + " minutes."; }
+  chords.addEventListener("input", count); count();
+  modal("Record my strums", h("div", null,
+    h("p", null, "For each chord shape you play one strum pattern in time with a click: down up down up, two palm-muted downs, then chucks, and one last down that you let ring. The app cuts out every stroke and keeps them all, so strum patterns play your real strokes."),
+    h("label", { class: "field" }, "Name", name),
+    h("label", { class: "field" }, "Chord shapes (as you finger them)", chords),
+    h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { var t = akSmpTopChords(10); if (t.length) { chords.value = t.join(" "); count(); } else toast("No chords found in your songs yet."); } }, "★ Use the chords my songs use most")),
+    info,
+    h("p", { class: "hint" }, "Tuning: " + akTuning(akHearIns()).name + ". Mic about a foot from the soundhole, quiet room, headphones off is fine (the click is short). Strum the way you do in a song.")
+  ), [{ label: "Cancel" }, { label: "Start", primary: true, onClick: function () {
+    var cs = list(); if (!cs.length) { toast("Type at least one chord."); return false; }
+    var ins = akHearIns(), tu = akTuning(ins);
+    var set = { id: "gk" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: name.value.trim() || "My strums", kind: "steel", ins: ins, notes: tu.notes, tname: tu.name, fix: false, kit: true, pat: true, chords: cs, created: Date.now() };
+    akSmpPutSet(set, function () { akPatWizard(set, []); });
+  } }]);
+};
+(function () {
+  var rec0 = akSmpRecorder;
+  akSmpRecorder = function (setId) {
+    if (!setId) return rec0();
+    akSmpGetSet(setId, function (set, list) { if (set && set.pat) akPatWizard(set, list); else if (set) akSmpWizard(set, list); });
+  };
+})();
+/* one chord at a time: record the pattern, check the markers, keep */
+function akPatWizard(set, list) {
+  var have = {}; list.forEach(function (r) { if (r.chord) have[r.chord] = (have[r.chord] || 0) + 1; });
+  var cur = set.chords.filter(function (c) { return !have[c]; })[0] || set.chords[0], take = null, R = null;
+  var chips = h("div", { class: "aks-chips" }), big = h("div", { class: "aks-big" }), patRow = h("div", { class: "akpat-row" }), status = h("div", { class: "aks-status", "aria-live": "polite" });
+  var meterIn = h("div", { class: "aks-lvl" }), meter = h("div", { class: "aks-meter" }, meterIn), edit = h("div"), btns = h("div", { class: "row" });
+  var bpmSel = h("select", { "aria-label": "Click speed", onChange: function () { akHearCfg().patBpm = Number(this.value); save(); paint(); } }, [60, 66, 72, 80, 90].map(function (b) { return h("option", { value: String(b), selected: b === akPatBpm() }, "Click ♩ = " + b); }));
+  var body = h("div", { class: "aks-wiz" }, chips, big, patRow, meter, status, edit, btns, h("div", { class: "row" }, bpmSel));
+  var close = modal(set.name + ": strums", body, [{ label: "Done", primary: true }], { wide: true, onClose: function () { stop(); akSmpUnload(set.id); try { if (S.view === "settings") render(); } catch (e) {} } });
+  function stop() { if (R) { clearTimeout(R.timer); cancelAnimationFrame(R.raf); if (R.M) R.M.close(); R.clicks.forEach(function (o) { try { o.stop(); } catch (e) {} }); R = null; } }
+  function paintChips() {
+    chips.innerHTML = "";
+    set.chords.forEach(function (c) { chips.appendChild(h("button", { class: "aks-chip" + (have[c] ? " done" : "") + (c === cur ? " cur" : ""), onClick: function () { stop(); cur = c; take = null; paint(); } }, c + (have[c] ? " ✓" : ""))); });
+  }
+  function paintPat(k) { patRow.innerHTML = ""; AK_PAT.forEach(function (t, i) { patRow.appendChild(h("span", { class: "akpat-s" + (i === k ? " now" : "") + (i % 8 === 0 ? " bar" : "") + (t === "M" ? " m" : t === "P" ? " p" : "") }, akPatGlyph(t) + (i === AK_PAT.length - 1 ? " let ring" : ""))); }); }
+  function paint() {
+    paintChips(); paintPat(-1);
+    big.textContent = R ? "Play " + cur + " with the click" : take ? "Check the strokes on " + cur : "Strum pattern on " + cur;
+    if (!R && !take) status.textContent = "↓ down, ↑ up, ⤓ palm mute (side of the hand on the strings at the bridge), ✕ chuck (fretting hand flat across the strings). One bar of clicks first, then play along. " + (have[cur] ? "Recorded already: record again to replace it." : "");
+    btns.innerHTML = "";
+    if (!R) btns.appendChild(h("button", { class: "primary", onClick: record }, take ? "↺ Record again" : "● Record " + cur));
+    else btns.appendChild(h("button", { onClick: function () { stop(); status.textContent = "Stopped."; paint(); } }, "■ Stop"));
+    if (take && !R) {
+      btns.appendChild(h("button", { onClick: function () { playAll(); } }, "▶ Hear them in time"));
+      btns.appendChild(h("button", { class: "primary", onClick: keep }, "✓ Keep these strokes"));
+    }
+    if (!take) edit.innerHTML = "";
+  }
+  function record() {
+    stop(); take = null; edit.innerHTML = "";
+    var ac = akAudio(); try { if (ac.state === "suspended") ac.resume(); } catch (e) {}
+    status.textContent = "Opening the microphone…";
+    aklMic().then(function (M) {
+      if (!body.isConnected) { M.close(); return; }
+      var bpm = akPatBpm(), spb = 60 / bpm, e8 = spb / 2, t0 = ac.currentTime + 0.3 + 4 * spb, n = AK_PAT.length, end = t0 + (n - 1) * e8 + 2.6;
+      R = { M: M, t0: t0, e8: e8, clicks: [], timer: 0, raf: 0 };
+      var beats = 4 + Math.ceil((n - 1) / 2) + 1;
+      for (var b = 0; b < beats; b++) { var o = ac.createOscillator(), g = ac.createGain(), t = t0 - 4 * spb + b * spb, acc = b % 4 === 0; o.frequency.value = acc ? 1600 : 1050; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(acc ? 0.35 : 0.25, t + 0.003); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.07); R.clicks.push(o); }
+      M.start(); paint();
+      var last = "";
+      (function frame() {
+        if (!R) return; var now = ac.currentTime - aklOutLat(), k = Math.floor((now - t0) / e8 + 0.5);
+        var say = now < t0 ? "Get ready… " + Math.ceil((t0 - now) / spb) : k < n ? "Stroke " + (k + 1) + " of " + n : "Let it ring…";
+        /* only change the page when it shows something new */
+        if (say !== last) { last = say; status.textContent = say; paintPat(now < t0 ? -1 : Math.min(n - 1, k)); meterIn.style.width = Math.min(100, Math.round(Math.sqrt(M.level) * 100)) + "%"; }
+        R.raf = requestAnimationFrame(frame);
+      })();
+      R.timer = setTimeout(function () { finish(); }, (end - ac.currentTime + 0.4) * 1000);
+    }, function (e) { status.textContent = (e && e.name === "NotAllowedError") ? "The microphone wasn't allowed." : "The microphone didn't open."; });
+  }
+  function finish() {
+    if (!R) return; var M = R.M, pre = 0.15, n = AK_PAT.length; M.pause();
+    var raw = aklCut(M, R.t0 - pre, (n - 1) * R.e8 + 2.6 + pre, aklLat()), sr = M.sr, e8 = R.e8; stop();
+    var pk = 0; for (var i = 0; i < raw.length; i++) pk = Math.max(pk, Math.abs(raw[i]));
+    if (pk < 0.01) { status.textContent = "I didn't hear anything. Check the microphone and try again."; paint(); return; }
+    var exp = AK_PAT.map(function (t, j) { return j * e8; }), at = akPatOnsets(raw, sr, exp, pre);
+    take = { raw: raw, sr: sr, marks: AK_PAT.map(function (t, j) { return { tok: t, a: at[j] }; }), clip: pk > 0.98 };
+    paint();
+    status.textContent = (take.clip ? "⚠ It clipped (too loud): move the mic back and record again. " : "") + "Each coloured line is where a stroke starts. Drag a line if it's off; tap between lines to hear that stroke. Tap a numbered stroke below to leave it out.";
+    var ed = akPatEditor(raw, sr, take.marks, function (j) { playOne(j); });
+    edit.innerHTML = ""; edit.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { ed.akZoom(1); } }, "Whole"), h("button", { class: "sm", onClick: function () { ed.akZoom(2.5); } }, "Zoom in"), h("button", { class: "sm", onClick: function () { ed.akZoom(5); } }, "More")));
+    edit.appendChild(ed);
+    var offRow = h("div", { class: "akpat-offs" });
+    take.marks.forEach(function (m, j) { offRow.appendChild(h("button", { class: "sm", title: "Leave this stroke out or put it back", onClick: function () { m.off = !m.off; this.classList.toggle("off", m.off); ed.akDraw(); } }, (j + 1) + " " + akPatGlyph(m.tok))); });
+    edit.appendChild(offRow);
+  }
+  function seg(j) { var m = take.marks, b = j + 1 < m.length ? m[j + 1].a : take.raw.length / take.sr; return akPatSlice(take.raw, take.sr, m[j].a, b); }
+  function playBuf(d, when) { var ac = akAudio(), b = ac.createBuffer(1, d.length, take.sr); b.getChannelData(0).set(d); var s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(when || 0); return s; }
+  function playOne(j) { playBuf(seg(j)); }
+  function playAll() { var ac = akAudio(), t = ac.currentTime + 0.1, e8 = 30 / akPatBpm(); take.marks.forEach(function (m, j) { if (!m.off) playBuf(seg(j), t + j * e8); }); }
+  function keep() {
+    if (!take) return;
+    var sig = akHearNotes(cur, { capo: 0, oct: 0, pos: "low", ins: set.ins }).map(function (x) { return x.m; }), recs = [];
+    take.marks.forEach(function (m, j) {
+      if (m.off) return; var d = seg(j), r = { set: set.id, k: "q" + cur + "_" + j, chord: cur, rate: take.sr, pcm: akSmpTo16(d), at: Date.now() };
+      if (m.tok === "M") r.chuck = true; else { r.dir = AK_PAT_DIR[m.tok]; r.sig = sig; }
+      if (j === take.marks.length - 1) r.tail = true;
+      recs.push(r);
+    });
+    /* replace what this chord had before */
+    akSmpDb(function (db) {
+      if (!db) { toast("Couldn't save on this device."); return; }
+      var tx = db.transaction("smp", "readwrite"), st = tx.objectStore("smp");
+      st.index("set").getAll(set.id).onsuccess = function (e) { (e.target.result || []).forEach(function (r) { if (r.chord === cur && /^q/.test(r.k)) st.delete(r.id); }); recs.forEach(function (r) { r.id = r.set + "|" + r.k; st.put(r); }); };
+      tx.oncomplete = function () {
+        akSmpUnload(set.id); akSmpPutSet(set);
+        have[cur] = recs.length; take = null;
+        if (!akSmpKitCfg()[set.ins]) { akSmpKitCfg()[set.ins] = set.id; save(); }
+        var next = set.chords.filter(function (c) { return !have[c]; })[0];
+        if (next) { cur = next; paint(); status.textContent = "Kept " + recs.length + " strokes. Next: " + next + "."; }
+        else { paint(); status.textContent = "All done. Strum patterns now play your strokes. Settings › Chord sound › ▶ Try it to hear them."; }
+      };
+    });
+  }
+  paint();
+  return close;
+}
+
+akCss("akloop-b", [
+  ".akpat-row{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin:6px 0 4px;font-size:1.25rem}",
+  ".akpat-s{min-width:1.6em;text-align:center;border-radius:6px;padding:2px 3px;opacity:.75}.akpat-s.bar{margin-left:8px}",
+  ".akpat-s.p{color:#B08800}.akpat-s.m{color:#E5484D}.akpat-s.now{background:var(--accent);color:var(--on-accent);opacity:1}",
+  ".akpat-wave{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:6px 0;touch-action:pan-x}.akpat-wave canvas{display:block;touch-action:none;cursor:ew-resize}",
+  ".akpat-offs{display:flex;flex-wrap:wrap;gap:3px}.akpat-offs .off{text-decoration:line-through;opacity:.5}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
