@@ -48184,6 +48184,377 @@ akCss("akgfx-k", ".akg-subhd{display:flex;justify-content:space-between;align-it
   ".akg-fxrow{display:flex;gap:6px;align-items:center;margin:4px 0}.akg-fxname{flex:1;text-align:left;background:none;border:1px solid rgba(127,127,127,.3);padding:6px 8px;color:inherit;font-size:13px}" +
   ".akg-fxname span{opacity:.8}.akg-fxrow.warn .akg-fxname{border-color:#C8962E}.akg-fxoff{min-width:36px}");
 
+/* ================================================================ akgfx_l: Graphics studio, part 12 (version 17.7): undo that works, text tools together
+   Undo: the ↶ in the top bar was the app's own undo (songs, setlists...), which skips the studio on purpose, so tapping it after
+   moving a part did nothing. In the studio the top bar ↶ / ↷ now step through the design (akGfxUndoGo). Each tap, drag or pick is one
+   step right away (akGfxUndoNote); only a slider being dragged or words being typed wait until you let go / pause (AKGL_SLOW).
+   Steps that change nothing you can see (an empty edit made by tapping a part, settings filled in when the studio opens) are
+   skipped (akGfxUKey), so one ↶ always undoes the last real change.
+   Syncopate: the font file is the real one (its small letters are small capitals, the logo look). Most layouts write the venue, date
+   and headings in CAPITALS, so Syncopate showed no small letters there. A words part in Syncopate whose Capitals choice is
+   "As the layout" now shows Abc (first letters big); ABC under Capitals still makes it all capitals. The wordmark's stand-in
+   text keeps the name as typed.
+   Tapped part popup (akGfxPopSync): Copy, Paste, Delete, ⋯ (and Aa Text for words); ⋯ opens a small grid with the rest. A tap
+   anywhere outside the part and its tools closes it; tapping the photo behind a picked part only lets go of the part.
+   Selected (akGfxSelFill, replaces the old list): for words, "Text" (the words, font, size, color, bold, italic, line up,
+   capitals, effect, shape behind), "Style" (quick styles, effect color, spacing, turn, see-through) and "Arrange" (copy, order,
+   lock...); for pictures and shapes, the part's own settings and "Arrange". Each folds (akGfxSubFold). */
+
+AK_VERSION = "17.7";
+AK_WHATS_NEW = [
+  "Graphics studio: ↶ Undo works on your design. The ↶ at the top undoes the last thing you did (a move, size, font, color, words, delete, order, effects…) and ↷ redoes it. Each tap or drag is one step.",
+  "Graphics studio: Syncopate shows its small letters. Layouts wrote many words in capitals; in Syncopate they now show Abc (Capitals › ABC still gives all capitals).",
+  "Graphics studio: the popup on a tapped part is small (Copy, Paste, Delete, ⋯ for the rest) and a tap anywhere outside closes it.",
+  "Graphics studio: tap words and every text tool is together under the picture: the words, font, size, color, bold, italic, line up, capitals and effect. Style and Arrange sit below it, and each one folds."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- undo */
+/* the design as it looks: empty edits and empty lists don't count */
+function akGfxUKey(s) {
+  if (s == null) return "";
+  try { return JSON.stringify(JSON.parse(s), function (k, v) { if (k && v && typeof v === "object" && !Object.keys(v).length) return undefined; return v; }); } catch (e) { return s; }
+}
+/* a slider being dragged or words being typed: one step when you let go or pause */
+function AKGL_SLOW() {
+  var a = document.activeElement;
+  if (AKGL.down && AKGL.down.closest && AKGL.down.closest(".akg input[type=range]")) return true;
+  return !!(a && a.closest && a.closest(".akg") && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && /^(text|range|search|url|number)$/.test(a.type))));
+}
+var AKGL = { down: null };
+(function () {
+  var us0 = akGfxUndoStart;
+  akGfxUndoStart = function (D, kind) {
+    /* fill in what the studio adds on its own before the first step is kept */
+    try { akGfxDecoCfg(D); akGfxFree(D); akGfxOvlList(D); } catch (e) {}
+    us0.apply(this, arguments);
+    setTimeout(akGfxUBtns, 0);
+  };
+  akGfxUndoNote = function (now) {
+    clearTimeout(AKGU.t); AKGU.t = 0;
+    function take() {
+      AKGU.t = 0;
+      if (!AKGU.D || AKGU.quiet) return;
+      var j = akGfxJson(AKGU.D), cur = AKGU.st[AKGU.i];
+      if (j === cur) return;
+      if (akGfxUKey(j) === akGfxUKey(cur)) { AKGU.st[AKGU.i] = j; return; }
+      AKGU.st = AKGU.st.slice(0, AKGU.i + 1); AKGU.st.push(j);
+      if (AKGU.st.length > 100) AKGU.st.shift();
+      AKGU.i = AKGU.st.length - 1;
+      akGfxUBtns();
+      if (S.akg && S.akg.edSync) S.akg.edSync(true);
+    }
+    if (!now && AKGL_SLOW()) AKGU.t = setTimeout(take, 900); else take();
+  };
+  var go0 = akGfxUndoGo;
+  akGfxUndoGo = function (step, X) {
+    X = X || (S.akg && S.akg.X); if (!X) return;
+    akGfxUndoNote(true);
+    var cur = akGfxUKey(AKGU.st[AKGU.i]), i = AKGU.i + step;
+    while (i >= 0 && i < AKGU.st.length && akGfxUKey(AKGU.st[i]) === cur) i += step;
+    if (i < 0 || i >= AKGU.st.length) { toast(step < 0 ? "Nothing more to undo." : "Nothing to redo."); return; }
+    try { var a = document.activeElement; if (a && a.closest && a.closest(".akg")) a.blur(); } catch (e) {}
+    AKGU.i = i - step; go0(step, X);
+    akGfxUBtns();
+  };
+  akGfxCanUndo = function () { var c = akGfxUKey(AKGU.st[AKGU.i]); for (var i = AKGU.i - 1; i >= 0; i--) if (akGfxUKey(AKGU.st[i]) !== c) return true; return !!AKGU.t; };
+})();
+/* let go of a slider, leave a words box: that change is one step now */
+["pointerup", "change", "focusout"].forEach(function (ev) {
+  document.addEventListener(ev, function () { if (S.view === "gfx" && AKGU.t) setTimeout(function () { if (AKGU.t && !AKGL_SLOW()) akGfxUndoNote(true); }, 0); }, true);
+});
+document.addEventListener("pointerdown", function (e) { AKGL.down = e.target; }, true);
+document.addEventListener("pointerup", function () { AKGL.down = null; }, true);
+document.addEventListener("pointercancel", function () { AKGL.down = null; }, true);
+/* the ↶ ↷ in the top bar */
+function akGfxUBtns() {
+  if (S.view !== "gfx") return;
+  Array.prototype.forEach.call(document.querySelectorAll(".akg-undo"), function (b) { var on = akGfxCanUndo(); b.disabled = false; b.style.opacity = on ? "" : "0.45"; });
+  Array.prototype.forEach.call(document.querySelectorAll(".akg-redo"), function (b) { var on = akGfxCanRedo(); b.disabled = !on; b.style.opacity = on ? "" : "0.45"; });
+}
+(function () {
+  var sh = shell;
+  shell = function () {
+    var w = sh.apply(this, arguments);
+    try {
+      if (S.view === "gfx") {
+        var tb = w.querySelector(".topbar"), old = tb && tb.querySelector(".ak17-undo");
+        if (tb) {
+          var u = h("button", { class: "icon akg-undo", "aria-label": "Undo the last change to the design", title: "Undo (the design)", onClick: function () { akGfxUndoGo(-1); } }, "↶");
+          var r = h("button", { class: "icon akg-redo", "aria-label": "Redo", title: "Redo", onClick: function () { akGfxUndoGo(1); } }, "↷");
+          if (old) { old.parentNode.insertBefore(u, old); old.parentNode.insertBefore(r, old); old.parentNode.removeChild(old); }
+          else { var at = tb.querySelector(".akbhead"); if (at) { tb.insertBefore(u, at); tb.insertBefore(r, at); } else { tb.appendChild(u); tb.appendChild(r); } }
+          setTimeout(akGfxUBtns, 0);
+        }
+      }
+    } catch (e) {}
+    return w;
+  };
+})();
+
+/* ---------------------------------------------------------------- Syncopate: its small letters show */
+function akGfxIsSync(f) { return /syncopate/i.test(String(f || "")); }
+(function () {
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) {
+      if (l.type === "text" && akGfxIsSync(l.font) && !(E[l.id] || {}).caps && !/^(name|wordmark|fromName)$/.test(l.id)) {
+        var t = String(l.text || "");
+        if (/[A-Z]{2}/.test(t) && t === t.toUpperCase()) { l = Object.assign({}, l); l.text = t.replace(/[A-Za-z][A-Za-z'’]*/g, function (w) { return w.charAt(0) + w.slice(1).toLowerCase(); }); }
+      }
+      if (l.alt && akGfxIsSync(l.altFont) && typeof akGfxName === "function") { var X = S.akg && S.akg.X; l = Object.assign({}, l); l.alt = akGfxNameCase(X && X.D, akGfxName() || l.alt); }
+      return l;
+    });
+    return out;
+  };
+})();
+
+/* ---------------------------------------------------------------- shared bits */
+function akGfxDelPart(D, X, id) {
+  var st = akGfxState(), f = akGfxFreeOf(D, id), s = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id);
+  if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s), 1); else if (o) akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1);
+  st.sel = ""; st.popMore = false;
+  if (f || s || o) { delete D.edit[id]; X.ch(true); toast("Deleted. ↶ brings it back."); }
+  else { D.edit[id] = D.edit[id] || {}; D.edit[id].hide = true; X.ch(true); toast("Removed from the picture. ↶ or 👁 in Layers brings it back."); }
+}
+/* the part bar's own buttons (Duplicate, Lock, Flip, Hide) do the same jobs here */
+function akGfxBarBtns(X, re) {
+  var tmp = h("div"), out = [];
+  try { akGfxEdBar(tmp, X); } catch (e) { return out; }
+  Array.prototype.forEach.call(tmp.querySelectorAll("button"), function (x) { if (!x.closest(".chips") && re.test(x.textContent)) out.push(x); });
+  return out;
+}
+function akGfxIcoBtn(ic, lab, fn, o) {
+  o = o || {};
+  return h("button", { class: "akg-ib" + (o.cls ? " " + o.cls : ""), type: "button", "aria-label": o.aria || lab, title: o.aria || lab, "aria-pressed": o.on == null ? null : (o.on ? "true" : "false"), onClick: fn }, h("i", null, ic), h("span", null, lab));
+}
+
+/* ---------------------------------------------------------------- the popup: small, ⋯ for the rest, a tap outside closes it */
+akGfxPopSync = function (wrap, cv, X, busy) {
+  var st = akGfxState(), P = st.P, D = X.D, pop = wrap._pop;
+  if (!pop) { pop = wrap._pop = h("div", { class: "akg-pop akg-pop2 akg-pop3", role: "toolbar", "aria-label": "Quick actions for the tapped part" }); wrap.appendChild(pop); }
+  var L = P && st.sel && P.layers.filter(function (l) { return l.id === st.sel; })[0];
+  if (!L || busy || akGfxCfg().pop === false || L.type === "gbg") { pop.hidden = true; return; }
+  var key = [st.sel, JSON.stringify(D.edit[st.sel] || {}), JSON.stringify(akGfxFreeOf(D, st.sel) || {}), !!L.lock, JSON.stringify(D.zord || null), !!AKGFX.clip, !!st.popMore].join("|");
+  if (pop._key !== key) {
+    pop._key = key; pop.textContent = "";
+    var id = L.id, fixed = !!L.fixed;
+    function b(ic, lab, fn, o) { var x = akGfxIcoBtn(ic, lab, fn, o); x.classList.add("akg-popb"); return x; }
+    function z(how) { return function () { if (akGfxZMove(D, st.P || P, id, how)) X.ch(); }; }
+    var row = h("div", { class: "akg-poprow" });
+    if (L.type === "text") row.appendChild(b("Aa", "Text", function () { akGfxTextGo(X); }, { aria: "Text tools: words, font, size, color" }));
+    row.appendChild(b("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
+    if (AKGFX.clip) row.appendChild(b("📥", "Paste", function () { akGfxPaste(D, X); }));
+    row.appendChild(b("🗑", "Delete", function () { akGfxDelPart(D, X, id); }, { cls: "danger" }));
+    row.appendChild(b(st.popMore ? "▴" : "⋯", st.popMore ? "Less" : "More", function () { st.popMore = !st.popMore; pop._key = ""; X.paint(); }, { aria: st.popMore ? "Fewer actions" : "More actions" }));
+    pop.appendChild(row);
+    if (st.popMore) {
+      var more = h("div", { class: "akg-popgrid akg-popmore" });
+      akGfxBarBtns(X, /Duplicate/).forEach(function (x) { more.appendChild(b("⧉", "Duplicate", function () { x.click(); })); });
+      if (!fixed) {
+        more.appendChild(b("⤒", "To front", z("top"), { aria: "Bring to the very front" }));
+        more.appendChild(b("⬆", "Forward", z("up"), { aria: "Bring forward (in front of the next part it touches)" }));
+        more.appendChild(b("⬇", "Back", z("down"), { aria: "Send back (behind the next part it touches)" }));
+        more.appendChild(b("⤓", "To back", z("bottom"), { aria: "Send to the very back" }));
+      }
+      akGfxBarBtns(X, /Lock|Unlock/).forEach(function (x) { var lk = /Unlock/.test(x.textContent); more.appendChild(b(lk ? "🔓" : "🔒", lk ? "Unlock" : "Lock", function () { x.click(); })); });
+      akGfxBarBtns(X, /Flip/).forEach(function (x) { more.appendChild(b("⇆", "Flip", function () { x.click(); })); });
+      if (/^(gfree|gpic|gphoto)$/.test(L.type)) more.appendChild(b("🔁", "Replace", function () { X.cat("pics"); toast("Tap a picture to put it in its place."); }));
+      more.appendChild(b("⚙", "Settings", function () { X.cat("sel"); }, { aria: "All settings for this part" }));
+      pop.appendChild(more);
+    }
+  }
+  pop.hidden = false;
+  try {
+    var k = cv._k || 1, bx = akLayerBox(L, P), left = cv.offsetLeft + (cv._ox || 0) + bx.x * k, top = cv.offsetTop + (cv._oy || 0) + bx.y * k, bh = bx.h * k;
+    var ph = pop.offsetHeight || 36, pw = pop.offsetWidth || 160, W = wrap.clientWidth, Hh = cv.offsetTop + cv.offsetHeight;
+    var y = top + bh + 12; if (y + ph > Hh) y = Math.max(cv.offsetTop, top - ph - 44);
+    var x = Math.max(0, Math.min(W - pw, left + bx.w * k / 2 - pw / 2));
+    pop.style.left = x + "px"; pop.style.top = Math.max(0, Math.min(y, Hh - ph)) + "px";
+  } catch (e) {}
+};
+/* let go of the part: a tap outside it and its tools */
+function akGfxLetGo() {
+  var st = akGfxState(); if (!st.sel || !st.X) return;
+  st.sel = ""; st.popMore = false; st.X.paint(); st.X.refill("parts", true);
+}
+document.addEventListener("pointerdown", function (e) {
+  if (S.view !== "gfx") return;
+  var st = akGfxState(), t = e.target; if (!st.sel || !st.X || !t || !t.closest) return;
+  if (t.closest(".modal, .menu, .akg-pop")) return;
+  var cv = t.closest("canvas.akg-cv");
+  if (cv) {
+    /* on the picture: the photo or a page-size part behind the picked part only lets go (it doesn't pick the photo) */
+    var P = st.P; if (!P || typeof akGfxHit !== "function") return;
+    var r = cv.getBoundingClientRect(), k = cv._k || 1, p = { x: (e.clientX - r.left - (cv._ox || 0)) / k, y: (e.clientY - r.top - (cv._oy || 0)) / k };
+    if (typeof akGfxOnHandle === "function" && akGfxOnHandle(P, st, p, k)) return;
+    var L = P.layers.filter(function (l) { return l.id === st.sel; })[0];
+    if (L) { var b = akLayerBox(L, P); if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return; }
+    var hit = akGfxHit(P, p);
+    if (!hit || hit.id === st.sel) return;
+    var hb = akLayerBox(hit, P);
+    if (hit.type === "gphoto" || hit.type === "gbg" || hb.w * hb.h >= P.W * P.H * 0.5) { e.stopPropagation(); e.preventDefault(); akGfxLetGo(); }
+    return;
+  }
+  /* the part's tools, the tool groups, the divider and any button (↶, ＋ Words...) keep it picked; empty space lets go */
+  if (t.closest(".akg-cat, .akg-strip, .akg-split, .akg-hdshow, .topbar, button, select, input, textarea, label, a")) return;
+  akGfxLetGo();
+}, true);
+
+/* ---------------------------------------------------------------- Selected: text tools together, then Style and Arrange; each folds */
+function akGfxTextGo(X) {
+  var cfg = akGfxCfg(); if (cfg.sub) delete cfg.sub["sel:Text"];
+  X.cat("sel");
+  setTimeout(function () { var w = document.querySelector(".akg-twords"); if (w) { try { w.scrollIntoView({ block: "nearest" }); } catch (e) {} } }, 60);
+}
+function akGfxSelFill(d, X) {
+  var D = X.D, st = akGfxState(), base = X.base ? X.base() : null, P = st.P;
+  var L = P && st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0], l = base && st.sel && base.layers.filter(function (x) { return x.id === st.sel; })[0];
+  if (!L || !l) { if (st.sel) d._for = null; d.appendChild(h("p", { class: "hint" }, "Tap a part on the picture (or pick one in 🗂 Layers) to change it.")); if (AKGFX.clip) d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akGfxPaste(D, X); } }, "📥 Paste"))); return; }
+  var id = L.id, free = akGfxFreeOf(D, id), ft = free && free.t === "text";
+  function E() { return D.edit[id] = D.edit[id] || {}; }
+  var e0 = D.edit[id] || {};
+  function set(k, v) { var e = E(); if (v == null || v === "") delete e[k]; else e[k] = v; X.ch(); X.refill("parts", true); }
+  d.appendChild(h("div", { class: "akg-selname" }, (L.lock ? "🔒 " : "") + L.name));
+  function step(lab, cur, fmt, fn) {
+    return h("div", { class: "akg-step", role: "group", "aria-label": lab },
+      h("button", { type: "button", "aria-label": lab + " smaller", onClick: function () { fn(-1); } }, "−"),
+      h("span", null, fmt(cur)),
+      h("button", { type: "button", "aria-label": lab + " bigger", onClick: function () { fn(1); } }, "+"));
+  }
+  var k0 = Number(e0.k) || 1;
+  var sizeStep = step("Size", k0, function (v) { return Math.round(v * 100) + "%"; }, function (dir) { var e = E(), k = Number(e.k) || 1; k = Math.max(0.2, Math.min(5, Math.round((k + dir * (k >= 2 ? 0.2 : 0.1)) * 100) / 100)); e.k = k; X.ch(); X.refill("parts", true); });
+  var colorNow = ft ? (free.color || "") : (e0.color || "");
+  function colorBtn() {
+    var sw = colorNow || L.color || L.fill || "";
+    return h("button", { type: "button", class: "akg-colb", "aria-label": "Color", title: "Color", onClick: function () {
+      akGfxColorAsk("Color", colorNow, function (c) { if (ft) { free.color = c || ""; delete E().color; } else if (c) E().color = c; else delete E().color; X.ch(); X.refill("parts", true); });
+    } }, h("i", { style: "background:" + (sw || "transparent") }), "Color");
+  }
+  /* ---- words ---- */
+  if (L.type === "text") {
+    d.appendChild(h("div", { class: "akg-sub" }, "Text"));
+    var tw = h("div", { class: "akg-tbox" });
+    var words = ft ? free.text : (e0.text != null ? e0.text : l.text);
+    tw.appendChild(h("textarea", { class: "akg-twords", rows: Math.min(4, Math.max(1, String(words || "").split("\n").length)), "aria-label": "Words", value: words || "", onInput: function () {
+      if (free) free.text = this.value; else E().text = this.value; save(); if (free) X.rebuild(); else X.paint();
+    } }));
+    var fontNow = ft ? (free.font || L.font) : (e0.font || l.font);
+    var g1 = h("div", { class: "akg-tgrid" });
+    g1.appendChild(akGfxFontBtn("Font", fontNow, function (v) {
+      if (ft) free.font = v; else E().font = v;
+      if (akGfxIsSync(v)) { var c = akGfxCfg(); if (!c.syncTold) { c.syncTold = 1; toast("Syncopate: small letters are small capitals (your logo look). Capitals › ABC makes everything big."); } }
+      X.ch(); X.refill("parts", true);
+    }));
+    g1.appendChild(sizeStep); g1.appendChild(colorBtn());
+    tw.appendChild(g1);
+    var boldOn = ft ? (free.weight || 700) >= 700 : (e0.bold != null ? e0.bold : (l.weight || 400) >= 700), itOn = ft ? !!free.italic : (e0.italic != null ? e0.italic : !!l.italic), al = e0.align || l.align || "center";
+    var g2 = h("div", { class: "akg-tgrid akg-tgrid2" });
+    g2.appendChild(akGfxIcoBtn("B", "Bold", function () { if (ft) { free.weight = boldOn ? 400 : 700; X.ch(); X.refill("parts", true); } else set("bold", !boldOn); }, { on: boldOn, cls: "akg-tb" }));
+    g2.appendChild(akGfxIcoBtn("I", "Italic", function () { if (ft) { free.italic = !itOn; X.ch(); X.refill("parts", true); } else set("italic", !itOn); }, { on: itOn, cls: "akg-ti" }));
+    [["left", "⇤", "Left"], ["center", "≡", "Middle"], ["right", "⇥", "Right"]].forEach(function (a) { g2.appendChild(akGfxIcoBtn(a[1], a[2], function () { set("align", a[0]); }, { on: al === a[0], aria: "Line up: " + a[2] })); });
+    tw.appendChild(g2);
+    var g3 = h("div", { class: "akg-two akg-tsel" });
+    g3.appendChild(akGfxSelect("Capitals", [["", "As the layout"], ["upper", "ABC"], ["title", "Abc"], ["lower", "abc"]], e0.caps || "", function (v) { set("caps", v); }));
+    g3.appendChild(akGfxSelect("Effect", [["", "As it is"]].concat(AKG_TFX), e0.fx || "", function (v) { set("fx", v); }));
+    g3.appendChild(akGfxSelect("Shape behind", AKG_BEHIND, (e0.behind || l.behind || {}).kind || "none", function (v) { set("behind", Object.assign({}, e0.behind || {}, { kind: v })); }));
+    tw.appendChild(g3);
+    d.appendChild(tw);
+    /* ---- style ---- */
+    d.appendChild(h("div", { class: "akg-sub" }, "Style"));
+    if (typeof AKG_TEXT_LOOKS === "object") d.appendChild(akGfxSelect("Quick style", [["", "Pick a quick style…"]].concat(AKG_TEXT_LOOKS.map(function (t) { return [t[0], t[1]]; })), "", function (v) {
+      var t = AKG_TEXT_LOOKS.filter(function (x) { return x[0] === v; })[0]; if (!t) return;
+      var e = E(), ks = typeof akGfxQsKeys === "function" ? akGfxQsKeys() : ["fx", "fxc", "fxk", "behind", "caps", "sp", "font"];
+      ks.forEach(function (k) { delete e[k]; });
+      Object.keys(t[2]).forEach(function (k) { if (ks.indexOf(k) >= 0) e[k] = clone(t[2][k]); });
+      if (v === "plain") { if (ks.indexOf("fx") >= 0) e.fx = "none"; if (ks.indexOf("behind") >= 0) e.behind = { kind: "none" }; }
+      X.ch(); X.refill("parts", true);
+    }));
+    if (typeof akGfxQsPick === "function") d.appendChild(akGfxQsPick(X));
+    if ((e0.fx || l.fx) && (e0.fx || l.fx) !== "none") {
+      d.appendChild(h("div", { class: "fld" }, "Effect color", colorPicker(e0.fxc || "", function (c) { set("fxc", c); })));
+      d.appendChild(X.slider("Effect strength", e0.fxk == null ? (l.fxk == null ? 50 : l.fxk) : e0.fxk, 0, 100, 5, function (v) { E().fxk = v; }, null, true));
+    }
+    var bk = e0.behind || l.behind;
+    if (bk && bk.kind && bk.kind !== "none") d.appendChild(h("div", { class: "fld" }, "Color of the shape behind", colorPicker((e0.behind || {}).color || "", function (c) { set("behind", Object.assign({}, e0.behind || { kind: bk.kind }, { color: c || "" })); })));
+    d.appendChild(X.slider("Letter spacing", e0.sp == null ? Math.round((l.spacing || 0) / l.size * 100) : e0.sp, -10, 80, 1, function (v) { E().sp = v; }, null, true));
+    d.appendChild(X.slider("Line spacing", Math.round((e0.lh || l.lh || 1.2) * 100), 70, 200, 5, function (v) { E().lh = v / 100; }, function (v) { return v + "%"; }, true));
+    d.appendChild(X.slider("Turn", e0.rot == null ? (l.rot || 0) : e0.rot, -45, 45, 1, function (v) { E().rot = v; }, function (v) { return v + "°"; }, true));
+    d.appendChild(X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = E(); if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true));
+  } else {
+    /* ---- a picture, shape, overlay... ---- */
+    var pic = /^(gfree|gphoto|gpic|gbg)$/.test(L.type);
+    d.appendChild(h("div", { class: "akg-sub" }, pic ? "Picture" : L.type === "govl" ? "Pattern" : "Shape"));
+    var g = h("div", { class: "akg-tgrid" });
+    if (!L.fixed) g.appendChild(sizeStep);
+    if (L.color || L.fill || L.type === "gpic") g.appendChild(colorBtn());
+    if (pic) g.appendChild(h("button", { type: "button", class: "sm", onClick: function () { X.cat("pics"); } }, "🔁 Swap"));
+    d.appendChild(g);
+    if (free && free.t === "pic") {
+      var two = h("div", { class: "akg-two akg-tsel" });
+      two.appendChild(akGfxSelect("Corners", [["", "Square"], ["round", "Rounded"], ["circle", "Circle"]], free.corner || "", function (v) { free.corner = v; X.ch(); }));
+      two.appendChild(akGfxSelect("Frame", [["", "No frame"], ["#ffffff", "White frame"], ["#111111", "Black frame"]], free.frame || "", function (v) { free.frame = v; X.ch(); }));
+      d.appendChild(two);
+      d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!free.shadow, onChange: function () { free.shadow = this.checked; X.ch(); } }), "Shadow"));
+    }
+    if (typeof akGfxPartExtra === "function") { try { akGfxPartExtra(d, l, X); } catch (er) {} }
+    d.appendChild(X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = E(); if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true));
+  }
+  /* ---- arrange ---- */
+  d.appendChild(h("div", { class: "akg-sub" }, "Arrange"));
+  var ar = h("div", { class: "akg-igrid" });
+  function z(how) { return function () { if (akGfxZMove(D, st.P || P, id, how)) X.ch(); }; }
+  ar.appendChild(akGfxIcoBtn("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
+  if (AKGFX.clip) ar.appendChild(akGfxIcoBtn("📥", "Paste", function () { akGfxPaste(D, X); }));
+  akGfxBarBtns(X, /Duplicate/).forEach(function (x) { ar.appendChild(akGfxIcoBtn("⧉", "Duplicate", function () { x.click(); })); });
+  ar.appendChild(akGfxIcoBtn("🗑", "Delete", function () { akGfxDelPart(D, X, id); }, { cls: "danger" }));
+  if (!L.fixed) {
+    ar.appendChild(akGfxIcoBtn("⤒", "To front", z("top"), { aria: "Bring to the very front" }));
+    ar.appendChild(akGfxIcoBtn("⬆", "Forward", z("up"), { aria: "Bring forward" }));
+    ar.appendChild(akGfxIcoBtn("⬇", "Back", z("down"), { aria: "Send back" }));
+    ar.appendChild(akGfxIcoBtn("⤓", "To back", z("bottom"), { aria: "Send to the very back" }));
+  }
+  akGfxBarBtns(X, /Lock|Unlock/).forEach(function (x) { var lk = /Unlock/.test(x.textContent); ar.appendChild(akGfxIcoBtn(lk ? "🔓" : "🔒", lk ? "Unlock" : "Lock", function () { x.click(); })); });
+  akGfxBarBtns(X, /Flip/).forEach(function (x) { ar.appendChild(akGfxIcoBtn("⇆", "Flip", function () { x.click(); })); });
+  if (!L.fixed) ar.appendChild(akGfxIcoBtn("⌖", "In place", function () { var e = E(); e.dx = 0; e.dy = 0; X.ch(); }, { aria: "Put it back where the layout puts it" }));
+  ar.appendChild(akGfxIcoBtn("↺", "Reset", function () { delete D.edit[id]; X.ch(); X.refill("parts", true); }, { aria: "Undo all changes to this part" }));
+  d.appendChild(ar);
+}
+(function () {
+  var n0 = akGfxNav;
+  akGfxNav = function (o) {
+    var s0 = o.sec, o2 = Object.assign({}, o, { sec: function (id, title, fill) { return s0(id, title, id === "sel" ? function (d) { akGfxSelFill(d, o.X); try { akGfxSubFold(d, id); } catch (e) {} } : fill); } });
+    return n0(o2);
+  };
+})();
+
+akCss("akgfx-l", [
+  ".akg-pop3 .akg-poprow{overflow:visible}",
+  ".akg-pop3 .akg-popb{min-width:40px;min-height:36px!important}",
+  ".akg-popgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid #e3e0e8}",
+  ".akg-popgrid .akg-popb{border-right:0!important;border-bottom:1px solid #f0eef3}",
+  ".akg-ib{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-height:44px;padding:3px 2px;font-size:10.5px;line-height:1.1}",
+  ".akg-ib i{font-style:normal;font-size:16px;line-height:1.1}",
+  ".akg-ib[aria-pressed=true]{outline:2px solid #C8962E;outline-offset:-2px}",
+  ".akg-igrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin:4px 0 6px}",
+  ".akg-selname{font-weight:700;font-size:13px;opacity:.8;margin:0 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+  ".akg-tbox{display:flex;flex-direction:column;gap:6px}",
+  ".akg-twords{width:100%;min-height:40px;font-size:15px;margin:0}",
+  ".akg-tgrid{display:grid;grid-template-columns:minmax(0,1.5fr) auto auto;gap:6px;align-items:stretch}",
+  ".akg-tgrid>*{margin:0!important;min-height:40px}",
+  ".akg-tgrid .akg-fontbtn{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}",
+  ".akg-tgrid2{grid-template-columns:repeat(5,minmax(0,1fr))}",
+  ".akg-tb i{font-weight:900}.akg-ti i{font-style:italic;font-family:serif}",
+  ".akg-step{display:flex;align-items:center;border:1px solid rgba(127,127,127,.35);border-radius:8px;overflow:hidden}",
+  ".akg-step button{min-width:34px;min-height:40px;padding:0 6px;border:0;border-radius:0;font-size:18px}",
+  ".akg-step span{min-width:44px;text-align:center;font-size:13px;font-variant-numeric:tabular-nums}",
+  ".akg-colb{display:flex;align-items:center;gap:6px;padding:0 10px}",
+  ".akg-colb i{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid rgba(127,127,127,.6);background-image:linear-gradient(45deg,rgba(127,127,127,.3) 25%,transparent 25%)}",
+  ".akg-tsel{grid-template-columns:repeat(3,minmax(0,1fr))}.akg-tsel .fld{margin:0;font-size:12px}.akg-tsel select{width:100%;min-height:36px}",
+  "@media (max-width:420px){.akg-tsel{grid-template-columns:repeat(2,minmax(0,1fr))}}"
+].join("\n"));
+akCss("akgfx-l2", ".akg-shell>.topbar .akg-undo,.akg-shell>.topbar .akg-redo{min-width:28px!important;padding:0 3px!important}");
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
