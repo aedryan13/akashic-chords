@@ -31202,6 +31202,7 @@ akProgWheel = function (o) {
       { label: "Paste over this bar", disabled: !AKWS.clip, onClick: function () { keep(); akwrPaste(s, bi, "over"); changed(); } },
       { label: "Insert an empty bar before", onClick: function () { keep(); s.bars.splice(bi, 0, akWsNewBar()); changed(); } },
       { label: "Insert an empty bar after", onClick: function () { keep(); s.bars.splice(bi + 1, 0, akWsNewBar()); changed(); } },
+      { label: "🕒 Change the time signature from here…", onClick: function () { keep(); var tgt = s; if (bi > 0) { akWsSplit(ws, si, bi); ws.cur = si + 1; tgt = ws.secs[si + 1]; changed(); } tsDialog(tgt); } },
       { label: "✂ Start a new section here", disabled: bi === 0, onClick: function () { keep(); akWsSplit(ws, si, bi); ws.cur = si + 1; changed(); } },
       { label: "Clear the chords", onClick: function () { keep(); bar.c = []; changed(); } },
       { label: "Delete the bar", danger: true, disabled: s.bars.length < 2, onClick: function () { keep(); s.bars.splice(bi, 1); ws.sel = null; changed(); } }]);
@@ -48803,7 +48804,7 @@ akCss("akgfx-l2", ".akg-shell>.topbar .akg-undo,.akg-shell>.topbar .akg-redo{min
       sound, before Get ready, and lists inputs after the permission is given; if the chosen interface won't start the phone falls back to
       its microphone and says so; connecting to the tablet tries again by itself (with the reason) and has a Try again button. */
 
-AK_VERSION = "18.2";
+AK_VERSION = "18.3";
 AK_WHATS_NEW = [
   "Auto-scroll: press once to pause where you are, press again to carry on (it no longer starts over).",
   "One-phone recording: the phone now opens the right recorder page for the way you set it up on the tablet, and 🎚 Sound input (your audio interface) shows up on the recorder page.",
@@ -49108,12 +49109,13 @@ AK_WHATS_NEW = [
 
 var AK_W18_TOP = [["slim", "Thin bars (Song, Layout, Tempo)"], ["full", "Full: all the buttons in view"]];
 var AK_W18_SCR = [["stack", "Cards one under the other"], ["tabs", "View tabs"], ["halves", "Two halves"]];
-var AK_W18_SECS = [["lyrics", "Lyrics"], ["chords", "Chords"], ["linech", "Lyrics + chords (type in place)"], ["arranger", "Arranger (tracks and clips)"], ["timeline", "Timeline (sections and bars)"], ["wheel", "Chord wheel + suggestions"], ["workshop", "Whole chord workshop"], ["looper", "Audio looper"]];
-var AK_W18_WS = { timeline: 1, wheel: 1, workshop: 1 }; /* all three show the one chord workshop, with a different part of it in view */
+var AK_W18_SECS = [["lyrics", "Lyrics"], ["chords", "Chords"], ["linech", "Lyrics + chords (type in place)"], ["arranger", "Arranger (tracks and clips)"], ["sections", "Sections (build chords and bars)"], ["wheel", "Chord wheel + suggestions"], ["workshop", "Whole chord workshop"], ["looper", "Audio looper"]];
+var AK_W18_WS = { sections: 1, wheel: 1, workshop: 1 }; /* all three show the one chord workshop, with a different part of it in view */
 function akW18Fam(id) { return AK_W18_WS[id] ? "workshop" : id; }
 function akW18b() {
   var s = settings(), c = s.w18b = s.w18b || {}, d = { top: "slim", scr: "stack", hA: "chords", hB: "lyrics", tab: "lyrics", pct: 50 };
   Object.keys(d).forEach(function (k) { if (c[k] === undefined) c[k] = d[k]; });
+  ["hA", "hB", "tab"].forEach(function (k) { if (c[k] === "timeline") c[k] = "sections"; });
   if (!AK_W18_TOP.some(function (x) { return x[0] === c.top; })) c.top = "slim";
   if (!AK_W18_SCR.some(function (x) { return x[0] === c.scr; })) c.scr = "stack";
   return c;
@@ -49127,7 +49129,7 @@ function akW18bChips() {
     return h("div", { class: "chips akw18-grp", role: "group", "aria-label": label }, h("span", { class: "muted" }, label),
       list.map(function (x) { return h("button", { class: "chip" + (c[key] === x[0] ? " on" : ""), "aria-pressed": c[key] === x[0] ? "true" : "false", onClick: function () { c[key] = x[0]; save(); rerenderKeepScroll(); } }, x[1].replace(/ \(.*\)$/, "").replace(/^Full: .*/, "Full")); }));
   }
-  var PRE = [["Chords + arranger", "timeline", "arranger"], ["Lyrics + chords", "lyrics", "linech"], ["Lyrics + arranger", "lyrics", "arranger"], ["Wheel + arranger", "wheel", "arranger"]];
+  var PRE = [["Chords + arranger", "sections", "arranger"], ["Lyrics + chords", "lyrics", "linech"], ["Lyrics + arranger", "lyrics", "arranger"], ["Wheel + arranger", "wheel", "arranger"]];
   var pre = h("div", { class: "chips akw18-grp", role: "group", "aria-label": "Two-halves presets" }, h("span", { class: "muted" }, "Halves"),
     PRE.map(function (x) { var on = c.scr === "halves" && c.hA === x[1] && c.hB === x[2]; return h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { c.scr = "halves"; c.hA = x[1]; c.hB = x[2]; save(); rerenderKeepScroll(); } }, x[0]); }));
   return h("div", { class: "akw18-prefs" }, group("Screen", AK_W18_SCR, "scr"), pre, group("Top", AK_W18_TOP, "top"));
@@ -49189,12 +49191,12 @@ function akW18bApply(el) {
     secEls[id] = e; return e;
   }
   function have(id) { return id === "arranger" ? true : id === "looper" ? !!aloop : AK_W18_WS[id] ? !!wheel : true; }
-  function view(id) { if (wheel) wheel.setAttribute("data-wsview", id === "timeline" ? "timeline" : id === "wheel" ? "wheel" : "all"); }
+  function view(id) { if (wheel) wheel.setAttribute("data-wsview", id === "sections" ? "sections" : id === "wheel" ? "wheel" : "all"); }
   function openDet(e) { if (e && e.tagName === "DETAILS" && !e.open) e.open = true; }
 
   if (c.scr === "tabs") {
-    var ids = ["lyrics", "arranger", "timeline", "wheel", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
-    var labels = { lyrics: "Lyrics", arranger: "Arranger", timeline: "Timeline", wheel: "Wheel", looper: "Looper" };
+    var ids = ["lyrics", "arranger", "sections", "wheel", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
+    var labels = { lyrics: "Lyrics", arranger: "Arranger", sections: "Sections", wheel: "Wheel", looper: "Looper" };
     var tabs = h("div", { class: "akw18-tabs", role: "tablist", "data-bk": "w18tabs", "data-bt": "Write view tabs" },
       ids.map(function (id) { return h("button", { role: "tab", class: id === cur ? "on" : "", "aria-selected": id === cur ? "true" : "false", onClick: function () { c.tab = id; save(); rerenderKeepScroll(); } }, labels[id]); }));
     body.insertBefore(tabs, body.querySelector(".akw18-drawer") ? body.querySelector(".akw18-drawer").nextSibling : body.firstChild);
@@ -49264,7 +49266,7 @@ function akW18bApply(el) {
 })();
 
 akCss("akv18-wsview", [
-  "[data-wsview=timeline] .akws > .akws-pal,[data-wsview=timeline] .akws > .akws-main,[data-wsview=timeline] .akws > .akpw-legend,[data-wsview=timeline] .akws > .akfold-bar:has(+ .akws-pal),[data-wsview=timeline] .akws > .akfold-bar:has(+ .akws-main){display:none !important}",
+  "[data-wsview=sections] .akws > .akws-pal,[data-wsview=sections] .akws > .akws-main,[data-wsview=sections] .akws > .akpw-legend,[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-pal),[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-main){display:none !important}",
   "[data-wsview=wheel] .akws > .akws-strip,[data-wsview=wheel] .akws > .akws-gridwrap,[data-wsview=wheel] .akws > .akfold-bar:has(+ .akws-strip),[data-wsview=wheel] .akws > .akfold-bar:has(+ .akws-gridwrap){display:none !important}"
 ].join("\n"));
 akCss("akv18-write", [
@@ -49407,18 +49409,19 @@ akCss("akv18-bshape", [
   "html[data-bshape=underline] body .chips,html[data-bshape=boxes] body .chips,html[data-bshape=outline] body .chips{gap:2px 4px}"
 ].join("\n"));
 
-/* ================================================================ ak_v18c: multi-track Arranger (version 18.2, queue items 10, 11, 20)
-   A new card on the Write tab (🎚 Arranger), also a choice for the two halves and the view tabs.
-   - Tracks run across the top as lanes, bars run left to right. Start with one Chords track; + Track adds more.
-   - Chord tracks play: each clip is one of the workshop's sections (Verse, Chorus...) repeated 1, 2, 3... times.
-   - Drums, Bass, Guitar 2 and Vocals are placeholder tracks for now: lay out clips and patterns, no sound yet.
-   - Tap a clip to select it: move it a bar left or right, repeat it more or less, duplicate, copy / paste, change its section,
-     open that section in the workshop, delete. Or drag it along the lane, and drag its right edge to stretch it.
-   - ▶ Play plays all the chord tracks together (with Mute / Solo, a volume per track, Loop and the count-in), and stops at the end
-     when Loop is off. In the workshop, ▤ Send to arranger puts the section you are on at the end of the first chord track.
-   The arrangement is kept with the song's workshop (ws.arr), next to its sections. */
+/* ================================================================ ak_v18c: multi-track Arranger (18.2, reworked in 18.3; queue items 10, 11, 20 and next-build N1, N4 to N10)
+   A card on the Write tab (🎚 Arranger), also a choice for the two halves and the view tabs.
+   - Lanes for tracks, time left to right. Start with one Chords track; + Track adds more.
+   - Chord tracks play: a clip is a section (or a chain: a section that was split, e.g. at a time-signature change) repeated for as far as the clip
+     is long. Stretching a clip's right edge repeats the section for as far as you drag, and the last repeat can stop part-way.
+   - Drums, Bass, Guitar 2 and Vocals are placeholder tracks for now: clips and patterns, no sound yet.
+   - Positions are in ticks (12 to a quarter note, like the workshop), so clips can start anywhere. Snap: to bars (the real bars, whatever the time
+     signature is), to beats, or off (loose).
+   - Moving a clip: drag the ⠿ grip, or press and hold the clip and then drag. A swipe anywhere else scrolls the lanes sideways.
+   - The arranger can be made taller or shorter with the handle under the lanes, and shown full screen (⛶).
+   The arrangement is kept with the song's workshop (ws.arr, version 2), next to its sections. */
 AK_WHATS_NEW = [
-  "Arranger: a new 🎚 card on the Write tab with lanes for tracks. Chords plays your workshop sections, repeated as many times as you like; Drums, Bass, Guitar 2 and Vocals are placeholders for now (no sound yet). Add tracks with + Track, drag clips, stretch them, mute or solo. In the workshop, ▤ Send to arranger adds the section you are on."
+  "Arranger, reworked: drag the clip's right edge to repeat the section for as far as you drag (it can stop part-way), choose Snap (bars, beats, or loose), move clips with the ⠿ grip or press-and-hold so swiping scrolls, make the arranger taller with the handle under it or full screen with ⛶, zoom the width and the height, and scroll with the ◀ ▶ buttons. Sections can change time signature, even in the middle of a section (bar menu › Change the time signature from here)."
 ].concat(AK_WHATS_NEW);
 
 var AKARR = { mode: false, host: null, copy: null, undo: [], raf: 0 };
@@ -49437,74 +49440,132 @@ var AK_ARR_PAT = {
   vocals: ["Verse take", "Chorus take", "Harmony"],
   blank: ["Clip"]
 };
+var AK_ARR_SNAPS = [["bar", "Bars"], ["beat", "Beats"], ["off", "Loose"]];
 
 function akArrState() {
   var song = typeof akW9Song === "function" ? akW9Song() : null;
   var st = akPw9Norm(song ? akPw9SongState(song) : akPwState()); akWsNorm(st); return st;
 }
 function akArrSecIx(ws, id) { for (var i = 0; i < ws.secs.length; i++) if (ws.secs[i].id === id) return i; return -1; }
-function akArrLen(ws, t, c) {
-  if (t.k === "chords") { var i = akArrSecIx(ws, c.sec); return i < 0 ? 0 : ws.secs[i].bars.length * c.reps; }
-  return c.len;
+function akArrSecTicks(ws, id) { var i = akArrSecIx(ws, id); return i < 0 ? 0 : ws.secs[i].bars.length * akWsBarT(ws.secs[i].ts); }
+function akArrUnit(ws, c) { var u = 0; (c.secs || []).forEach(function (id) { u += akArrSecTicks(ws, id); }); return u; }
+function akArrName(ws, t, c) {
+  if (t.k !== "chords") return c.name;
+  var u = akArrUnit(ws, c), i = akArrSecIx(ws, c.secs[0]), nm = ws.secs[i].name + (c.secs.length > 1 ? " +" + (c.secs.length - 1) : "");
+  var r = u ? Math.round(c.len / u * 10) / 10 : 1; return nm + (r !== 1 ? " ×" + r : "");
 }
 function akArrNorm(st) {
-  var ws = akWsNorm(st), a = ws.arr;
-  if (!a || a.v !== 1 || !Array.isArray(a.tracks) || !a.tracks.length) {
-    var at = 0, clips = ws.secs.map(function (s) { var c = { id: uid(), sec: s.id, at: at, reps: 1 }; at += s.bars.length; return c; });
-    a = ws.arr = { v: 1, tracks: [{ id: uid(), k: "chords", name: "Chords", vol: 1, mute: false, solo: false, clips: clips }], px: 34, loop: true };
+  var ws = akWsNorm(st), a = ws.arr, bd = akWsBarT(ws.secs[0].ts);
+  if (!a || !Array.isArray(a.tracks) || !a.tracks.length) {
+    var at = 0, clips = ws.secs.map(function (s) { var c = { id: uid(), secs: [s.id], at: at, len: s.bars.length * akWsBarT(s.ts) }; at += c.len; return c; });
+    a = ws.arr = { v: 2, tracks: [{ id: uid(), k: "chords", name: "Chords", vol: 1, mute: false, solo: false, clips: clips }], px: 34, loop: true };
   }
-  a.px = Math.max(14, Math.min(80, Number(a.px) || 34));
+  if (a.v !== 2) { /* 18.2 kept positions in whole bars and a repeat count */
+    a.tracks.forEach(function (t) {
+      (t.clips || []).forEach(function (c) {
+        c.at = (Number(c.at) || 0) * bd;
+        if (t.k === "chords") { c.secs = [c.sec]; c.len = (Math.max(1, c.reps || 1)) * akArrSecTicks(ws, c.sec); delete c.sec; delete c.reps; }
+        else c.len = (Math.max(1, c.len || 4)) * bd;
+      });
+    });
+    a.v = 2;
+  }
+  a.px = Math.max(12, Math.min(90, Number(a.px) || 34));
+  a.lh = Math.max(36, Math.min(130, Number(a.lh) || 54));
+  if (!AK_ARR_SNAPS.some(function (x) { return x[0] === a.snap; })) a.snap = "bar";
   if (a.loop === undefined) a.loop = true;
   a.tracks.forEach(function (t) {
     if (!t.id) t.id = uid(); if (!AK_ARR_KINDS[t.k]) t.k = "blank";
     t.name = t.name || AK_ARR_KINDS[t.k].label; t.vol = typeof t.vol === "number" ? Math.max(0, Math.min(1.5, t.vol)) : 1;
     if (!Array.isArray(t.clips)) t.clips = [];
     t.clips = t.clips.filter(function (c) {
-      if (!c.id) c.id = uid();
-      if (t.k === "chords") { c.reps = Math.max(1, Math.min(32, Math.round(c.reps) || 1)); return akArrSecIx(ws, c.sec) >= 0; }
-      c.len = Math.max(1, Math.min(64, Math.round(c.len) || 4)); c.name = c.name || (AK_ARR_PAT[t.k] || ["Clip"])[0]; return true;
+      if (!c.id) c.id = uid(); c.at = Math.max(0, Math.round(c.at) || 0);
+      if (t.k === "chords") {
+        c.secs = (c.secs || []).filter(function (id) { return akArrSecIx(ws, id) >= 0; });
+        if (!c.secs.length) return false;
+        var u = akArrUnit(ws, c);
+        if (c.u && c.u !== u && c.len) c.len = Math.round(c.len / c.u * u); /* the workshop changed the section: the clip follows */
+        c.u = u; if (!c.len) c.len = u; c.len = Math.max(6, Math.round(c.len)); return true;
+      }
+      c.len = Math.max(6, Math.round(c.len) || 192); c.name = c.name || (AK_ARR_PAT[t.k] || ["Clip"])[0]; return true;
     });
     t.clips.sort(function (x, y) { return x.at - y.at; });
-    var end = 0; t.clips.forEach(function (c) { c.at = Math.max(0, Math.round(c.at) || 0); if (c.at < end) c.at = end; end = c.at + akArrLen(ws, t, c); });
+    var end = 0; t.clips.forEach(function (c) { if (c.at < end) c.at = end; end = c.at + c.len; });
   });
   return a;
 }
-function akArrTotal(st) {
-  var ws = st.ws, a = ws.arr, n = 0;
-  a.tracks.forEach(function (t) { t.clips.forEach(function (c) { n = Math.max(n, c.at + akArrLen(ws, t, c)); }); });
-  return n;
-}
-function akArrSig(st) { var ws = st.ws; return JSON.stringify(ws.secs.map(function (s) { return [s.id, s.name, s.bars.length]; })) + (ws.arr ? ws.arr.tracks.length : 0); }
-function akArrFits(ws, t, clip, at, len) {
+function akArrTotal(st) { var n = 0; st.ws.arr.tracks.forEach(function (t) { t.clips.forEach(function (c) { n = Math.max(n, c.at + c.len); }); }); return n; }
+function akArrSig(st) { var ws = st.ws; return JSON.stringify(ws.secs.map(function (s) { return [s.id, s.name, s.bars.length, s.ts]; })) + (ws.arr ? ws.arr.tracks.length : 0); }
+function akArrFits(t, clip, at, len) {
   if (at < 0) return false;
-  return t.clips.every(function (o) { return o === clip || at >= o.at + akArrLen(ws, t, o) || at + len <= o.at; });
+  return t.clips.every(function (o) { return o === clip || at >= o.at + o.len || at + len <= o.at; });
 }
-function akArrFree(ws, t, from, len) { var at = Math.max(0, from); for (var g = 0; g < 200; g++) { if (akArrFits(ws, t, null, at, len)) return at; at++; } return at; }
-function akArrColor(name, k) { if (k !== "chords") return null; return AKWS_COLS[name] || "#3E63DD"; }
+function akArrFree(t, from, len) {
+  var at = Math.max(0, from), moved = true, g = 0;
+  while (moved && g++ < 200) { moved = false; for (var i = 0; i < t.clips.length; i++) { var o = t.clips[i]; if (at < o.at + o.len && at + len > o.at) { at = o.at + o.len; moved = true; } } }
+  return at;
+}
+function akArrColor(name, k) { return k !== "chords" ? null : (AKWS_COLS[name] || "#3E63DD"); }
 
-/* ---------------------------------------------------------------- playing: every chord track at once, laid on one bar grid */
+/* the real bars of the first chords track: [{ t, len, n, ts, show }] (the ruler, the snap points). show = the time signature changes here */
+function akArrRuler(ws, a, limit) {
+  var m = a.tracks.filter(function (t) { return t.k === "chords" && t.clips.length; })[0], bars = [], pos = 0, num = 1, ts = ws.secs[0].ts, lastKey = "";
+  function push(len, tsx) { var key = tsx[0] + "/" + tsx[1]; bars.push({ t: pos, len: len, n: num++, ts: tsx, show: key !== lastKey }); lastKey = key; pos += len; }
+  (m ? m.clips : []).forEach(function (c) {
+    var g = 0; while (pos < c.at && g++ < 2000) { var bl = akWsBarT(ts); if (pos + bl <= c.at) push(bl, ts); else break; }
+    pos = c.at; var end = c.at + c.len, guard = 0;
+    while (pos < end && guard++ < 400) {
+      var any = false;
+      for (var k = 0; k < c.secs.length && pos < end; k++) {
+        var i = akArrSecIx(ws, c.secs[k]); if (i < 0) continue; var sec = ws.secs[i], bl2 = akWsBarT(sec.ts); ts = sec.ts;
+        for (var b = 0; b < sec.bars.length && pos < end; b++) { push(Math.min(bl2, end - pos), sec.ts); any = true; }
+      }
+      if (!any) break;
+    }
+  });
+  var g2 = 0; while (pos < limit && g2++ < 4000) push(akWsBarT(ts), ts);
+  return bars;
+}
+function akArrSnap(R, t, mode) {
+  t = Math.max(0, t); if (mode === "off") return Math.round(t);
+  var best = 0, bd = 1e9, i, last = R[R.length - 1];
+  if (mode === "bar") {
+    for (i = 0; i < R.length; i++) { var d = Math.abs(R[i].t - t); if (d < bd) { bd = d; best = R[i].t; } }
+    if (last && Math.abs(last.t + last.len - t) < bd) best = last.t + last.len; return best;
+  }
+  for (i = 0; i < R.length; i++) if (t >= R[i].t && t < R[i].t + R[i].len) { var bt = akWsBeatT(R[i].ts); return Math.min(R[i].t + R[i].len, R[i].t + Math.round((t - R[i].t) / bt) * bt); }
+  return Math.round(t / 12) * 12;
+}
+function akArrBarAt(R, t) { for (var i = 0; i < R.length; i++) if (t >= R[i].t && t < R[i].t + R[i].len) return R[i]; return R[R.length - 1] || { t: 0, len: 48, ts: [4, 4] }; }
+
+/* ---------------------------------------------------------------- playing: every chord track at once, on one clock in ticks */
 function akArrTimeline(st) {
-  var ws = st.ws, a = akArrNorm(st), spt = 60 / (st.bpm || 80) / AKWS_TPQ, barDur = akWsBarT(ws.secs[0].ts), bs = barDur * spt;
-  var solo = a.tracks.some(function (t) { return t.solo; }), ev = [], seen = {}, total = akArrTotal(st), firstSi = 0;
+  var ws = st.ws, a = akArrNorm(st), spt = 60 / (st.bpm || 80) / AKWS_TPQ;
+  var solo = a.tracks.some(function (t) { return t.solo; }), ev = [], seen = {}, total = akArrTotal(st), first = -1;
   a.tracks.forEach(function (t) {
-    if (t.k !== "chords") return;
-    var on = !t.mute && (!solo || t.solo);
+    if (t.k !== "chords" || t.mute || (solo && !t.solo)) return;
     t.clips.forEach(function (c) {
-      var si = akArrSecIx(ws, c.sec); if (si < 0 || !on) return;
-      var n = ws.secs[si].bars.length; firstSi = si;
-      for (var k = 0; k < c.reps; k++) {
-        var tl = akWsTimeline0(st, [{ si: si, a: 0, b: n - 1 }]), off = (c.at + k * n) * bs;
-        tl.ev.forEach(function (e) {
-          var at = e.at + off, o = {}; Object.keys(e).forEach(function (x) { o[x] = e[x]; }); o.at = at;
-          if (e.kind === "click") { var key = at.toFixed(3); if (seen[key]) return; seen[key] = 1; }
-          else if (typeof o.vol === "number") o.vol = o.vol * t.vol;
-          ev.push(o);
-        });
+      var end = c.at + c.len, p = c.at, guard = 0, unit = akArrUnit(ws, c); if (!unit) return;
+      while (p < end && guard++ < 600) {
+        for (var k = 0; k < c.secs.length && p < end; k++) {
+          var si = akArrSecIx(ws, c.secs[k]); if (si < 0) continue;
+          if (first < 0) first = si;
+          var n = ws.secs[si].bars.length, tl = akWsTimeline0(st, [{ si: si, a: 0, b: n - 1 }]), off = p * spt, cut = end * spt;
+          tl.ev.forEach(function (e) {
+            var at = e.at + off; if (at >= cut - 1e-6) return;
+            var o = {}; Object.keys(e).forEach(function (x) { o[x] = e[x]; }); o.at = at;
+            if (e.kind === "click") { var key = at.toFixed(3); if (seen[key]) return; seen[key] = 1; }
+            else if (typeof o.vol === "number") o.vol = o.vol * t.vol;
+            ev.push(o);
+          });
+          p += akArrSecTicks(ws, c.secs[k]);
+        }
       }
     });
   });
   ev.sort(function (x, y) { return x.at - y.at || (x.kind === "click" ? -1 : 1); });
-  return { ev: ev, bars: [{ si: firstSi, bi: 0, at: 0, len: bs, t: barDur }], len: total * bs };
+  var f = first < 0 ? 0 : first, bT = akWsBarT(ws.secs[f].ts);
+  return { ev: ev, bars: [{ si: f, bi: 0, at: 0, len: bT * spt, t: bT }], len: total * spt };
 }
 var akWsTimeline0 = akWsTimeline;
 akWsTimeline = function (st, part) { return AKARR.mode ? akArrTimeline(st) : akWsTimeline0(st, part); };
@@ -49519,8 +49580,18 @@ akWsTimeline = function (st, part) { return AKARR.mode ? akArrTimeline(st) : akW
   akWsPaint = function () {
     paint();
     var on = AKWS.on && AKARR.mode;
-    Array.prototype.forEach.call(document.querySelectorAll(".akarr-play"), function (b) { b.textContent = on ? "■ Stop" : "▶ Play"; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    Array.prototype.forEach.call(document.querySelectorAll(".akarr-play"), function (b) { b.textContent = on ? "■" : "▶"; b.setAttribute("aria-label", on ? "Stop" : "Play"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
     if (!AKWS.on) Array.prototype.forEach.call(document.querySelectorAll(".akarr-ph"), function (p) { p.style.display = "none"; });
+  };
+  /* a section split in two (new time signature from a bar): the clips that played the section now play both parts, in order */
+  var split = akWsSplit;
+  akWsSplit = function (ws, si, bi) {
+    var id = ws.secs[si] && ws.secs[si].id, ok = split(ws, si, bi);
+    if (ok && id && ws.arr && Array.isArray(ws.arr.tracks)) {
+      var nid = ws.secs[si + 1].id;
+      ws.arr.tracks.forEach(function (t) { (t.clips || []).forEach(function (c) { var i = (c.secs || []).indexOf(id); if (i >= 0 && c.secs.indexOf(nid) < 0) c.secs.splice(i + 1, 0, nid); }); });
+    }
+    return ok;
   };
 })();
 /* the moving line, and the clips playing now */
@@ -49528,14 +49599,14 @@ function akArrHead() {
   if (!AKWS.on || !AKARR.mode) { Array.prototype.forEach.call(document.querySelectorAll(".akarr .now"), function (x) { x.classList.remove("now"); }); return; }
   var ac = akAudio(), tl = AKWS.tl, st = AKWS.st, hosts = document.querySelectorAll(".akarr");
   if (st && st.ws && st.ws.arr && tl && tl.len) {
-    var ws = st.ws, a = ws.arr, bs = akWsBarT(ws.secs[0].ts) * 60 / (st.bpm || 80) / AKWS_TPQ, pos = ac.currentTime - AKWS.t0;
+    var a = st.ws.arr, spt = 60 / (st.bpm || 80) / AKWS_TPQ, pos = ac.currentTime - AKWS.t0;
     if (AKWS.loop) pos = ((pos % tl.len) + tl.len) % tl.len;
-    var bar = Math.max(0, pos / bs);
+    var tick = Math.max(0, pos / spt);
     Array.prototype.forEach.call(hosts, function (host) {
-      var ph = host.querySelector(".akarr-ph"), px = a.px;
-      if (ph) { ph.style.display = "block"; ph.style.left = (bar * px).toFixed(1) + "px"; }
-      var sc = host.querySelector(".akarr-scroll"); if (sc && ph && (bar * px < sc.scrollLeft || bar * px > sc.scrollLeft + sc.clientWidth - 30)) sc.scrollLeft = Math.max(0, bar * px - 40);
-      Array.prototype.forEach.call(host.querySelectorAll(".akarr-clip"), function (el) { var s = +el.getAttribute("data-at"), l = +el.getAttribute("data-len"); el.classList.toggle("now", bar >= s && bar < s + l); });
+      var ph = host.querySelector(".akarr-ph"), pt = a.px / 48, x = tick * pt;
+      if (ph) { ph.style.display = "block"; ph.style.left = x.toFixed(1) + "px"; }
+      var sc = host.querySelector(".akarr-scroll"); if (sc && ph && !host._hold && (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - 30)) sc.scrollLeft = Math.max(0, x - 40);
+      Array.prototype.forEach.call(host.querySelectorAll(".akarr-clip"), function (el) { var s0 = +el.getAttribute("data-at"), l = +el.getAttribute("data-len"); el.classList.toggle("now", tick >= s0 && tick < s0 + l); });
     });
   }
   AKARR.raf = requestAnimationFrame(akArrHead);
@@ -49553,7 +49624,7 @@ function akArrCard() {
 }
 
 function akArrBuild() {
-  var host = h("div", { class: "akarr" }), sel = null, ins = null, drag = false, last = "";
+  var host = h("div", { class: "akarr" }), sel = null, ins = null, drag = false, last = "", full = false;
   function st0() { return akArrState(); }
   function changed() {
     var st = st0(); if (last) { AKARR.undo.push(last); if (AKARR.undo.length > 30) AKARR.undo.shift(); }
@@ -49573,7 +49644,8 @@ function akArrBuild() {
     if (!akArrTotal(st)) { toast("Add a clip first."); return; }
     akWsStart(st, host);
   }
-  function tog(label, on, fn, aria) { return h("button", { class: "sm akws-tg" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": aria || label, onClick: fn }, label); }
+  function tog(label, on, fn, aria) { return h("button", { class: "sm akws-tg" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": aria || label, title: aria || label, onClick: fn }, label); }
+  function ib(label, aria, fn, off) { return h("button", { class: "sm", "aria-label": aria, title: aria, disabled: !!off, onClick: fn }, label); }
   function newName(a, base) { var n = base, i = 2; while (a.tracks.some(function (t) { return t.name === n; })) n = base + " " + i++; return n; }
   function addTrack(k) {
     var st = st0(), a = akArrNorm(st); if (a.tracks.length >= 8) { toast("That is plenty of tracks (8)."); return; }
@@ -49582,39 +49654,109 @@ function akArrBuild() {
     if (!AK_ARR_KINDS[k].sound) toast(AK_ARR_KINDS[k].label.replace(/ \(.*\)$/, "") + " is a placeholder for now: you can lay out clips, but it makes no sound yet.");
     changed();
   }
+  function endOf(t) { return t.clips.length ? Math.max.apply(null, t.clips.map(function (c) { return c.at + c.len; })) : 0; }
   function addClip(t, at) {
     var st = st0(), a = akArrNorm(st), ws = st.ws; last = JSON.stringify(a);
-    if (at === undefined || at === null) at = ins && ins.t === t.id ? ins.at : akArrFree(ws, t, t.clips.length ? Math.max.apply(null, t.clips.map(function (c) { return c.at + akArrLen(ws, t, c); })) : 0, 1);
+    if (at === undefined || at === null) at = ins && ins.t === t.id ? ins.at : endOf(t);
+    var anchor = host.querySelector(".akarr-add") || host;
     if (t.k === "chords") {
-      menu(host.querySelector(".akarr-add") || host, ws.secs.map(function (s) { return { label: s.name + " (" + s.bars.length + " bars)", onClick: function () { var n = s.bars.length, p = akArrFree(ws, t, at, n), c = { id: uid(), sec: s.id, at: p, reps: 1 }; last = JSON.stringify(a); t.clips.push(c); sel = { t: t.id, c: c.id }; changed(); } }; })
-        .concat([{ sep: true }, { label: "All the sections, in order", onClick: function () { last = JSON.stringify(a); var p = at; ws.secs.forEach(function (s) { p = akArrFree(ws, t, p, s.bars.length); t.clips.push({ id: uid(), sec: s.id, at: p, reps: 1 }); p += s.bars.length; }); sel = { t: t.id, c: null }; changed(); } }]));
+      menu(anchor, ws.secs.map(function (s) { return { label: s.name + " (" + s.bars.length + " bars, " + akWsTsName(s.ts) + ")", onClick: function () { var u = akArrSecTicks(ws, s.id), p = akArrFree(t, at, u), c = { id: uid(), secs: [s.id], at: p, len: u }; last = JSON.stringify(a); t.clips.push(c); sel = { t: t.id, c: c.id }; changed(); } }; })
+        .concat([{ sep: true }, { label: "All the sections, in order", onClick: function () { last = JSON.stringify(a); var p = at; ws.secs.forEach(function (s) { var u = akArrSecTicks(ws, s.id); p = akArrFree(t, p, u); t.clips.push({ id: uid(), secs: [s.id], at: p, len: u }); p += u; }); sel = { t: t.id, c: null }; changed(); } }]));
     } else {
-      menu(host.querySelector(".akarr-add") || host, (AK_ARR_PAT[t.k] || ["Clip"]).map(function (nm) { return { label: nm + " (4 bars)", onClick: function () { var p = akArrFree(ws, t, at, 4), c = { id: uid(), name: nm, at: p, len: 4 }; last = JSON.stringify(a); t.clips.push(c); sel = { t: t.id, c: c.id }; changed(); } }; }));
+      menu(anchor, (AK_ARR_PAT[t.k] || ["Clip"]).map(function (nm) { return { label: nm + " (4 bars)", onClick: function () { var l = 4 * akWsBarT(ws.secs[0].ts), p = akArrFree(t, at, l), c = { id: uid(), name: nm, at: p, len: l }; last = JSON.stringify(a); t.clips.push(c); sel = { t: t.id, c: c.id }; changed(); } }; }));
     }
   }
+  function scrollBy(f) { var sc = host.querySelector(".akarr-scroll"); if (sc) sc.scrollBy ? sc.scrollBy({ left: f * sc.clientWidth * 0.7, behavior: "smooth" }) : (sc.scrollLeft += f * sc.clientWidth * 0.7); }
+  function setFull(v) { full = v; host.classList.toggle("akarr-full", full); document.documentElement.classList.toggle("akarr-lock", full); draw(); }
+  host._esc = function (e) { if (e.key === "Escape" && full) setFull(false); };
+  document.addEventListener("keydown", host._esc);
+
+  /* a clip: drag it (grip, or press and hold), stretch it (right edge), tap to select */
+  function wireClip(el, t, c, a, ws, pt, R) {
+    function startMove(ev, hold) {
+      var x0 = ev.clientX, moved = false, to = c.at, lifted = !!hold; drag = true; host._hold = true;
+      try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+      el.classList.add("lift");
+      function mv(e) {
+        var d = (e.clientX - x0) / pt; if (Math.abs(e.clientX - x0) > 3) moved = true;
+        if (moved) { to = Math.max(0, akArrSnap(R, c.at + d, a.snap)); el.style.left = (to * pt) + "px"; }
+      }
+      function up() {
+        el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); drag = false; host._hold = false;
+        sel = { t: t.id, c: c.id }; ins = null;
+        if (moved && to !== c.at) { if (akArrFits(t, c, to, c.len)) { last = JSON.stringify(a); c.at = to; changed(); } else { toast("Something is already there."); draw(); } } else draw();
+      }
+      el.addEventListener("pointermove", mv); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+      el._lift = lifted;
+    }
+    var gp = el.querySelector(".akarr-gp");
+    gp.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); ev.preventDefault(); startMove(ev, true); });
+    /* press and hold on the clip itself (a mouse drags at once; a finger waits, so a swipe still scrolls) */
+    var timer = 0, sx = 0, sy = 0, pid = 0;
+    el.addEventListener("touchmove", function (e) { if (el._lift && drag) e.preventDefault(); }, { passive: false });
+    el.addEventListener("pointerdown", function (ev) {
+      if (ev.target.classList.contains("akarr-rs") || ev.target.classList.contains("akarr-gp")) return;
+      if (ev.pointerType === "mouse") { startMove(ev, true); return; }
+      sx = ev.clientX; sy = ev.clientY; pid = ev.pointerId; clearTimeout(timer);
+      var tap = function () { clearTimeout(timer); el.removeEventListener("pointerup", tapUp); el.removeEventListener("pointermove", chk); el.removeEventListener("pointercancel", tap); };
+      var tapUp = function () { tap(); sel = { t: t.id, c: c.id }; ins = null; draw(); };
+      var chk = function (e) { if (Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8) tap(); };
+      timer = setTimeout(function () { el.removeEventListener("pointerup", tapUp); el.removeEventListener("pointermove", chk); el.removeEventListener("pointercancel", tap); try { navigator.vibrate && navigator.vibrate(12); } catch (e) {} startMove({ clientX: sx, pointerId: pid }, true); }, 340);
+      el.addEventListener("pointerup", tapUp); el.addEventListener("pointermove", chk); el.addEventListener("pointercancel", tap);
+    });
+    el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sel = { t: t.id, c: c.id }; draw(); } });
+    /* stretch */
+    var rs = el.querySelector(".akarr-rs");
+    rs.addEventListener("pointerdown", function (ev) {
+      ev.stopPropagation(); ev.preventDefault(); drag = true; host._hold = true; var x0 = ev.clientX, nl = c.len;
+      try { rs.setPointerCapture(ev.pointerId); } catch (e) {}
+      function mv(e) { var end = akArrSnap(R, c.at + c.len + (e.clientX - x0) / pt, a.snap); nl = Math.max(6, end - c.at); el.style.width = (nl * pt - 2) + "px"; el.querySelector("small").textContent = akArrTxt(ws, t, c, nl); }
+      function up() {
+        rs.removeEventListener("pointermove", mv); rs.removeEventListener("pointerup", up); rs.removeEventListener("pointercancel", up); drag = false; host._hold = false; sel = { t: t.id, c: c.id };
+        if (nl !== c.len && akArrFits(t, c, c.at, nl)) { last = JSON.stringify(a); c.len = nl; changed(); } else draw();
+      }
+      rs.addEventListener("pointermove", mv); rs.addEventListener("pointerup", up); rs.addEventListener("pointercancel", up);
+    });
+  }
+  function akArrTxt(ws, t, c, len) {
+    if (t.k !== "chords") return Math.round(len / 48 * 10) / 10 + " bars";
+    var u = akArrUnit(ws, c); return u ? "×" + (Math.round(len / u * 10) / 10) : "";
+  }
+
   function draw() {
-    var st = st0(), ws = st.ws, a = akArrNorm(st), px = a.px, total = Math.max(16, akArrTotal(st) + 4), W = total * px, solo = a.tracks.some(function (t) { return t.solo; });
+    var st = st0(), ws = st.ws, a = akArrNorm(st), pt = a.px / 48, solo = a.tracks.some(function (t) { return t.solo; });
+    var total = akArrTotal(st), lastBar = akWsBarT(ws.secs[0].ts), R = akArrRuler(ws, a, total + lastBar * 4), end = R.length ? R[R.length - 1].t + R[R.length - 1].len : 0, W = Math.max(end, 16 * 48) * pt;
     host._sig = akArrSig(st); last = JSON.stringify(a);
-    var sc0 = host.querySelector(".akarr-scroll"), keep = sc0 ? sc0.scrollLeft : 0;
+    var sc0 = host.querySelector(".akarr-scroll"), keep = sc0 ? sc0.scrollLeft : 0, wrap0 = host.querySelector(".akarr-wrap"), keepY = wrap0 ? wrap0.scrollTop : 0;
     while (host.firstChild) host.removeChild(host.firstChild);
-    host.style.setProperty("--px", px + "px");
-    /* top row */
-    host.appendChild(h("div", { class: "akarr-tools row" },
-      h("button", { class: "primary akarr-play", "aria-pressed": "false", onClick: play }, "▶ Play"),
-      tog("🔁 Loop", a.loop, function () { a.loop = !a.loop; save(); if (AKWS.on && AKARR.mode) AKWS.loop = a.loop; draw(); }, "Loop the arrangement"),
-      tog("Count-in", ws.count, function () { ws.count = !ws.count; save(); draw(); }, "Count one bar in first"),
-      h("span", { class: "grow" }),
-      h("button", { class: "sm", "aria-label": "Zoom out", onClick: function () { a.px = Math.max(14, px - 6); save(); draw(); } }, "−"),
-      h("button", { class: "sm", "aria-label": "Zoom in", onClick: function () { a.px = Math.min(80, px + 6); save(); draw(); } }, "+"),
-      h("button", { class: "sm", "aria-label": "Undo", onClick: undo }, "↶"),
-      h("button", { class: "sm akarr-add", onClick: function () {
+    host.style.setProperty("--lh", a.lh + "px");
+    /* row 1: the main buttons, one tight row */
+    var snapSel = h("select", { class: "akarr-snap", "aria-label": "Snap clips to" }, AK_ARR_SNAPS.map(function (x) { return h("option", { value: x[0], selected: x[0] === a.snap }, "Snap: " + x[1]); }));
+    snapSel.addEventListener("change", function () { a.snap = snapSel.value; save(); draw(); });
+    host.appendChild(h("div", { class: "akarr-tools" },
+      h("button", { class: "primary akarr-play", "aria-pressed": "false", "aria-label": "Play", onClick: play }, "▶"),
+      tog("🔁", a.loop, function () { a.loop = !a.loop; save(); if (AKWS.on && AKARR.mode) AKWS.loop = a.loop; draw(); }, "Loop the arrangement"),
+      tog("⏱", ws.count, function () { ws.count = !ws.count; save(); draw(); }, "Count one bar in first"),
+      snapSel, h("span", { class: "grow" }),
+      ib("↶", "Undo", undo),
+      h("button", { class: "sm akarr-add", "aria-label": "Add a track", onClick: function () {
         menu(this, Object.keys(AK_ARR_KINDS).map(function (k) { var K = AK_ARR_KINDS[k]; return { label: K.icon + " " + K.label + (K.sound ? "" : " · no sound yet"), onClick: function () { addTrack(k); } }; }));
-      } }, "+ Track ▾")));
+      } }, "+ Track"),
+      ib(full ? "✕" : "⛶", full ? "Leave full screen" : "Full screen", function () { setFull(!full); })));
+    /* row 2: scroll and zoom */
+    host.appendChild(h("div", { class: "akarr-view" },
+      ib("◀", "Scroll left", function () { scrollBy(-1); }), ib("▶", "Scroll right", function () { scrollBy(1); }),
+      h("span", { class: "akarr-vl" }, "↔"), ib("−", "Narrower (zoom out sideways)", function () { a.px = Math.max(12, Math.round(a.px * 0.8)); save(); draw(); }), ib("+", "Wider (zoom in sideways)", function () { a.px = Math.min(90, Math.round(a.px * 1.25)); save(); draw(); }),
+      h("span", { class: "akarr-vl" }, "↕"), ib("−", "Shorter lanes", function () { a.lh = Math.max(36, a.lh - 12); save(); draw(); }), ib("+", "Taller lanes", function () { a.lh = Math.min(130, a.lh + 12); save(); draw(); })));
     /* lanes */
-    var names = h("div", { class: "akarr-names" }, h("div", { class: "akarr-ruler-sp" })), tl = h("div", { class: "akarr-tl", style: "width:" + W + "px" }), ruler = h("div", { class: "akarr-ruler" });
-    for (var b = 0; b < total; b++) if (px >= 26 || b % 2 === 0 || b % 4 === 0) ruler.appendChild(h("span", { style: "left:" + (b * px) + "px" }, String(b + 1)));
-    tl.appendChild(ruler);
-    a.tracks.forEach(function (t, ti) {
+    var names = h("div", { class: "akarr-names" }, h("div", { class: "akarr-ruler-sp" })), tl = h("div", { class: "akarr-tl", style: "width:" + W + "px" }), ruler = h("div", { class: "akarr-ruler" }), gl = h("div", { class: "akarr-gl" });
+    var every = pt * 48 >= 26 ? 1 : pt * 48 >= 14 ? 2 : 4;
+    R.forEach(function (b, i) {
+      gl.appendChild(h("i", { style: "left:" + (b.t * pt) + "px" }));
+      if ((b.n - 1) % every === 0 || b.show) ruler.appendChild(h("span", { style: "left:" + (b.t * pt) + "px" }, String(b.n), b.show ? h("em", null, b.ts[0] + "/" + b.ts[1]) : null));
+    });
+    tl.appendChild(ruler); tl.appendChild(gl);
+    a.tracks.forEach(function (t) {
       var K = AK_ARR_KINDS[t.k], dim = t.mute || (solo && !t.solo);
       names.appendChild(h("div", { class: "akarr-name" + (sel && sel.t === t.id && !sel.c ? " sel" : "") + (dim ? " dim" : "") },
         h("button", { class: "akarr-nm", "aria-label": "Track " + t.name + ", tap for track options", onClick: function () { sel = { t: t.id, c: null }; draw(); } }, h("span", null, K.icon + " " + t.name), K.sound ? null : h("small", null, "no sound yet")),
@@ -49622,76 +49764,63 @@ function akArrBuild() {
           h("button", { class: "sm" + (t.mute ? " on" : ""), "aria-pressed": t.mute ? "true" : "false", "aria-label": "Mute " + t.name, onClick: function () { last = JSON.stringify(a); t.mute = !t.mute; changed(); } }, "M"),
           h("button", { class: "sm" + (t.solo ? " on" : ""), "aria-pressed": t.solo ? "true" : "false", "aria-label": "Solo " + t.name, onClick: function () { last = JSON.stringify(a); t.solo = !t.solo; changed(); } }, "S"))));
       var lane = h("div", { class: "akarr-lane" + (K.sound ? "" : " ph") + (dim ? " dim" : "") });
-      lane.addEventListener("click", function (e) { if (e.target !== lane) return; ins = { t: t.id, at: Math.floor(e.offsetX / px) }; sel = { t: t.id, c: null }; draw(); });
-      if (ins && ins.t === t.id) lane.appendChild(h("i", { class: "akarr-ins", style: "left:" + (ins.at * px) + "px" }));
+      lane.addEventListener("click", function (e) { if (e.target !== lane) return; ins = { t: t.id, at: akArrSnap(R, e.offsetX / pt, a.snap === "off" ? "beat" : a.snap) }; sel = { t: t.id, c: null }; draw(); });
+      if (ins && ins.t === t.id) lane.appendChild(h("i", { class: "akarr-ins", style: "left:" + (ins.at * pt) + "px" }));
       t.clips.forEach(function (c) {
-        var len = akArrLen(ws, t, c), si = t.k === "chords" ? akArrSecIx(ws, c.sec) : -1, nm = t.k === "chords" ? ws.secs[si].name + (c.reps > 1 ? " ×" + c.reps : "") : c.name, col = akArrColor(t.k === "chords" ? ws.secs[si].name : "", t.k);
-        var el = h("div", { class: "akarr-clip" + (t.k === "chords" ? "" : " ph") + (sel && sel.c === c.id ? " sel" : ""), "data-at": String(c.at), "data-len": String(len), role: "button", tabindex: "0", "aria-label": nm + ", bar " + (c.at + 1) + ", " + len + " bars", style: "left:" + (c.at * px) + "px;width:" + (len * px - 2) + "px" + (col ? ";background:" + col : "") }, h("span", null, nm), h("small", null, len + (len === 1 ? " bar" : " bars")), h("i", { class: "akarr-rs", "aria-hidden": "true" }));
-        el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sel = { t: t.id, c: c.id }; draw(); } });
-        el.addEventListener("pointerdown", function (ev) {
-          if (ev.target.classList.contains("akarr-rs")) return;
-          var x0 = ev.clientX, moved = false, to = c.at; drag = true;
-          try { el.setPointerCapture(ev.pointerId); } catch (e) {}
-          function mv(e) { var d = Math.round((e.clientX - x0) / px); if (d !== 0) moved = true; if (moved) { to = Math.max(0, c.at + d); el.style.left = (to * px) + "px"; } }
-          function up() {
-            el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); drag = false;
-            sel = { t: t.id, c: c.id }; ins = null;
-            if (moved && to !== c.at) { if (akArrFits(ws, t, c, to, len)) { last = JSON.stringify(a); c.at = to; changed(); } else { toast("Something is already there."); draw(); } } else draw();
-          }
-          el.addEventListener("pointermove", mv); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
-        });
-        var rs = el.querySelector(".akarr-rs");
-        rs.addEventListener("pointerdown", function (ev) {
-          ev.stopPropagation(); ev.preventDefault(); drag = true; var x0 = ev.clientX, n = t.k === "chords" ? ws.secs[si].bars.length : 1, nl = len;
-          try { rs.setPointerCapture(ev.pointerId); } catch (e) {}
-          function mv(e) { var d = Math.round((e.clientX - x0) / px / n); nl = Math.max(n, len + d * n); el.style.width = (nl * px - 2) + "px"; }
-          function up() {
-            rs.removeEventListener("pointermove", mv); rs.removeEventListener("pointerup", up); rs.removeEventListener("pointercancel", up); drag = false; sel = { t: t.id, c: c.id };
-            if (nl !== len && akArrFits(ws, t, c, c.at, nl)) { last = JSON.stringify(a); if (t.k === "chords") c.reps = Math.min(32, nl / n); else c.len = nl; changed(); } else draw();
-          }
-          rs.addEventListener("pointermove", mv); rs.addEventListener("pointerup", up); rs.addEventListener("pointercancel", up);
-        });
+        var col = akArrColor(t.k === "chords" ? ws.secs[akArrSecIx(ws, c.secs[0])].name : "", t.k), nm = akArrName(ws, t, c);
+        var el = h("div", { class: "akarr-clip" + (t.k === "chords" ? "" : " ph") + (sel && sel.c === c.id ? " sel" : ""), "data-at": String(c.at), "data-len": String(c.len), role: "button", tabindex: "0", "aria-label": nm + ", " + Math.round(c.len / 48 * 10) / 10 + " bars of 4/4 long", style: "left:" + (c.at * pt) + "px;width:" + (c.len * pt - 2) + "px" + (col ? ";background:" + col : "") },
+          h("i", { class: "akarr-gp", role: "button", "aria-label": "Drag to move " + nm, title: "Drag to move" }, "⠿"), h("span", null, nm), h("small", null, akArrTxt(ws, t, c, c.len)), h("i", { class: "akarr-rs", "aria-hidden": "true" }));
+        wireClip(el, t, c, a, ws, pt, R);
         lane.appendChild(el);
       });
       tl.appendChild(lane);
     });
     tl.appendChild(h("i", { class: "akarr-ph", style: "display:none" }));
     var scroll = h("div", { class: "akarr-scroll" }, tl);
-    host.appendChild(h("div", { class: "akarr-wrap" }, names, scroll));
-    scroll.scrollLeft = keep;
+    var rows = a.tracks.length, auto = Math.min(20 + rows * a.lh + 4, 380);
+    var wrap = h("div", { class: "akarr-wrap", style: full ? "" : "height:" + Math.round(a.h || auto) + "px" }, names, scroll);
+    host.appendChild(wrap);
+    /* the handle: drag it to make the lanes taller or shorter */
+    if (!full) {
+      var gr = h("div", { class: "akarr-grip", role: "separator", "aria-label": "Drag to make the arranger taller or shorter", tabindex: "0", title: "Drag to resize" });
+      gr.addEventListener("pointerdown", function (ev) {
+        ev.preventDefault(); var y0 = ev.clientY, h0 = wrap.getBoundingClientRect().height; try { gr.setPointerCapture(ev.pointerId); } catch (e) {}
+        function mv(e) { a.h = Math.round(Math.max(90, Math.min(window.innerHeight * 0.9, h0 + e.clientY - y0))); wrap.style.height = a.h + "px"; }
+        function up() { gr.removeEventListener("pointermove", mv); gr.removeEventListener("pointerup", up); gr.removeEventListener("pointercancel", up); save(); }
+        gr.addEventListener("pointermove", mv); gr.addEventListener("pointerup", up); gr.addEventListener("pointercancel", up);
+      });
+      gr.addEventListener("keydown", function (e) { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); a.h = Math.max(90, Math.round((a.h || wrap.getBoundingClientRect().height) + (e.key === "ArrowDown" ? 30 : -30))); wrap.style.height = a.h + "px"; save(); } });
+      host.appendChild(gr);
+    }
+    scroll.scrollLeft = keep; wrap.scrollTop = keepY;
     /* what is selected */
-    host.appendChild(selBar(st, a));
-    if (a.tracks.some(function (t) { return !AK_ARR_KINDS[t.k].sound; })) host.appendChild(h("p", { class: "hint" }, "Drums, Bass, Guitar 2 and Vocals are placeholders for now: lay out clips, they make no sound yet."));
+    host.appendChild(selBar(st, a, R));
+    host.appendChild(h("p", { class: "hint" }, "Tap a clip or a track name. Tap an empty spot in a lane to choose where the next clip goes. Drag the ⠿ grip (or press and hold a clip) to move it; swipe anywhere else to scroll. Drag a clip's right edge to repeat the section for as far as you drag. Drums, Bass, Guitar 2 and Vocals are placeholders for now: no sound yet."));
     AKARR.host = AKARR.host || host;
     akWsPaint();
   }
-  function selBar(st, a) {
+  function selBar(st, a, R) {
     var ws = st.ws, t = sel && tr(a, sel.t), c = t && sel.c ? cl(t, sel.c) : null, bar = h("div", { class: "akarr-sel row" });
-    if (!t) { bar.appendChild(h("span", { class: "muted" }, "Tap a clip or a track name. Tap an empty spot in a lane to choose where the next clip goes.")); return bar; }
+    if (!t) { bar.appendChild(h("span", { class: "muted" }, "Nothing selected.")); return bar; }
     function B(label, fn, o) { o = o || {}; return h("button", { class: "sm" + (o.danger ? " danger" : ""), disabled: !!o.off, "aria-label": o.aria || label, onClick: fn }, label); }
     function mut(f) { return function () { last = JSON.stringify(a); f(); changed(); }; }
     if (c) {
-      var len = akArrLen(ws, t, c), n = t.k === "chords" ? ws.secs[akArrSecIx(ws, c.sec)].bars.length : 1;
-      bar.appendChild(h("b", { class: "akarr-sl" }, t.k === "chords" ? ws.secs[akArrSecIx(ws, c.sec)].name : c.name));
-      bar.appendChild(B("◀", mut(function () { if (akArrFits(ws, t, c, c.at - 1, len)) c.at -= 1; }), { aria: "Move one bar earlier", off: c.at < 1 }));
-      bar.appendChild(B("▶", mut(function () { if (akArrFits(ws, t, c, c.at + 1, len)) c.at += 1; else toast("Something is already there."); }), { aria: "Move one bar later" }));
-      if (t.k === "chords") {
-        bar.appendChild(B("− Repeat", mut(function () { c.reps = Math.max(1, c.reps - 1); }), { aria: "Repeat one time less", off: c.reps <= 1 }));
-        bar.appendChild(B("+ Repeat ×" + c.reps, mut(function () { if (akArrFits(ws, t, c, c.at, len + n)) c.reps += 1; else toast("No room: move the next clip first."); }), { aria: "Repeat one more time" }));
-      } else {
-        bar.appendChild(B("− Bar", mut(function () { c.len = Math.max(1, c.len - 1); }), { off: c.len <= 1 }));
-        bar.appendChild(B("+ Bar", mut(function () { if (akArrFits(ws, t, c, c.at, len + 1)) c.len += 1; else toast("No room: move the next clip first."); })));
-      }
-      bar.appendChild(B("⧉ Duplicate", mut(function () { var p = akArrFree(ws, t, c.at + len, len), d = JSON.parse(JSON.stringify(c)); d.id = uid(); d.at = p; t.clips.push(d); sel = { t: t.id, c: d.id }; })));
+      var unit = t.k === "chords" ? akArrUnit(ws, c) : 48, bb = akArrBarAt(R, c.at), step = a.snap === "bar" ? bb.len : akWsBeatT(bb.ts);
+      bar.appendChild(h("b", { class: "akarr-sl" }, akArrName(ws, t, c)));
+      bar.appendChild(B("◀", mut(function () { var to = Math.max(0, c.at - step); if (akArrFits(t, c, to, c.len)) c.at = to; }), { aria: "Move earlier", off: c.at < 1 }));
+      bar.appendChild(B("▶", mut(function () { var to = c.at + step; if (akArrFits(t, c, to, c.len)) c.at = to; else toast("Something is already there."); }), { aria: "Move later" }));
+      bar.appendChild(B("− Repeat", mut(function () { var k = Math.ceil(c.len / unit - 1e-9) - 1; c.len = Math.max(Math.min(unit, 6), k * unit || unit); if (c.len % unit && k < 1) c.len = unit; }), { aria: "Repeat one time less", off: c.len <= unit }));
+      bar.appendChild(B("+ Repeat", mut(function () { var nl = (Math.floor(c.len / unit + 1e-9) + 1) * unit; if (akArrFits(t, c, c.at, nl)) c.len = nl; else toast("No room: move the next clip first."); }), { aria: "Repeat one more time" }));
+      bar.appendChild(B("⧉ Duplicate", mut(function () { var p = akArrFree(t, c.at + c.len, c.len), d = JSON.parse(JSON.stringify(c)); d.id = uid(); d.at = p; t.clips.push(d); sel = { t: t.id, c: d.id }; })));
       bar.appendChild(B("Copy", function () { AKARR.copy = { k: t.k, clip: JSON.parse(JSON.stringify(c)) }; toast("Copied. Tap a lane, then Paste."); draw(); }));
       bar.appendChild(B("Paste", mut(function () {
         var cp = AKARR.copy; if (!cp) { toast("Nothing copied yet."); return; }
-        var tt = (t.k === cp.k) ? t : null; if (!tt) { toast("That clip belongs on a " + AK_ARR_KINDS[cp.k].label + " track."); return; }
-        var d = JSON.parse(JSON.stringify(cp.clip)); d.id = uid(); var l = akArrLen(ws, tt, d); d.at = akArrFree(ws, tt, ins && ins.t === tt.id ? ins.at : c.at + len, l); tt.clips.push(d); sel = { t: tt.id, c: d.id };
+        if (t.k !== cp.k) { toast("That clip belongs on a " + AK_ARR_KINDS[cp.k].label + " track."); return; }
+        var d = JSON.parse(JSON.stringify(cp.clip)); d.id = uid(); d.at = akArrFree(t, ins && ins.t === t.id ? ins.at : c.at + c.len, d.len); t.clips.push(d); sel = { t: t.id, c: d.id };
       }), { off: !AKARR.copy }));
       if (t.k === "chords") {
-        bar.appendChild(B("Section ▾", function () { menu(this, ws.secs.map(function (s) { return { label: s.name, used: s.id === c.sec, onClick: mut(function () { var old = c.sec; c.sec = s.id; if (!akArrFits(ws, t, c, c.at, akArrLen(ws, t, c))) { c.sec = old; toast("No room for that section here."); } }) }; })); }));
-        bar.appendChild(B("✎ Edit in workshop", function () { ws.cur = akArrSecIx(ws, c.sec); save(); var w = document.querySelector('[data-bk=wheel]'); if (w) { w.hidden = false; w.open = true; w.setAttribute("data-wsview", w.getAttribute("data-wsview") === "wheel" ? "wheel" : "all"); } rerenderKeepScroll(); toast("The workshop is on “" + ws.secs[ws.cur].name + "”."); }));
+        bar.appendChild(B("Section ▾", function () { menu(this, ws.secs.map(function (s) { return { label: s.name + " (" + akWsTsName(s.ts) + ")", used: c.secs[0] === s.id, onClick: mut(function () { var r = c.len / (akArrUnit(ws, c) || 1); c.secs = [s.id]; c.u = akArrSecTicks(ws, s.id); c.len = Math.max(6, Math.round(r * c.u)); if (!akArrFits(t, c, c.at, c.len)) toast("The next clip is pushed along."); }) }; })); }));
+        bar.appendChild(B("✎ Edit in workshop", function () { ws.cur = akArrSecIx(ws, c.secs[0]); save(); var w = document.querySelector('[data-bk=wheel]'); if (w) { w.hidden = false; w.open = true; } rerenderKeepScroll(); toast("The workshop is on “" + ws.secs[ws.cur].name + "”."); }));
       } else {
         bar.appendChild(B("Pattern ▾", function () { menu(this, (AK_ARR_PAT[t.k] || ["Clip"]).map(function (nm) { return { label: nm, used: nm === c.name, onClick: mut(function () { c.name = nm; }) }; })); }));
       }
@@ -49715,7 +49844,7 @@ function akArrBuild() {
   draw();
   return host;
 }
-/* the workshop changed a section (name, bars): redraw so clips follow */
+/* the workshop changed a section (name, bars, time signature): redraw so clips follow */
 setInterval(function () {
   Array.prototype.forEach.call(document.querySelectorAll(".akarr"), function (host) {
     if (!host.isConnected || !host._draw) return;
@@ -49735,10 +49864,10 @@ setInterval(function () {
         row.appendChild(h("button", { class: "akarr-sendb", onClick: function () {
           var st = akArrState(), a = akArrNorm(st), ws = st.ws, t = a.tracks.filter(function (x) { return x.k === "chords"; })[0];
           if (!t) { toast("Add a Chords track in the arranger first."); return; }
-          var s = ws.secs[ws.cur], n = s.bars.length, p = akArrFree(ws, t, t.clips.length ? Math.max.apply(null, t.clips.map(function (c) { return c.at + akArrLen(ws, t, c); })) : 0, n);
-          t.clips.push({ id: uid(), sec: s.id, at: p, reps: 1 }); save();
+          var s = ws.secs[ws.cur], u = akArrSecTicks(ws, s.id), p = akArrFree(t, t.clips.length ? Math.max.apply(null, t.clips.map(function (c) { return c.at + c.len; })) : 0, u);
+          t.clips.push({ id: uid(), secs: [s.id], at: p, len: u }); save();
           var d = document.querySelector('[data-bk=arranger]'); if (d && d._in) { var hh = d.querySelector(".akarr"); if (hh && hh._draw) hh._draw(); }
-          toast("“" + s.name + "” is in the arranger (bar " + (p + 1) + ").", { label: "Open", fn: function () { var dd = document.querySelector('[data-bk=arranger]'); if (dd) { dd.hidden = false; dd.open = true; dd.scrollIntoView({ block: "start" }); } } });
+          toast("“" + s.name + "” is in the arranger.", { label: "Open", fn: function () { var dd = document.querySelector('[data-bk=arranger]'); if (dd) { dd.hidden = false; dd.open = true; dd.scrollIntoView({ block: "start" }); } } });
         } }, "▤ Send to arranger"));
       });
     } catch (e) { if (window.console) console.warn("ak18c send", e); }
@@ -49746,30 +49875,105 @@ setInterval(function () {
 })();
 
 akCss("akv18-arranger", [
-  ".akarr{margin:4px 0}.akarr-tools{gap:4px;align-items:center;margin:0 0 6px;flex-wrap:wrap}",
-  ".akarr-wrap{display:flex;border:1px solid var(--line,#8886);border-radius:6px;overflow:hidden}",
-  ".akarr-names{flex:none;width:98px;border-right:1px solid var(--line,#8886);background:var(--panel,#8881)}",
-  ".akarr-ruler-sp,.akarr-ruler{height:20px}",
-  ".akarr-name{height:54px;box-sizing:border-box;padding:3px 4px;border-top:1px solid var(--line,#8884);display:flex;flex-direction:column;gap:2px;justify-content:space-between}",
+  ".akarr{margin:4px 0}.akarr-tools,.akarr-view{display:flex;gap:4px;align-items:center;margin:0 0 4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}",
+  ".akarr-tools>*,.akarr-view>*{flex:none}.akarr-tools .grow{flex:1 1 0;min-width:0}",
+  "html body .akarr-tools button,html body .akarr-view button{min-height:32px !important;padding:0 10px !important;margin:0 !important;width:auto !important}",
+  ".akarr-snap{font-size:.8rem;min-height:32px;padding:0 6px;max-width:112px}.akarr-vl{font-size:.8rem;opacity:.7;padding:0 2px}",
+  ".akarr-wrap{display:flex;align-items:flex-start;border:1px solid var(--line,#8886);border-radius:6px;overflow-y:auto;overflow-x:hidden;min-height:90px}",
+  ".akarr-names{flex:none;width:98px;border-right:1px solid var(--line,#8886);background:var(--panel,#8881);position:sticky;left:0;z-index:4}",
+  ".akarr-ruler-sp,.akarr-ruler{height:26px}",
+  ".akarr-name{height:var(--lh,54px);box-sizing:border-box;padding:3px 4px;border-top:1px solid var(--line,#8884);display:flex;flex-direction:column;gap:2px;justify-content:space-between}",
   ".akarr-name.sel{outline:2px solid var(--accent,#c60);outline-offset:-2px}.akarr-name.dim{opacity:.55}",
   "html body .akarr-nm{all:unset;cursor:pointer;display:flex;flex-direction:column;font-size:.8rem;font-weight:600;overflow:hidden;min-width:0}",
   ".akarr-nm span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.akarr-nm small{font-weight:400;opacity:.7;font-size:.66rem}",
   ".akarr-ms{display:flex;gap:3px}html body .akarr-ms button{min-height:20px !important;min-width:26px !important;padding:0 !important;font-size:.7rem !important}",
   ".akarr-ms button.on{background:var(--accent,#c60) !important;color:#fff !important}",
-  ".akarr-scroll{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}",
+  ".akarr-scroll{flex:1;min-width:0;overflow-x:scroll;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:thin}",
+  ".akarr-scroll::-webkit-scrollbar{height:10px}.akarr-scroll::-webkit-scrollbar-thumb{background:var(--muted,#888);border-radius:4px}",
   ".akarr-tl{position:relative}.akarr-ruler{position:relative;border-bottom:1px solid var(--line,#8884)}",
-  ".akarr-ruler span{position:absolute;top:2px;font-size:.66rem;opacity:.65;padding-left:3px}",
-  ".akarr-lane{position:relative;height:54px;box-sizing:border-box;border-top:1px solid var(--line,#8884);background-image:repeating-linear-gradient(90deg,var(--line,#8883) 0,var(--line,#8883) 1px,transparent 1px,transparent var(--px,34px))}",
+  ".akarr-ruler span{position:absolute;top:1px;font-size:.66rem;opacity:.75;padding-left:3px;line-height:1.1;white-space:nowrap}.akarr-ruler em{display:block;font-style:normal;color:var(--accent,#c60);font-weight:700}",
+  ".akarr-gl{position:absolute;left:0;right:0;top:26px;bottom:0;pointer-events:none}.akarr-gl i{position:absolute;top:0;bottom:0;width:1px;background:var(--line,#8883)}",
+  ".akarr-lane{position:relative;height:var(--lh,54px);box-sizing:border-box;border-top:1px solid var(--line,#8884)}",
   ".akarr-lane.dim{opacity:.55}.akarr-lane.ph{background-color:rgba(128,128,128,.06)}",
-  ".akarr-clip{position:absolute;top:5px;bottom:5px;border-radius:4px;color:#fff;padding:3px 6px;overflow:hidden;cursor:grab;touch-action:none;box-sizing:border-box;display:flex;flex-direction:column;font-size:.8rem;font-weight:600;line-height:1.15;user-select:none}",
+  ".akarr-clip{position:absolute;top:5px;bottom:5px;border-radius:4px;color:#fff;padding:3px 6px 3px 20px;overflow:hidden;cursor:pointer;box-sizing:border-box;display:flex;flex-direction:column;font-size:.8rem;font-weight:600;line-height:1.15;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:pan-x pan-y}",
   ".akarr-clip small{font-weight:400;opacity:.8;font-size:.66rem}",
-  ".akarr-clip.ph{background:transparent;color:inherit;border:1px dashed var(--muted,#888)}",
-  ".akarr-clip.sel{outline:2px solid var(--accent,#c60);outline-offset:1px;z-index:2}.akarr-clip.now{filter:brightness(1.35)}",
-  ".akarr-rs{position:absolute;right:0;top:0;bottom:0;width:12px;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35))}",
+  ".akarr-gp{position:absolute;left:0;top:0;bottom:0;width:18px;display:grid;place-items:center;font-style:normal;cursor:grab;touch-action:none;background:rgba(0,0,0,.22);font-size:.8rem}",
+  ".akarr-clip.ph{background:transparent;color:inherit;border:1px dashed var(--muted,#888)}.akarr-clip.ph .akarr-gp{background:rgba(128,128,128,.18)}",
+  ".akarr-clip.sel{outline:2px solid var(--accent,#c60);outline-offset:1px;z-index:2}.akarr-clip.now{filter:brightness(1.35)}.akarr-clip.lift{box-shadow:0 4px 14px rgba(0,0,0,.5);z-index:5}",
+  ".akarr-rs{position:absolute;right:0;top:0;bottom:0;width:16px;cursor:ew-resize;touch-action:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,.4))}",
   ".akarr-ins{position:absolute;top:0;bottom:0;width:2px;background:var(--accent,#c60);pointer-events:none}",
   ".akarr-ph{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 4px var(--accent,#c60);pointer-events:none;z-index:3}",
+  ".akarr-grip{height:18px;margin:2px 0;border:1px solid var(--line,#8886);border-radius:4px;background:var(--panel,#8882);cursor:ns-resize;display:grid;place-items:center;touch-action:none}",
+  ".akarr-grip::after{content:\"\";width:44px;height:3px;border-radius:2px;background:var(--muted,#888)}",
   ".akarr-sel{gap:4px;align-items:center;margin:6px 0 0;flex-wrap:wrap}.akarr-sl{margin-right:4px}",
-  ".akarr-volw{display:inline-flex;align-items:center;gap:4px;font-size:.8rem}.akarr-vol{width:90px}"
+  ".akarr-volw{display:inline-flex;align-items:center;gap:4px;font-size:.8rem}.akarr-vol{width:90px}",
+  ".akarr-full{position:fixed;inset:0;z-index:1000;background:var(--bg,#111);padding:10px;display:flex;flex-direction:column;overflow:auto;margin:0}",
+  ".akarr-full .akarr-wrap{flex:1 1 auto;height:auto;min-height:0}.akarr-lock{overflow:hidden}"
+].join("\n"));
+
+/* ================================================================ ak_v18d: tips fold away (version 18.3, next-build N2) and round buttons are a choice (N5)
+   - Every long help line in the app (a paragraph of class hint, or a long muted paragraph) is folded to a small ⓘ Tip button. Tap it to read; the app
+     remembers which ones you opened. Settings › Tips and descriptions: Folded (default) or Always shown. The ⊟ Fold all row gets ⓘ Tips to show or
+     hide all the tips on the page. Short lines, warnings, and lines with buttons or links in them stay as they are.
+   - Button shape now rounds ordinary buttons too: only "Round pills" gives pill-shaped buttons. */
+AK_WHATS_NEW = [
+  "Tips fold away: long help text everywhere is now a small ⓘ Tip you tap to read (remembered). Settings › Tips and descriptions can turn that off, and ⓘ Tips beside Fold all shows or hides all of them. Buttons are no longer round pills unless you pick Round pills in Settings › Button shape."
+].concat(AK_WHATS_NEW);
+
+function akTipsOn() { return settings().tipFold !== false; }
+function akTipKey(el) { return "tip:" + (typeof akFoldSlug === "function" ? akFoldSlug(el.textContent.trim().slice(0, 48)) : el.textContent.trim().slice(0, 30)); }
+function akTipShut(key) { var m = akColMap(); return Object.prototype.hasOwnProperty.call(m, key) ? !!m[key] : true; }
+function akTipsFold(root) {
+  var on = akTipsOn();
+  Array.prototype.forEach.call(root.querySelectorAll("p.hint,.hint,p.muted"), function (el) {
+    var prev = el.previousElementSibling, has = prev && prev.classList.contains("akhint-btn");
+    if (!on) { if (has) prev.remove(); el.classList.remove("akhint-shut"); el.removeAttribute("data-aktip"); return; }
+    if (has) return;
+    if (el.closest(".akhint-btn,summary,.menu,.toast,button,label") || el.classList.contains("warn") || el.classList.contains("err") || el.classList.contains("bad")) return;
+    if (el.tagName !== "P" && !el.classList.contains("hint")) return;
+    var txt = el.textContent.trim(), min = el.classList.contains("hint") ? 70 : 110;
+    if (txt.length < min || el.querySelector("button,a,input,select,textarea")) return;
+    var key = akTipKey(el), shut = akTipShut(key);
+    var btn = h("button", { type: "button", class: "akhint-btn", "aria-expanded": shut ? "false" : "true", "aria-label": "Tip: tap to read", onClick: function () {
+      var now = !el.classList.contains("akhint-shut"); el.classList.toggle("akhint-shut", now); btn.setAttribute("aria-expanded", now ? "false" : "true"); akColSet(key, now);
+    } }, "ⓘ Tip");
+    el.setAttribute("data-aktip", key); el.classList.toggle("akhint-shut", shut);
+    el.parentNode.insertBefore(btn, el);
+  });
+}
+function akTipsAll(main, shut) {
+  Array.prototype.forEach.call(main.querySelectorAll("[data-aktip]"), function (el) {
+    el.classList.toggle("akhint-shut", shut); akColSet(el.getAttribute("data-aktip"), shut);
+    var b = el.previousElementSibling; if (b && b.classList.contains("akhint-btn")) b.setAttribute("aria-expanded", shut ? "false" : "true");
+  });
+}
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    root = root || document.body; if (!root || !root.querySelectorAll) return;
+    try { akTipsFold(root); } catch (e) { if (window.console) console.warn("ak18d tips", e); }
+    try {
+      var app = $("app"), main = app && app.querySelector(".main"), row = main && main.querySelector(":scope > .akfold-all");
+      if (row && akTipsOn() && !row.querySelector(".akhint-all") && main.querySelector("[data-aktip]")) {
+        row.appendChild(h("button", { type: "button", class: "akfold-allb akhint-all", onClick: function () { var anyShut = !!main.querySelector(".akhint-shut"); akTipsAll(main, !anyShut); } }, "ⓘ Tips"));
+      }
+    } catch (e) {}
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.again("songs-and-shows");
+    c.section("Tips and descriptions", "The long help lines under things");
+    c.select("Help text", function () { return akTipsOn() ? "fold" : "show"; }, function (v) { settings().tipFold = v === "fold"; }, [["fold", "Folded: tap ⓘ Tip to read"], ["show", "Always shown"]]);
+    return sx.apply(this, arguments);
+  };
+})();
+akCss("akv18-tips", [
+  ".akhint-shut{display:none !important}",
+  "html body .akhint-btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin:2px 0;padding:1px 6px;font-size:.72rem;line-height:1.4;color:var(--muted,#999);border:1px solid var(--line,#8886);border-radius:4px}",
+  ".akhint-btn[aria-expanded=true]{color:var(--accent,#c60);border-color:var(--accent,#c60)}",
+  /* ordinary buttons: only Round pills makes them pills */
+  "html[data-bshape]:not([data-bshape=pills]) body button:not(.fab):not(.akfab):not(.swatch):not(.akdot):not(.akarr-nm):not(.chip){border-radius:6px !important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
