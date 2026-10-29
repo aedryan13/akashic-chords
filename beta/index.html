@@ -11764,12 +11764,15 @@ function durOf(song) { return song.duration || Number(settings().defaultLength) 
 var lenFlashUntil = 0;
 function lenFlashing() { return performance.now() < lenFlashUntil; }
 function markPlayed() { var it = curItem(); if (it) countPlay(it.songId, it.showId, it); }
-function stopAuto() { clearAdvance(); ciStop(); autoOn = false; if (autoRAF) cancelAnimationFrame(autoRAF); autoRAF = 0; setAutoUI(); }
+var akPause = null; /* 18.0: set by a Pause (press while scrolling): {id, left ms of the start wait} so Resume carries on instead of restarting */
+function stopAuto() { akPause = null; clearAdvance(); ciStop(); autoOn = false; if (autoRAF) cancelAnimationFrame(autoRAF); autoRAF = 0; setAutoUI(); }
 function startAuto() {
   var sc = scroller(); if (!sc || !S.play || S.layout) return;
   var song = curSong();
   autoOn = true; pos = sc.scrollTop; lastSet = sc.scrollTop; lastT = performance.now();
   var wait = sc.scrollTop < 5 ? akAsWait(song) : 0; /* 17.8: the song's own wait, else the default wait (30 s) */
+  if (akPause && song && akPause.id === song.id) { wait = akPause.left > 0 ? akPause.left / 1000 : 0; } /* 18.0: Resume after a Pause keeps what was left of the wait */
+  akPause = null;
   preUntil = wait ? lastT + wait * 1000 : 0;
   var cin = ciPlan(song, sc); if (cin) { var lead = Math.max(0, wait * 1000 - cin.ms); preUntil = lastT + lead + cin.ms; ciRun(cin, lead); } /* the count-in ends the wait */
   akAsWaitShown = !!preUntil; if (wait && !document.querySelector(".play .spd")) toast("Auto-scroll starts in " + Math.round((preUntil - lastT) / 1000) + " s");
@@ -11807,7 +11810,12 @@ function tick(t) {
   }
   autoRAF = requestAnimationFrame(tick);
 }
-function autoToggle() { if (autoOn) stopAuto(); else startAuto(); }
+function autoToggle() {
+  if (autoOn) { /* 18.0: a press while it scrolls PAUSES (keeps the place and any wait still left); the next press RESUMES */
+    var song = curSong(), left = Math.max(0, preUntil - performance.now());
+    stopAuto(); if (song) akPause = { id: song.id, left: left };
+  } else startAuto();
+}
 function setAutoUI() {
   if (ui.auto) { ui.auto.textContent = autoOn ? "⏸" : "▶"; ui.auto.classList.toggle("on", !!autoOn); ui.auto.setAttribute("aria-label", autoOn ? "Stop auto-scroll" : "Start auto-scroll"); ui.auto.setAttribute("aria-pressed", autoOn ? "true" : "false"); }
   if (ui.speed && S.play && (!autoOn || lenFlashing())) { var song = curSong(); ui.speed.textContent = modeOf(song) === "duration" ? fmtTime(durOf(song)) + " song" : (speedOf(song) + " px/s"); }
@@ -15729,8 +15737,18 @@ var AK_RETUNES = ["Drop D", "Half step down", "Whole step down", "Half step up",
 function akRetuneOf(song) {
   if (!song) return "";
   if (song.retune) return String(song.retune);
-  var t = (song.tags || []).filter(function (x) { return /^drop\s*[a-g]$/i.test(String(x).trim()); })[0];
-  return t ? String(t).trim().replace(/^drop\s*/i, "Drop ").replace(/\s([a-g])$/i, function (m, c) { return " " + c.toUpperCase(); }) : "";
+  /* 18.0: also "Drop-D", "DropD", "Drop D tuning", "drop db", the other names in AK_RETUNES, and "(Drop D)" at the end of a title */
+  function norm(x) {
+    x = String(x || "").trim().replace(/\s*tuning$/i, "").replace(/^tuning\s*[:\-]?\s*/i, "");
+    var m = /^drop[\s\-_]*([a-g])([#♯b♭]?)$/i.exec(x);
+    if (m) return "Drop " + m[1].toUpperCase() + (m[2] ? m[2].replace("#", "♯").replace(/b/i, "♭") : "");
+    for (var i = 0; i < AK_RETUNES.length; i++) if (AK_RETUNES[i].toLowerCase() === x.toLowerCase()) return AK_RETUNES[i];
+    return "";
+  }
+  var tags = song.tags || [];
+  for (var i = 0; i < tags.length; i++) { var n = norm(tags[i]); if (n) return n; }
+  var tm = /[(\[]([^)\]]{3,24})[)\]]\s*$/.exec(String(song.title || ""));
+  return tm ? norm(tm[1]) : "";
 }
 /* the name of the tuning you are normally in, from Settings */
 function akBaseTuningName() {
@@ -15774,7 +15792,11 @@ function akRetuneOnShow(song, item) {
   if (akRetuneLast.key === key) return;
   var prevTune = akRetuneLast.id && akRetuneLast.id !== song.id ? akRetuneLast.tune : null;
   akRetuneLast = { id: song.id, tune: now, key: key };
-  if (prevTune === null || prevTune === now) return;
+  if (prevTune === null) { /* 18.0: the first song of a play session: you are assumed to be in your normal tuning */
+    if (now && o.headsUp !== false) { akPlayBanner(root, "⚠ This song is in " + now + ". Retune before you start.", "warn", 20000); try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {} }
+    return;
+  }
+  if (prevTune === now) return;
   if (now && o.headsUp !== false) akPlayBanner(root, "⚠ This song is in " + now + ". Retune before you start.", "warn");
   else if (!now && prevTune && o.endRemind !== false) akPlayBanner(root, "⚠ Back to " + akBaseTuningName() + ": the last song was in " + prevTune + ".", "warn");
 }
@@ -16274,6 +16296,8 @@ function akSettingsExtra(c) {
   c.section("Tuning changes", "Drop D and other tunings per song: tag, heads-up and reminder");
   var r = settings().retune;
   c.out.appendChild(h("p", { class: "hint" }, "Pick a song's tuning in the song (under Playing), or give it a tag like “Drop D”. Your normal tuning is " + akBaseTuningName() + " (set under Instrument and tuning)."));
+  var nRt = (lib().songs || []).filter(function (x) { return akRetuneOf(x); }).length;
+  c.out.appendChild(h("p", { class: "hint" }, nRt ? nRt + " of your songs count as a tuning change right now. Only those get the heads-up and the reminder." : "None of your songs has a tuning change yet, so no reminders can show. Set one in the song (Playing section), or give the song a tag like “Drop D”."));
   c.check("Heads-up when a song in another tuning comes up", function () { return r.headsUp !== false; }, function (v) { r.headsUp = v; });
   c.check("At the end of such a song, remind me to tune back (not when the next song uses the same tuning)", function () { return r.endRemind !== false; }, function (v) { r.endRemind = v; });
   c.section("Countdown to the next break", "Set lengths and the break countdown on the playing screen");
@@ -48771,6 +48795,486 @@ akCss("akgfx-l", [
   "@media (max-width:420px){.akg-tsel{grid-template-columns:repeat(2,minmax(0,1fr))}}"
 ].join("\n"));
 akCss("akgfx-l2", ".akg-shell>.topbar .akg-undo,.akg-shell>.topbar .akg-redo{min-width:28px!important;padding:0 3px!important}");
+
+/* ================================================================ ak_v18a: version 18.0, bug fixes first (queue items 37, 39, 45, 38)
+   37 Auto-scroll: a press while it scrolls PAUSES, the next press RESUMES (play.js autoToggle, akPause).
+   39 One-phone recording: the recorder phone remembers the tablet's recording style (localStorage "akrr:style": one / snd1 / two) so its
+      🎙 button opens the right recorder page; the 🎚 Sound input card (microphone or audio interface) shows on every phone that records
+      sound, before Get ready, and lists inputs after the permission is given; if the chosen interface won't start the phone falls back to
+      its microphone and says so; connecting to the tablet tries again by itself (with the reason) and has a Try again button. */
+
+AK_VERSION = "18.0";
+AK_WHATS_NEW = [
+  "Auto-scroll: press once to pause where you are, press again to carry on (it no longer starts over).",
+  "One-phone recording: the phone now opens the right recorder page for the way you set it up on the tablet, and 🎚 Sound input (your audio interface) shows up on the recorder page.",
+  "Songs page: Library / Works in progress / Originals can look like tabs (new default), small rectangles, one menu, one Filter button, one chip that unfolds, or the old round pills. Pick it in Settings › Works in progress and Originals.",
+  "Recorder phone: if connecting fails it tries again by itself, says why, and has a Try again button."
+].concat(AK_WHATS_NEW);
+
+/* ---------------------------------------------------------------- 39: the phone remembers how the tablet records */
+function akV18Style(cfg) { return cfg && cfg.v ? (cfg.v.snd1 ? "snd1" : cfg.v.one ? "one" : "two") : ""; }
+(function () {
+  var rc = akRpCmd;
+  akRpCmd = function (cmd) {
+    try { if (cmd && cmd.cfg && cmd.cfg.v) localStorage.setItem("akrr:style", akV18Style(cmd.cfg)); } catch (e) {}
+    return rc.apply(this, arguments);
+  };
+  /* what the tablet wants is known before Get ready, so the page already shows the right choices */
+  var ra = akRpApply;
+  akRpApply = function () {
+    try { if (AKRP.want && AKRP.want.cfg && !AKRP.ready && !AKRP.cur) AKRP.cfg = AKRP.want.cfg; } catch (e) {}
+    return ra.apply(this, arguments);
+  };
+})();
+(function () {
+  var go = akRr142Go;
+  akRr142Go = function () {
+    var c = akRrCfg(), st = ""; try { st = localStorage.getItem("akrr:style") || ""; } catch (e) {}
+    var role = st === "snd1" ? "audio" : st === "one" ? "video" : "";
+    if (c.v.snd1 || c.v.one || !role) return go.apply(this, arguments);
+    var u = akRr142Url(role); if (!u) return go.apply(this, arguments);
+    location.href = u + "&go=1";
+  };
+  AK_RR_ACTS.rrgo = akRr142Go;
+})();
+
+/* ---------------------------------------------------------------- 39: 🎚 Sound input on every phone that records sound */
+function akV18Sound() {
+  if (AKRP.role === "audio") return true;
+  var V = ((AKRP.cfg || (AKRP.want || {}).cfg || {}).v) || {};
+  return !!V.one || V.audio !== false;
+}
+var akV18DevWatch = false;
+akMic17Card = function (inn) {
+  if (!akV18Sound()) return;
+  var old = inn.querySelector(".ak17-mic"); if (old) old.remove();
+  var c = akMic17(), card = h("div", { class: "akrp-cb card ak17-mic" }, h("b", null, "🎚 Sound input"));
+  var at = AKRP.stream && AKRP.stream.getAudioTracks()[0], now = at && at.getSettings ? at.getSettings().deviceId : "";
+  var pick = h("select", { "aria-label": "Sound input", disabled: !!AKRP.cur }, h("option", { value: "" }, "The phone's microphone (the phone picks)"));
+  var note = h("p", { class: "hint" }, "Plug in the audio interface first (USB-C, or an adapter), then tap Get ready or Show my inputs so the phone lists it by name. Set its level so the loudest parts stay out of the red. The phone's own clean-up (echo, noise, auto level) stays off.");
+  var md = navigator.mediaDevices;
+  if (md && md.enumerateDevices) md.enumerateDevices().then(function (ds) {
+    var n = 0, ins = ds.filter(function (d) { return d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications"; }), unnamed = false;
+    ins.forEach(function (d) {
+      n++; if (!d.label) unnamed = true;
+      pick.appendChild(h("option", { value: d.deviceId, selected: c.dev === d.deviceId }, (d.label || "Input " + n) + (d.deviceId === now ? " (in use now)" : "")));
+    });
+    if (c.dev && !ins.some(function (d) { return d.deviceId === c.dev; })) pick.appendChild(h("option", { value: c.dev, selected: true }, "The input you chose before (not plugged in now)"));
+    if (unnamed || !ins.length) note.textContent = "The phone only lists inputs by name after it has been allowed to use the microphone. Tap Show my inputs. If your interface still isn't listed, unplug it, plug it back in and tap Show my inputs again.";
+  }).catch(function () {});
+  if (md && md.addEventListener && !akV18DevWatch) { akV18DevWatch = true; md.addEventListener("devicechange", function () { if (AKRP.el && !AKRP.cur) akRpDraw(); }); }
+  card.appendChild(h("label", { class: "fld" }, "Record from", pick));
+  card.appendChild(note);
+  card.appendChild(h("div", { class: "row" },
+    h("button", { class: "primary", disabled: !!AKRP.cur, onClick: function () {
+      c.dev = pick.value; akMic17Save(c);
+      if (!AKRP.ready) { toast("Saved. It's used when you tap Get ready."); return; }
+      akRpStream().then(function () { akRpDraw(); toast("Sound input changed."); }, function () { c.dev = ""; akMic17Save(c); toast("That input didn't start. Back to the phone's microphone."); akRpStream().then(akRpDraw, function () {}); });
+    } }, "Use this"),
+    h("button", { disabled: !!AKRP.cur, onClick: function () {
+      if (!md || !md.getUserMedia) { toast("This browser can't use the microphone."); return; }
+      md.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); akRpDraw(); toast("Inputs listed."); }, function () { toast("The microphone isn't allowed. Allow it in the site settings."); });
+    } }, "Show my inputs"),
+    AKRP.cur ? h("span", { class: "muted" }, "(change it between songs)") : null));
+  var cb = inn.querySelector(".ak16g-after"); if (cb) inn.insertBefore(card, cb); else inn.appendChild(card);
+};
+
+/* an interface that won't start falls back to the phone's microphone, and says so */
+(function () {
+  var rs = akRpStream;
+  akRpStream = function () {
+    var self = this, args = arguments, p = rs.apply(self, args);
+    return p.catch(function (e) {
+      var c = akMic17();
+      if (c.dev && e && /Overconstrained|NotFound|NotReadable|Abort/.test(e.name || "")) {
+        c.dev = ""; akMic17Save(c);
+        AKRP.warn = "The audio interface didn't start (" + e.name + "). The phone's microphone is used instead. Plug the interface in again, tap Show my inputs and pick it under Sound input.";
+        return rs.apply(self, args);
+      }
+      throw e;
+    });
+  };
+})();
+
+/* ---------------------------------------------------------------- 39: connecting to the tablet tries again, and says why */
+var akV18Tries = 0, akV18Timer = 0, akV18Unsub = null;
+(function () {
+  var rc = akRpConnect;
+  akRpConnect = function () {
+    if (AKRP.local) return rc.apply(this, arguments);
+    clearTimeout(akV18Timer);
+    var step = "loading the connection", b = "https://www.gstatic.com/firebasejs/" + AK_FB_VER + "/";
+    AKRP.conn = "connecting";
+    function again(why) {
+      akV18Tries++;
+      var secs = Math.min(30, 3 * akV18Tries);
+      AKRP.connErr = "Couldn't connect (" + why + ")" + (navigator.onLine === false ? ": the phone is offline" : "") + ". Trying again in " + secs + " s.";
+      akRpDraw();
+      clearTimeout(akV18Timer); akV18Timer = setTimeout(function () { akRpConnect(); }, secs * 1000);
+    }
+    var loaded = window.firebase && window.firebase.firestore && window.firebase.auth ? Promise.resolve() : akLoadScript(b + "firebase-app-compat.js").then(function () { return Promise.all([akLoadScript(b + "firebase-auth-compat.js"), akLoadScript(b + "firebase-firestore-compat.js")]); });
+    loaded.then(function () {
+      step = "signing in";
+      var app; try { app = firebase.app("akrr"); } catch (e) { app = firebase.initializeApp({ apiKey: AKRP.key, authDomain: AKRP.proj + ".firebaseapp.com", projectId: AKRP.proj }, "akrr"); }
+      AKRP.db = app.firestore(); return app.auth().signInAnonymously();
+    }).then(function () {
+      step = "reading the tablet's page";
+      AKRP.conn = "online"; akV18Tries = 0; AKRP.connErr = "";
+      if (akV18Unsub) { try { akV18Unsub(); } catch (e) {} akV18Unsub = null; }
+      akV18Unsub = AKRP.db.collection("performers").doc(AKRP.pid).onSnapshot(function (d) { var x = d.exists ? d.data() : null; akRpCmd(x && x.rr); AKRP.connErr = ""; akV18Tries = 0; akRpDraw(); },
+        function () { again("reading the tablet's page. Scan the code again if this keeps happening"); });
+    }).catch(function () { again(step); });
+  };
+  var rd = akRpDraw;
+  akRpDraw = function () {
+    var r = rd.apply(this, arguments);
+    try {
+      var inn = AKRP.el && AKRP.el.querySelector(".akrp-in"), m = inn && inn.querySelector("p.muted");
+      if (m && AKRP.connErr && !inn.querySelector(".akv18-retry")) m.parentNode.insertBefore(h("div", { class: "row akv18-retry" }, h("button", { onClick: function () { akV18Tries = 0; AKRP.connErr = "Trying…"; akRpConnect(); akRpDraw(); } }, "Try again now")), m.nextSibling);
+    } catch (e) {}
+    return r;
+  };
+  window.addEventListener("online", function () { if (AKRP.role && AKRP.connErr && !AKRP.local) { akV18Tries = 0; akRpConnect(); } });
+})();
+
+/* ---------------------------------------------------------------- 38: pedal help on the playing screen
+   🦶 Pedal (Button bar / side buttons "Pedal help", and always in the song header's ⋯ menu): every pedal button with its key, what a press and a
+   double press do, and where you can ASSIGN: Assign (press the pedal now) gives an action a key; the two drop-downs choose what a press and a
+   double press do (settings().pedalDo[action] = { s, d }, "Normal" puts a button back). A button with its own choices waits one double-press
+   window (Settings › Pedal) before a single press acts, because the app must see whether a second press is coming. */
+var AK_PEDAL_DO = [["none", "Nothing"], ["auto", "Start / pause auto-scroll"], ["down", "Scroll down"], ["up", "Scroll up"], ["faster", "Scroll faster"], ["slower", "Scroll slower"],
+  ["next", "Next song"], ["prev", "Previous song"], ["nextset", "Jump to the next set"], ["prevset", "Jump to the previous set"], ["list", "Open or close the song list"], ["breaktoggle", "Start or stop a break"], ["rrsong", "Phone recorders: start / end song"]];
+/* [action, name, normal press, normal double press, group] */
+var AK_PEDAL_BTNS = [
+  ["toggle", "Left pedal", "auto", "list", "Scrolling"], ["down", "Right pedal", "down", "up", "Scrolling"], ["up", "Scroll up button", "up", "none", "Scrolling"],
+  ["faster", "Faster button", "faster", "none", "Scrolling"], ["slower", "Slower button", "slower", "none", "Scrolling"],
+  ["next", "Next song button", "next", "none", "Songs and sets"], ["prev", "Previous song button", "prev", "none", "Songs and sets"],
+  ["nextset", "Next set button", "nextset", "none", "Songs and sets"], ["prevset", "Previous set button", "prevset", "none", "Songs and sets"], ["list", "Song list button", "list", "none", "Songs and sets"],
+  ["breaktoggle", "Break button", "breaktoggle", "none", "Show"], ["rrsong", "Start / end song (recorders)", "rrsong", "none", "Show"]];
+function akPedalRun(a) {
+  if (a === "auto") autoToggle(); else if (a === "down") scrollBy(1); else if (a === "up") scrollBy(-1);
+  else if (a === "faster") adjustSpeed(1); else if (a === "slower") adjustSpeed(-1);
+  else if (a === "next") playStep(1); else if (a === "prev") playStep(-1);
+  else if (a === "nextset") playSetJump(1); else if (a === "prevset") playSetJump(-1);
+  else if (a === "list") toggleList(); else if (a === "breaktoggle") tmBreakToggle();
+  else if (a === "rrsong") akRrToggleSong();
+}
+(function () {
+  var pa = pedalAct;
+  pedalAct = function (act) {
+    var d = (settings().pedalDo || {})[act], root = document.querySelector(".play");
+    if (d && root && !S.layout && !root.querySelector(".imgview") && !root.querySelector(".listpanel") && !(typeof advActive === "function" && advActive()) && !(typeof akSolo !== "undefined" && akSolo && autoOn)) {
+      var s = d.s || "none", dd = d.d || "none";
+      gesture("c" + act, function () { akPedalRun(s); }, dd === "none" ? null : function () { akPedalRun(dd); }, null);
+      return;
+    }
+    return pa.apply(this, arguments);
+  };
+})();
+function akPedalHelp() {
+  var s = settings(), body = h("div", { class: "akv18-ped" }), openMem = { Scrolling: true };
+  if (!s.pedalDo || typeof s.pedalDo !== "object") s.pedalDo = {};
+  function sel(cur, onPick) {
+    return h("select", { onChange: function () { onPick(this.value); } }, AK_PEDAL_DO.map(function (o) { return h("option", { value: o[0], selected: cur === o[0] }, o[1]); }));
+  }
+  function row(b) {
+    var act = b[0], key = s.pedal[act], d = s.pedalDo[act], learning = S.learning === act;
+    var cs = d ? d.s : b[2], cd = d ? d.d : b[3];
+    function set(k, v) { var x = s.pedalDo[act] || { s: b[2], d: b[3] }; x[k] = v; s.pedalDo[act] = x; save(); draw(); }
+    return h("div", { class: "keyrow akv18-row" },
+      h("div", { class: "lab" }, h("b", null, b[1]), d ? h("span", { class: "muted" }, " (your choices)") : null),
+      h("code", { class: learning ? "learn" : "" }, learning ? "Press the pedal now…" : keyName(key) || "no key yet"),
+      h("button", { onClick: function () { S.learning = learning ? null : act; draw(); } }, learning ? "Cancel" : key ? "Change key" : "Assign key"),
+      h("button", { disabled: !key, onClick: function () { s.pedal[act] = ""; save(); draw(); } }, "Clear"),
+      h("div", { class: "akv18-do" },
+        h("label", null, "Press", sel(cs, function (v) { set("s", v); })),
+        h("label", null, "Double press", sel(cd, function (v) { set("d", v); })),
+        d ? h("button", { onClick: function () { delete s.pedalDo[act]; save(); draw(); } }, "Normal") : null));
+  }
+  function draw() {
+    var sc = body.parentElement && body.parentElement.scrollTop;
+    body.textContent = "";
+    body.appendChild(h("p", { class: "hint", style: "margin-top:0" }, "Each pedal button, the key it sends, and what a press and a double press do. Tap Assign key, then press that pedal button. Pick a different action in the drop-downs to change what it does. Last key received: ", h("code", { id: "lastKey" }, keyName(S.lastKey) || "—")));
+    ["Scrolling", "Songs and sets", "Show"].forEach(function (g) {
+      var det = h("details", { class: "card", open: !!openMem[g] }, h("summary", null, g));
+      det.addEventListener("toggle", function () { openMem[g] = det.open; });
+      AK_PEDAL_BTNS.filter(function (b) { return b[4] === g; }).forEach(function (b) { det.appendChild(row(b)); });
+      body.appendChild(det);
+    });
+    body.appendChild(h("p", { class: "hint" }, "A button with your own choices waits a moment (the double-press window in Settings › Playing screen › Pedal) before a single press acts, so the app can tell if a second press is coming."));
+    if (sc) body.parentElement.scrollTop = sc;
+  }
+  S.redrawKeys = function () { if (body.isConnected) draw(); };
+  var close = modal("🦶 Pedal", body, [{ label: "Done" }], { wide: true, onClose: function () { S.learning = null; } });
+  draw();
+  var t = setInterval(function () { if (!body.isConnected) { clearInterval(t); S.learning = null; } }, 500);
+}
+(function () {
+  var ex = akHdr17Extra;
+  akHdr17Extra = function (items, root) { try { items.push({ label: "🦶 Pedal help and keys", onClick: function () { akPedalHelp(); } }); } catch (e) {} return ex.apply(this, arguments); };
+})();
+TB_ITEMS.push(["pedalhelp", "Pedal help and keys"]); TB_SHORT.pedalhelp = "Pedal";
+FAB_ITEMS.push(["pedalhelp", "Pedal help and keys"]); FAB_OFF.pedalhelp = 1; FAB_SHORT.pedalhelp = "Pedal";
+AK_TB_MODES.pedalhelp = "p"; AK_IC.pedalhelp = "M5 19h14 M7 19l2-9h6l2 9 M10 10V5h4v5";
+AK_RR_ACTS.pedalhelp = function () { akPedalHelp(); };
+akCss("akv18", [
+  ".akv18-row{flex-wrap:wrap}",
+  ".akv18-do{flex:1 0 100%;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:2px 0 8px}",
+  ".akv18-do label{display:flex;flex-direction:column;font-size:12px;gap:2px;flex:1 1 140px}",
+  ".akv18-do select{max-width:100%}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- 8: the Songs page list switch (Library / Works in progress / Originals) as layout presets
+   settings().shelfStyle: tabs (underlined, default), boxes (small rectangles), dropdown (one menu + gear), button (one Filter button), fold (one chip that
+   unfolds), chips (the old round pills). Settings › Works in progress and Originals › "How the list switch looks". Everything stays in ONE row. */
+var AK_SHELF_STYLES = [["tabs", "Tabs with an underline"], ["boxes", "Small rectangles"], ["dropdown", "One menu and the gear"], ["button", "One Filter button"], ["fold", "One chip that unfolds"], ["chips", "Round pills (the old look)"]];
+function akShelfStyle() { var s = settings().shelfStyle; return AK_SHELF_STYLES.some(function (x) { return x[0] === s; }) ? s : "tabs"; }
+akShelfBar = function (refill) {
+  var bar = h("div", { class: "akshelf akst-" + akShelfStyle(), "data-akm": "w" }), open = false;
+  function gearMenu(btn) {
+    var c = akShelfCfg();
+    menu(btn, [{ head: "In the main Library list" },
+      { label: (c.wipInMain ? "✓ " : "") + "Show works in progress", onClick: function () { c.wipInMain = !c.wipInMain; save(); draw(); refill(); } },
+      { label: (c.origInMain ? "✓ " : "") + "Show originals", onClick: function () { c.origInMain = !c.origInMain; save(); draw(); refill(); } },
+      { sep: true }, { label: "💡 Quick idea…", onClick: akIdeaDialog }]);
+  }
+  function draw() {
+    var st = akShelfStyle(); bar.className = "akshelf akst-" + st; bar.textContent = "";
+    var cnt = { main: 0, wip: 0, orig: 0 }; lib().songs.forEach(function (s) { cnt[akShelfOf(s)]++; });
+    var cur = S.shelf || "main", curName = AK_SHELVES.filter(function (x) { return x[0] === cur; })[0][1];
+    function pick(id) { S.shelf = id; open = false; draw(); refill(); }
+    function one(x, cls) { return h("button", { class: cls + (cur === x[0] ? " on" : ""), role: "tab", "aria-selected": cur === x[0] ? "true" : "false", "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { pick(x[0]); } }, x[1], " ", h("span", { class: "akst-n" }, String(cnt[x[0]]))); }
+    var gear = h("button", { class: "akst-gear", "aria-label": "List options", onClick: function () { gearMenu(this); } }, "⚙");
+    if (st === "chips") { AK_SHELVES.forEach(function (x) { bar.appendChild(h("button", { class: "chip" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { pick(x[0]); } }, x[1] + " " + cnt[x[0]])); }); gear.className = "chip"; bar.appendChild(gear); bar.classList.add("chips"); return; }
+    if (st === "tabs" || st === "boxes") { var row = h("div", { class: "akst-row", role: "tablist" }); AK_SHELVES.forEach(function (x) { row.appendChild(one(x, "akst-t")); }); bar.appendChild(row); bar.appendChild(gear); return; }
+    if (st === "dropdown") {
+      bar.appendChild(h("button", { class: "akst-sel", "aria-haspopup": "menu", onClick: function () { menu(this, AK_SHELVES.map(function (x) { return { label: (cur === x[0] ? "✓ " : "") + x[1] + " (" + cnt[x[0]] + ")", onClick: function () { pick(x[0]); } }; })); } }, h("span", null, curName, " ", h("span", { class: "akst-badge" }, String(cnt[cur]))), h("span", null, "▾")));
+      bar.appendChild(gear); return;
+    }
+    if (st === "button") {
+      bar.appendChild(h("button", { class: "akst-sel akst-fb", "aria-haspopup": "menu", onClick: function () { menu(this, [{ head: "Show" }].concat(AK_SHELVES.map(function (x) { return { label: (cur === x[0] ? "✓ " : "") + x[1] + " (" + cnt[x[0]] + ")", onClick: function () { pick(x[0]); } }; }))); } }, h("span", null, "Showing: " + curName), h("span", null, "▾")));
+      bar.appendChild(gear); return;
+    }
+    /* fold: one chip; tap it and the others show in a grid under it */
+    var top = h("div", { class: "akst-row" }, h("button", { class: "akst-sel", "aria-expanded": open ? "true" : "false", onClick: function () { open = !open; draw(); } }, h("span", null, curName, " ", h("span", { class: "akst-badge" }, String(cnt[cur]))), h("span", null, open ? "▴" : "▾")), gear);
+    bar.appendChild(top);
+    if (open) { var g = h("div", { class: "akst-grid" }); AK_SHELVES.forEach(function (x) { g.appendChild(one(x, "akst-t akst-box")); }); bar.appendChild(g); }
+  }
+  draw(); bar.redraw = draw;
+  return bar;
+};
+(function () {
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.again("songs-and-shows");
+    c.section("Songs page: how the list switch looks", "Library / Works in progress / Originals in one row");
+    c.select("List switch style", function () { return akShelfStyle(); }, function (v) { settings().shelfStyle = v; }, AK_SHELF_STYLES);
+    c.out.appendChild(h("p", { class: "hint" }, "All of them fit in one row. Tabs and small rectangles show every list at once; the menu, Filter button and unfolding chip take the least room."));
+    return sx.apply(this, arguments);
+  };
+})();
+akCss("akv18-shelf", [
+  ".akshelf{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}",
+  ".akst-row{display:flex;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}",
+  ".akst-t{background:none;border:0;color:var(--muted,#888);padding:9px 10px;white-space:nowrap;font:inherit;font-size:.9rem;cursor:pointer;flex:1 0 auto}",
+  ".akst-t.on{color:var(--text,inherit);font-weight:600}",
+  ".akst-n{opacity:.7;font-size:.8em}",
+  ".akst-tabs .akst-row{border-bottom:1px solid var(--line,#8884)}",
+  ".akst-tabs .akst-t{border-bottom:2px solid transparent}.akst-tabs .akst-t.on{border-bottom-color:var(--accent,#c60)}",
+  ".akst-boxes .akst-row{gap:4px}.akst-boxes .akst-t{border:1px solid var(--line,#8886);border-radius:3px;padding:6px 8px;flex:1 1 0;text-align:center}",
+  ".akst-boxes .akst-t.on{border-color:var(--accent,#c60);color:var(--accent,#c60)}",
+  ".akst-gear{flex:none;width:34px;height:34px;border:1px solid var(--line,#8886);border-radius:4px;background:none;color:inherit;cursor:pointer}",
+  ".akst-sel{flex:1;display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--line,#8886);border-radius:4px;background:none;color:inherit;font:inherit;cursor:pointer;min-width:0}",
+  ".akst-badge{background:var(--accent,#c60);color:#fff;border-radius:8px;padding:0 7px;font-size:.75em;font-weight:700}",
+  ".akst-fold,.akst-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px}",
+  ".akst-fold{display:block}.akshelf.akst-fold{display:block}.akst-fold .akst-row{overflow:visible}",
+  ".akst-box{border:1px solid var(--line,#8886);border-radius:3px;padding:6px 4px;text-align:center}",
+  ".akst-box.on{border-color:var(--accent,#c60);color:var(--accent,#c60)}"
+].join("\n"));
+
+/* ================================================================ ak_v18b: Write screen layout presets (version 18.0, queue items 17, 25, 13, 33)
+   Two preferences (settings().w18b, set in Settings › Writing extras › Write screen, or in the Layout bar at the top of the Write tab):
+   top: "slim" (default) = three thin bars (Song / Layout / Tempo) that open a small drawer instead of the rows of buttons, or "full" (the old top).
+   scr: "stack" (default, the cards one under the other as before), "tabs" (view tabs: Lyrics | Chord workshop | Looper) or
+        "halves" (two halves, each one picks what it shows: Lyrics, Chords, Lyrics + chords typed in place, Chord workshop, Audio looper;
+        a drag handle between them stacked, side by side when the screen is wide; ⇅ swaps them).
+   Nothing is rebuilt: this wraps viewWrite and moves the cards that are already there. Classic / Split / Chord strip / Side by side (ak18_a.js)
+   still decide how chords and lyrics sit together inside the lyrics area. */
+
+AK_WHATS_NEW = [
+  "Write screen: the top is now three thin bars (Song, Layout, Tempo) that open a small drawer. Pick “Full” in Settings › Writing extras › Write screen to get the old rows back.",
+  "Write screen: show it as stacked cards (as before), as view tabs (Lyrics, Chord workshop, Looper), or as two halves where each half shows what you pick: Lyrics, Chords, Lyrics + chords, Chord workshop or Audio looper."
+].concat(AK_WHATS_NEW);
+
+var AK_W18_TOP = [["slim", "Thin bars (Song, Layout, Tempo)"], ["full", "Full: all the buttons in view"]];
+var AK_W18_SCR = [["stack", "Cards one under the other"], ["tabs", "View tabs"], ["halves", "Two halves"]];
+var AK_W18_SECS = [["lyrics", "Lyrics"], ["chords", "Chords"], ["linech", "Lyrics + chords (type in place)"], ["workshop", "Chord workshop"], ["looper", "Audio looper"]];
+function akW18b() {
+  var s = settings(), c = s.w18b = s.w18b || {}, d = { top: "slim", scr: "stack", hA: "chords", hB: "lyrics", tab: "lyrics", pct: 50 };
+  Object.keys(d).forEach(function (k) { if (c[k] === undefined) c[k] = d[k]; });
+  if (!AK_W18_TOP.some(function (x) { return x[0] === c.top; })) c.top = "slim";
+  if (!AK_W18_SCR.some(function (x) { return x[0] === c.scr; })) c.scr = "stack";
+  return c;
+}
+function akW18bName(list, id) { var x = list.filter(function (r) { return r[0] === id; })[0]; return x ? x[1] : id; }
+
+/* the chips that set the two preferences (in the Layout drawer, or under the Layout chips when the top is Full) */
+function akW18bChips() {
+  var c = akW18b();
+  function group(label, list, key) {
+    return h("div", { class: "chips akw18-grp", role: "group", "aria-label": label }, h("span", { class: "muted" }, label),
+      list.map(function (x) { return h("button", { class: "chip" + (c[key] === x[0] ? " on" : ""), "aria-pressed": c[key] === x[0] ? "true" : "false", onClick: function () { c[key] = x[0]; save(); rerenderKeepScroll(); } }, x[1].replace(/ \(.*\)$/, "").replace(/^Full: .*/, "Full")); }));
+  }
+  return h("div", { class: "akw18-prefs" }, group("Screen", AK_W18_SCR, "scr"), group("Top", AK_W18_TOP, "top"));
+}
+
+function akW18bApply(el) {
+  var body = el.querySelector(".akw9"), card = el.querySelector(".akw9-card"), ta = el.querySelector(".akw9-pad"), padRow = el.querySelector(".akw9-padrow");
+  if (!body || !card || !ta || !padRow) return;
+  var c = akW18b(), song = akW9Song();
+  var quick = body.querySelector(".akw9-top"), resume = body.querySelector(".akw9-resume"), lays = card.querySelector(".ak18-lays"), tempo = card.querySelector(".akw9-tempo");
+  var wheel = body.querySelector('[data-bk="wheel"]'), aloop = body.querySelector('[data-bk="aloop"]'), pane = card.querySelector(".ak18-pane"), grip = card.querySelector(".ak18-grip");
+  var tempoBar = tempo && tempo.previousElementSibling && tempo.previousElementSibling.classList.contains("akfold-bar") ? tempo.previousElementSibling : null;
+  var toolsEl = card.querySelector(".akw9-tools"), toolsBar = toolsEl && toolsEl.previousElementSibling && toolsEl.previousElementSibling.classList.contains("akfold-bar") ? toolsEl.previousElementSibling : null;
+  var prefs = akW18bChips();
+  function bpmText() { var o = tempo && tempo.querySelector(".akw9-bpm"); return o ? o.textContent.replace("=", "").trim() : "♩"; }
+
+  /* ---- the top */
+  if (c.top === "slim") {
+    var drawer = h("div", { class: "akw18-drawer", hidden: true }), open = "", panels = {};
+    function mk(id, kids) { var p = h("div", { class: "akw18-panel", hidden: true }); kids.forEach(function (k) { if (k) p.appendChild(k); }); panels[id] = p; drawer.appendChild(p); }
+    mk("song", [quick, resume]);
+    mk("layout", [lays, prefs]);
+    mk("tempo", [tempo]);
+    if (tempoBar) tempoBar.hidden = true;
+    var lay = akW18Lay(), btns = {};
+    function bar(id, label) {
+      var b = h("button", { class: "akw18-bar", "aria-expanded": "false", onClick: function () {
+        open = open === id ? "" : id; drawer.hidden = !open;
+        Object.keys(panels).forEach(function (k) { panels[k].hidden = k !== open; btns[k].setAttribute("aria-expanded", k === open ? "true" : "false"); btns[k].classList.toggle("on", k === open); });
+        if (btns.tempo) btns.tempo.firstChild.textContent = "♩ " + bpmText().replace(/^♩\s*/, "") + " ";
+      } }, h("span", null, label), h("span", { class: "akw18-car" }, "▾"));
+      btns[id] = b; return b;
+    }
+    var bars = h("div", { class: "akw18-bars", "data-bk": "w18bars", "data-bt": "Write top bars" },
+      bar("song", "📄 " + (song && song.title ? song.title : "New song") + " "),
+      bar("layout", "▦ " + akW18bName(AK_W18_SCR, c.scr).replace(/^Cards one under the other$/, "Stacked") + " · " + akW18bName(AK18_LAYS, lay) + " "),
+      bar("tempo", "♩ " + bpmText().replace(/^♩\s*/, "") + " "));
+    body.insertBefore(drawer, body.firstChild); body.insertBefore(bars, drawer);
+  } else if (lays) lays.parentNode.insertBefore(prefs, lays.nextSibling);
+
+  /* ---- the screen */
+  var secEls = {};
+  function paneFor(strip) {
+    var isStrip = card.classList.contains("ak18-L-strip");
+    if (pane && isStrip === strip) return pane;
+    var ctx = { ta: ta, strip: strip, changed: function () { ta.dispatchEvent(new Event("input")); } }, p = akW18Pane(ctx);
+    card.addEventListener("click", function () { setTimeout(p._sync, 0); });
+    return p;
+  }
+  function section(id) {
+    if (secEls[id]) return secEls[id];
+    var e = null;
+    if (id === "lyrics") { e = padRow; ta.classList.remove("ak18-hide"); }
+    else if (id === "chords") e = paneFor(false);
+    else if (id === "linech") e = paneFor(true);
+    else if (id === "workshop") e = wheel;
+    else if (id === "looper") e = aloop;
+    secEls[id] = e; return e;
+  }
+  function have(id) { return id === "looper" ? !!aloop : id === "workshop" ? !!wheel : true; }
+  function openDet(e) { if (e && e.tagName === "DETAILS" && !e.open) e.open = true; }
+
+  if (c.scr === "tabs") {
+    var ids = ["lyrics", "workshop", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
+    var labels = { lyrics: "Lyrics", workshop: "Chord workshop", looper: "Looper" };
+    var tabs = h("div", { class: "akw18-tabs", role: "tablist", "data-bk": "w18tabs", "data-bt": "Write view tabs" },
+      ids.map(function (id) { return h("button", { role: "tab", class: id === cur ? "on" : "", "aria-selected": id === cur ? "true" : "false", onClick: function () { c.tab = id; save(); rerenderKeepScroll(); } }, labels[id]); }));
+    body.insertBefore(tabs, body.querySelector(".akw18-drawer") ? body.querySelector(".akw18-drawer").nextSibling : body.firstChild);
+    card.hidden = cur !== "lyrics"; if (wheel) wheel.hidden = cur !== "workshop"; if (aloop) aloop.hidden = cur !== "looper";
+    if (cur === "workshop") openDet(wheel); if (cur === "looper") openDet(aloop);
+  } else if (c.scr === "halves") {
+    var A = have(c.hA) ? c.hA : "chords", B = have(c.hB) && c.hB !== A ? c.hB : (A === "lyrics" ? "chords" : "lyrics");
+    var land = akW18Land(), box = h("div", { class: "akw18-halves" + (land ? " side" : ""), "data-bk": "w18halves", "data-bt": "Two halves" });
+    function pick(which, v, other) {
+      var sel = h("select", { "aria-label": which === "A" ? "First half shows" : "Second half shows", onChange: function () {
+        var nv = this.value;
+        if (which === "A") { if (nv === c.hB) c.hB = A; c.hA = nv; } else { if (nv === c.hA) c.hA = B; c.hB = nv; }
+        save(); rerenderKeepScroll();
+      } }, AK_W18_SECS.filter(function (x) { return have(x[0]); }).map(function (x) { return h("option", { value: x[0], selected: x[0] === v }, x[1]); }));
+      return sel;
+    }
+    var slotA = h("div", { class: "akw18-slot" }), slotB = h("div", { class: "akw18-slot" });
+    var hA = h("div", { class: "akw18-half" }, h("div", { class: "akw18-hh" }, pick("A", A), h("button", { class: "sm", "aria-label": "Swap the halves", title: "Swap the halves", onClick: function () { var t = c.hA; c.hA = B; c.hB = t; save(); rerenderKeepScroll(); } }, "⇅")), slotA);
+    var hB = h("div", { class: "akw18-half" }, h("div", { class: "akw18-hh" }, pick("B", B)), slotB);
+    var gr = h("div", { class: "akw18-grip", role: "separator", "aria-label": "Drag to share the room between the halves", tabindex: "0" });
+    function size() { if (land) { hA.style.flex = "1 1 0"; hB.style.flex = "1 1 0"; } else { hA.style.flex = "0 0 " + c.pct + "%"; hB.style.flex = "1 1 0"; } }
+    size();
+    if (!land) {
+      gr.addEventListener("pointerdown", function (e) {
+        e.preventDefault(); var y0 = e.clientY, p0 = c.pct, tot = box.getBoundingClientRect().height || 1;
+        function mv(ev) { c.pct = Math.round(Math.max(15, Math.min(85, p0 + (ev.clientY - y0) / tot * 100))); size(); }
+        function up() { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); save(); }
+        window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+      });
+      gr.addEventListener("keydown", function (e) { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); c.pct = Math.max(15, Math.min(85, c.pct + (e.key === "ArrowUp" ? -5 : 5))); size(); save(); } });
+    }
+    var ea = section(A), eb = section(B);
+    if (ea) { slotA.appendChild(ea); ea.hidden = false; openDet(ea); } if (eb) { slotB.appendChild(eb); eb.hidden = false; openDet(eb); }
+    box.append(hA, land ? null : gr, hB);
+    /* the old strip of cards under the title is replaced by the halves; the title/record row and the tools row stay */
+    [grip, pane && secEls.chords !== pane && secEls.linech !== pane ? pane : null].forEach(function (x) { if (x && x.parentNode) x.parentNode.removeChild(x); });
+    var wrapEmpty = card.querySelector(".ak18-sidewrap"); if (wrapEmpty && !wrapEmpty.children.length) wrapEmpty.remove();
+    var ref = toolsBar || toolsEl; if (ref && ref.parentNode === card) card.insertBefore(box, ref); else card.appendChild(box);
+  }
+}
+
+(function () {
+  var vw = viewWrite;
+  viewWrite = function () {
+    var el = vw.apply(this, arguments);
+    try { akW18bApply(el); } catch (e) { if (window.console) console.warn("ak18b write screen", e); }
+    return el;
+  };
+  AK_VIEWS.write = viewWrite;
+})();
+
+/* Settings › Writing extras */
+(function () {
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    var w = akW18b();
+    c.again("songs-and-shows");
+    c.section("Write screen", "How the Write tab is laid out");
+    c.select("Top of the Write screen", function () { return w.top; }, function (v) { w.top = v; }, AK_W18_TOP);
+    c.select("Show the writing area as", function () { return w.scr; }, function (v) { w.scr = v; }, AK_W18_SCR);
+    c.select("Two halves: first half shows", function () { return w.hA; }, function (v) { w.hA = v; if (w.hB === v) w.hB = v === "lyrics" ? "chords" : "lyrics"; }, AK_W18_SECS);
+    c.select("Two halves: second half shows", function () { return w.hB; }, function (v) { w.hB = v; if (w.hA === v) w.hA = v === "chords" ? "lyrics" : "chords"; }, AK_W18_SECS);
+    c.out.appendChild(h("p", { class: "hint" }, "You can also switch these at the top of the Write tab: the ▦ Layout bar. Classic, Split, Chord strip and Side by side still decide how chords and words sit together."));
+    return sx.apply(this, arguments);
+  };
+})();
+
+akCss("akv18-write", [
+  ".akw18-bars{display:flex;gap:4px;margin:4px 0}",
+  ".akw18-bar{flex:1 1 0;min-width:0;display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line,#8886);border-radius:4px;background:none;color:inherit;font:inherit;font-size:.85rem;cursor:pointer}",
+  ".akw18-bar span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akw18-bar.on{border-color:var(--accent,#c60);color:var(--accent,#c60)}",
+  ".akw18-drawer{border:1px solid var(--line,#8886);border-radius:6px;padding:8px;margin:0 0 8px}.akw18-drawer .akw9-top{margin:0}",
+  ".akw18-grp{margin:4px 0;align-items:center}.akw18-grp .chip{padding:4px 10px}",
+  ".akw18-tabs{display:flex;border-bottom:1px solid var(--line,#8886);margin:4px 0 8px}",
+  ".akw18-tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--muted,#888);padding:9px 4px;font:inherit;font-size:.9rem;cursor:pointer}",
+  ".akw18-tabs button.on{color:var(--text,inherit);font-weight:600;border-bottom-color:var(--accent,#c60)}",
+  ".akw18-halves{display:flex;flex-direction:column;height:72vh;min-height:320px;border:1px solid var(--line,#8886);border-radius:6px;overflow:hidden;margin:8px 0}",
+  ".akw18-halves.side{flex-direction:row}",
+  ".akw18-half{display:flex;flex-direction:column;min-height:0;min-width:0}",
+  ".akw18-hh{display:flex;gap:4px;padding:4px;border-bottom:1px solid var(--line,#8886)}.akw18-hh select{flex:1;min-width:0}",
+  ".akw18-slot{flex:1;min-height:0;overflow:auto;padding:4px}",
+  ".akw18-slot>.card,.akw18-slot>details{margin:0}.akw18-slot .akw9-pad{min-height:0;height:100%}",
+  ".akw18-halves.side .akw18-half+.akw18-half{border-left:1px solid var(--line,#8886)}",
+  ".akw18-grip{flex:none;height:16px;background:var(--panel,#8882);border-block:1px solid var(--line,#8886);cursor:row-resize;display:grid;place-items:center;touch-action:none}",
+  ".akw18-grip::after{content:\"\";width:36px;height:3px;border-radius:2px;background:var(--muted,#888)}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
