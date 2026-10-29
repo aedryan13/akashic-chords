@@ -48803,7 +48803,7 @@ akCss("akgfx-l2", ".akg-shell>.topbar .akg-undo,.akg-shell>.topbar .akg-redo{min
       sound, before Get ready, and lists inputs after the permission is given; if the chosen interface won't start the phone falls back to
       its microphone and says so; connecting to the tablet tries again by itself (with the reason) and has a Try again button. */
 
-AK_VERSION = "18.0";
+AK_VERSION = "18.1";
 AK_WHATS_NEW = [
   "Auto-scroll: press once to pause where you are, press again to carry on (it no longer starts over).",
   "One-phone recording: the phone now opens the right recorder page for the way you set it up on the tablet, and 🎚 Sound input (your audio interface) shows up on the recorder page.",
@@ -49108,7 +49108,9 @@ AK_WHATS_NEW = [
 
 var AK_W18_TOP = [["slim", "Thin bars (Song, Layout, Tempo)"], ["full", "Full: all the buttons in view"]];
 var AK_W18_SCR = [["stack", "Cards one under the other"], ["tabs", "View tabs"], ["halves", "Two halves"]];
-var AK_W18_SECS = [["lyrics", "Lyrics"], ["chords", "Chords"], ["linech", "Lyrics + chords (type in place)"], ["workshop", "Chord workshop"], ["looper", "Audio looper"]];
+var AK_W18_SECS = [["lyrics", "Lyrics"], ["chords", "Chords"], ["linech", "Lyrics + chords (type in place)"], ["arranger", "Arranger (timeline: sections and bars)"], ["wheel", "Chord wheel + suggestions"], ["workshop", "Whole chord workshop"], ["looper", "Audio looper"]];
+var AK_W18_WS = { arranger: 1, wheel: 1, workshop: 1 }; /* all three show the one chord workshop, with a different part of it in view */
+function akW18Fam(id) { return AK_W18_WS[id] ? "workshop" : id; }
 function akW18b() {
   var s = settings(), c = s.w18b = s.w18b || {}, d = { top: "slim", scr: "stack", hA: "chords", hB: "lyrics", tab: "lyrics", pct: 50 };
   Object.keys(d).forEach(function (k) { if (c[k] === undefined) c[k] = d[k]; });
@@ -49178,28 +49180,29 @@ function akW18bApply(el) {
     if (id === "lyrics") { e = padRow; ta.classList.remove("ak18-hide"); }
     else if (id === "chords") e = paneFor(false);
     else if (id === "linech") e = paneFor(true);
-    else if (id === "workshop") e = wheel;
+    else if (AK_W18_WS[id]) e = wheel;
     else if (id === "looper") e = aloop;
     secEls[id] = e; return e;
   }
-  function have(id) { return id === "looper" ? !!aloop : id === "workshop" ? !!wheel : true; }
+  function have(id) { return id === "looper" ? !!aloop : AK_W18_WS[id] ? !!wheel : true; }
+  function view(id) { if (wheel) wheel.setAttribute("data-wsview", id === "arranger" ? "arranger" : id === "wheel" ? "wheel" : "all"); }
   function openDet(e) { if (e && e.tagName === "DETAILS" && !e.open) e.open = true; }
 
   if (c.scr === "tabs") {
-    var ids = ["lyrics", "workshop", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
-    var labels = { lyrics: "Lyrics", workshop: "Chord workshop", looper: "Looper" };
+    var ids = ["lyrics", "arranger", "wheel", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
+    var labels = { lyrics: "Lyrics", arranger: "Arranger", wheel: "Chord wheel", looper: "Looper" };
     var tabs = h("div", { class: "akw18-tabs", role: "tablist", "data-bk": "w18tabs", "data-bt": "Write view tabs" },
       ids.map(function (id) { return h("button", { role: "tab", class: id === cur ? "on" : "", "aria-selected": id === cur ? "true" : "false", onClick: function () { c.tab = id; save(); rerenderKeepScroll(); } }, labels[id]); }));
     body.insertBefore(tabs, body.querySelector(".akw18-drawer") ? body.querySelector(".akw18-drawer").nextSibling : body.firstChild);
-    card.hidden = cur !== "lyrics"; if (wheel) wheel.hidden = cur !== "workshop"; if (aloop) aloop.hidden = cur !== "looper";
-    if (cur === "workshop") openDet(wheel); if (cur === "looper") openDet(aloop);
+    card.hidden = cur !== "lyrics"; if (wheel) wheel.hidden = !AK_W18_WS[cur]; if (aloop) aloop.hidden = cur !== "looper"; view(cur);
+    if (AK_W18_WS[cur]) openDet(wheel); if (cur === "looper") openDet(aloop);
   } else if (c.scr === "halves") {
-    var A = have(c.hA) ? c.hA : "chords", B = have(c.hB) && c.hB !== A ? c.hB : (A === "lyrics" ? "chords" : "lyrics");
+    var A = have(c.hA) ? c.hA : "chords", B = have(c.hB) && akW18Fam(c.hB) !== akW18Fam(A) ? c.hB : (A === "lyrics" ? "chords" : "lyrics");
     var land = akW18Land(), box = h("div", { class: "akw18-halves" + (land ? " side" : ""), "data-bk": "w18halves", "data-bt": "Two halves" });
     function pick(which, v, other) {
       var sel = h("select", { "aria-label": which === "A" ? "First half shows" : "Second half shows", onChange: function () {
         var nv = this.value;
-        if (which === "A") { if (nv === c.hB) c.hB = A; c.hA = nv; } else { if (nv === c.hA) c.hA = B; c.hB = nv; }
+        if (which === "A") { if (akW18Fam(nv) === akW18Fam(c.hB)) c.hB = A; c.hA = nv; } else { if (akW18Fam(nv) === akW18Fam(c.hA)) c.hA = B; c.hB = nv; }
         save(); rerenderKeepScroll();
       } }, AK_W18_SECS.filter(function (x) { return have(x[0]); }).map(function (x) { return h("option", { value: x[0], selected: x[0] === v }, x[1]); }));
       return sel;
@@ -49220,6 +49223,7 @@ function akW18bApply(el) {
       gr.addEventListener("keydown", function (e) { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); c.pct = Math.max(15, Math.min(85, c.pct + (e.key === "ArrowUp" ? -5 : 5))); size(); save(); } });
     }
     var ea = section(A), eb = section(B);
+    view(AK_W18_WS[A] ? A : AK_W18_WS[B] ? B : "all");
     if (ea) { slotA.appendChild(ea); ea.hidden = false; openDet(ea); } if (eb) { slotB.appendChild(eb); eb.hidden = false; openDet(eb); }
     box.append(hA, land ? null : gr, hB);
     /* the old strip of cards under the title is replaced by the halves; the title/record row and the tools row stay */
@@ -49248,13 +49252,17 @@ function akW18bApply(el) {
     c.section("Write screen", "How the Write tab is laid out");
     c.select("Top of the Write screen", function () { return w.top; }, function (v) { w.top = v; }, AK_W18_TOP);
     c.select("Show the writing area as", function () { return w.scr; }, function (v) { w.scr = v; }, AK_W18_SCR);
-    c.select("Two halves: first half shows", function () { return w.hA; }, function (v) { w.hA = v; if (w.hB === v) w.hB = v === "lyrics" ? "chords" : "lyrics"; }, AK_W18_SECS);
-    c.select("Two halves: second half shows", function () { return w.hB; }, function (v) { w.hB = v; if (w.hA === v) w.hA = v === "chords" ? "lyrics" : "chords"; }, AK_W18_SECS);
+    c.select("Two halves: first half shows", function () { return w.hA; }, function (v) { w.hA = v; if (akW18Fam(w.hB) === akW18Fam(v)) w.hB = v === "lyrics" ? "chords" : "lyrics"; }, AK_W18_SECS);
+    c.select("Two halves: second half shows", function () { return w.hB; }, function (v) { w.hB = v; if (akW18Fam(w.hA) === akW18Fam(v)) w.hA = v === "chords" ? "lyrics" : "chords"; }, AK_W18_SECS);
     c.out.appendChild(h("p", { class: "hint" }, "You can also switch these at the top of the Write tab: the ▦ Layout bar. Classic, Split, Chord strip and Side by side still decide how chords and words sit together."));
     return sx.apply(this, arguments);
   };
 })();
 
+akCss("akv18-wsview", [
+  "[data-wsview=arranger] .akws > .akws-pal,[data-wsview=arranger] .akws > .akws-main,[data-wsview=arranger] .akws > .akpw-legend,[data-wsview=arranger] .akws > .akfold-bar:has(+ .akws-pal),[data-wsview=arranger] .akws > .akfold-bar:has(+ .akws-main){display:none !important}",
+  "[data-wsview=wheel] .akws > .akws-strip,[data-wsview=wheel] .akws > .akws-gridwrap,[data-wsview=wheel] .akws > .akfold-bar:has(+ .akws-strip),[data-wsview=wheel] .akws > .akfold-bar:has(+ .akws-gridwrap){display:none !important}"
+].join("\n"));
 akCss("akv18-write", [
   ".akw18-bars{display:flex;gap:4px;margin:4px 0}",
   ".akw18-bar{flex:1 1 0;min-width:0;display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--line,#8886);border-radius:4px;background:none;color:inherit;font:inherit;font-size:.85rem;cursor:pointer}",
@@ -49274,6 +49282,125 @@ akCss("akv18-write", [
   ".akw18-halves.side .akw18-half+.akw18-half{border-left:1px solid var(--line,#8886)}",
   ".akw18-grip{flex:none;height:16px;background:var(--panel,#8882);border-block:1px solid var(--line,#8886);cursor:row-resize;display:grid;place-items:center;touch-action:none}",
   ".akw18-grip::after{content:\"\";width:36px;height:3px;border-radius:2px;background:var(--muted,#888)}"
+].join("\n"));
+
+/* ================================================================ 18.0: sections inside sections fold too (Chord workshop, Looper), with ⊟ Fold parts / ⊞ Open parts
+   - Every part of the Chord workshop (Play and tempo, Sections, Bars grid, Chord palette, Chord wheel, Add to a song) and of the Audio looper
+     (Beat and tempo, Record, Play the order) gets a slim ▾ bar. Folded or open is remembered like every other fold.
+   - Inside any folding section that has three or more folding parts, a small ⊟ Fold parts / ⊞ Open parts row folds or opens just those parts.
+   - ⊞ Open all (top of the page) now opens the parts inside the sections as well; ⊟ Fold all still folds the top level only, so what is
+     inside keeps the state you left it in. */
+AK_WHATS_NEW = [
+  "Parts inside a folding section now fold too: the Chord workshop (Play and tempo, Sections, Bars, Chord palette, Chord wheel, Add to a song) and the Looper. Each section also has ⊟ Fold parts / ⊞ Open parts, and ⊞ Open all opens everything inside as well."
+].concat(AK_WHATS_NEW);
+
+function akLoopKey(el) { var b = el.querySelector("button"), t = b ? b.textContent.replace(/[^A-Za-z ]/g, "").trim().toLowerCase() : "row"; return "lp:" + (t || "row"); }
+function akLoopTitle(el) { var b = el.querySelector("button"), t = b ? b.textContent.replace(/^[^A-Za-z]+/, "").trim() : ""; return t ? "Looper: " + t : "Looper"; }
+[
+  { sel: ".akws > .akws-tp", mode: "bar", key: "ws:play", title: "Play and tempo" },
+  { sel: ".akws > .akws-strip", mode: "bar", key: "ws:sections", title: "Sections" },
+  { sel: ".akws > .akws-gridwrap", mode: "bar", key: "ws:grid", title: "Bars" },
+  { sel: ".akws > .akws-pal", mode: "bar", key: "ws:palette", title: "Chord palette" },
+  { sel: ".akws > .akws-main", mode: "bar", key: "ws:wheel", title: "Chord wheel" },
+  { sel: ".akws > .akws-send", mode: "bar", key: "ws:send", title: "Add to a song" },
+  { sel: ".akl-box > .akl-beatrow", mode: "bar", key: "lp:beat", title: "Beat and tempo" },
+  { sel: ".akl-box > .akl-ctl", mode: "bar", key: akLoopKey, title: "Looper" }
+].forEach(function (r) { AKCOL_RULES.push(r); });
+
+function akFoldOne(el, shut) {
+  if (el.tagName === "DETAILS") { if (el.open === shut) el.open = !shut; return; }
+  var key = el.getAttribute("data-akcol"); if (!key) return;
+  akColSet(key, shut);
+  var bar = el.classList.contains("akfold-tgt") ? el.previousElementSibling : el.firstElementChild;
+  if (el.classList.contains("akft") && typeof akFtShut === "function") akFtShut(el, shut);
+  else akColPaint(el, bar && bar.classList.contains("akfold-bar") ? bar : null, shut);
+}
+function akPartsOf(box) {
+  return [].slice.call(box.querySelectorAll(".akfold-tgt, .akfold, details")).filter(function (e) {
+    return !e.closest(".akfold-all") && !e.classList.contains("lay-hidden");
+  });
+}
+(function () {
+  var fa = akFoldAll;
+  akFoldAll = function (main, shut) {
+    fa(main, shut);
+    if (!shut) akPartsOf(main).forEach(function (e) { akFoldOne(e, false); });
+  };
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    root = root || document.body; if (!root || !root.querySelectorAll) return;
+    try {
+      [].slice.call(root.querySelectorAll("details")).forEach(function (d) {
+        if (d.closest(".akrr-win,.menu")) return;
+        var has = d.querySelector(":scope > .akfold-parts");
+        var parts = akPartsOf(d).filter(function (e) { return e !== d && e.closest("details") === d; });
+        if (parts.length < 3) { if (has) has.remove(); return; }
+        if (has) return;
+        var row = h("div", { class: "akfold-all akfold-parts" },
+          h("button", { type: "button", class: "akfold-allb", onClick: function () { akPartsOf(d).forEach(function (e) { if (e !== d && e.closest("details") === d) akFoldOne(e, true); }); } }, "⊟ Fold parts"),
+          h("button", { type: "button", class: "akfold-allb", onClick: function () { akPartsOf(d).forEach(function (e) { if (e !== d) akFoldOne(e, false); }); } }, "⊞ Open parts"));
+        var s = d.querySelector(":scope > summary"); d.insertBefore(row, s ? s.nextSibling : d.firstChild);
+      });
+    } catch (e) { if (window.console) console.warn("ak18b parts", e); }
+  };
+})();
+
+/* ================================================================ 18.0: Button shape (no pills by default)
+   settings().bshape: "underline" (default) | "boxes" | "outline" | "dropdown" | "pills". It restyles every group of chips in the app
+   (filters, tags, Layout, Write options...). "dropdown" swaps a group of three or more chips for one square drop-down list. */
+AK_WHATS_NEW = [
+  "Button shape: the round pills are gone by default. Every group of chips is now underlined text; Settings › Button shape lets you pick small rectangles, thin outline, one drop-down per group, or the old pills. Your pick is remembered."
+].concat(AK_WHATS_NEW);
+var AK_BSHAPES = [["underline", "Underlined text (default)"], ["boxes", "Small rectangles"], ["outline", "Plain text with a thin outline"], ["dropdown", "One drop-down per group"], ["pills", "Round pills"]];
+function akBshape() { var s = settings(); if (!AK_BSHAPES.some(function (x) { return x[0] === s.bshape; })) s.bshape = "underline"; return s.bshape; }
+function akBshapeApply() { try { document.documentElement.setAttribute("data-bshape", akBshape()); } catch (e) {} }
+function akChipOn(b) { return b.classList.contains("on") || b.getAttribute("aria-pressed") === "true" || b.classList.contains("active"); }
+function akBshapeDD(root) {
+  var dd = akBshape() === "dropdown";
+  [].slice.call(root.querySelectorAll(".chips")).forEach(function (g) {
+    var kids = [].slice.call(g.children), sel = null, chips = [], other = 0;
+    kids.forEach(function (x) { if (x.tagName === "SELECT" && x.classList.contains("akdd")) sel = x; else if (x.tagName === "BUTTON" && x.classList.contains("chip")) chips.push(x); else if (x.tagName !== "SPAN" || x.querySelector("button,input,select")) other++; });
+    var on = chips.filter(akChipOn), ok = dd && !other && chips.length >= 3 && on.length <= 1 && !g.closest(".akrr-win");
+    if (!ok) { if (sel) sel.remove(); chips.forEach(function (c) { c.classList.remove("akdd-hid"); }); return; }
+    var want = chips.map(function (c) { return c.textContent.trim() || "·"; });
+    if (sel && sel._lab && sel._lab.join("\u0001") !== want.join("\u0001")) { sel.remove(); sel = null; }
+    if (!sel) {
+      sel = h("select", { class: "akdd", "aria-label": "Choose one" }, [h("option", { value: "-1" }, "Choose…")].concat(want.map(function (t, i) { return h("option", { value: String(i) }, t); })));
+      sel._lab = want;
+      sel.addEventListener("change", function () { var i = +sel.value; if (i >= 0 && chips[i] && chips[i].isConnected) chips[i].click(); });
+      g.appendChild(sel);
+    }
+    sel._chips = chips;
+    var v = String(on.length ? chips.indexOf(on[0]) : -1); if (sel.value !== v) sel.value = v;
+    chips.forEach(function (c) { if (!c.classList.contains("akdd-hid")) c.classList.add("akdd-hid"); });
+  });
+}
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    root = root || document.body; if (!root || !root.querySelectorAll) return;
+    akBshapeApply();
+    try { akBshapeDD(root); } catch (e) { if (window.console) console.warn("ak18b bshape", e); }
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.again("songs-and-shows");
+    c.section("Button shape", "How groups of chips and option buttons look everywhere in the app");
+    c.select("Button shape", function () { return akBshape(); }, function (v) { settings().bshape = v; akBshapeApply(); }, AK_BSHAPES);
+    return sx.apply(this, arguments);
+  };
+})();
+akCss("akv18-bshape", [
+  ".akdd-hid{display:none !important}",
+  "select.akdd{border:1px solid var(--line,#8886);border-radius:3px;background:var(--panel,transparent);color:inherit;font:inherit;padding:4px 8px;min-height:30px;max-width:100%}",
+  "html[data-bshape=underline] body .chip{background:transparent !important;box-shadow:none !important;border:0 !important;border-bottom:2px solid transparent !important;border-radius:0 !important;padding:2px 7px !important;min-height:28px !important;color:var(--muted,#999) !important}",
+  "html[data-bshape=underline] body .chip.on,html[data-bshape=underline] body .chip[aria-pressed=true],html[data-bshape=underline] body .chip.active{border-bottom-color:var(--accent,#c60) !important;color:var(--text,inherit) !important;font-weight:600}",
+  "html[data-bshape=boxes] body .chip{border-radius:3px !important;padding:2px 8px !important;min-height:28px !important}",
+  "html[data-bshape=outline] body .chip{background:transparent !important;box-shadow:none !important;border:1px solid var(--line,#8886) !important;border-radius:3px !important;padding:2px 8px !important;min-height:28px !important}",
+  "html[data-bshape=outline] body .chip.on,html[data-bshape=outline] body .chip[aria-pressed=true]{border-color:var(--accent,#c60) !important;color:var(--accent,#c60) !important}",
+  "html[data-bshape=underline] body .chips,html[data-bshape=boxes] body .chips,html[data-bshape=outline] body .chips{gap:2px 4px}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
