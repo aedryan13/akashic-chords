@@ -29944,7 +29944,7 @@ function akRrBc() { if (!AKRR.bc) try { AKRR.bc = new BroadcastChannel("akrr"); 
 function akRrSend() {
   var c = akRrCfg(); if (!AKRR.sess) AKRR.sess = Date.now().toString(36);
   var cmd = { sess: AKRR.sess, seq: ++AKRR.seq, at: Date.now(), rec: AKRR.rec, file: AKRR.file, title: AKRR.title, show: akRrShowName(), mark: AKRR.mark, mode: c.mode, ids: typeof akRrIds === "function" ? akRrIds() : {},
-    cfg: { a: clone(c.a), v: clone(c.v) } };
+    cfg: { a: clone(c.a), v: clone(c.v), inDev: clone(c.inDev || {}) } };
   AKRR.cmd = cmd;
   if (akRrCloud()) AKL.db.collection("performers").doc(AKL.uid).set({ rr: cmd }, { merge: true }).catch(function () { toast("Couldn't reach the phones (no connection?)."); });
   try { localStorage.setItem("akrr:cmd", JSON.stringify(cmd)); } catch (e) {}
@@ -30012,7 +30012,7 @@ function akRrListen() {
 setInterval(function () { try { if (akRrCfg().on) akRrListen(); } catch (e) {} }, 3000);
 function akRrPhoneRows() {
   var now = Date.now();
-  return Object.keys(AKRR.phones).map(function (k) { return AKRR.phones[k]; }).filter(function (p) { return now - p.seen < 10 * 60e3; }).sort(function (a, b) { return a.role < b.role ? 1 : -1; });
+  return Object.keys(AKRR.phones).map(function (k) { return AKRR.phones[k]; }).filter(function (p) { var g = (settings().rrGone || {})[p.dev]; return now - p.seen < 10 * 60e3 && !(g && (p.at || 0) <= g); }).sort(function (a, b) { return a.role < b.role ? 1 : -1; });
 }
 
 /* ---------------------------------------------------------------- the tablet: buttons and the Phones window */
@@ -30097,6 +30097,11 @@ function akRrWin() {
     sc.forEach(function (x) { x[0].scrollTop = x[1]; });
   }
   function drawTop() {
+    /* 18.4: nothing to redraw when no phone's news changed what is shown (stops the window flickering every few seconds) */
+    try {
+      var sg = JSON.stringify([AKRR.rec, AKRR.title, AKRR.songOn, AKRR.stErr, c.mode, c.v && c.v.one, akRrPhoneRows().map(function (p) { var old = Date.now() - p.seen > 15000; return [p.role, p.rec, p.title, p.ready, p.warn, p.got, p.free, p.files, p.wake, old, p.rec ? Math.round(p.secs || 0) : 0, p.rec ? p.bytes : 0]; })]);
+      if (top._sg === sg && top.firstChild) return; top._sg = sg;
+    } catch (e) {}
     top.textContent = "";
     var body = top;
     akRrListen();
@@ -30118,7 +30123,8 @@ function akRrWin() {
         h("b", null, (p.role === "video" ? (c.v.one ? "📱 Recording phone" : "🎥 Video phone") : "🎙 Sound phone") + (old ? " (not heard from for " + Math.round((Date.now() - p.seen) / 1000) + " s)" : "")),
         h("div", null, p.rec ? "● " + (p.title || "") + " · " + fmtTime(p.secs || 0) + " · " + akRecSize(p.bytes || 0) : p.ready ? "Ready" : "Waiting for a tap on the phone"),
         h("div", { class: "muted" }, [p.got || "", p.free ? akRecSize(p.free) + " free" : "", p.files ? p.files + " files" : "", p.wake === false ? "screen may sleep" : ""].filter(Boolean).join(" · ")),
-        p.warn ? h("div", { class: "akrr-w" }, "⚠ " + p.warn) : null));
+        p.warn ? h("div", { class: "akrr-w" }, "⚠ " + p.warn) : null,
+        typeof akRrForget === "function" ? h("button", { class: "sm", "aria-label": "Remove this phone from the list", onClick: function () { akRrForget(p.dev); body.akDraw && body.akDraw(); } }, "Remove") : null));
     });
     body.appendChild(box);
     if (typeof akRr141Top === "function") akRr141Top(body);
@@ -30407,7 +30413,7 @@ function akRpSaveOut(r) { akRecBlob(r).then(function (b) { akRecDownload(b, akRe
 function akRpReport(now) {
   if (!now && Date.now() - (AKRP.repAt || 0) < 3000) return; AKRP.repAt = Date.now();
   var r = AKRP.cur, st = { dev: AKRP.dev, role: AKRP.role, rec: !!r, ready: AKRP.ready, title: r ? r.title + (r.marks && r.marks.length ? " · " + r.marks[r.marks.length - 1].title : "") : "", secs: r ? Math.round((performance.now() - r.t0) / 1000) : 0, bytes: r ? r.bytes : 0,
-    free: AKRP.free || 0, files: AKRP.files, got: AKRP.got || "", warn: AKRP.warn || "", wake: AKRP.wakeOk !== false, at: Date.now() };
+    free: AKRP.free || 0, files: AKRP.files, got: AKRP.got || "", warn: AKRP.warn || "", wake: AKRP.wakeOk !== false, at: Date.now(), inp: (function () { try { var t = AKRP.stream && AKRP.stream.getAudioTracks()[0]; return t ? t.label || "" : ""; } catch (e) { return ""; } })(), ins: (AKRP.ins || []).slice(0, 8) };
   if (AKRP.local) { try { if (AKRP.bc) AKRP.bc.postMessage({ t: "st", st: st }); } catch (e) {} return; }
   if (AKRP.db && AKRP.pid) AKRP.db.collection("performers").doc(AKRP.pid).collection("recorders").doc(AKRP.dev).set(st).catch(function () { AKRP.noReport = true; });
 }
@@ -33725,7 +33731,7 @@ function akRec141On() {
   akPlayTabs = function (root) {
     var out = pt.apply(this, arguments);
     var wrap = root.querySelector(".ptopwrap");
-    if (wrap && !S.layout && akRec141On() && !wrap.querySelector(".ak16f-rtabs"))
+    if (false && wrap && !S.layout && akRec141On() && !wrap.querySelector(".ak16f-rtabs"))
       wrap.appendChild(h("div", { class: "ak8-tabs ak16f-rtabs" }, h("button", { class: "ak8-tab ak16f-rtab" + (akFloatOpen("rec16") ? " on" : ""), "aria-label": "Recording: camera view and recording buttons", onClick: function () { akRec141Win(); this.classList.toggle("on", akFloatOpen("rec16")); } }, "● Recording")));
     return out;
   };
@@ -33736,7 +33742,7 @@ function akRec141VideoDev() {
 }
 function akRec141Win(tab) {
   if (tab) akFloatCfg("rec16").tab = tab;
-  akFloat("rec16", { title: "Recording", tabs: [["cam", "Camera"], ["ctl", "Buttons"]], w: 380, h: 320, key: function () { return "rec16"; },
+  akFloat("rec16", { title: "Recording", tabs: [["ctl", "Record"], ["cam", "Camera"]], w: 380, h: 360, key: function () { return "rec16"; },
     onClose: function () { clearInterval(AK16F.t); AK16F.t = 0; var t = document.querySelector(".ak16f-rtab"); if (t) t.classList.remove("on"); },
     body: function (tab, el) {
       var fl = AK_FLOATS.rec16 && AK_FLOATS.rec16.el;
@@ -34930,7 +34936,11 @@ function akCv17Run(ta, song, done) {
    plugged-in audio interface (saved on that phone, localStorage akrr:mic); the phone's sound clean-up stays off unless turned on. */
 function akMic17() { var c = {}; try { c = JSON.parse(localStorage.getItem("akrr:mic") || "{}") || {}; } catch (e) {} return c; }
 function akMic17Save(c) { try { localStorage.setItem("akrr:mic", JSON.stringify(c)); } catch (e) {} }
-function akMic17Aud(aud) { var c = akMic17(); if (c.dev && typeof aud === "object") aud.deviceId = { exact: c.dev }; return aud; }
+function akMic17Aud(aud) {
+  var c = akMic17(), d = c.dev, m = AKRP.cfg && AKRP.cfg.inDev; /* 18.4: the tablet can choose this phone's input; its choice wins */
+  if (m && m[AKRP.dev] !== undefined) d = m[AKRP.dev];
+  if (d && typeof aud === "object") aud.deviceId = { exact: d }; return aud;
+}
 function akMic17Card(inn) {
   if (AKRP.role !== "audio" && !(AKRP.cfg && AKRP.cfg.v && AKRP.cfg.v.one)) return;
   var old = inn.querySelector(".ak17-mic"); if (old) old.remove();
@@ -38122,7 +38132,12 @@ document.addEventListener("click", function (e) {
 }, true);
 (function () {
   var t = 0;
-  function later() { if (t) return; t = setTimeout(function () { t = 0; akColRun(); }, 60); }
+  var mt = 0, chain = 0;
+  /* 18.4: folds and tip buttons are applied in a microtask, before the screen paints, so a rebuilt box never shows open for a moment (the flicker in the phone window); the timer stays as a backstop */
+  function later() {
+    if (!mt && chain < 3) { mt = 1; Promise.resolve().then(function () { mt = 0; chain++; try { akColRun(); } catch (e) {} setTimeout(function () { chain = 0; }, 0); }); }
+    if (t) return; t = setTimeout(function () { t = 0; akColRun(); }, 60);
+  }
   function start() { if (window.MutationObserver && document.body) new MutationObserver(later).observe(document.body, { childList: true, subtree: true }); later(); }
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 })();
@@ -50352,6 +50367,277 @@ akCss("akv184-pick", [
   "[data-wsview=sections][data-pick=pal] .akws > .akws-pal,[data-wsview=sections][data-pick=wheel] .akws > .akws-main{display:block !important;position:fixed;left:6px;right:6px;bottom:64px;max-height:44vh;overflow:auto;z-index:60;background:var(--panel,#1c1c1c);border:1px solid var(--accent,#c60);border-radius:8px;box-shadow:0 -4px 18px rgba(0,0,0,.55);padding:6px !important;margin:0 !important}",
   "[data-wsview=sections][data-pick=pal] .akws > .akws-pal > .akpick-x,[data-wsview=sections][data-pick=wheel] .akws > .akws-main > .akpick-x{display:flex;gap:4px;position:sticky;top:-6px;z-index:2;background:var(--panel,#1c1c1c);padding:2px 0 4px}",
   "html body .akpick-x button:not(#ak){min-height:24px !important;height:24px !important;padding:0 8px !important;margin:0 !important;font-size:.74rem !important;line-height:1 !important;width:auto !important}html body .akpick-x button.on:not(#ak){background:var(--accent,#c60) !important;color:#fff !important}"
+].join("\n"));
+
+/* ================================================================ 18.4: one Recording place
+   - The "● Recording" tab at the top right of the playing screen is gone. The 🎙 Phones button is now "Recording" and opens the Recording
+     window (dock, minimise, float): what is recording, what should record (This device and/or the phones), one big Record / Stop, and the
+     phone set-up (QR codes) and recorder settings one tap away.
+   - The Record button (and the old "Song rec" button) now start and stop everything ticked in that window, and light up while anything records.
+     Before, Record only ever recorded on this device, even with phones set up. */
+var AKHUB = { labels: null, sig: "" };
+function akRecSrc() {
+  var s = settings(); if (!s.recSrc || typeof s.recSrc !== "object") {
+    var on = false; try { on = !!akRrCfg().on; } catch (e) {}
+    s.recSrc = { here: !on, phones: on, set: false };
+  }
+  return s.recSrc;
+}
+function akRecAny() { return !!(AKREC.rec || AKREC.lead || AKRR.songOn || AKRR.rec); }
+function akRecNames() {
+  var r = akRecSrc(), out = [];
+  if (r.here) out.push("this device");
+  try { var n = akRrPhoneRows().length; if (r.phones && n) out.push(n === 1 ? "1 phone" : n + " phones"); } catch (e) {}
+  return out.join(" + ");
+}
+var akRec12Toggle0 = akRec12Toggle;
+function akRecAll() {
+  if (akRecAny()) {
+    if (AKREC.rec || AKREC.lead) akRec12Toggle0();
+    if (AKRR.songOn) akRrEndSong(); else if (AKRR.rec) akRrStopAll();
+    akRecHubPaint(); return;
+  }
+  var r = akRecSrc(), phones = 0; try { phones = akRrPhoneRows().length; } catch (e) {}
+  if (!r.here && !(r.phones && akRrCfg().on)) { toast("Nothing is ticked to record with. Pick it here."); akRecHub(); return; }
+  if (r.here) akRec12Toggle0();
+  if (r.phones && akRrCfg().on) { akRrStartSong(); if (!phones) { toast("No phone is connected yet. Open the Recording window to set one up."); } }
+  akRecHubPaint();
+  toast("● Recording with " + akRecNames() + ".");
+}
+akRec12Toggle = akRecAll;
+function akRecHub(tab) { try { akRec141Win(tab || "ctl"); } catch (e) { if (typeof akRrWin === "function") akRrWin(); } }
+if (typeof AK_RR_ACTS !== "undefined") { AK_RR_ACTS.rrstart = function () { akRecAll(); }; AK_RR_ACTS.rrphones = function () { akRecHub("ctl"); }; }
+if (typeof AK_LONG !== "undefined") { AK_LONG.rec = function () { akRecHub("ctl"); }; AK_LONG.rrstart = AK_LONG.rrend = function () { akRecHub("ctl"); }; }
+TB_SHORT.rrphones = "Recording"; FAB_SHORT.rrphones = "Recording"; TB_SHORT.rrstart = "Record"; FAB_SHORT.rrstart = "Record";
+[TB_ITEMS, FAB_ITEMS].forEach(function (L) { L.forEach(function (x) { if (x[0] === "rrphones") x[1] = "Recording (what records, phones, settings)"; if (x[0] === "rrstart") x[1] = "Record (everything ticked in Recording)"; }); });
+function akRecHubPaint() {
+  var on = !!(AKREC.rec || AKREC.lead || AKRR.songOn);
+  Array.prototype.forEach.call(document.querySelectorAll('[data-tb="rec"],[data-fab="rec"],[data-tb="rrstart"],[data-fab="rrstart"],[data-tb="rrphones"],[data-fab="rrphones"]'), function (b) {
+    b.classList.toggle("on", on); b.classList.toggle("ak12-recon", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+    var rec = /rec|rrstart/.test(b.getAttribute("data-tb") || b.getAttribute("data-fab") || "") && !/rrphones/.test(b.getAttribute("data-tb") || b.getAttribute("data-fab") || "");
+    if (rec) { b.setAttribute("aria-label", on ? "Stop recording (hold for the Recording window)" : "Record (hold for the Recording window)"); if (b.hasAttribute("data-lbl")) b.setAttribute("data-lbl", on ? "■ Stop" : "Record"); }
+  });
+  if (akFloatOpen("rec16")) { var c = akFloatCfg("rec16"); if (!c.tab || c.tab === "ctl") akFloatFill("rec16"); }
+}
+(function () {
+  var p12 = akRec12Paint; akRec12Paint = function () { p12.apply(this, arguments); akRecHubPaint(); };
+  var prr = akRrPaint; akRrPaint = function () { var o = prr.apply(this, arguments); akRecHubPaint(); return o; };
+  setInterval(function () {
+    var sg = String(akRecAny()) + "|" + String(!!AKREC.rec) + "|" + String(!!AKRR.songOn);
+    if (sg !== AKHUB.sig) { AKHUB.sig = sg; akRecHubPaint(); }
+  }, 700);
+})();
+/* the Record tab of the Recording window */
+akRec141Buttons = function (el) {
+  var r = akRecSrc(), cfg = akRrCfg(), rc = akRecCfg(), any = akRecAny(), rows = [];
+  try { rows = akRrPhoneRows(); } catch (e) {}
+  function ck(label, on, fn, sub) { return h("label", { class: "akhub-src" }, h("input", { type: "checkbox", checked: !!on, disabled: any, onChange: function () { fn(this.checked); r.set = true; save(); akFloatFill("rec16"); } }), h("span", null, h("b", null, label), sub ? h("small", null, sub) : null)); }
+  el.appendChild(h("div", { class: "akhub-state" + (any ? " rec" : "") }, any ? "● Recording with " + (akRecNames() || "…") : "Not recording"));
+  el.appendChild(h("div", { class: "akhub-go" },
+    h("button", { class: "akhub-rec" + (any ? " on ak12-recon" : " primary"), "aria-pressed": any ? "true" : "false", onClick: function () { akRecAll(); } }, any ? "■ Stop" : "● Record"),
+    h("button", { class: "sm", onClick: function () { go("recs"); } }, "My recordings")));
+  var micName = h("small", null, rc.video ? "Camera and sound" : "Sound only");
+  var micSel = h("select", { "aria-label": "Microphone or audio interface on this device", disabled: any, onChange: function () { rc.mic = this.value; try { aklCfg().dev = this.value; } catch (e) {} save(); micName.textContent = "Using: " + (this.options[this.selectedIndex].text); } }, h("option", { value: "" }, "Default microphone"));
+  akMicList(function (ds) { ds.forEach(function (d, i) { micSel.appendChild(h("option", { value: d.deviceId, selected: rc.mic === d.deviceId }, d.label || "Input " + (i + 1))); }); });
+  el.appendChild(h("div", { class: "akhub-h" }, "Record with"));
+  var here = ck("📱 This device", r.here, function (v) { r.here = v; }, null);
+  here.querySelector("span").appendChild(micName);
+  el.appendChild(here);
+  el.appendChild(h("div", { class: "akhub-in" }, micSel, h("label", { class: "akhub-auto" }, h("input", { type: "checkbox", checked: settings().micAuto !== false, onChange: function () { settings().micAuto = this.checked; save(); if (this.checked) akMicAuto(false); } }), "Use a USB audio interface by itself when it's plugged in")));
+  var ph = rows.length;
+  el.appendChild(ck("📲 The phones" + (ph ? " (" + ph + ")" : ""), r.phones, function (v) { r.phones = v; }, ph ? "" : "none connected yet"));
+  rows.forEach(function (p) {
+    var inDev = (cfg.inDev = cfg.inDev || {}), cur = inDev[p.dev] !== undefined ? inDev[p.dev] : "";
+    var line = h("div", { class: "akhub-ph" + (Date.now() - p.seen > 15000 ? " old" : "") },
+      h("span", null, (p.role === "video" ? (cfg.v && cfg.v.one ? "📱 " : "🎥 ") : "🎙 ") + (p.role === "video" ? (cfg.v && cfg.v.one ? "Recording phone" : "Video phone") : "Sound phone") + " · " + (p.rec ? "● recording" : p.ready ? "ready" : "waiting for a tap on the phone")),
+      h("button", { class: "sm", "aria-label": "Remove this phone from the list", onClick: function () { akRrForget(p.dev); akFloatFill("rec16"); } }, "Remove"));
+    el.appendChild(line);
+    if (p.role !== "video" || (cfg.v && cfg.v.one)) {
+      var sel = h("select", { "aria-label": "Input the phone records from", disabled: !!p.rec, onChange: function () { if (this.value === "") delete inDev[p.dev]; else inDev[p.dev] = this.value; save(); akRrSend(); toast("Sent to the phone. It switches before the next file."); } },
+        h("option", { value: "" }, "Phone picks (a USB interface when plugged in)"));
+      (p.ins || []).forEach(function (x) { sel.appendChild(h("option", { value: x.id, selected: cur === x.id }, x.label)); });
+      el.appendChild(h("div", { class: "akhub-in" }, h("small", null, "Recording from: " + (p.inp || "(not known yet: tap Get ready on the phone)")), sel));
+    }
+  });
+  el.appendChild(h("div", { class: "row akhub-more" },
+    h("button", { class: "sm", onClick: function () { akRrWin(); } }, "📲 Set up phones (QR)…"),
+    h("button", { class: "sm", onClick: function () { try { akRecFloat(); } catch (e) {} } }, "⚙ This device's recorder…")));
+  /* name the microphone */
+  try {
+    var mk = function (list) { var d = list.filter(function (x) { return x.kind === "audioinput" && rc.mic && x.deviceId === rc.mic; })[0]; micName.textContent = (rc.video ? "Camera and " : "") + "sound · " + (d && d.label ? d.label : rc.mic ? "chosen input" : "default microphone"); };
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) navigator.mediaDevices.enumerateDevices().then(mk, function () {});
+  } catch (e) {}
+};
+akCss("akv184-hub", [
+  ".akhub-state{font-weight:700;margin:0 0 4px}.akhub-state.rec{color:#e23}",
+  ".akhub-go{display:flex;gap:6px;align-items:center;margin:0 0 6px}",
+  "html body .akhub-rec:not(#ak){min-height:34px !important;height:34px !important;padding:0 18px !important;font-weight:800}",
+  "html body .akhub-rec.on:not(#ak){background:#e23 !important;color:#fff !important;border-color:#e23 !important}",
+  ".akhub-h{font-size:.74rem;opacity:.7;margin:4px 0 2px;text-transform:uppercase;letter-spacing:.04em}",
+  ".akhub-src{display:flex;gap:8px;align-items:flex-start;padding:3px 0;border-top:1px solid var(--line,#8883)}.akhub-src small{display:block;opacity:.7;font-size:.72rem;font-weight:400}",
+  ".akhub-ph{font-size:.76rem;opacity:.85;padding:1px 0 1px 26px;display:flex;gap:6px;align-items:center;justify-content:space-between}.akhub-ph.old{opacity:.5}",
+  ".akhub-in{padding:1px 0 3px 26px;font-size:.74rem}.akhub-in select{width:100%;min-height:26px;font-size:.76rem}.akhub-auto{display:flex;gap:6px;align-items:center;margin-top:2px;opacity:.85}",
+  "html body .akhub-ph button:not(#ak){min-height:22px !important;height:22px !important;padding:0 8px !important;font-size:.72rem !important}",
+  ".akhub-more{gap:4px;margin-top:6px;flex-wrap:wrap}html body .akhub-more button:not(#ak){min-height:26px !important;height:26px !important;padding:0 8px !important;font-size:.76rem !important}"
+].join("\n"));
+
+/* ================================================================ 18.4: forget a phone, choose the input, switch to a USB interface by itself */
+function akRrForget(dev) {
+  var s = settings(); if (!s.rrGone) s.rrGone = {}; s.rrGone[dev] = Date.now(); save();
+  try { delete AKRR.phones[dev]; } catch (e) {}
+  try { if (akRrCloud()) AKL.db.collection("performers").doc(AKL.uid).collection("recorders").doc(dev).delete().catch(function () {}); } catch (e) {}
+  toast("Removed from the list. If that phone still has its recorder page open it will show up again; close the page on the phone to be rid of it.");
+  try { akRrPaint(); } catch (e) {}
+}
+var AKMIC = { seen: null };
+function akMicList(cb) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) { cb([]); return; }
+  navigator.mediaDevices.enumerateDevices().then(function (ds) { cb(ds.filter(function (d) { return d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications"; })); }, function () { cb([]); });
+}
+/* "looks like a plugged-in interface": named like one, or new since last time and not a Bluetooth or built-in mic */
+function akMicExternal(d, isNew) {
+  var l = String(d.label || "");
+  if (/bluetooth|hands-?free|airpods|buds|earpiece|speakerphone|built-?in|microphone array|front|back mic|internal/i.test(l)) return false;
+  if (/usb|scarlett|focusrite|behringer|presonus|steinberg|audient|motu|tascam|zoom|rode|interface|codec|umc|mixer|line in|ur\d\d|apollo|volt|babyface|id\d\d/i.test(l)) return true;
+  return !!isNew && l.length > 0;
+}
+function akMicAuto(first) {
+  if (settings().micAuto === false) return;
+  akMicList(function (ds) {
+    var prev = AKMIC.seen; AKMIC.seen = ds.map(function (d) { return d.deviceId; });
+    var c = akRecCfg(), here = ds.some(function (d) { return d.deviceId === c.mic; });
+    if (c.mic && !here) { c.mic = ""; try { aklCfg().dev = ""; } catch (e) {} save(); toast("The chosen microphone was unplugged. Back to the default."); }
+    var ext = ds.filter(function (d) { return akMicExternal(d, prev && prev.indexOf(d.deviceId) < 0); })[0];
+    if (ext && c.mic !== ext.deviceId && (!first || !c.mic || !here)) {
+      if (akRecAny() || AKREC.rec) return; /* never switch in the middle of a recording */
+      c.mic = ext.deviceId; try { aklCfg().dev = ext.deviceId; } catch (e) {} save();
+      toast("Using " + (ext.label || "the audio interface") + " to record.");
+      try { akRecHubPaint(); } catch (e) {}
+    }
+  });
+}
+try { if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", function () { setTimeout(function () { akMicAuto(false); }, 400); }); } catch (e) {}
+setTimeout(function () { akMicAuto(true); }, 3000);
+/* on a recording phone: the same, and report the list of inputs to the tablet */
+function akRpIns() {
+  akMicList(function (ds) {
+    AKRP.ins = ds.map(function (d, i) { return { id: d.deviceId, label: d.label || "Input " + (i + 1) }; });
+    var prev = AKRP.insSeen; AKRP.insSeen = AKRP.ins.map(function (x) { return x.id; });
+    if (!AKRP.stream || AKRP.cur || settings().micAuto === false || typeof akMic17 !== "function") return;
+    var ext = ds.filter(function (d) { return akMicExternal(d, prev && prev.indexOf(d.deviceId) < 0); })[0], c = akMic17();
+    if (ext && prev && c.dev !== ext.deviceId && !(AKRP.cfg && AKRP.cfg.inDev && AKRP.cfg.inDev[AKRP.dev] !== undefined)) {
+      c.dev = ext.deviceId; akMic17Save(c);
+      akRpStream().then(function () { try { akRpDraw(); } catch (e) {} }, function () {});
+    }
+  });
+}
+try { if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener("devicechange", function () { if (typeof akRcIsRecorder === "function" && akRcIsRecorder()) setTimeout(akRpIns, 500); }); } catch (e) {}
+setInterval(function () { try { if (typeof akRcIsRecorder === "function" && akRcIsRecorder() && AKRP.ready) akRpIns(); } catch (e) {} }, 15000);
+
+/* ================================================================ 18.4: a recording phone heals its sound input
+   After the Wi-Fi drops, the screen sleeps or an interface is replugged, a phone could say "Ready" while its microphone had gone quiet
+   (the level meter stuck at nothing). Now the phone checks every two seconds when it is ready and not recording: if the audio context
+   fell asleep it wakes it; if the microphone stopped, or has given dead silence for six seconds, it opens the input again by itself. */
+function akRpHeal(now) {
+  try {
+    if (typeof akRcIsRecorder !== "function" || !akRcIsRecorder() || !AKRP.ready) return;
+    var ac = AKRP.ac; if (ac && ac.state !== "running" && ac.resume) ac.resume().catch(function () {});
+    var t = AKRP.stream && AKRP.stream.getAudioTracks()[0], dead = !!AKRP.stream && (!t || t.readyState !== "live");
+    if (!dead && AKRP.an && t) {
+      var buf = AKRP.healBuf || (AKRP.healBuf = new Float32Array(AKRP.an.fftSize)), nz = false; AKRP.an.getFloatTimeDomainData(buf);
+      for (var i = 0; i < buf.length; i += 4) if (buf[i] !== 0) { nz = true; break; }
+      AKRP.zeroN = nz ? 0 : (AKRP.zeroN || 0) + 1; if (AKRP.zeroN >= (now ? 1 : 3)) dead = true;
+    }
+    if (dead && !AKRP.cur && Date.now() - (AKRP.revAt || 0) > 8000) {
+      AKRP.revAt = Date.now(); AKRP.zeroN = 0;
+      akRpStream().then(function () { AKRP.ready = true; try { akRpDraw(); } catch (e) {} }, function () { AKRP.ready = false; try { akRpDraw(); } catch (e) {} });
+    }
+  } catch (e) {}
+}
+setInterval(akRpHeal, 2000);
+window.addEventListener("online", function () { setTimeout(function () { akRpHeal(true); }, 800); });
+document.addEventListener("visibilitychange", function () { if (!document.hidden) setTimeout(function () { akRpHeal(true); }, 600); });
+
+/* ================================================================ 18.4: remind me to log tips and pay after a show (optional)
+   When you press End show (or the show closes by itself), a small pop-up asks "Log tips and pay?" (Log now / Later). If the show is never
+   ended and nothing has happened for the set time (default 60 minutes), the same pop-up comes up once. "Later" leaves a red ! badge on the
+   Shows tab and a line at the top of the Shows screens until you log it (or tap ✕). Settings › Songs and shows › Tips and pay reminder. */
+function akPayCfg() { var s = settings(); if (!s.payRemind || typeof s.payRemind !== "object") s.payRemind = {}; var c = s.payRemind; if (c.on === undefined) c.on = true; if (c.mins === undefined) c.mins = 60; return c; }
+function akPayPending() { var p = settings().payPending; return p && typeof p === "object" ? p : null; }
+function akPayGig(p) { try { return p && p.gig ? akGig(p.gig) : null; } catch (e) { return null; } }
+function akPayClear() { delete settings().payPending; save(); akPayBadge(); Array.prototype.forEach.call(document.querySelectorAll(".akpay-banner"), function (b) { b.remove(); }); }
+function akPayOpen() {
+  var p = akPayPending(), g = akPayGig(p);
+  if (g && typeof akGigMoneyDialog === "function") { akGigMoneyDialog(g, function () { akPayClear(); try { rerenderKeepScroll(); } catch (e) {} }); return; }
+  akPayClear(); go("history");
+  toast("Open the night, tap Edit, and add the tips and pay.");
+}
+function akPayAsk(name, gigId, key) {
+  var c = akPayCfg(); if (!c.on) return;
+  var p = settings().payPending; if (p && p.key === key) return;
+  settings().payPending = { key: key, gig: gigId || "", name: name || "tonight", at: Date.now() }; save(); akPayBadge();
+  modal("Log tips and pay?", h("p", null, "Want to write down tonight's tips and pay for " + (name ? "“" + name + "”" : "this show") + " while you remember?"),
+    [{ label: "Later" }, { label: "Log now", primary: true, onClick: function () { akPayOpen(); } }]);
+}
+(function () {
+  var end = akRunEnd;
+  akRunEnd = function (why, at, quiet) {
+    var run = RUN, was = run && !run.ended;
+    var r = end.apply(this, arguments);
+    try {
+      if (was && run && run.ended && Date.now() - run.ended < 6 * 3600e3 && !run.payAsked) {
+        run.payAsked = 1; try { akRunSave(); } catch (e) {}
+        var sh = akRunShow(), g = run.gigId ? akGig(run.gigId) : null;
+        setTimeout(function () { akPayAsk(g ? akGigTitle(g) : (sh ? sh.name : ""), g ? g.id : "", String(run.began)); }, quiet ? 800 : 1800);
+      }
+    } catch (e) { if (window.console) console.warn("ak184 pay", e); }
+    return r;
+  };
+  setInterval(function () {
+    try {
+      var c = akPayCfg(); if (!c.on || !c.mins || !RUN || RUN.ended || RUN.payAsked) return;
+      if (Date.now() - (RUN.lastAct || RUN.began) >= c.mins * 60e3) {
+        RUN.payAsked = 1; akRunSave();
+        var sh = akRunShow(), g = RUN.gigId ? akGig(RUN.gigId) : null;
+        akPayAsk(g ? akGigTitle(g) : (sh ? sh.name : ""), g ? g.id : "", String(RUN.began));
+      }
+    } catch (e) {}
+  }, 60000);
+})();
+function akPayBadge() {
+  var p = akPayPending();
+  Array.prototype.forEach.call(document.querySelectorAll(".tabbar > button"), function (b) {
+    if (!/Shows/.test(b.textContent.replace(/!$/, ""))) return;
+    var bd = b.querySelector(".akpay-bd");
+    if (p) { if (!bd) { bd = h("span", { class: "akbadge akpay-bd", title: "Log tips and pay" }, "!"); b.style.position = "relative"; b.appendChild(bd); } } else if (bd) bd.remove();
+  });
+}
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    try {
+      akPayBadge();
+      var p = akPayPending(), main = document.querySelector("#app .main");
+      if (p && main && /^(shows|gigs|gig|history)$/.test(S.view || "") && !main.querySelector(":scope > .akpay-banner")) {
+        main.insertBefore(h("div", { class: "akpay-banner" }, h("span", null, "💵 Log tips and pay for " + (p.name || "tonight")),
+          h("button", { class: "sm", onClick: function () { akPayOpen(); } }, "Log now"), h("button", { class: "sm", "aria-label": "Dismiss", onClick: function () { akPayClear(); } }, "✕")), main.firstChild);
+      }
+    } catch (e) {}
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.again("songs-and-shows");
+    var pc = akPayCfg();
+    c.section("Tips and pay reminder", "A nudge to write them down after a show");
+    c.select("Remind me", function () { return pc.on ? "on" : "off"; }, function (v) { pc.on = v === "on"; }, [["on", "After End show, and if I forget to end it"], ["off", "Never"]]);
+    c.select("If I never end the show, remind me after", function () { return String(pc.mins); }, function (v) { pc.mins = Number(v); }, [["30", "30 minutes of nothing playing"], ["60", "1 hour"], ["90", "1½ hours"], ["120", "2 hours"], ["0", "Don't"]]);
+    return sx.apply(this, arguments);
+  };
+})();
+akCss("akv184-pay", [
+  ".akpay-banner{display:flex;gap:6px;align-items:center;margin:0 0 6px;padding:4px 8px;border:1px solid var(--accent,#c60);border-radius:6px;font-size:.8rem}.akpay-banner span{flex:1}",
+  "html body .akpay-banner button:not(#ak){min-height:24px !important;height:24px !important;padding:0 8px !important;font-size:.74rem !important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
