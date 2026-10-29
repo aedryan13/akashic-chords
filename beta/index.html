@@ -49133,7 +49133,7 @@ function akW18bChips() {
   var PRE = [["Chords + arranger", "sections", "arranger"], ["Lyrics + chords", "lyrics", "linech"], ["Lyrics + arranger", "lyrics", "arranger"], ["Wheel + arranger", "wheel", "arranger"]];
   var pre = h("div", { class: "chips akw18-grp", role: "group", "aria-label": "Two-halves presets" }, h("span", { class: "muted" }, "Halves"),
     PRE.map(function (x) { var on = c.scr === "halves" && c.hA === x[1] && c.hB === x[2]; return h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { c.scr = "halves"; c.hA = x[1]; c.hB = x[2]; save(); rerenderKeepScroll(); } }, x[0]); }));
-  return h("div", { class: "akw18-prefs" }, group("Screen", AK_W18_SCR, "scr"), pre, group("Top", AK_W18_TOP, "top"));
+  return h("div", { class: "akw18-prefs" }, group("Screen", AK_W18_SCR, "scr"), pre, c.scr === "halves" ? group("Split", [["auto", "Auto (side by side when wide)"], ["stack", "Top and bottom"], ["side", "Side by side"]], "dir") : null, group("Top", AK_W18_TOP, "top"));
 }
 
 function akW18bApply(el) {
@@ -49196,7 +49196,7 @@ function akW18bApply(el) {
   function openDet(e) { if (e && e.tagName === "DETAILS" && !e.open) e.open = true; }
 
   if (c.scr === "tabs") {
-    var ids = ["lyrics", "arranger", "sections", "wheel", "looper"].filter(have), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
+    var ids = ["lyrics", "arranger", "sections", "wheel", "looper"].filter(have).filter(function (x) { return x !== "wheel" || c.wheelTab || c.tab === "wheel"; }), cur = ids.indexOf(c.tab) >= 0 ? c.tab : "lyrics";
     var labels = { lyrics: "Lyrics", arranger: "Arranger", sections: "Sections", wheel: "Wheel", looper: "Looper" };
     var tabs = h("div", { class: "akw18-tabs", role: "tablist", "data-bk": "w18tabs", "data-bt": "Write view tabs" },
       ids.map(function (id) { return h("button", { role: "tab", class: id === cur ? "on" : "", "aria-selected": id === cur ? "true" : "false", onClick: function () { c.tab = id; save(); rerenderKeepScroll(); } }, labels[id]); }));
@@ -49205,7 +49205,7 @@ function akW18bApply(el) {
     if (AK_W18_WS[cur]) openDet(wheel); if (cur === "arranger") openDet(arrEl); if (cur === "looper") openDet(aloop);
   } else if (c.scr === "halves") {
     var A = have(c.hA) ? c.hA : "chords", B = have(c.hB) && akW18Fam(c.hB) !== akW18Fam(A) ? c.hB : (A === "lyrics" ? "chords" : "lyrics");
-    var land = akW18Land(), box = h("div", { class: "akw18-halves" + (land ? " side" : ""), "data-bk": "w18halves", "data-bt": "Two halves" });
+    var land = c.dir === "side" || (c.dir !== "stack" && akW18Land()), box = h("div", { class: "akw18-halves" + (land ? " side" : ""), "data-bk": "w18halves", "data-bt": "Two halves" });
     function pick(which, v, other) {
       var sel = h("select", { "aria-label": which === "A" ? "First half shows" : "Second half shows", onChange: function () {
         var nv = this.value;
@@ -49215,24 +49215,23 @@ function akW18bApply(el) {
       return sel;
     }
     var slotA = h("div", { class: "akw18-slot" }), slotB = h("div", { class: "akw18-slot" });
-    var hA = h("div", { class: "akw18-half" }, h("div", { class: "akw18-hh" }, pick("A", A), h("button", { class: "sm", "aria-label": "Swap the halves", title: "Swap the halves", onClick: function () { var t = c.hA; c.hA = B; c.hB = t; save(); rerenderKeepScroll(); } }, "⇅")), slotA);
+    var hA = h("div", { class: "akw18-half" }, h("div", { class: "akw18-hh" }, pick("A", A), h("button", { class: "sm", "aria-label": "Swap the halves", title: "Swap the halves", onClick: function () { var t = c.hA; c.hA = B; c.hB = t; save(); rerenderKeepScroll(); } }, "⇅"), h("button", { class: "sm", "aria-label": land ? "Put the halves top and bottom" : "Put the halves side by side", title: land ? "Top and bottom" : "Side by side", onClick: function () { c.dir = land ? "stack" : "side"; save(); rerenderKeepScroll(); } }, land ? "▤" : "▥")), slotA);
     var hB = h("div", { class: "akw18-half" }, h("div", { class: "akw18-hh" }, pick("B", B)), slotB);
     var gr = h("div", { class: "akw18-grip", role: "separator", "aria-label": "Drag to share the room between the halves", tabindex: "0" });
-    function size() { if (land) { hA.style.flex = "1 1 0"; hB.style.flex = "1 1 0"; } else { hA.style.flex = "0 0 " + c.pct + "%"; hB.style.flex = "1 1 0"; } }
+    function size() { hA.style.flex = "0 0 " + (c.pct || 50) + "%"; hB.style.flex = "1 1 0"; }
     size();
-    if (!land) {
-      gr.addEventListener("pointerdown", function (e) {
-        e.preventDefault(); var y0 = e.clientY, p0 = c.pct, tot = box.getBoundingClientRect().height || 1;
-        function mv(ev) { c.pct = Math.round(Math.max(15, Math.min(85, p0 + (ev.clientY - y0) / tot * 100))); size(); }
-        function up() { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); save(); }
-        window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
-      });
-      gr.addEventListener("keydown", function (e) { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); c.pct = Math.max(15, Math.min(85, c.pct + (e.key === "ArrowUp" ? -5 : 5))); size(); save(); } });
-    }
+    if (land) gr.classList.add("v");
+    gr.addEventListener("pointerdown", function (e) {
+      e.preventDefault(); var x0 = land ? e.clientX : e.clientY, p0 = c.pct || 50, r = box.getBoundingClientRect(), tot = (land ? r.width : r.height) || 1;
+      function mv(ev) { c.pct = Math.round(Math.max(15, Math.min(85, p0 + ((land ? ev.clientX : ev.clientY) - x0) / tot * 100))); size(); }
+      function up() { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); save(); }
+      window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
+    });
+    gr.addEventListener("keydown", function (e) { var k = land ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"]; if (e.key === k[0] || e.key === k[1]) { e.preventDefault(); c.pct = Math.max(15, Math.min(85, (c.pct || 50) + (e.key === k[0] ? -5 : 5))); size(); save(); } });
     var ea = section(A), eb = section(B);
     view(AK_W18_WS[A] ? A : AK_W18_WS[B] ? B : "all");
     if (ea) { slotA.appendChild(ea); ea.hidden = false; openDet(ea); } if (eb) { slotB.appendChild(eb); eb.hidden = false; openDet(eb); }
-    box.append(hA, land ? null : gr, hB);
+    box.append(hA, gr, hB);
     /* the old strip of cards under the title is replaced by the halves; the title/record row and the tools row stay */
     [grip, pane && secEls.chords !== pane && secEls.linech !== pane ? pane : null].forEach(function (x) { if (x && x.parentNode) x.parentNode.removeChild(x); });
     var wrapEmpty = card.querySelector(".ak18-sidewrap"); if (wrapEmpty && !wrapEmpty.children.length) wrapEmpty.remove();
@@ -49259,6 +49258,7 @@ function akW18bApply(el) {
     c.section("Write screen", "How the Write tab is laid out");
     c.select("Top of the Write screen", function () { return w.top; }, function (v) { w.top = v; }, AK_W18_TOP);
     c.select("Show the writing area as", function () { return w.scr; }, function (v) { w.scr = v; }, AK_W18_SCR);
+    c.select("Two halves: arranged", function () { return w.dir || "auto"; }, function (v) { w.dir = v; }, [["auto", "Side by side when the screen is wide"], ["stack", "Top and bottom"], ["side", "Side by side"]]);
     c.select("Two halves: first half shows", function () { return w.hA; }, function (v) { w.hA = v; if (akW18Fam(w.hB) === akW18Fam(v)) w.hB = v === "lyrics" ? "chords" : "lyrics"; }, AK_W18_SECS);
     c.select("Two halves: second half shows", function () { return w.hB; }, function (v) { w.hB = v; if (akW18Fam(w.hA) === akW18Fam(v)) w.hA = v === "chords" ? "lyrics" : "chords"; }, AK_W18_SECS);
     c.out.appendChild(h("p", { class: "hint" }, "You can also switch these at the top of the Write tab: the ▦ Layout bar. Classic, Split, Chord strip and Side by side still decide how chords and words sit together."));
@@ -49286,7 +49286,7 @@ akCss("akv18-write", [
   ".akw18-hh{display:flex;gap:4px;padding:4px;border-bottom:1px solid var(--line,#8886)}.akw18-hh select{flex:1;min-width:0}",
   ".akw18-slot{flex:1;min-height:0;overflow:auto;padding:4px}",
   ".akw18-slot>.card,.akw18-slot>details{margin:0}.akw18-slot .akw9-pad{min-height:0;height:100%}",
-  ".akw18-halves.side .akw18-half+.akw18-half{border-left:1px solid var(--line,#8886)}",
+  ".akw18-grip.v{height:auto;width:14px;border-block:0;border-inline:1px solid var(--line,#8886);cursor:col-resize}.akw18-grip.v::after{width:3px;height:36px}",
   ".akw18-grip{flex:none;height:16px;background:var(--panel,#8882);border-block:1px solid var(--line,#8886);cursor:row-resize;display:grid;place-items:center;touch-action:none}",
   ".akw18-grip::after{content:\"\";width:36px;height:3px;border-radius:2px;background:var(--muted,#888)}"
 ].join("\n"));
@@ -50288,6 +50288,70 @@ akCss("akv184-tight", [
   "html body .akws .akfold-tgt:not(#ak){margin-top:0 !important;margin-bottom:2px !important}",
   "html body .akws:not(#ak){gap:2px !important}",
   "html body .akws-sel:not(#ak),html body .akws-gh:not(#ak){gap:3px !important;margin:2px 0 !important;padding-top:2px !important;padding-bottom:2px !important}"
+].join("\n"));
+
+/* ================================================================ 18.4: chord wheel and suggestions as a pop-up inside Sections
+   In the Sections view (tabs or halves), a thin row above the bars has 🎡 Wheel and 💡 Suggestions. Tapping one lays that panel over the
+   bottom of the screen; pick the square in the bars, then tap a chord in the panel and it goes into that square. Unless 📌 is on, the panel
+   closes by itself once a chord goes in. The separate Wheel tab is hidden unless Settings turns it on. */
+AK_WHATS_NEW = ["Sections: the chord wheel and chord suggestions are now pop-ups right above the bars (🎡 Wheel, 💡 Suggestions). Tap a square, tap a chord, and the panel tucks away (📌 keeps it open). The separate Wheel tab is hidden; Settings › Write screen can bring it back."].concat(AK_WHATS_NEW);
+var AKPICK = { what: "", pin: false };
+function akPickSet(what) {
+  AKPICK.what = what || "";
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wsview]"), function (c) { if (AKPICK.what) c.setAttribute("data-pick", AKPICK.what); else c.removeAttribute("data-pick"); });
+  Array.prototype.forEach.call(document.querySelectorAll(".akpickrow, .akpick-x"), akPickPaint);
+}
+function akPickPaint(row) {
+  Array.prototype.forEach.call(row.querySelectorAll("button[data-pk]"), function (b) { var on = b.getAttribute("data-pk") === AKPICK.what; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+  var pin = row.querySelector(".akpick-pin"); if (pin) { pin.classList.toggle("on", AKPICK.pin); pin.setAttribute("aria-pressed", AKPICK.pin ? "true" : "false"); if (row.classList.contains("akpickrow")) pin.style.display = AKPICK.what ? "" : "none"; }
+}
+(function () {
+  var put = akWsPut;
+  akWsPut = function () { var r = put.apply(this, arguments); if (AKPICK.what && !AKPICK.pin) setTimeout(function () { akPickSet(""); }, 120); return r; };
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    try {
+      var base = root && root.querySelectorAll ? root : document;
+      Array.prototype.forEach.call(base.querySelectorAll(".akws"), function (ws) {
+        var grid = ws.querySelector(":scope > .akws-gridwrap"); if (!grid || ws.querySelector(":scope > .akpickrow")) return;
+        var bar = grid.previousElementSibling && grid.previousElementSibling.classList.contains("akfold-bar") ? grid.previousElementSibling : grid;
+        var row = h("div", { class: "akpickrow" },
+          h("span", { class: "muted akpick-l" }, "Chords from:"),
+          h("button", { type: "button", "data-pk": "wheel", "aria-label": "Chord wheel pop-up", onClick: function () { akPickSet(AKPICK.what === "wheel" ? "" : "wheel"); } }, "🎡 Wheel"),
+          h("button", { type: "button", "data-pk": "pal", "aria-label": "Chord suggestions pop-up", onClick: function () { akPickSet(AKPICK.what === "pal" ? "" : "pal"); } }, "💡 Suggestions"),
+          h("button", { type: "button", class: "akpick-pin", title: "Keep the panel open after a chord goes in", "aria-label": "Keep the panel open", onClick: function () { AKPICK.pin = !AKPICK.pin; akPickPaint(row); } }, "📌"),
+          h("button", { type: "button", class: "akpick-pin", title: "Close the panel", "aria-label": "Close the panel", onClick: function () { akPickSet(""); } }, "✕"));
+        ws.insertBefore(row, bar); akPickPaint(row);
+        Array.prototype.forEach.call(row.querySelectorAll(".akpick-pin"), function (b) { b.style.display = AKPICK.what ? "" : "none"; });
+      });
+      Array.prototype.forEach.call(base.querySelectorAll(".akws > .akws-pal, .akws > .akws-main"), function (el) {
+        if (el.querySelector(":scope > .akpick-x")) return;
+        el.insertBefore(h("div", { class: "akpick-x" },
+          h("button", { type: "button", "data-pk": "wheel", onClick: function () { akPickSet("wheel"); } }, "🎡 Wheel"),
+          h("button", { type: "button", "data-pk": "pal", onClick: function () { akPickSet("pal"); } }, "💡 Suggestions"),
+          h("button", { type: "button", class: "akpick-pin", title: "Keep open after a chord goes in", onClick: function () { AKPICK.pin = !AKPICK.pin; Array.prototype.forEach.call(document.querySelectorAll(".akpickrow, .akpick-x"), akPickPaint); } }, "📌"),
+          h("button", { type: "button", onClick: function () { akPickSet(""); } }, "✕ Close")), el.firstChild);
+      });
+    } catch (e) { if (window.console) console.warn("ak184 pick", e); }
+  };
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && AKPICK.what && !document.querySelector(".modal,.menu")) akPickSet(""); });
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.again("songs-and-shows");
+    var w = akW18b();
+    c.select("Wheel tab", function () { return w.wheelTab ? "on" : "off"; }, function (v) { w.wheelTab = v === "on"; }, [["off", "Hidden: use the pop-ups in Sections"], ["on", "Shown as its own tab"]]);
+    return sx.apply(this, arguments);
+  };
+})();
+akCss("akv184-pick", [
+  ".akpickrow,.akpick-x{display:none}",
+  "[data-wsview=sections] .akpickrow{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:2px 0;padding:2px 0}",
+  "html body .akpickrow button:not(#ak){min-height:24px !important;height:24px !important;padding:0 8px !important;margin:0 !important;font-size:.74rem !important;line-height:1 !important;width:auto !important}",
+  "html body .akpickrow button.on:not(#ak){background:var(--accent,#c60) !important;color:#fff !important}.akpick-l{font-size:.74rem}",
+  "[data-wsview=sections][data-pick=pal] .akws > .akws-pal,[data-wsview=sections][data-pick=wheel] .akws > .akws-main{display:block !important;position:fixed;left:6px;right:6px;bottom:64px;max-height:44vh;overflow:auto;z-index:60;background:var(--panel,#1c1c1c);border:1px solid var(--accent,#c60);border-radius:8px;box-shadow:0 -4px 18px rgba(0,0,0,.55);padding:6px !important;margin:0 !important}",
+  "[data-wsview=sections][data-pick=pal] .akws > .akws-pal > .akpick-x,[data-wsview=sections][data-pick=wheel] .akws > .akws-main > .akpick-x{display:flex;gap:4px;position:sticky;top:-6px;z-index:2;background:var(--panel,#1c1c1c);padding:2px 0 4px}",
+  "html body .akpick-x button:not(#ak){min-height:24px !important;height:24px !important;padding:0 8px !important;margin:0 !important;font-size:.74rem !important;line-height:1 !important;width:auto !important}html body .akpick-x button.on:not(#ak){background:var(--accent,#c60) !important;color:#fff !important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
