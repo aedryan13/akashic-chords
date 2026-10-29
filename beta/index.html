@@ -49426,7 +49426,7 @@ AK_WHATS_NEW = [
 ].concat(AK_WHATS_NEW);
 
 AK_WHATS_NEW = [
-  "Arranger, audio: Guitar and Vocals audio tracks play the loops you recorded in the Audio looper, in time with the chords. Loop a part of the song with the [ ] bracket on the ruler, record straight into a track (you hear the others and a click), fade clips in and out, nudge a clip by milliseconds, and the loops follow the tempo without changing pitch. Chords show inside the clips when you zoom in."
+  "Arranger, audio: Instrument and Vocals audio tracks play the loops you recorded in the Audio looper, in time with the chords. Loop a part of the song with the [ ] bracket on the ruler, record straight into a track (you hear the others and a click), fade clips in and out, nudge a clip by milliseconds, and the loops follow the tempo without changing pitch. Chords show inside the clips when you zoom in."
 ].concat(AK_WHATS_NEW);
 
 var AKARR = { mode: false, host: null, copy: null, undo: [], raf: 0, bufs: {}, lcs: {}, srcs: [], opt: null };
@@ -49434,7 +49434,7 @@ var AK_ARR_KINDS = {
   chords: { label: "Chords", icon: "🎸", sound: true },
   drums: { label: "Drums", icon: "🥁", sound: false },
   bass: { label: "Bass", icon: "🎻", sound: false },
-  gtr: { label: "Guitar", icon: "🎙", sound: true, audio: true, col: "#1E8A7A" },
+  gtr: { label: "Instrument", icon: "🎵", sound: true, audio: true, col: "#1E8A7A" },
   vox: { label: "Vocals", icon: "🎤", sound: true, audio: true, col: "#B5497A" },
   guitar2: { label: "Guitar 2 (melody)", icon: "🎶", sound: false },
   vocals: { label: "Vocals (placeholder)", icon: "🎤", sound: false },
@@ -49480,7 +49480,9 @@ function akArrNorm(st) {
     a.v = 2;
   }
   a.px = Math.max(12, Math.min(90, Number(a.px) || 34));
-  a.lh = Math.max(36, Math.min(130, Number(a.lh) || 54));
+  if (!a.v184) { a.v184 = 1; a.tracks.forEach(function (t) { if (t.k === "gtr" && /^Guitar( \d+)?$/.test(t.name || "")) t.name = t.name.replace("Guitar", "Instrument"); }); }
+  a.tracks.forEach(function (t) { if (t.arm && !(AK_ARR_KINDS[t.k] && AK_ARR_KINDS[t.k].audio)) t.arm = false; });
+  a.lh = Math.max(48, Math.min(130, Number(a.lh) || 54));
   if (!AK_ARR_SNAPS.some(function (x) { return x[0] === a.snap; })) a.snap = "bar";
   if (a.loop === undefined) a.loop = true;
   if (a.hear === undefined) a.hear = true;
@@ -49714,6 +49716,15 @@ function akArrTimingDialog() {
   modal("Recording timing", h("div", null, h("div", { class: "row", style: "align-items:center;gap:8px" }, "Delay: ", out), rng, h("div", { class: "row", style: "margin-top:8px" }, lineBtn), note),
     [{ label: "Close" }, { label: "Save", primary: true, onClick: function () { var v = Number(rng.value); c.lat = v; c.latBy = c.latBy || {}; c.latBy[akLatKey()] = v; save(); toast("Saved " + v + " ms for this microphone and output."); } }]);
 }
+/* the transport buttons: play and record light up while they run, stop is there whenever something is running */
+function akArrBtns() {
+  var playing = !!(AKWS.on && AKARR.mode), rec = !!AKARR.rec, busy = !!AKARR.busy, armed = false;
+  try { var a = akArrState().ws.arr; armed = !!(a && a.tracks.some(function (t) { return t.arm; })); } catch (e) {}
+  function all(sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn); }
+  all(".akarr-play", function (b) { b.classList.toggle("on", playing || busy); b.setAttribute("aria-pressed", (playing || busy) ? "true" : "false"); b.setAttribute("aria-label", playing ? "Playing. Tap to stop" : busy ? "Getting ready. Tap to cancel" : armed ? "Record (a track is armed)" : "Play"); b.textContent = busy ? "…" : "▶"; });
+  all(".akarr-stop", function (b) { var on = playing || rec || busy; b.disabled = !on; b.classList.toggle("on", on); });
+  all(".akarr-rec", function (b) { b.classList.toggle("on", rec); b.classList.toggle("armed", armed && !rec); b.setAttribute("aria-pressed", (rec || armed) ? "true" : "false"); b.setAttribute("aria-label", rec ? "Recording. Tap to stop" : armed ? "A track is armed to record. Tap to disarm" : "Arm a track for recording"); });
+}
 function akArrAudioStop() { AKARR.srcs.forEach(function (s) { try { s.stop(); } catch (e) {} }); AKARR.srcs = []; }
 var akWsTimeline0 = akWsTimeline;
 akWsTimeline = function (st, part) { return AKARR.mode ? akArrTimeline(st) : akWsTimeline0(st, part); };
@@ -49721,16 +49732,16 @@ akWsTimeline = function (st, part) { return AKARR.mode ? akArrTimeline(st) : akW
   var start = akWsStart;
   akWsStart = function (st, host, from) {
     AKARR.mode = !!(host && host.classList && host.classList.contains("akarr"));
+    akArrAudioStop();
     start(st, host, from);
     if (AKARR.mode && AKWS.on) { AKWS.loop = !!st.ws.arr.loop; AKARR.host = host; cancelAnimationFrame(AKARR.raf); akArrHead(); }
   };
   var stop = akWsStop;
-  akWsStop = function () { stop(); akArrAudioStop(); };
+  akWsStop = function () { stop(); akArrAudioStop(); try { akArrBtns(); } catch (e) {} };
   var paint = akWsPaint;
   akWsPaint = function () {
     paint();
-    var on = AKWS.on && AKARR.mode;
-    Array.prototype.forEach.call(document.querySelectorAll(".akarr-play"), function (b) { b.textContent = on ? "■" : "▶"; b.setAttribute("aria-label", on ? "Stop" : "Play"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    akArrBtns();
     if (!AKWS.on) Array.prototype.forEach.call(document.querySelectorAll(".akarr-ph"), function (p) { p.style.display = "none"; });
   };
   /* a section split in two (new time signature from a bar): the clips that played the section now play both parts, in order */
@@ -49788,13 +49799,34 @@ function akArrBuild() {
   }
   function tr(a, id) { for (var i = 0; i < a.tracks.length; i++) if (a.tracks[i].id === id) return a.tracks[i]; return null; }
   function cl(t, id) { for (var i = 0; t && i < t.clips.length; i++) if (t.clips[i].id === id) return t.clips[i]; return null; }
-  function play() {
-    var st = st0(); akArrNorm(st);
-    if (AKWS.on) { akWsStop(); return; }
-    if (!akArrTotal(st)) { toast("Add a clip first."); return; }
-    AKARR.opt = null;
-    akArrPrepare(st, function () { akWsStart(st, host); });
+  /* stop everything: playing, getting ready, and a recording in progress (nothing is saved from a stopped recording) */
+  function stopAll() {
+    AKARR.gen = (AKARR.gen || 0) + 1; AKARR.busy = 0; clearInterval(AKARR.pollIv); clearInterval(AKARR.watchIv);
+    var wasRec = AKARR.rec; AKARR.rec = false; AKARR.opt = null;
+    try { if (AKLP.rec) aklCancelRec(); } catch (e) {}
+    akWsStop(); cancelAnimationFrame(AKARR.raf); akArrHead(); akArrBtns();
+    if (wasRec) toast("Recording stopped. Nothing was saved.");
   }
+  function armedTrack(a) { for (var i = 0; i < a.tracks.length; i++) if (a.tracks[i].arm && AK_ARR_KINDS[a.tracks[i].k].audio) return a.tracks[i]; return null; }
+  function play() {
+    var st = st0(), a = akArrNorm(st);
+    if (AKWS.on || AKARR.busy || AKARR.rec) { stopAll(); return; }
+    var at = armedTrack(a); if (at) { recordInto(at); return; }
+    if (!akArrTotal(st)) { toast("Add a clip first."); return; }
+    AKARR.opt = null; var gen = AKARR.gen = (AKARR.gen || 0) + 1; AKARR.busy = gen; akArrBtns();
+    akArrPrepare(st, function () { if (AKARR.busy !== gen || AKARR.gen !== gen) return; AKARR.busy = 0; akWsStart(st, host); akArrBtns(); });
+  }
+  /* the red button: arms the selected audio track (or the first one); tap again to disarm. Play then records. */
+  function recBtn() {
+    var st = st0(), a = akArrNorm(st);
+    if (AKARR.rec) { stopAll(); return; }
+    var cur = armedTrack(a);
+    if (cur) { cur.arm = false; save(); draw(); return; }
+    var t = sel && tr(a, sel.t); if (!t || !AK_ARR_KINDS[t.k].audio) t = a.tracks.filter(function (x) { return AK_ARR_KINDS[x.k].audio; })[0];
+    if (!t) { toast("Add an Instrument or Vocals track first (+ Track)."); return; }
+    setArm(a, t, true); toast("“" + t.name + "” is armed. Press ▶ to record.");
+  }
+  function setArm(a, t, on) { a.tracks.forEach(function (x) { x.arm = false; }); t.arm = !!on; save(); draw(); }
   function tog(label, on, fn, aria) { return h("button", { class: "sm akws-tg" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": aria || label, title: aria || label, onClick: fn }, label); }
   function ib(label, aria, fn, off) { return h("button", { class: "sm", "aria-label": aria, title: aria, disabled: !!off, onClick: fn }, label); }
   function newName(a, base) { var n = base, i = 2; while (a.tracks.some(function (t) { return t.name === n; })) n = base + " " + i++; return n; }
@@ -49812,7 +49844,7 @@ function akArrBuild() {
     var anchor = host.querySelector(".akarr-add") || host;
     if (AK_ARR_KINDS[t.k].audio) {
       akArrLoops(akW9Song(), function (list) {
-        if (!list.length) { toast("No recorded loops yet. Use ● Record on this track, or record in the Audio looper."); return; }
+        if (!list.length) { toast("No recorded loops yet. Arm this track (the red ●) and press ▶, or record in the Audio looper."); return; }
         menu(anchor, list.map(function (lc) { return { label: (lc.name || "Loop") + " (" + aklLenName(lc) + ", " + Math.round(lc.bpm) + " bpm)", onClick: function () { var u = lc.nb * 12, p = akArrFree(t, at, u), c = { id: uid(), at: p, len: u, lc: lc.id, name: lc.name, nb: lc.nb, bpm: lc.bpm, fi: 0, fo: 0, nud: 0 }; last = JSON.stringify(a); t.clips.push(c); sel = { t: t.id, c: c.id }; changed(); } }; }));
       });
       return;
@@ -49838,10 +49870,18 @@ function akArrBuild() {
     if (typeof aklRecord !== "function") { toast("The audio looper isn't available here."); return; }
     function go(nb, atTick) {
       var len = nb * 12; last = JSON.stringify(a);
-      t.clips = t.clips.filter(function (c) { return !(atTick < c.at + c.len && atTick + len > c.at); }); /* record over what was there */
       var opt = { a: atTick, b: atTick + len, skip: t.id };
+      var gen = AKARR.gen = (AKARR.gen || 0) + 1; AKARR.rec = true; AKARR.busy = 0; AKARR.seen = false; akArrBtns();
+      clearInterval(AKARR.watchIv); var wt0 = Date.now();
+      AKARR.watchIv = setInterval(function () { /* the recording ended some other way (cancelled, microphone refused) */
+        if (AKLP.rec) AKARR.seen = true;
+        if (AKARR.gen !== gen || !AKARR.rec) { clearInterval(AKARR.watchIv); return; }
+        if ((AKARR.seen && !AKLP.rec) || (!AKARR.seen && Date.now() - wt0 > 40000)) { clearInterval(AKARR.watchIv); AKARR.rec = false; AKARR.gen++; akWsStop(); akArrBtns(); }
+      }, 250);
       akArrPrepare(st, function () {
+        if (AKARR.gen !== gen) return;
         aklRecord({ song: song, name: t.name, nb: nb, done: function (clip) {
+          clearInterval(AKARR.watchIv); clearInterval(AKARR.pollIv); AKARR.rec = false; AKARR.gen++; akWsStop();
           AKARR.lcs[clip.id] = clip; AKARR.opt = null;
           var a2 = akArrNorm(st0()), t2 = tr(a2, t.id); if (!t2) return;
           var c = { id: uid(), at: atTick, len: clip.nb * 12, lc: clip.id, name: clip.name, nb: clip.nb, bpm: clip.bpm, fi: 0, fo: 0, nud: 0 };
@@ -49849,9 +49889,11 @@ function akArrBuild() {
           sel = { t: t2.id, c: c.id }; last = ""; changed();
         } });
         if (a.hear !== false) {
-          var tries = 0, iv = setInterval(function () {
+          var tries = 0; clearInterval(AKARR.pollIv);
+          var iv = AKARR.pollIv = setInterval(function () {
             tries++; var R = AKLP.rec;
-            if (R && R.t0) { clearInterval(iv); akArrStartAt(st, host, R.t0, opt); } else if (tries > 1200) clearInterval(iv);
+            if (AKARR.gen !== gen) { clearInterval(iv); return; }
+            if (R && R.t0) { clearInterval(iv); akArrStartAt(st, host, R.t0, opt); akArrBtns(); } else if (tries > 1200) clearInterval(iv);
           }, 25);
         }
       }, true);
@@ -49925,7 +49967,7 @@ function akArrBuild() {
   function draw() {
     var st = st0(), ws = st.ws, a = akArrNorm(st), pt = a.px / 48, solo = a.tracks.some(function (t) { return t.solo; });
     var total = akArrTotal(st), lastBar = akWsBarT(ws.secs[0].ts), R = akArrRuler(ws, a, total + lastBar * 4), end = R.length ? R[R.length - 1].t + R[R.length - 1].len : 0, W = Math.max(end, 16 * 48) * pt;
-    host._sig = akArrSig(st); last = JSON.stringify(a);
+    host._sig = akArrSig(st); last = JSON.stringify(a); setTimeout(akArrBtns, 0);
     var sc0 = host.querySelector(".akarr-scroll"), keep = sc0 ? sc0.scrollLeft : 0, wrap0 = host.querySelector(".akarr-wrap"), keepY = wrap0 ? wrap0.scrollTop : 0;
     while (host.firstChild) host.removeChild(host.firstChild);
     host.style.setProperty("--lh", a.lh + "px");
@@ -49933,7 +49975,9 @@ function akArrBuild() {
     var snapSel = h("select", { class: "akarr-snap", "aria-label": "Snap clips to" }, AK_ARR_SNAPS.map(function (x) { return h("option", { value: x[0], selected: x[0] === a.snap }, "Snap: " + x[1]); }));
     snapSel.addEventListener("change", function () { a.snap = snapSel.value; save(); draw(); });
     host.appendChild(h("div", { class: "akarr-tools" },
-      h("button", { class: "primary akarr-play", "aria-pressed": "false", "aria-label": "Play", onClick: play }, "▶"),
+      h("button", { class: "sm akarr-play", "aria-pressed": "false", "aria-label": "Play", title: "Play (records if a track is armed)", onClick: play }, "▶"),
+      h("button", { class: "sm akarr-stop", "aria-label": "Stop", title: "Stop", disabled: true, onClick: stopAll }, "■"),
+      h("button", { class: "sm akarr-rec", "aria-pressed": "false", "aria-label": "Arm a track for recording", title: "Arm a track to record, then press play", onClick: recBtn }, "●"),
       tog("🔁", a.loop, function () { a.loop = !a.loop; save(); if (AKWS.on && AKARR.mode) AKWS.loop = a.loop; draw(); }, "Loop the arrangement"),
       tog("⏱", ws.count, function () { ws.count = !ws.count; save(); draw(); }, "Count one bar in first"),
       tog("⟦⟧", a.regionOn, function () { regionToggle(a, ws); }, "Loop just a part (the bracket on the ruler)"),
@@ -49947,7 +49991,7 @@ function akArrBuild() {
     host.appendChild(h("div", { class: "akarr-view" },
       ib("◀", "Scroll left", function () { scrollBy(-1); }), ib("▶", "Scroll right", function () { scrollBy(1); }),
       h("span", { class: "akarr-vl" }, "↔"), ib("−", "Narrower (zoom out sideways)", function () { a.px = Math.max(12, Math.round(a.px * 0.8)); save(); draw(); }), ib("+", "Wider (zoom in sideways)", function () { a.px = Math.min(90, Math.round(a.px * 1.25)); save(); draw(); }),
-      h("span", { class: "akarr-vl" }, "↕"), ib("−", "Shorter lanes", function () { a.lh = Math.max(36, a.lh - 12); save(); draw(); }), ib("+", "Taller lanes", function () { a.lh = Math.min(130, a.lh + 12); save(); draw(); })));
+      h("span", { class: "akarr-vl" }, "↕"), ib("−", "Shorter lanes", function () { a.lh = Math.max(48, a.lh - 12); save(); draw(); }), ib("+", "Taller lanes", function () { a.lh = Math.min(130, a.lh + 12); save(); draw(); })));
     /* lanes */
     var names = h("div", { class: "akarr-names" }, h("div", { class: "akarr-ruler-sp" })), tl = h("div", { class: "akarr-tl", style: "width:" + W + "px" }), ruler = h("div", { class: "akarr-ruler" }), gl = h("div", { class: "akarr-gl" });
     var every = pt * 48 >= 26 ? 1 : pt * 48 >= 14 ? 2 : 4;
@@ -49986,8 +50030,9 @@ function akArrBuild() {
     a.tracks.forEach(function (t) {
       var K = AK_ARR_KINDS[t.k], dim = t.mute || (solo && !t.solo);
       names.appendChild(h("div", { class: "akarr-name" + (sel && sel.t === t.id && !sel.c ? " sel" : "") + (dim ? " dim" : "") },
-        h("button", { class: "akarr-nm", "aria-label": "Track " + t.name + ", tap for track options", onClick: function () { sel = { t: t.id, c: null }; draw(); } }, h("span", null, K.icon + " " + t.name), K.sound ? null : h("small", null, "no sound yet")),
+        h("button", { class: "akarr-nm sm", "aria-label": "Track " + t.name + ", tap for track options", onClick: function () { sel = { t: t.id, c: null }; draw(); } }, h("span", null, K.icon + " " + t.name), K.sound ? null : h("small", null, "no sound yet")),
         h("span", { class: "akarr-ms" },
+          K.audio ? h("button", { class: "sm arm" + (t.arm ? " on" : ""), "aria-pressed": t.arm ? "true" : "false", "aria-label": "Arm " + t.name + " for recording", title: "Arm for recording", onClick: function () { setArm(a, t, !t.arm); } }, "●") : null,
           h("button", { class: "sm" + (t.mute ? " on" : ""), "aria-pressed": t.mute ? "true" : "false", "aria-label": "Mute " + t.name, onClick: function () { last = JSON.stringify(a); t.mute = !t.mute; changed(); } }, "M"),
           h("button", { class: "sm" + (t.solo ? " on" : ""), "aria-pressed": t.solo ? "true" : "false", "aria-label": "Solo " + t.name, onClick: function () { last = JSON.stringify(a); t.solo = !t.solo; changed(); } }, "S"))));
       var lane = h("div", { class: "akarr-lane" + (K.sound ? "" : " ph") + (dim ? " dim" : "") });
@@ -50022,7 +50067,7 @@ function akArrBuild() {
     scroll.scrollLeft = keep; wrap.scrollTop = keepY;
     /* what is selected */
     host.appendChild(selBar(st, a, R));
-    host.appendChild(h("p", { class: "hint" }, "Tap a clip or a track name. Tap an empty spot in a lane to choose where the next clip goes. Drag the ⠿ grip (or press and hold a clip) to move it; swipe anywhere else to scroll. Drag a clip's right edge to repeat the section for as far as you drag. Drums, Bass, Guitar 2 and Vocals are placeholders for now: no sound yet."));
+    host.appendChild(h("p", { class: "hint" }, "Tap a clip or a track name. Tap an empty spot in a lane to choose where the next clip goes. Drag the ⠿ grip (or press and hold a clip) to move it; swipe anywhere else to scroll. Drag a clip's right edge to repeat the section for as far as you drag. Drums, Bass, Guitar 2 and Vocals (placeholder) make no sound yet. To record: tap the red ● on an Instrument or Vocals track, then press ▶."));
     var mem = akArrMem(st); if (mem > 0.5) host.appendChild(h("p", { class: "hint" }, "Audio in use: about " + Math.round(mem) + " MB in memory" + (mem > 250 ? " (that is a lot for a tablet: fold or delete loops you don't need)" : "") + "."));
     AKARR.host = AKARR.host || host;
     akWsPaint();
@@ -50070,7 +50115,7 @@ function akArrBuild() {
     } else {
       bar.appendChild(h("b", { class: "akarr-sl" }, AK_ARR_KINDS[t.k].icon + " " + t.name));
       bar.appendChild(B("+ Clip", function () { addClip(t); }));
-      if (AK_ARR_KINDS[t.k].audio) { bar.appendChild(B("● Record", function () { recordInto(t); }, { aria: "Record into this track" })); bar.appendChild(B("⏱ Timing", function () { akArrTimingDialog(); })); }
+      if (AK_ARR_KINDS[t.k].audio) { bar.appendChild(B(t.arm ? "● Armed" : "● Arm", function () { setArm(a, t, !t.arm); }, { aria: "Arm this track for recording, then press play" })); bar.appendChild(B("⏱ Timing", function () { akArrTimingDialog(); })); }
       bar.appendChild(B("Rename", function () { askText("Track name", t.name, "Rename", function (v) { last = JSON.stringify(a); t.name = v.slice(0, 24); changed(); }); }));
       var vol = h("input", { type: "range", min: "0", max: "150", value: String(Math.round(t.vol * 100)), "aria-label": "Volume of " + t.name, class: "akarr-vol" });
       vol.addEventListener("input", function () { t.vol = vol.value / 100; });
@@ -50125,11 +50170,15 @@ akCss("akv18-arranger", [
   ".akarr-wrap{display:flex;align-items:flex-start;border:1px solid var(--line,#8886);border-radius:6px;overflow-y:auto;overflow-x:hidden;min-height:90px}",
   ".akarr-names{flex:none;width:98px;border-right:1px solid var(--line,#8886);background:var(--panel,#8881);position:sticky;left:0;z-index:4}",
   ".akarr-ruler-sp,.akarr-ruler{height:26px}",
-  ".akarr-name{height:var(--lh,54px);box-sizing:border-box;padding:3px 4px;border-top:1px solid var(--line,#8884);display:flex;flex-direction:column;gap:2px;justify-content:space-between}",
+  ".akarr-name{height:var(--lh,54px);box-sizing:border-box;overflow:hidden;padding:3px 4px;border-top:1px solid var(--line,#8884);display:flex;flex-direction:column;gap:2px;justify-content:space-between}",
   ".akarr-name.sel{outline:2px solid var(--accent,#c60);outline-offset:-2px}.akarr-name.dim{opacity:.55}",
-  "html body .akarr-nm{all:unset;cursor:pointer;display:flex;flex-direction:column;font-size:.8rem;font-weight:600;overflow:hidden;min-width:0}",
-  ".akarr-nm span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.akarr-nm small{font-weight:400;opacity:.7;font-size:.66rem}",
-  ".akarr-ms{display:flex;gap:3px}html body .akarr-ms button{min-height:20px !important;min-width:26px !important;padding:0 !important;font-size:.7rem !important}",
+  "html body .akarr-nm{all:unset;cursor:pointer;display:flex;flex-direction:column;font-size:.76rem;font-weight:600;overflow:hidden;min-width:0;min-height:0 !important;height:18px !important;flex:none !important;line-height:18px !important;padding:0 !important;margin:0 !important}",
+  ".akarr-nm span{display:block;min-height:0 !important;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.akarr-nm small{font-weight:400;opacity:.7;font-size:.66rem}",
+  ".akarr-ms{display:flex;gap:3px;flex:none}html body .akarr-ms button{min-height:22px !important;height:22px !important;min-width:26px !important;width:26px !important;padding:0 !important;margin:0 !important;font-size:.7rem !important;line-height:1 !important}",
+  "html body .akarr-ms button.arm{color:#e23 !important}html body .akarr-ms button.arm.on{background:#e23 !important;color:#fff !important}",
+  "html body .akarr-tools button.akarr-play.on{background:#2a9d4a !important;color:#fff !important;border-color:#2a9d4a !important}",
+  "html body .akarr-tools button.akarr-stop.on{border-color:var(--accent,#c60) !important}html body .akarr-tools button.akarr-stop:disabled{opacity:.4}",
+  "html body .akarr-tools button.akarr-rec{color:#e23 !important}html body .akarr-tools button.akarr-rec.armed{border-color:#e23 !important;box-shadow:0 0 0 1px #e23 inset}html body .akarr-tools button.akarr-rec.on{background:#e23 !important;color:#fff !important;animation:akarrpulse 1s infinite}@keyframes akarrpulse{50%{opacity:.55}}",
   ".akarr-ms button.on{background:var(--accent,#c60) !important;color:#fff !important}",
   ".akarr-scroll{flex:1;min-width:0;overflow-x:scroll;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:thin}",
   ".akarr-scroll::-webkit-scrollbar{height:10px}.akarr-scroll::-webkit-scrollbar-thumb{background:var(--muted,#888);border-radius:4px}",
@@ -50223,6 +50272,22 @@ akCss("akv18-tips", [
   ".akhint-btn[aria-expanded=true]{color:var(--accent,#c60);border-color:var(--accent,#c60)}",
   /* ordinary buttons: only Round pills makes them pills */
   "html[data-bshape]:not([data-bshape=pills]) body button:not(.fab):not(.akfab):not(.swatch):not(.akdot):not(.akarr-nm):not(.chip){border-radius:6px !important}"
+].join("\n"));
+
+/* ================================================================ 18.4: tighter workshop and fold rows
+   Standing rule (Aedryan): anything sprawling gets condensed. Smaller controls, thin divider lines between parts, no dead space.
+   The ":not(#ak)" tails give these rules the weight needed to beat the touch-size rules that make every button 38 to 44 px tall. */
+akCss("akv184-tight", [
+  "html body .akfold-bar:not(#ak){min-height:22px !important;height:auto !important;margin:0 !important;padding:2px 4px !important;border-top:1px solid var(--line,#8883) !important;font-size:.74rem !important;line-height:1.1 !important}",
+  "html body .akfold-all:not(#ak){margin:0 0 2px !important;padding:0 !important;gap:4px !important;min-height:0 !important;flex-wrap:wrap}",
+  "html body .akfold-all button:not(#ak){min-height:22px !important;height:22px !important;padding:0 7px !important;font-size:.72rem !important;line-height:1 !important;margin:0 !important}",
+  "html body .akws-tp:not(#ak){gap:3px !important;padding:2px 0 3px !important}",
+  "html body .akws-tp button:not(#ak),html body .akws-tp select:not(#ak),html body .akws-tp input:not(#ak),html body .akws-gh button:not(#ak),html body .akws-gh select:not(#ak),html body .akws-sel button:not(#ak),html body .akws-sel select:not(#ak),html body .akws-send button:not(#ak){min-height:26px !important;height:26px !important;padding:0 7px !important;font-size:.76rem !important;line-height:1 !important;margin:0 !important;min-width:0 !important}",
+  "html body .akws-tp .akws-play:not(#ak){min-width:0 !important;padding:0 9px !important}",
+  "html body .akws-lab:not(#ak){font-size:.76rem !important;gap:3px}html body .akws-tp input.akws-bpm:not(#ak){width:3.6em !important;padding:0 2px !important;text-align:center}",
+  "html body .akws .akfold-tgt:not(#ak){margin-top:0 !important;margin-bottom:2px !important}",
+  "html body .akws:not(#ak){gap:2px !important}",
+  "html body .akws-sel:not(#ak),html body .akws-gh:not(#ak){gap:3px !important;margin:2px 0 !important;padding-top:2px !important;padding-bottom:2px !important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
