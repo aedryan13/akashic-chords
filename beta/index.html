@@ -50287,8 +50287,20 @@ function akArrTimingDialog() {
     [{ label: "Close" }, { label: "Save", primary: true, onClick: function () { var v = Number(rng.value); c.lat = v; c.latBy = c.latBy || {}; c.latBy[akLatKey()] = v; save(); toast("Saved " + v + " ms for this microphone and output."); } }]);
 }
 /* the transport buttons: play and record light up while they run, stop is there whenever something is running */
+/* anything making sound for the arranger: its own player, the looper (clips, vocal takes), recorded clips still ringing */
+function akArrSounding() {
+  try { return !!(AKWS.on || (AKLP && (AKLP.on || (AKLP.srcs && AKLP.srcs.length))) || (AKARR.srcs && AKARR.srcs.length)); } catch (e) { return false; }
+}
+/* the one stop: every player and every sound that is still scheduled */
+function akArrHardStop() {
+  try { akWsStop(); } catch (e) {}
+  try { if (typeof aklStop === "function") aklStop(true); } catch (e) {}
+  try { akArrAudioStop(); } catch (e) {}
+  try { if (typeof AKP !== "undefined" && AKP.on) akPStop(); if (typeof AKR !== "undefined" && AKR.on) akRStop(); } catch (e) {}
+  try { akGtrHush(); } catch (e) {}
+}
 function akArrBtns() {
-  var playing = !!(AKWS.on && AKARR.mode), rec = !!AKARR.rec, busy = !!AKARR.busy, armed = false;
+  var playing = !!(AKWS.on && AKARR.mode) || akArrSounding(), rec = !!AKARR.rec, busy = !!AKARR.busy, armed = false;
   try { var a = akArrState().ws.arr; armed = !!(a && a.tracks.some(function (t) { return t.arm; })); } catch (e) {}
   function all(sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn); }
   all(".akarr-play", function (b) { b.classList.toggle("on", playing || busy); b.setAttribute("aria-pressed", (playing || busy) ? "true" : "false"); b.setAttribute("aria-label", playing ? "Playing. Tap to stop" : busy ? "Getting ready. Tap to cancel" : armed ? "Record (a track is armed)" : "Play"); b.textContent = busy ? "…" : "▶"; });
@@ -50374,13 +50386,13 @@ function akArrBuild() {
     AKARR.gen = (AKARR.gen || 0) + 1; AKARR.busy = 0; clearInterval(AKARR.pollIv); clearInterval(AKARR.watchIv);
     var wasRec = AKARR.rec; AKARR.rec = false; AKARR.opt = null;
     try { if (AKLP.rec) aklCancelRec(); } catch (e) {}
-    akWsStop(); cancelAnimationFrame(AKARR.raf); akArrHead(); akArrBtns();
+    akArrHardStop(); cancelAnimationFrame(AKARR.raf); akArrHead(); akArrBtns();
     if (wasRec) toast("Recording stopped. Nothing was saved.");
   }
   function armedTrack(a) { for (var i = 0; i < a.tracks.length; i++) if (a.tracks[i].arm && AK_ARR_KINDS[a.tracks[i].k].audio) return a.tracks[i]; return null; }
   function play() {
     var st = st0(), a = akArrNorm(st);
-    if (AKWS.on || AKARR.busy || AKARR.rec) { stopAll(); return; }
+    if (AKWS.on || AKARR.busy || AKARR.rec || akArrSounding()) { stopAll(); return; }
     var at = armedTrack(a); if (at) { recordInto(at); return; }
     if (!akArrTotal(st)) { toast("Add a clip first."); return; }
     AKARR.opt = null; var gen = AKARR.gen = (AKARR.gen || 0) + 1; AKARR.busy = gen; akArrBtns();
@@ -51846,8 +51858,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.6d";
+AK_VERSION = "18.6e";
 AK_WHATS_NEW = [
+  "Arranger: ■ Stop now stops everything that is making sound (the looper, vocal takes, clips still playing) and is never greyed out while you hear something; ▶ while sound is running stops it too.",
   "Version 18.6: Write has three layouts (Tabs, Halves, Cards) and every part folds; the side slider is always on screen; chords drag onto words; type any chord into a bar; ▶ Play sits in the Bars header; the Songs list has letter dividers; welcome notes can be turned off.",
   "Graphics studio: one ＋ Add ▾ menu, Save always visible, effects only for the picked part (with shadow styles), and the part stays picked while you scroll.",
   "Show page: Graphics, Media and Analytics boxes. Chord placer: the song's own chords come first, in order. Song edit: chords show in the chord color."
@@ -51921,6 +51934,9 @@ akCss("akmir",
   ".akmir-c{color:var(--chord,var(--accent))}.akmir-ta{position:relative;display:block;width:100%;box-sizing:border-box;color:transparent!important;-webkit-text-fill-color:transparent;caret-color:var(--fg);background:transparent!important}.akmir-ta::selection{background:rgba(120,160,255,.45);-webkit-text-fill-color:transparent}");
 
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Chord placer chord list and chord colors in the edit box", a: "Place chords (song edit): the buttons at the bottom are the song's own chords in the order they appear, then any you added yourself. In the lyrics and chord boxes, text that is a chord shows in the chord color, so Make chord is easy to see.", k: "chord placer place chords bottom list order song edit make chord color recognized highlight", go: function () { go("songs"); } });
+
+/* the arranger's ▶ and ■ follow whatever is really making sound (the looper, a vocal take, a clip still ringing), so ■ is never greyed out while you hear something */
+setInterval(function () { try { if (document.querySelector(".akarr-stop") && typeof akArrBtns === "function") akArrBtns(); } catch (e) {} }, 500);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
