@@ -3006,8 +3006,20 @@ function openPlacer(song, o) {
     }); });
     return out;
   }
+  /* every chord the song already has, in the order it first appears (what the player places most) */
+  function inSong() {
+    var out = [];
+    function take(c) { c = String(c || "").trim(); if (c && out.indexOf(c) < 0 && (isChordTok(c) || isChordLike(c))) out.push(c); }
+    lines.forEach(function (l) {
+      var t = plLineText(l);
+      if (/\[/.test(t)) t.replace(/\[([^\]\n]+)\]/g, function (m0, c) { take(c); return m0; });
+      else if (isChordLineText(t)) t.split(/\s+/).forEach(function (w) { take(w.replace(/^[(,;:]+|[),;:]+$/g, "")); });
+    });
+    found().forEach(take);
+    return out;
+  }
   function palette() {
-    var out = found();
+    var out = inSong();
     (song.palette || []).forEach(function (c) { if (out.indexOf(c) < 0) out.push(c); });
     return out;
   }
@@ -3135,9 +3147,9 @@ function openPlacer(song, o) {
     body.scrollTop = sc;
     if (o.startLine != null) { var sl = o.startLine; o.startLine = null; var tgt = body.querySelector('[data-li="' + sl + '"]'); if (tgt) body.scrollTop = Math.max(0, body.scrollTop + tgt.getBoundingClientRect().top - body.getBoundingClientRect().top - 1); }
     foot.textContent = "";
-    var pal = palette(), sug = pal.length < 4 ? plKeyChords(song).filter(function (c, i, a) { return pal.indexOf(c) < 0 && a.indexOf(c) === i; }) : [];
+    var pal = inSong(), extra = (song.palette || []).filter(function (c) { return pal.indexOf(c) < 0; }), sug = pal.length + extra.length < 4 ? plKeyChords(song).filter(function (c, i, a) { return pal.indexOf(c) < 0 && extra.indexOf(c) < 0 && a.indexOf(c) === i; }) : [];
     var row = h("div", { class: "prow" });
-    pal.concat(sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { if (typeof akHearPlace === "function") akHearPlace(c, song); tapChip(c); } }, styleChord(c, styleOf()))); });
+    pal.concat(extra, sug).forEach(function (c) { row.appendChild(h("button", { class: "chip pchipbtn" + (armed === c ? " on" : "") + (sug.indexOf(c) >= 0 || extra.indexOf(c) >= 0 ? " sug" : ""), "aria-pressed": armed === c ? "true" : "false", onClick: function () { if (typeof akHearPlace === "function") akHearPlace(c, song); tapChip(c); } }, styleChord(c, styleOf()))); });
     row.appendChild(h("button", { class: "chip pchipbtn" + (erase ? " on" : ""), "aria-pressed": erase ? "true" : "false", onClick: tapErase }, "⌫ Erase"));
     row.appendChild(h("button", { class: "chip", onClick: addChordDialog }, "+ Chord"));
     if (typeof akShapePicker === "function") row.appendChild(h("button", { class: "chip", "aria-label": "Build a chord by picking its shape", onClick: function () { akShapePicker(function (c) {
@@ -31128,6 +31140,7 @@ akProgWheel = function (o) {
     [12, 8, 6, 4, 3].concat(sc.ts[1] === 2 ? [24] : []).forEach(function (t) { if (t > bt && sc.ts[1] !== 2) return; stepSel.appendChild(h("option", { value: String(t), selected: t === step }, "Grid: " + akWsStepName(t))); });
     function zoom(d) { ws.zoom = Math.max(0.5, Math.min(3, Math.round((ws.zoom + d) * 10) / 10)); save(); draw(); }
     wrap.appendChild(h("div", { class: "akws-gh" },
+      h("button", { class: "sm primary akws-play akws-play-gh", "aria-pressed": AKWS.on ? "true" : "false", title: "Play the bars", onClick: function () { if (AKWS.on) akWsStop(); else akWsStart(st, box); } }, AKWS.on ? "■ Stop" : "▶ Play"),
       h("b", { style: "color:" + (sc.col || "inherit") }, sc.name), h("button", { class: "sm", onClick: function () { tsDialog(sc); } }, akWsTsName(sc.ts) + (sc.grp ? " (" + sc.grp + ")" : "")),
       h("button", { class: "sm", onClick: function () { strumMenu(this, sc, null); } }, "Strum: " + akWsStrumLabel(sc.st) + (sc.gv ? " · " + akwrGrooveName(sc.gv) : "") + (sc.s16 ? " · 16ths" : "") + " ▾"),
       stepSel, h("span", { class: "grow" }),
@@ -31238,6 +31251,13 @@ akProgWheel = function (o) {
     if (!s) { bar.appendChild(h("span", { class: "muted" }, pend && (armed || ws.paint) ? "Picked " + pend + ". Tap a beat in the chart to put it there" + (ws.paint ? " (✎ Paint is on: every tap adds it)." : ".") : "Tap a beat in the chart, then a chord below or on the wheel: it goes there" + (ws.adv ? " and the next beat is picked." : " (you stay on that beat).") + (ws.chordFirst !== false ? " Or pick a chord first, then tap its beat." : "") + " Hold a chord to slide it. Hold a bar number to copy or paste bars, or hold and slide it to move the bar.")); return bar; }
     var sc = ws.secs[s.s], e = selEvent(), snd = akWsAt(ws, s.s, s.b, s.t);
     var where = "Bar " + (s.b + 1) + ", " + akWsWhere(sc, s.t);
+    function typeChord() {
+      askText("Chord for " + where, e && e.ch || "", "Put in bar", function (v) {
+        v = String(v || "").trim(); if (!v) return;
+        if (!akPwParse(v)) { toast("I don't know “" + v + "”. Try something like F#m7 or Cmaj7."); return; }
+        choose(v, "commit");
+      }, "Like F#m7");
+    }
     if (e) {
       var c = akPwParse(e.ch), prev = akWsChordsBefore(ws, s.s, s.b, s.t).map(akPwParse).filter(Boolean).pop() || null;
       bar.appendChild(h("span", { class: "akws-selh" }, h("b", null, e.ch ? akPwName(c || { pc: 0, q: "" }, k) : "N.C."), " ", h("span", { class: "muted" }, (c ? akPwRoman(c, k) + " · " + akPwWord(akPwTension(c, k, prev), c, k, prev) + " · " : "") + where)));
@@ -31250,12 +31270,14 @@ akProgWheel = function (o) {
         e.ch ? h("button", { class: "sm" + (e.p === "high" ? " on" : ""), title: "Play it as a bar chord up the neck", onClick: function () { keep(); if (e.p === "high") delete e.p; else e.p = "high"; akWsHear(e.ch, e.p); changed(true); } }, e.p === "high" ? "Bar chord ✓" : "Bar chord") : null,
         h("button", { class: "sm", title: "Silence from here (no chord)", onClick: function () { keep(); e.ch = ""; delete e.p; changed(); } }, "N.C."),
         h("button", { class: "sm danger", onClick: function () { keep(); var b = sc.bars[s.b]; b.c.splice(akWsFind(b, s.t), 1); changed(); } }, "✕ Remove"),
+        h("button", { class: "sm", title: "Type any chord", onClick: typeChord }, "⌨ Type"),
         h("button", { class: "sm", onClick: function () { ws.sel = null; save(); draw(); } }, "Done")));
     } else {
       bar.appendChild(h("span", { class: "akws-selh" }, h("b", null, where), h("span", { class: "muted" }, snd && snd.ch ? "  · " + snd.ch + " is still sounding here. Pick a chord to change it here." : "  · pick a chord below or on the wheel")));
       bar.appendChild(h("div", { class: "akws-selb" },
         pend ? h("button", { class: "sm primary", onClick: function () { choose(pend); } }, "+ " + pend) : null,
         snd && snd.ch ? h("button", { class: "sm", onClick: function () { choose(snd.ch); } }, "Again: " + snd.ch) : null,
+        h("button", { class: "sm", title: "Type any chord", onClick: typeChord }, "⌨ Type"),
         h("button", { class: "sm", title: "Silence from here", onClick: function () { keep(); akWsPut(sc.bars[s.b], s.t, ""); changed(); } }, "N.C."),
         h("button", { class: "sm", onClick: function () { ws.sel = null; save(); draw(); } }, "Done")));
     }
@@ -35143,13 +35165,48 @@ function akW18M(song, text) {
 function akW18Beat(k, sub) { return "beat " + (Math.floor(k / sub) + 1) + (k % sub ? " &" : ""); }
 
 /* chord chips over one line, pushed right when they would overlap */
-function akW18Strip(o, li, sel, pick) {
+function akW18Strip(o, li, sel, pick, drop) {
   var row = h("div", { class: "ak18-strip" }), col = -1;
   o.ch.forEach(function (x, k) {
     var at = Math.max(x.at, col + 1); col = at + x.c.length;
-    row.appendChild(h("span", { class: "ak18-at", style: "left:" + at + "ch" }, h("button", { class: "ak18-chip" + (sel && sel.li === li && sel.k === k ? " on" : ""), "aria-label": "Chord " + x.c + ", tap to move it", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { pick({ kind: "chord", li: li, k: k }); } }, x.c)));
+    row.appendChild(h("span", { class: "ak18-at", style: "left:" + at + "ch" }, h("button", { class: "ak18-chip" + (sel && sel.li === li && sel.k === k ? " on" : ""), "aria-label": "Chord " + x.c + ", tap to move it", onMouseDown: function (e) { e.preventDefault(); }, onClick: function () { if (row._moved) { row._moved = false; return; } pick({ kind: "chord", li: li, k: k }); }, onPointerDown: function (e) { akW18Drag(e, row, o, k, at, drop, li); } }, x.c)));
   });
   return row;
+}
+
+/* drag a chord over the words: it follows the finger a letter at a time and lands where you let go (the chord placer's way) */
+function akW18Drag(e, row, o, k, at0, drop, li) {
+  if (!drop || (e.button != null && e.button > 0)) return;
+  var chip = e.currentTarget, span = chip.parentNode, x0 = e.clientX, y0 = e.clientY, go = false, col = at0;
+  var probe = h("span", { style: "position:absolute;visibility:hidden;width:10ch" }); row.appendChild(probe); var chw = probe.offsetWidth / 10 || 8; row.removeChild(probe);
+  var base = row.getBoundingClientRect().left, max = Math.max(0, (o.t || "").length);
+  try { chip.setPointerCapture(e.pointerId); } catch (x) {}
+  function mv(ev) {
+    if (!go && Math.abs(ev.clientX - x0) < 6 && Math.abs(ev.clientY - y0) < 6) return;
+    go = true; ev.preventDefault(); chip.classList.add("drag");
+    col = Math.max(0, Math.min(max, Math.round((ev.clientX - base - chip.offsetWidth / 2) / chw))); span.style.left = col + "ch";
+  }
+  function up() {
+    chip.removeEventListener("pointermove", mv); chip.removeEventListener("pointerup", up); chip.removeEventListener("pointercancel", up); chip.classList.remove("drag");
+    if (go) { row._moved = true; setTimeout(function () { row._moved = false; }, 400); if (col !== at0) drop(li, k, col); }
+  }
+  chip.addEventListener("pointermove", mv); chip.addEventListener("pointerup", up); chip.addEventListener("pointercancel", up);
+}
+/* drag a word to another beat of its bar */
+function akW18DragWord(e, btn, cell, n, wi, si, bi, w, dropWord) {
+  var x0 = e.clientX, y0 = e.clientY, go = false, slot = -1;
+  try { btn.setPointerCapture(e.pointerId); } catch (x) {}
+  function mv(ev) {
+    if (!go && Math.abs(ev.clientX - x0) < 6 && Math.abs(ev.clientY - y0) < 6) return;
+    go = true; ev.preventDefault(); btn.classList.add("drag"); btn.style.transform = "translate(" + (ev.clientX - x0) + "px," + (ev.clientY - y0) + "px)";
+    var r = cell.getBoundingClientRect(); slot = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - r.left) / r.width * n)));
+    Array.prototype.forEach.call(cell.querySelectorAll("i"), function (el, k) { el.classList.toggle("aim", k === slot); });
+  }
+  function up() {
+    btn.removeEventListener("pointermove", mv); btn.removeEventListener("pointerup", up); btn.removeEventListener("pointercancel", up);
+    if (go) { btn._moved = true; setTimeout(function () { btn._moved = false; }, 400); btn.style.transform = ""; btn.classList.remove("drag"); if (slot >= 0) dropWord(si, bi, wi, slot); }
+  }
+  btn.addEventListener("pointermove", mv); btn.addEventListener("pointerup", up); btn.addEventListener("pointercancel", up);
 }
 
 /* the chord pane (split / side) and the line editor (strip) */
@@ -35176,6 +35233,17 @@ function akW18Pane(ctx) {
   function moveChord(d, word) {
     var ls = lines(); if (!sel || !ls[sel.li]) return;
     once("move a chord"); ls[sel.li] = akW18Move(ls[sel.li], sel.k, d, word); setText(ls.join("\n"), sel.li); draw();
+  }
+  function dropTo(li, k, col) {
+    var ls = lines(), o = akW18Parse(ls[li]); if (!o.ch[k]) return; snap("move a chord");
+    var x = o.ch[k]; x.at = Math.max(0, Math.min(o.t.length, col)); o.ch.sort(function (a, b) { return a.at - b.at; });
+    ls[li] = akW18Join(o); sel = null; setText(ls.join("\n"), li); draw();
+  }
+  function dropWord(si, bi, wi, k) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), b = r && r.m.sections[si] && r.m.sections[si].bars[bi]; if (!b) return;
+    var wa = akR9Wa(b), lo = wi > 0 ? wa[wi - 1] : 0, hi = wi < wa.length - 1 ? wa[wi + 1] : b.s.length - 1;
+    k = Math.max(lo, Math.min(hi, k)); if (k === wa[wi]) return;
+    snap("move a word"); wa[wi] = k; b.wa = wa; akMKeep(s0, r.m); sel = null; draw();
   }
   function dropChord() { var ls = lines(), o = akW18Parse(ls[sel.li]); snap("remove a chord"); o.ch.splice(sel.k, 1); ls[sel.li] = akW18Join(o); var li = sel.li; sel = null; setText(ls.join("\n"), li); draw(); }
   function moveWord(d) {
@@ -35240,7 +35308,7 @@ function akW18Pane(ctx) {
       var ls = lines(), cur = akW18Parse(ls[li]), v = inp.value, d = v.length - was.length, p = inp.selectionStart || 0, at = d > 0 ? p - d : p;
       cur.ch.forEach(function (x) { if (d > 0 && x.at >= at) x.at += d; else if (d < 0 && x.at > at) x.at = Math.max(at, x.at + d); });
       cur.t = v; was = v; inp.style.width = (v.length + 4) + "ch"; ls[li] = akW18Join(cur); setText(ls.join("\n"), li, null); mark();
-      var strip = inp.previousSibling; if (strip) strip.parentNode.replaceChild(akW18Strip(cur, li, sel, pick), strip);
+      var strip = inp.previousSibling; if (strip) strip.parentNode.replaceChild(akW18Strip(cur, li, sel, pick, dropTo), strip);
     });
     inp.addEventListener("keydown", function (e) {
       var ls = lines(), p = inp.selectionStart || 0;
@@ -35265,7 +35333,7 @@ function akW18Pane(ctx) {
       var o = akW18Parse(akW18IsHead(line) ? "" : line);
       if (!edit && !o.t.trim() && !o.ch.length) { body.appendChild(h("div", { class: "ak18-gap" })); return; }
       if (edit && akW18IsHead(line)) return;
-      body.appendChild(h("div", { class: "ak18-ln" }, akW18Strip(o, li, sel, pick), edit ? lineInput(o, li) : h("div", { class: "ak18-tx" }, o.t || " ")));
+      body.appendChild(h("div", { class: "ak18-ln" }, akW18Strip(o, li, sel, pick, dropTo), edit ? lineInput(o, li) : h("div", { class: "ak18-tx" }, o.t || " ")));
     });
     if (!ls.join("").trim() && !ctx.strip) body.appendChild(h("p", { class: "hint" }, "Your lyrics and their [chords] show here as you write."));
     if (edit && !ctx.strip) body.appendChild(h("button", { class: "sm ak18-addln", onClick: function () { snap("add a line"); var v = ctx.ta.value; setText(v + (v && !/\n$/.test(v) ? "\n" : "") + " ", lines().length); focusLine = lines().length - 1; focusAt = 0; draw(true); } }, "＋ Add a line of words"));
@@ -35290,7 +35358,7 @@ function akW18Pane(ctx) {
             var here = h("span");
             words.forEach(function (w, wi) {
               if (wa[wi] !== k2) return;
-              here.appendChild(h("button", { class: "ak18-wd" + (sel && sel.kind === "word" && sel.si === si && sel.bi === bi && sel.wi === wi ? " on" : ""), onClick: function () { pick({ kind: "word", si: si, bi: bi, wi: wi, w: w, beat: akW18Beat(wa[wi], sub) }); } }, w));
+              here.appendChild(h("button", { class: "ak18-wd" + (sel && sel.kind === "word" && sel.si === si && sel.bi === bi && sel.wi === wi ? " on" : ""), onPointerDown: function (e) { akW18DragWord(e, e.currentTarget, cell, n, wi, si, bi, w, dropWord); }, onClick: function () { if (this._moved) { this._moved = false; return; } pick({ kind: "word", si: si, bi: bi, wi: wi, w: w, beat: akW18Beat(wa[wi], sub) }); } }, w));
             });
             cell.appendChild(here);
           }
@@ -48697,7 +48765,7 @@ document.addEventListener("pointerdown", function (e) {
     return;
   }
   /* the part's tools, the tool groups, the divider and any button (↶, ＋ Words...) keep it picked; empty space lets go */
-  if (t.closest(".akg-cat, .akg-strip, .akg-split, .akg-hdshow, .topbar, button, select, input, textarea, label, a")) return;
+  if (t.closest(".akg-panel, .akg-edbar, .akg-sbar, .akg-sthumb, .akg-pop, .akg-cat, .akg-strip, .akg-split, .akg-hdshow, .topbar, button, select, input, textarea, label, a")) return;
   akGfxLetGo();
 }, true);
 
@@ -49163,6 +49231,138 @@ akCss("akgfx-m",
   ".akg-sbar{position:fixed;right:0;width:24px;z-index:60;background:rgba(127,127,127,.14);touch-action:none}" +
   ".akg-sthumb{position:absolute;left:3px;right:3px;border-radius:4px;background:#C8962E;opacity:.9;touch-action:none;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}" +
   "body.akg-kbd #mainScroll{padding-bottom:var(--akkb,0)}");
+
+/* 18.6d Graphics studio: a compact tool row (one ＋ Add ▾), effects only for the picked part with their sliders right under them,
+   shadow styles, and the picked part stays picked while you scroll or use the lower panel. */
+var AKGN = { scope: true };
+
+/* ---------------------------------------------------------------- shadow styles: extra settings kept with the part (fxo) */
+[["shadowD", "Shadow distance", 0, 100], ["shadowB", "Shadow softness", 0, 100], ["shadowA", "Shadow direction", -180, 180]].forEach(function (x) {
+  AKG_FXO.push([x[0], x[1], x[2], x[3], "shx"]); AKGK_FXN[x[0]] = x[1];
+});
+var AKGN_SHSTYLES = [["soft", "Soft"], ["hard", "Hard"], ["long", "Long"], ["lift", "Lifted"], ["pop", "Offset color"]];
+function akgnShadowOn(f) { return f && f.shadow && (f.shadowS || f.shadowD || f.shadowB || f.shadowA); }
+(function () {
+  var a0 = akGfxFxApply;
+  akGfxFxApply = function (cv, l, P, sc, g) {
+    var f = l.fxo || {};
+    if (!akgnShadowOn(f)) return a0.call(this, cv, l, P, sc, g);
+    var f2 = Object.assign({}, f); delete f2.shadow;
+    var l2 = Object.assign({}, l, { fxo: f2 });
+    var out = a0.call(this, cv, l2, P, sc, g), w = out.width, hh = out.height, M = Math.min(P.W, P.H) * sc;
+    var s = f.shadowS || "soft", amt = f.shadow / 100, col = f.shadowC || "#000000";
+    var dist = (f.shadowD == null ? 50 : f.shadowD) / 100 * 0.04 * M, bl = (f.shadowB == null ? 50 : f.shadowB) / 100 * 0.07 * M;
+    var ang = (f.shadowA == null ? 62 : f.shadowA) * Math.PI / 180, alpha = 0.3 + amt * 0.55;
+    if (s === "hard") { bl = 0; alpha = Math.min(1, 0.6 + amt * 0.4); }
+    if (s === "lift") { ang = Math.PI / 2; dist = (f.shadowD == null ? 70 : f.shadowD) / 100 * 0.05 * M; bl = (f.shadowB == null ? 80 : f.shadowB) / 100 * 0.09 * M; alpha = 0.25 + amt * 0.4; }
+    if (s === "pop") { bl = 0; alpha = 1; dist = (f.shadowD == null ? 60 : f.shadowD) / 100 * 0.04 * M; if (!f.shadowC) col = "#ff3d81"; }
+    var dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist;
+    var res = akGfxCv(w, hh), c = res.getContext("2d"), sil = akGfxSil(out, col);
+    c.globalAlpha = alpha;
+    if (s === "long") {
+      var n = Math.max(8, Math.round(dist * 2.2 + 10 * amt));
+      for (var i = n; i >= 1; i--) c.drawImage(sil, dx * 2.4 * i / n, dy * 2.4 * i / n);
+    } else c.drawImage(bl > 0.5 ? akGfxBlurCv(sil, bl) : sil, dx, dy);
+    c.globalAlpha = 1; c.drawImage(out, 0, 0);
+    return res;
+  };
+  var r0 = akGfxFxRegion;
+  akGfxFxRegion = function (l, P) {
+    var o = r0.apply(this, arguments), f = l.fxo || {};
+    if (akgnShadowOn(f)) { var e = Math.min(P.W, P.H) * (0.04 + (f.shadowD || 50) / 100 * 0.12 + (f.shadowB || 0) / 100 * 0.07); o.R = { x: o.R.x - e, y: o.R.y - e, w: o.R.w + 2 * e, h: o.R.h + 2 * e }; }
+    return o;
+  };
+  AKG_FX_LOOKS.splice(AKG_FX_LOOKS.length - 1, 0,
+    ["hardsh", "Hard shadow", { shadow: 70, shadowS: "hard", shadowD: 40 }],
+    ["longsh", "Long shadow", { shadow: 60, shadowS: "long", shadowD: 45, shadowA: 45 }],
+    ["floaty", "Floating", { shadow: 60, shadowS: "lift" }],
+    ["neon", "Neon glow", { glow: 85, outline: 12, outlineC: "#ffffff", glowC: "#ff2bd6" }],
+    ["popsh", "Pop shadow", { shadow: 70, shadowS: "pop", shadowD: 55 }]);
+})();
+
+/* ---------------------------------------------------------------- only the picked part's effects */
+(function () {
+  var u0 = akGfxFxInUse;
+  akGfxFxInUse = function (D) {
+    var out = u0.apply(this, arguments), st = akGfxState();
+    return st.sel ? out.filter(function (x) { return x.id === st.sel; }) : out;
+  };
+  var b0 = akGfxFxInUseBox;
+  akGfxFxInUseBox = function (D, X) {
+    var box = b0.apply(this, arguments), st = akGfxState();
+    if (st.sel) {
+      var g = box.querySelector(".akg-grp"); if (g) g.textContent = "On this part";
+      var n = box.querySelector(".akg-fxnone"); if (n) n.textContent = "No effects on this part yet.";
+    }
+    return box;
+  };
+  /* the picker and its sliders sit together in one little section; shadow styles right under the shadow slider */
+  var e0 = akGfxEffectsFill;
+  akGfxEffectsFill = function (d, X) {
+    e0.apply(this, arguments);
+    try {
+      var kids = [].slice.call(d.children), a = kids.filter(function (n) { return n.classList.contains("akg-grp") && /^Add an effect/.test(n.textContent); })[0];
+      var z = kids.filter(function (n) { return n.classList.contains("akg-grp") && /^Quick looks/.test(n.textContent); })[0];
+      if (!a || !z) return;
+      var box = h("div", { class: "akg-fxbox" }); d.insertBefore(box, a);
+      var cur = a; while (cur && cur !== z) { var nx = cur.nextSibling; box.appendChild(cur); cur = nx; }
+      if (AKGM.add === "shadow") {
+        var D = X.D, L = akGfxTargetOf(X, true), id = L && L.id; if (!id) return;
+        var f = akgmFx(D, id), style = f.shadowS || "soft";
+        box.appendChild(h("div", { class: "akg-grp" }, "Shadow style"));
+        box.appendChild(X.chips(AKGN_SHSTYLES, style, function (v) { var g2 = akgmFx(D, id, true); if (v === "soft") delete g2.shadowS; else g2.shadowS = v; if (!g2.shadow) g2.shadow = 55; save(); X.paint(); X.refill("fx"); }, "Shadow style"));
+        ["shadowD", "shadowB", "shadowA"].forEach(function (k) { akgmEffectBits(X, id, k, null).forEach(function (n) { box.appendChild(n); }); });
+      }
+    } catch (er) {}
+  };
+})();
+
+/* ---------------------------------------------------------------- the tool row: ＋ Add ▾, ↶ ↷, ⬇ Save ▾, zoom, ✋ Pan; no sideways scrolling */
+(function () {
+  var t0 = akGfxTools;
+  akGfxTools = function (bar, X) {
+    t0.apply(this, arguments);
+    var D = X.D, st = akGfxState();
+    if (st.big) { st.big = false; try { X.big(); } catch (e) {} }
+    var q = function (sel) { return bar.querySelector(sel); };
+    var undo = q('button[aria-label="Undo"]'), redo = q('button[aria-label="Redo"]'), save2 = q('button[aria-label="Save or share"]'), zoom = q(".akg-zoom"), pan = q('button[aria-label="Pan tool"]');
+    var pic = q('input[type="file"]'), picLab = pic && pic.parentNode !== bar ? pic.parentNode : pic;
+    if (picLab) picLab.classList.add("akg-hid");
+    function shapes(anchor) {
+      menu(anchor, AKG_SHAPES.map(function (s) { return { label: s[1], onClick: function () { akGfxAddShape(D, X, s[0]); } }; }));
+    }
+    var add = h("button", { class: "sm akg-addbtn", title: "Add words, a picture or a shape", "aria-label": "Add", onClick: function () {
+      var me = this;
+      menu(me, [
+        { label: "＋ Words", onClick: function () { akGfxAddWords(D, X); } },
+        { label: "＋ Picture", onClick: function () { if (pic) pic.click(); } },
+        { label: "＋ Shape…", onClick: function () { setTimeout(function () { shapes(me); }, 30); } },
+        { label: "🖼 From my pictures", onClick: function () { X.cat("pics"); } },
+        { label: "🌀 An overlay (dots, lines, waves…)", onClick: function () { X.cat("ovl"); } },
+        { label: "✳ Make a shape with sliders", onClick: function () { akGfxAddShape(D, X, "gen"); } },
+        { label: "🫧 A blob", onClick: function () { akGfxAddShape(D, X, "blob"); } },
+        { label: "📥 Paste" + (AKGFX.clip ? "" : " (copy something first)"), onClick: function () { akGfxPaste(D, X); } },
+        { label: "💡 Ideas to start from", onClick: function () { X.cat("ideas"); } }]);
+    } }, "＋ Add ▾");
+    var keep = [add, undo, redo, save2, zoom, pan, picLab].filter(Boolean);
+    bar.textContent = ""; keep.forEach(function (n) { bar.appendChild(n); });
+    bar.classList.add("akg-tools2");
+  };
+})();
+
+/* ---------------------------------------------------------------- help, styles */
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Graphics: add words, a picture or a shape", a: "Graphics studio › the row under the picture: ＋ Add ▾ has Words, Picture, Shape, My pictures, Overlay, Blob, Paste and Ideas. ↶ ↷ undo and redo, ⬇ Save ▾ saves or shares, − % + zoom and ✋ Pan move the view.", k: "graphics poster add words picture shape tool row save export undo zoom pan big view menu", go: function () { go("gfx"); } },
+  { t: "Graphics: effects for one part (shadow styles)", a: "Pick a part on the picture, then ✨ Effects: only that part's effects show. Choose an effect and its sliders sit right under it. Shadow has styles (Soft, Hard, Long, Lifted, Offset color) plus distance, softness, direction and color. The part stays picked while you scroll or use the panel; tap an empty spot on the picture to let go.", k: "graphics poster effects shadow style long hard lifted offset neon glow outline selected part deselect", go: function () { go("gfx"); } }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+akCss("akgfx-n",
+  ".akg-hid{position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;overflow:hidden!important;pointer-events:none!important}" +
+  "html body .akg-edbar.akg-tools{display:flex;flex-wrap:wrap;overflow:visible;gap:4px;align-items:center}" +
+  "html body .akg-edbar.akg-tools button:not(#ak),html body .akg-edbar.akg-tools .akg-zoom button:not(#ak){min-height:30px;height:30px;padding:0 9px;font-size:13px;line-height:1}" +
+  ".akg-tools .akg-zoom{display:inline-flex;gap:3px;align-items:center}" +
+  ".akg-fxbox{border:1px solid rgba(127,127,127,.4);border-left:3px solid #C8962E;border-radius:8px;padding:6px 8px;margin:4px 0 8px}" +
+  ".akg-fxbox .akg-grp:first-child{margin-top:0}");
 
 /* ================================================================ ak_v18a: version 18.0, bug fixes first (queue items 37, 39, 45, 38)
    37 Auto-scroll: a press while it scrolls PAUSES, the next press RESUMES (play.js autoToggle, akPause).
@@ -51148,8 +51348,8 @@ function akPopPlace() {
 })();
 
 /* ---------------------------------------------------------------- parts you can move: ▲ ▼ on each part header of the Sections tab */
-var AKW_PARTS = ["bars", "play", "secs", "send"];
-function akPartsOrder() { var c = akW18b(), o = c.partOrd; if (!Array.isArray(o) || AKW_PARTS.some(function (x) { return o.indexOf(x) < 0; })) o = AKW_PARTS.slice(); return o; }
+var AKW_PARTS = ["bars", "play", "send", "secs"];
+function akPartsOrder() { var c = akW18b(), o; if (!c.po186) { c.po186 = 1; delete c.partOrd; } o = c.partOrd; if (!Array.isArray(o) || AKW_PARTS.some(function (x) { return o.indexOf(x) < 0; })) o = AKW_PARTS.slice(); return o; }
 function akPartsApply(ws) {
   var o = akPartsOrder(), sel = { bars: ".akws-gridwrap", play: ".akws-tp", secs: ".akws-strip", send: ".akws-send" };
   o.forEach(function (k, i) {
@@ -51416,6 +51616,7 @@ akW18bChips = function () {
       if (c.scr !== "stack") {
         dets.forEach(function (d) { d.open = true; });
         if (c.scr === "halves") {
+          Array.prototype.forEach.call(body.querySelectorAll('.akfold-bar[data-akcolk="w:pad"]'), function (x) { x.parentNode.removeChild(x); });
           var box = body.querySelector(".akw18-halves"); if (arr && !(box && box.contains(arr))) arr.hidden = true;
           if (box) {
             var halves = box.querySelectorAll(":scope > .akw18-half"), grip = box.querySelector(":scope > .akw18-grip"), keys = ["shutA", "shutB"];
@@ -51425,9 +51626,9 @@ akW18bChips = function () {
                 if (sl) sl.hidden = shut; hf.classList.toggle("akhalf-shut", shut);
                 if (tg) { tg.setAttribute("aria-expanded", shut ? "false" : "true"); tg.firstChild.textContent = shut ? "▸" : "▾"; }
               });
-              var any = !!(c.shutA || c.shutB); if (grip) grip.hidden = any;
-              if (any) { halves[0].style.flex = c.shutA ? "0 0 auto" : "1 1 0"; halves[1].style.flex = c.shutB ? "0 0 auto" : "1 1 0"; }
-              else { halves[0].style.flex = "0 0 " + (c.pct || 50) + "%"; halves[1].style.flex = "1 1 0"; }
+              /* the divider stays where it is: a folded half just hides its contents up to its header */
+              if (grip) grip.hidden = false;
+              halves[0].style.flex = "0 0 " + (c.pct || 50) + "%"; halves[1].style.flex = "1 1 0";
             }
             Array.prototype.forEach.call(halves, function (hf, i) {
               var hh = hf.querySelector(".akw18-hh"); if (!hh || hh.querySelector(".akhalf-tg")) return;
@@ -51476,7 +51677,7 @@ akW18bChips = function () {
 
 akCss("akv186", [
   ".akhalf-tg{flex:none;width:34px;min-height:32px;border:0;border-radius:6px;background:var(--accent,#c60);color:var(--on-accent,#000);font-weight:700;cursor:pointer;padding:0}",
-  ".akhalf-shut{flex:0 0 auto !important}",
+  
   ".akcard-hd{display:flex;align-items:center;gap:4px;margin:2px 0}.akcard-tg{flex:1;text-align:left;background:none;border:0;color:inherit;font:inherit;font-weight:600;padding:6px 2px;cursor:pointer}",
   ".akcard-shut>*:not(.akw9-head):not(.akcard-hd){display:none !important}",
   ".akcard-sm{display:flex !important;align-items:center;gap:4px}.akcard-sm>*:first-child{flex:1}",
@@ -51513,7 +51714,7 @@ setInterval(function () {
 [
   { sel: ".akws > .akws-sel", mode: "bar", key: "ws:sel", title: "Bar editor" },
   { sel: ".akws > .aktry-inline", mode: "bar", key: "ws:try", title: "Hear and add" },
-  { sel: ".akw9 .akw9-padrow", mode: "bar", key: "w:pad", title: "Lyrics text" },
+  { sel: ".akw9-card > .akw9-padrow", mode: "bar", key: "w:pad", title: "Lyrics text" },
   { sel: ".akws > .akpw-legend", mode: "bar", key: "ws:legend", title: "What the colors mean" }
 ].forEach(function (r) { AKCOL_RULES.push(r); });
 
@@ -51533,11 +51734,13 @@ akCss("akv186c", [
     { t: "Fold or collapse anything on the Write screen", a: "Tap any bar with the coloured ▾ arrow, a card title, or a half's ▾ button. Each one remembers how you left it (cards start folded when you open Write).", k: "collapse fold close open hide minimize arrow section card half", go: W },
     { t: "Move cards, song parts or sections up and down", a: "Cards layout: ▲▼ on each card title. Sections tab: ▲▼ on each part's bar. Song parts (Verse, Chorus…) move with ▲▼ too.", k: "move reorder order up down card part section rearrange", go: W },
     { t: "Change how the lyrics look (Chords over words, Bars, Rhythm, Jazz chart)", a: "Write tab › Lyrics window (the Chords pane): the row Chords over words / Bars / Rhythm / Jazz chart. It is in the Lyrics tab, the Chords half, and the Lyrics card.", k: "view lyrics chords over words bars rhythm jazz chart chord pro switch", go: W },
-    { t: "Put chords on the lyrics, and slide them", a: "Chords over words: tap Add a chord (or Other…) and the chord goes where the cursor is, or on the line you were typing in. Tap a chord to slide it with ◀ ▶ (a letter) or ⏮ ⏭ (a word). Lines are typeable right there.", k: "add chord lyrics words slide move attach type over line", go: W },
-    { t: "Type the words of a bar (Bars and Rhythm)", a: "Bars: tap a bar. Rhythm: tap the ✎ at the end of a bar. Type the words sung in that bar. In Rhythm, tap a word to move it to another beat.", k: "words bar rhythm type edit lyrics beat", go: W },
+    { t: "Put chords on the lyrics, and slide them", a: "Chords over words: tap Add a chord (or Other…) and the chord goes where the cursor is, or on the line you were typing in. Drag a chord sideways to the word it belongs over (it moves a letter at a time and lands where you let go). Or tap it and slide with ◀ ▶ (a letter) or ⏮ ⏭ (a word). Lines are typeable right there.", k: "add chord lyrics words slide move attach type over line", go: W },
+    { t: "Type the words of a bar (Bars and Rhythm)", a: "Bars: tap a bar. Rhythm: tap the ✎ at the end of a bar. Type the words sung in that bar. In Rhythm, drag a word to another beat of its bar (or tap it and use ◀ ▶).", k: "words bar rhythm type edit lyrics beat", go: W },
     { t: "Rebuild from the lyrics", a: "Shows in Bars / Rhythm / Jazz when you edited the chart by hand. It redraws the bars from the chords in your lyrics and drops hand edits (Undo brings them back). Words on a line under a chord line spread over that line's bars.", k: "refill rebuild redo chart lyrics hand edit reset bars", go: W },
     { t: "Open the Jazz chart", a: "Chords pane › Jazz chart › Open the full jazz chart. It opens its own screen (the Play screen's jazz chart); Back returns to Write.", k: "jazz chart real book repeats endings screen play", go: W },
     { t: "Hear a chord, then add it to a bar", a: "Sections tab (or a half): tap a bar square, tap chords in the Wheel or Suggestions pop-up to hear them, then ✓ Add. The pop-up stays open for the next bar (Settings › Write screen sets size, and whether it opens by itself).", k: "chord workshop wheel suggestions palette hear audition add bar pop-up popup", go: W },
+    { t: "Play the bars to hear them", a: "Sections tab › Bars header: the ▶ Play button at the left (■ Stop while it plays). The Play and tempo row, with Loop, ♩ tempo and Click, is lower in the same section.", k: "play bars listen hear measures progression start stop", go: W },
+    { t: "Type any chord into a bar", a: "Sections tab: tap a bar square, then ⌨ Type in the bar editor under the bars. Type the chord (like F#m7) and tap Put in bar. The Wheel and Suggestions pop-ups are the other way in.", k: "type chord keyboard bar custom enter write name put", go: W },
     { t: "Make the bars one size, add or remove bars", a: "Sections tab › Bars: the bars are equal size on every row. + Bar sits in the Bars header next to the zoom buttons; the bar editor (Bar / Chord / N.C. / Remove / Done) opens under the bars when you tap one.", k: "bars add remove size zoom plus bar row grid", go: W },
     { t: "Arranger: play, record, click, tempo, loop", a: "Arranger tab (or half or card): ▶ ■ ● are the transport; ⚙ opens Click, tempo, Loop, Count-in, Part and Snap. Under it, ◀ ▶ − + scroll and zoom. + Track adds chords, drums or audio tracks.", k: "arranger transport play stop record click metronome tempo bpm loop count in track zoom scroll", go: W },
     { t: "Audio looper", a: "Looper tab (or half or card): record layers over the beat and play the order. Its clips also show as tracks in the Arranger.", k: "looper loop audio layers record beat", go: W },
@@ -51617,6 +51820,101 @@ var AKMENU_STD = (function () {
   document.addEventListener("click", function () { if (menu !== std) menu = std; }, true);
   return std;
 })();
+
+akCss("akv186e", [
+  ".ak18-chip,.ak18-wd{touch-action:none}.ak18-chip.drag{opacity:.85;position:relative;z-index:3;box-shadow:0 2px 8px rgba(0,0,0,.5)}",
+  ".ak18-wd.drag{position:relative;z-index:5;box-shadow:0 2px 8px rgba(0,0,0,.5)}.ak18-rb i.aim{background:var(--accent,#c60);color:var(--on-accent,#000);border-radius:4px;opacity:1}"
+].join("\n"));
+
+/* Sections view order: bars, Play and tempo, Add to a song, bar editor, hear-and-add, pick row, Sections list */
+akCss("akv186f", [
+  "html body .aktry-inline .aktry-use:not(#ak){min-height:24px !important;padding:0 10px !important;font-size:.78rem !important;margin:0 !important}",
+  "html body .aktry-inline:not(#ak){padding:0 !important;margin:0 !important;gap:6px}"
+].join("\n"));
+
+/* Halves: a chord pop-up must never sit over the divider. It opens below it, and follows it when it moves. */
+akCss("akv186g", [
+  "body.akw-halves [data-wsview=sections][data-pick=pal] .akws > .akws-pal,body.akw-halves [data-wsview=sections][data-pick=wheel] .akws > .akws-main{top:var(--akpop-top,auto) !important;bottom:64px !important;max-height:none !important}",
+  ".akw18-grip{position:relative;z-index:30}"
+].join("\n"));
+function akPopBelowDivider() {
+  var g = document.querySelector(".akw18-halves > .akw18-grip");
+  if (!g) { document.documentElement.style.removeProperty("--akpop-top"); return; }
+  var r = g.getBoundingClientRect(); document.documentElement.style.setProperty("--akpop-top", Math.round(r.bottom + 2) + "px");
+}
+setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } catch (e) {} }, 250);
+document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
+
+/* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
+var AKGG = [
+  { k: "gfxgrp", t: "Graphics", ic: "🎨", of: ["graphics"] },
+  { k: "mediagrp", t: "Media", ic: "📷", of: ["photos", "recordings"] },
+  { k: "analgrp", t: "Analytics", ic: "📊", of: ["money", "log", "played", "requests"] }
+];
+function akGigGroupOpen(k, v) { var s = settings(); s.gigGrpOpen = s.gigGrpOpen || {}; if (v === undefined) return !!s.gigGrpOpen[k]; s.gigGrpOpen[k] = v ? 1 : 0; save(); }
+function akGigGroup(body) {
+  if (!body || body.getAttribute("data-blocks") !== "gig" || body.querySelector(":scope > [data-bk=gfxgrp]")) return;
+  var kids = [].slice.call(body.children), at = null;
+  var sets = kids.filter(function (n) { return n.getAttribute && n.getAttribute("data-bk") === "setlists"; })[0];
+  AKGG.forEach(function (g) {
+    var mine = kids.filter(function (n) { return n.getAttribute && g.of.indexOf(n.getAttribute("data-bk")) >= 0; });
+    if (!mine.length) return;
+    var det = h("details", { class: "card akgig-card akgig18-grp", "data-bk": g.k, "data-bt": g.t, "data-akcold": "1" });
+    det._layInit = true;
+    var n = mine.length, sum = h("summary", null, h("span", null, g.ic + " " + g.t), h("span", { class: "hint akgig18-n" }, g.k === "analgrp" ? "Pay and tips, played, requests" : g.k === "mediagrp" ? "Photos, recordings" : "Flyer, week poster, invoice"));
+    det.appendChild(sum);
+    mine.forEach(function (m) { det.appendChild(m); });
+    det.open = akGigGroupOpen(g.k);
+    det.addEventListener("toggle", function () { if (det.open !== akGigGroupOpen(g.k)) akGigGroupOpen(g.k, det.open); });
+    var ref = at ? at.nextSibling : (sets ? sets.nextSibling : null); body.insertBefore(det, ref); at = det;
+  });
+}
+(function () {
+  var lr = layRun;
+  layRun = function (root) { try { akGigGroup(root); } catch (e) { if (window.console) console.error(e); } return lr.apply(this, arguments); };
+})();
+akCss("akgig18",
+  ".akgig18-grp{padding:8px 12px}.akgig18-grp>summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px;align-items:center;font-weight:700;min-height:34px}" +
+  ".akgig18-grp[open]>summary{margin-bottom:8px}.akgig18-grp>.card,.akgig18-grp>.akgig9-money,.akgig18-grp>.akg-gigrow{margin-left:0;margin-right:0}" +
+  ".akgig18-grp>.card{border:0;background:transparent;box-shadow:none;padding:6px 0}.akgig18-n{font-weight:400;font-size:.8rem}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Show page: Graphics, Media and Analytics boxes", a: "A show's page has Details, Setlists, then three folding boxes. Graphics: Flyer, Week poster, Invoice. Media: photos of the venue and recordings. Analytics: Pay and tips, what was played and requests at the show.", k: "show page gig flyer week poster invoice graphics photos recordings media pay tips analytics played requests fold group", go: function () { go("shows"); } });
+
+/* ---------------------------------------------------------------- song edit: text that is a chord shows in the chord color (a colored copy of the text sits behind the box) */
+function akMirHtml(t) {
+  function esc(x) { return x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  return String(t || "").split("\n").map(function (ln) {
+    if (/\[/.test(ln)) return ln.split(/(\[[^\]\n]+\])/).map(function (p) { var m = /^\[([^\]\n]+)\]$/.exec(p); return m && isChordLike(m[1].trim()) ? '<span class="akmir-c">' + esc(p) + "</span>" : esc(p); }).join("");
+    if (typeof isChordLineText === "function" && isChordLineText(ln)) return ln.split(/(\s+)/).map(function (p) { return p && !/^\s+$/.test(p) && isChordTok(p.replace(/^[(,;:]+|[),;:]+$/g, "")) ? '<span class="akmir-c">' + esc(p) + "</span>" : esc(p); }).join("");
+    return esc(ln);
+  }).join("\n") + "\n ";
+}
+function akMirrorWrap(ta) {
+  if (ta._mir || !ta.parentNode) return;
+  var wrap = h("div", { class: "akmir" }), bd = h("div", { class: "akmir-bd", "aria-hidden": "true" });
+  ta.parentNode.insertBefore(wrap, ta); wrap.appendChild(bd); wrap.appendChild(ta); ta._mir = bd; ta.classList.add("akmir-ta");
+  function sync() {
+    var cs = getComputedStyle(ta), st = bd.style;
+    ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "tabSize", "paddingTop", "paddingBottom", "paddingLeft", "borderTopWidth", "borderLeftWidth", "borderRightWidth", "borderBottomWidth", "borderRadius"].forEach(function (k) { st[k] = cs[k]; });
+    st.paddingRight = (parseFloat(cs.paddingRight) + (ta.offsetWidth - ta.clientWidth - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth))) + "px";
+    st.background = cs.backgroundColor; ta.style.backgroundColor = "transparent";
+    if (ta._mv !== ta.value) { ta._mv = ta.value; bd.innerHTML = akMirHtml(ta.value); }
+    bd.scrollTop = ta.scrollTop;
+  }
+  ta._mirSync = sync; ta.addEventListener("input", sync); ta.addEventListener("scroll", function () { bd.scrollTop = ta.scrollTop; });
+  sync();
+}
+setInterval(function () {
+  if (S.view !== "song") return;
+  try {
+    var list = [].slice.call(document.querySelectorAll("#edLyrics, label.fld.mono textarea"));
+    list.forEach(function (ta) { if (!ta._mir) akMirrorWrap(ta); else ta._mirSync(); });
+  } catch (e) {}
+}, 400);
+akCss("akmir",
+  ".akmir{position:relative;display:block}.akmir-bd{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden;white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;color:var(--fg);pointer-events:none;box-sizing:border-box;border-style:solid;border-color:transparent}" +
+  ".akmir-c{color:var(--chord,var(--accent))}.akmir-ta{position:relative;display:block;width:100%;box-sizing:border-box;color:transparent!important;-webkit-text-fill-color:transparent;caret-color:var(--fg);background:transparent!important}.akmir-ta::selection{background:rgba(120,160,255,.45);-webkit-text-fill-color:transparent}");
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Chord placer chord list and chord colors in the edit box", a: "Place chords (song edit): the buttons at the bottom are the song's own chords in the order they appear, then any you added yourself. In the lyrics and chord boxes, text that is a chord shows in the chord color, so Make chord is easy to see.", k: "chord placer place chords bottom list order song edit make chord color recognized highlight", go: function () { go("songs"); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
