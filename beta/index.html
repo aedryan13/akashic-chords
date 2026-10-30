@@ -6329,12 +6329,12 @@ function akFirstRunSamples() {
   s.samplesOffered = true;
 }
 function akSampleBanner() {
-  if (S.sampleBannerHidden || !akHasSamples()) return null;
+  if (S.sampleBannerHidden || settings().sampleNoteOff || settings().welcomeOff || !akHasSamples()) return null;
   return h("div", { class: "akhint banner" },
     h("div", { class: "grow" }, h("strong", null, "Sample songs"), " are in your list so you can try the app. Play one, open the Chords panel, try a few themes."),
     h("button", { class: "primary", onClick: function () { openThemePicker(function () { render(); }); } }, "Try themes"),
-    h("button", { onClick: function () { confirmBox("Remove the sample songs and the sample setlist? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove"),
-    h("button", { class: "icon sm", "aria-label": "Hide this note", onClick: function () { S.sampleBannerHidden = true; render(); } }, "✕"));
+    h("button", { onClick: function () { confirmBox("Remove the sample songs and the sample setlist? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove samples"),
+    h("button", { class: "icon sm", "aria-label": "Hide this note for good", title: "Hide this note for good", onClick: function () { settings().sampleNoteOff = true; save(); S.sampleBannerHidden = true; render(); toast("Note hidden for good. The sample songs stay. Settings › Welcome notes brings it back."); } }, "✕"));
 }
 akCss("ak-samples", ".akhint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 14px 6px;padding:10px 12px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-bg);color:var(--fg)}.akhint .grow{flex:1;min-width:220px}");
 
@@ -51546,6 +51546,76 @@ akCss("akv186c", [
     { t: "The side slider (fast scroll)", a: "A bar on the right edge of any screen that scrolls: drag it to move through the screen. Settings › “Show a handle on the right edge of long lists” turns it off.", k: "slider scroll fast scrub bar handle side right scrollbar", go: W },
     { t: "Black windows or theme colours in Write", a: "Settings › Write screen › Window background: black windows with theme colours around them, or theme colours everywhere.", k: "black window background theme color contrast dark write", go: W }
   ].forEach(function (e) { AK_HELP_WHERE.push(e); });
+})();
+
+/* ---------------------------------------------------------------- welcome notes: the sample-songs note and the Quick start card can be hidden for good */
+(function () {
+  var q = akHelpQsCard;
+  akHelpQsCard = function () { if (settings().welcomeOff) return null; return q.apply(this, arguments); };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.section("Welcome notes", "The sample-songs note and the Quick start card");
+    c.check("Show the welcome notes (sample-songs note and Quick start)", function () { return !settings().welcomeOff; }, function (v) { settings().welcomeOff = !v; if (v) settings().sampleNoteOff = false; });
+    return sx.apply(this, arguments);
+  };
+  if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Stop the sample-songs note and Quick start from showing", a: "✕ on the sample-songs note hides it for good (the sample songs stay; “Remove samples” deletes them). Settings › Welcome notes turns the note and the Quick start card off or back on.", k: "sample songs note banner quick start hide stop remove welcome popup message x close", go: function () { go("settings"); } });
+})();
+
+/* ---------------------------------------------------------------- 18.6b: letter dividers in the song list (sorted A–Z or by artist), A–Z strip on the left, bigger to tap */
+function akAzDividers(list) {
+  Array.prototype.forEach.call(list.querySelectorAll(".azdiv"), function (d) { d.parentNode.removeChild(d); });
+  if (settings().azDividers === false || !(S.sortBy === "az" || S.sortBy === "artist") || S.groupBy) return;
+  var rows = Array.prototype.slice.call(list.querySelectorAll(".item[data-k]")), prev = null;
+  if (rows.length < 2) return;
+  rows.forEach(function (r) {
+    var k = r.getAttribute("data-k"); if (k === prev) return; prev = k;
+    list.insertBefore(h("div", { class: "azdiv", "data-k": k, role: "separator", "aria-label": "Songs starting with " + k }, h("b", null, k), h("i", null)), r);
+  });
+}
+(function () {
+  var az0 = azIndexEl;
+  azIndexEl = function (list) {
+    var o = az0.apply(this, arguments), u = o.update;
+    o.update = function () {
+      try { akAzDividers(list); o.el.classList.toggle("azleft", !!settings().azLeft); list.classList.toggle("azleft", !!settings().azLeft); } catch (e) {}
+      return u.apply(this, arguments);
+    };
+    return o;
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    c.section("Song list letters", "Dividers and the A–Z strip");
+    c.check("Show a divider with the letter between letters (when sorted A–Z or by artist)", function () { return settings().azDividers !== false; }, function (v) { settings().azDividers = v; });
+    c.check("Put the A–Z strip on the left (so your finger doesn't cover it)", function () { return !!settings().azLeft; }, function (v) { settings().azLeft = v; });
+    return sx.apply(this, arguments);
+  };
+  if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Letter dividers and the A–Z strip in the song list", a: "Songs tab sorted A–Z or by artist: a divider with the letter sits before each new letter. The A–Z strip at the side jumps to a letter (tap or slide). Settings › Song list letters turns the dividers off and moves the strip to the left.", k: "divider letters alphabet a-z strip jump left side songs list sort artist title", go: function () { go("songs"); } });
+})();
+akCss("akv186d", [
+  ".azdiv{display:flex;align-items:center;gap:8px;margin:12px 2px 4px;color:var(--accent)}.azdiv b{font-size:1.25rem;line-height:1;min-width:1.2em}.azdiv i{flex:1;height:0;border-top:3px solid var(--accent);border-radius:2px;opacity:.85}",
+  ".azstrip{width:32px !important;right:-18px !important}.azl{font-size:max(11px,inherit)}",
+  ".azwrap.azleft .azstrip{left:-8px !important;right:auto !important}.azwrap.azleft .azbubble{left:42px !important;right:auto !important}",
+  ".list.azon.azleft{margin-left:16px;margin-right:0}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- menus that repeat their first items (seen on the Songs library menu):
+   several screens add items by swapping the global menu() for a tap; a swap that is never used piled up. One clean menu() is put back at the start of every tap,
+   and an item with the same label is only listed once. */
+var AKMENU_STD = (function () {
+  var base = menu;
+  var std = function (anchor, items, o) {
+    var seen = {}, out = [];
+    (items || []).forEach(function (it) {
+      if (it && it.label && !it.sep) { if (seen[it.label]) return; seen[it.label] = 1; }
+      if (it && it.sep && (!out.length || out[out.length - 1].sep)) return;
+      out.push(it);
+    });
+    while (out.length && out[out.length - 1].sep) out.pop();
+    return base.call(this, anchor, out, o);
+  };
+  menu = std;
+  document.addEventListener("click", function () { if (menu !== std) menu = std; }, true);
+  return std;
 })();
 
 /* ---------- turning pasted charts into bracket form ---------- */
