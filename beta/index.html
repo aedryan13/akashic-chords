@@ -48824,10 +48824,10 @@ function akGfxSelFill(d, X) {
     tw.appendChild(g2);
     var g3 = h("div", { class: "akg-two akg-tsel" });
     g3.appendChild(akGfxSelect("Capitals", [["", "As the layout"], ["upper", "ABC"], ["title", "Abc"], ["lower", "abc"]], e0.caps || "", function (v) { set("caps", v); }));
-    g3.appendChild(akGfxSelect("Effect", [["", "As it is"]].concat(AKG_TFX), e0.fx || "", function (v) { set("fx", v); }));
     g3.appendChild(akGfxSelect("Shape behind", AKG_BEHIND, (e0.behind || l.behind || {}).kind || "none", function (v) { set("behind", Object.assign({}, e0.behind || {}, { kind: v })); }));
     tw.appendChild(g3);
     d.appendChild(tw);
+    if (typeof akGfxFxModule === "function") d.appendChild(akGfxFxModule(X, L, l));
     /* ---- style ---- */
     d.appendChild(h("div", { class: "akg-sub" }, "Style"));
     if (typeof AKG_TEXT_LOOKS === "object") d.appendChild(akGfxSelect("Quick style", [["", "Pick a quick style…"]].concat(AKG_TEXT_LOOKS.map(function (t) { return [t[0], t[1]]; })), "", function (v) {
@@ -48839,10 +48839,6 @@ function akGfxSelFill(d, X) {
       X.ch(); X.refill("parts", true);
     }));
     if (typeof akGfxQsPick === "function") d.appendChild(akGfxQsPick(X));
-    if ((e0.fx || l.fx) && (e0.fx || l.fx) !== "none") {
-      d.appendChild(h("div", { class: "fld" }, "Effect color", colorPicker(e0.fxc || "", function (c) { set("fxc", c); })));
-      d.appendChild(X.slider("Effect strength", e0.fxk == null ? (l.fxk == null ? 50 : l.fxk) : e0.fxk, 0, 100, 5, function (v) { E().fxk = v; }, null, true));
-    }
     var bk = e0.behind || l.behind;
     if (bk && bk.kind && bk.kind !== "none") d.appendChild(h("div", { class: "fld" }, "Color of the shape behind", colorPicker((e0.behind || {}).color || "", function (c) { set("behind", Object.assign({}, e0.behind || { kind: bk.kind }, { color: c || "" })); })));
     d.appendChild(X.slider("Letter spacing", e0.sp == null ? Math.round((l.spacing || 0) / l.size * 100) : e0.sp, -10, 80, 1, function (v) { E().sp = v; }, null, true));
@@ -48858,6 +48854,7 @@ function akGfxSelFill(d, X) {
     if (L.color || L.fill || L.type === "gpic") g.appendChild(colorBtn());
     if (pic) g.appendChild(h("button", { type: "button", class: "sm", onClick: function () { X.cat("pics"); } }, "🔁 Swap"));
     d.appendChild(g);
+    if (typeof akGfxFxModule === "function") d.appendChild(akGfxFxModule(X, L, l));
     if (free && free.t === "pic") {
       var two = h("div", { class: "akg-two akg-tsel" });
       two.appendChild(akGfxSelect("Corners", [["", "Square"], ["round", "Rounded"], ["circle", "Circle"]], free.corner || "", function (v) { free.corner = v; X.ch(); }));
@@ -49071,7 +49068,7 @@ var AKGM_COL = { tint: [["tintC", "Tint color"]], shadow: [["shadowC", "Shadow c
 function akgmDef(key) { return AKG_FXO.filter(function (x) { return x[0] === key; })[0]; }
 function akgmFmt(x) { return function (v) { return v ? (x[0] === "hue" ? v + "°" : (v > 0 && x[2] < 0 ? "+" : "") + v) : "off"; }; }
 function akgmFx(D, id, make) {
-  var e = D.edit[id] = D.edit[id] || {};
+  var e = D.edit[id]; if (!e) { if (!make) return {}; e = D.edit[id] = {}; }
   if (make && (!e.fxo || typeof e.fxo !== "object")) e.fxo = {};
   return e.fxo || {};
 }
@@ -49299,6 +49296,14 @@ function akgnShadowOn(f) { return f && f.shadow && (f.shadowS || f.shadowD || f.
   /* the picker and its sliders sit together in one little section; shadow styles right under the shadow slider */
   var e0 = akGfxEffectsFill;
   akGfxEffectsFill = function (d, X) {
+    /* a picked part has its effects in its own Effects box (Edit › Selected); this section only lists what is on it */
+    var st0 = akGfxState();
+    if (st0.sel && st0.P && st0.P.layers.some(function (x) { return x.id === st0.sel; })) {
+      d.appendChild(h("p", { class: "hint" }, "This part's effects, sliders and colors are in its ✨ Effects box, right under its words or picture options."));
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { AKGM.mod = true; X.cat("sel"); X.refill("parts", true); setTimeout(function () { var m = document.querySelector(".akg-fxmod"); if (m) { m.open = true; try { m.scrollIntoView({ block: "nearest" }); } catch (e) {} } }, 80); } }, "✨ Open the Effects box")));
+      try { d.appendChild(akGfxFxInUseBox(X.D, X)); } catch (er) {}
+      return;
+    }
     e0.apply(this, arguments);
     try {
       var kids = [].slice.call(d.children), a = kids.filter(function (n) { return n.classList.contains("akg-grp") && /^Add an effect/.test(n.textContent); })[0];
@@ -49353,7 +49358,7 @@ function akgnShadowOn(f) { return f && f.shadow && (f.shadowS || f.shadowD || f.
 /* ---------------------------------------------------------------- help, styles */
 if (typeof AK_HELP_WHERE !== "undefined") [
   { t: "Graphics: add words, a picture or a shape", a: "Graphics studio › the row under the picture: ＋ Add ▾ has Words, Picture, Shape, My pictures, Overlay, Blob, Paste and Ideas. ↶ ↷ undo and redo, ⬇ Save ▾ saves or shares, − % + zoom and ✋ Pan move the view.", k: "graphics poster add words picture shape tool row save export undo zoom pan big view menu", go: function () { go("gfx"); } },
-  { t: "Graphics: effects for one part (shadow styles)", a: "Pick a part on the picture, then ✨ Effects: only that part's effects show. Choose an effect and its sliders sit right under it. Shadow has styles (Soft, Hard, Long, Lifted, Offset color) plus distance, softness, direction and color. The part stays picked while you scroll or use the panel; tap an empty spot on the picture to let go.", k: "graphics poster effects shadow style long hard lifted offset neon glow outline selected part deselect", go: function () { go("gfx"); } }
+  { t: "Graphics: effects for one part (shadow styles)", a: "Pick a part on the picture: Edit › its ✨ Effects box sits right under the words or picture options and only shows that part's effects. Choose an effect and its sliders, shadow style and a color pop-up sit right under it. Shadow has styles (Soft, Hard, Long, Lifted, Offset color) plus distance, softness, direction and color. The part stays picked while you scroll or use the panel; tap an empty spot on the picture to let go.", k: "graphics poster effects shadow style long hard lifted offset neon glow outline selected part deselect", go: function () { go("gfx"); } }
 ].forEach(function (e) { AK_HELP_WHERE.push(e); });
 
 akCss("akgfx-n",
@@ -49363,6 +49368,69 @@ akCss("akgfx-n",
   ".akg-tools .akg-zoom{display:inline-flex;gap:3px;align-items:center}" +
   ".akg-fxbox{border:1px solid rgba(127,127,127,.4);border-left:3px solid #C8962E;border-radius:8px;padding:6px 8px;margin:4px 0 8px}" +
   ".akg-fxbox .akg-grp:first-child{margin-top:0}");
+
+/* ---------------------------------------------------------------- one Effects module for the picked part: effect, its sliders and a color pop-up right under it */
+AKGM.mod = AKGM.mod === undefined ? true : AKGM.mod;
+function akgnColorBtn(X, id, key, label) {
+  var f = akgmFx(X.D, id), cur = f[key] || "";
+  return h("button", { type: "button", class: "sm akg-fxcol", "aria-label": label, title: label, onClick: function () {
+    akGfxColorAsk(label, akgmFx(X.D, id)[key] || "", function (v) { var g = akgmFx(X.D, id, true); if (v) g[key] = v; else delete g[key]; save(); X.paint(); X.refill("parts", true); });
+  } }, h("span", { class: "akg-fxdot", style: "background:" + (cur || "transparent") }), label + " ▾");
+}
+function akgnBits(X, id, key) {
+  var out = [], bits = akgmEffectBits(X, id, key, null);
+  bits.forEach(function (n) { if (!(n.classList && n.classList.contains("row"))) out.push(n); });
+  (AKGM_COL[key] || []).forEach(function (c) { out.push(akgnColorBtn(X, id, c[0], c[1])); });
+  return out;
+}
+function akGfxFxModule(X, L, l) {
+  var D = X.D, id = L.id, e0 = D.edit[id] || {}, isText = L.type === "text";
+  var det = h("details", { class: "akg-fxmod", "data-bk": "fxmod", "data-akcold": "1", open: !!AKGM.mod });
+  det._layInit = true;
+  var f0 = e0.fxo || {}, nOn = Object.keys(f0).filter(function (k) { return f0[k] && akgmDef(k) && !/^shadow[DBA]$/.test(k); }).length + (isText && (e0.fx || l.fx) && (e0.fx || l.fx) !== "none" ? 1 : 0);
+  det.appendChild(h("summary", null, "✨ Effects" + (nOn ? " (" + nOn + ")" : ""), h("span", { class: "hint" }, " for " + L.name)));
+  det.addEventListener("toggle", function () { AKGM.mod = det.open; });
+  function E() { return D.edit[id] = D.edit[id] || {}; }
+  function again() { save(); X.paint(); X.refill("parts", true); }
+  if (isText) {
+    var cur = e0.fx || l.fx || "none";
+    det.appendChild(akGfxSelect("Text effect", AKG_TFX, cur, function (v) { var e = E(); if (v === "" || v === "none") e.fx = "none"; else e.fx = v; again(); }));
+    if (cur !== "none") {
+      det.appendChild(X.slider("Effect strength", e0.fxk == null ? (l.fxk == null ? 50 : l.fxk) : e0.fxk, 0, 100, 5, function (v) { E().fxk = v; }, null, true));
+      var cb = h("button", { type: "button", class: "sm akg-fxcol", "aria-label": "Effect color", onClick: function () {
+        akGfxColorAsk("Effect color", E().fxc || "", function (c) { var e = E(); if (c) e.fxc = c; else delete e.fxc; again(); });
+      } }, h("span", { class: "akg-fxdot", style: "background:" + (e0.fxc || "transparent") }), "Effect color ▾");
+      det.appendChild(cb);
+    }
+  }
+  var groups = [["soft", "Soft and blurry"], ["color", "Color"], ["around", "Around it"], ["bold", "Bold"]];
+  if (!akgmDef(AKGM.add)) AKGM.add = "blur";
+  det.appendChild(h("label", { class: "fld" }, "Add effect", h("select", { "aria-label": "Effect to add", onChange: function () { AKGM.add = this.value; X.refill("parts", true); } },
+    groups.map(function (g) { return h("optgroup", { label: g[1] }, AKG_FXO.filter(function (x) { return x[4] === g[0]; }).map(function (x) { return h("option", { value: x[0], selected: AKGM.add === x[0] }, x[1] + (f0[x[0]] ? "  ✓" : "")); })); }))));
+  akgnBits(X, id, AKGM.add).forEach(function (n) { det.appendChild(n); });
+  if (AKGM.add === "shadow") {
+    var f = akgmFx(D, id), style = f.shadowS || "soft";
+    det.appendChild(h("label", { class: "fld" }, "Shadow style", h("select", { "aria-label": "Shadow style", onChange: function () { var g2 = akgmFx(D, id, true), v = this.value; if (v === "soft") delete g2.shadowS; else g2.shadowS = v; if (!g2.shadow) g2.shadow = 55; again(); } },
+      AKGN_SHSTYLES.map(function (x) { return h("option", { value: x[0], selected: style === x[0] }, x[1]); }))));
+    ["shadowD", "shadowB", "shadowA"].forEach(function (k) { akgmEffectBits(X, id, k, null).forEach(function (n) { if (!(n.classList && n.classList.contains("row"))) det.appendChild(n); }); });
+  }
+  var act = Object.keys(f0).filter(function (k) { return f0[k] && akgmDef(k) && !/^shadow[DBA]$/.test(k); });
+  if (act.length) {
+    var row = h("div", { class: "akg-fxact" });
+    act.forEach(function (k) { row.appendChild(h("button", { type: "button", class: "sm", title: "Take this effect off", "aria-label": "Take off " + akgmDef(k)[1], onClick: function () { var g = akgmFx(D, id, true); delete g[k]; if (k === "shadow") { delete g.shadowS; delete g.shadowD; delete g.shadowB; delete g.shadowA; } again(); } }, akgmDef(k)[1].replace(/ \(.*\)$/, "") + " ✕")); });
+    det.appendChild(row);
+  }
+  det.appendChild(akGfxSelect("Quick looks", [["", "Pick a quick look…"]].concat(AKG_FX_LOOKS.filter(function (x) { return x[0]; }).map(function (x) { return [x[0], x[1]]; })), "", function (v) {
+    var look = AKG_FX_LOOKS.filter(function (x) { return x[0] === v; })[0]; if (!look) return;
+    var e = E(); e.fxo = Object.assign({}, e.fxo || {}, clone(look[2])); again();
+  }));
+  det.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm", onClick: function () { var e = E(); delete e.fxo; delete e.blend; if (isText) e.fx = "none"; again(); } }, "No effects")));
+  return det;
+}
+akCss("akgfx-n2",
+  ".akg-fxmod{border:1px solid rgba(127,127,127,.4);border-left:3px solid #C8962E;border-radius:8px;padding:6px 8px;margin:8px 0}.akg-fxmod>summary{cursor:pointer;font-weight:700;min-height:30px;display:flex;align-items:center;gap:6px}" +
+  ".akg-fxmod[open]>summary{margin-bottom:6px}.akg-fxcol{display:inline-flex;align-items:center;gap:6px;margin:2px 6px 4px 0}.akg-fxdot{display:inline-block;width:14px;height:14px;border-radius:50%;border:1px solid rgba(127,127,127,.6)}" +
+  ".akg-fxact{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}");
 
 /* ================================================================ ak_v18a: version 18.0, bug fixes first (queue items 37, 39, 45, 38)
    37 Auto-scroll: a press while it scrolls PAUSES, the next press RESUMES (play.js autoToggle, akPause).
@@ -51858,8 +51926,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.6e";
+AK_VERSION = "18.6f";
 AK_WHATS_NEW = [
+  "Graphics studio: every part now has one ✨ Effects box right under its words or picture options. Pick an effect and its slider, shadow style and a color pop-up are right under it; the loose Effect dropdown and color swatches are gone. More effects to choose from.",
   "Arranger: ■ Stop now stops everything that is making sound (the looper, vocal takes, clips still playing) and is never greyed out while you hear something; ▶ while sound is running stops it too.",
   "Version 18.6: Write has three layouts (Tabs, Halves, Cards) and every part folds; the side slider is always on screen; chords drag onto words; type any chord into a bar; ▶ Play sits in the Bars header; the Songs list has letter dividers; welcome notes can be turned off.",
   "Graphics studio: one ＋ Add ▾ menu, Save always visible, effects only for the picked part (with shadow styles), and the part stays picked while you scroll.",
