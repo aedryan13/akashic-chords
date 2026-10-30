@@ -40315,6 +40315,7 @@ function akVenSweep(all) {
   akGigs().forEach(function (g) {
     var name = (g.venue || "").replace(/\s+/g, " ").trim(), key = normTitle(name);
     if (!key) return;
+    if (typeof akGigIsHome === "function" && akGigIsHome(g)) return;   // a private home is not a venue to save or look up
     if (!all && !(g.added && g.added >= c.from)) return;
     var v = akVenueByName(name);
     if (v) {
@@ -52196,8 +52197,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7g";
+AK_VERSION = "18.7h";
 AK_WHATS_NEW = [
+  "Each show says whether it is held at a venue or a private home (house concerts). 🔒 Private shows start as a private home, public ones as a venue. Homes are never saved as venues or looked up online, and their address stays off flyers. When 🔎 Find can't find a place, it offers Search Google Maps ↗ and a box to paste the address. The little 🗺 button next to 🔎 Find opens that any time.",
   "Design templates: in the Graphics studio, 📁 File ▾ › ⭐ Save as a template… keeps a design you like (the show's own words are left out). On a show's page, ⭐ Template (next to 🎨 Flyer) starts that show's flyer from one, with its details filled in. Templates are also in 📁 My designs.",
   "A 🔎 Find button next to a show's Address (and in the venue editor) looks the address up online. If several places match it asks which one. Venues that already had no address are found automatically too (Shows › Venues › ⚙).",
   "Venue addresses fill in by themselves: a venue with no address is looked up online (OpenStreetMap) and flyers and posters use it. If a name matches several places, a question asks \"Which one is it?\" with each address. Shows › Venues › ⚙ to turn it off, or tap 🔎 Find missing addresses now.",
@@ -52709,6 +52711,7 @@ function akGfxAddrText(D) {
     var P = L0.apply(this, arguments);
     try {
       if (D.kind !== "flyer" || D.addr === "off") return P;
+      if (D.addr == null && typeof akGigIsHome === "function" && akGigIsHome(akGfxGig(D))) return P; /* a private home: its address stays off the flyer unless asked */
       var txt = akGfxAddrText(D); if (!txt) return P;
       var W = P.W, H = P.H, M = Math.min(W, H), F = D.fonts || {}, size = M * 0.021, ven = P.layers.filter(function (l) { return l.id === "title" && l.type === "text"; })[0];
       var lay = { id: "addr", name: "Address", type: "text", role: "addr", text: txt, size: size, font: F.small || F.main || akGfxStack("Outfit"), weight: 500, italic: false, color: ven && ven.color && !ven.fgAuto ? ven.color : "#ffffff", fgAuto: !(ven && ven.color && !ven.fgAuto), lh: 1.2, spacing: 0, valign: "middle" };
@@ -52954,6 +52957,7 @@ function akVenMarkMissing(force) {
   var n = 0, cut = Date.now() - 30 * 86400e3;
   akVenues().forEach(function (v) {
     if ((v.address || "").trim() || v.pend || (v.look && v.look.want)) return;
+    var us = akGigs().filter(function (g) { return akVenueFor(g) === v; }); if (us.length && us.every(akGigIsHome)) return;
     if (v.noAddr && v.noAddr > cut && !force) return;
     if (force) delete v.noAddr;
     v.look = { want: 1, tries: 0 }; n++;
@@ -53014,14 +53018,21 @@ function akVenFindFlow(name, hint, btn, use) {
   akVenFindAddr(name.trim(), hint, function (err, list) {
     btn.disabled = false; btn.textContent = label;
     if (err) { toast("Couldn't look it up right now (no internet?)."); return; }
-    if (!list.length) { toast("Nothing found online for “" + name + "”. Try adding the town to the venue name."); return; }
+    if (!list.length) { akVenManual(name, hint, use); return; }
     if (list.length === 1) { use(list[0]); return; }
     var close, box = h("div", null, h("p", null, "Several places are called “" + name + "”. Which one is it?"));
     list.forEach(function (c) { box.appendChild(h("button", { type: "button", class: "akven-cand", onClick: function () { close(); use(c); } }, h("b", null, c.name), h("div", { class: "muted" }, c.address || "(no street address)"))); });
-    close = modal("Which one is it?", box, [{ label: "None of these" }]);
+    close = modal("Which one is it?", box, [{ label: "None of these", onClick: function () { setTimeout(function () { akVenManual(name, hint, use); }, 0); } }]);
   });
 }
 function akFindAddrBtn(g, redraw) {
+  var find = akFindAddrBtn1(g, redraw), gm = h("button", { type: "button", class: "sm akven-find", title: "Search Google Maps, then paste the address", "aria-label": "Search Google Maps and paste the address", onClick: function () {
+    var inp = this.parentNode && this.parentNode.querySelector("input");
+    akVenManual(g.venue || "", (g.address || "").trim(), function (c) { var v = akVenueFor(g); if (v && !(v.address || "").trim()) v.address = c.address; g.address = c.address; if (inp) { inp.value = c.address; try { inp.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} } save(); toast("Address saved. Flyers will use it."); });
+  } }, "🗺");
+  var f = document.createDocumentFragment(); f.appendChild(find); f.appendChild(gm); return f;
+}
+function akFindAddrBtn1(g, redraw) {
   return h("button", { type: "button", class: "sm akven-find", title: "Look this venue's address up online", "aria-label": "Find the address online", onClick: function () {
     var btn = this, inp = btn.parentNode && btn.parentNode.querySelector("input");
     akVenFindFlow(g.venue, (g.address || "").trim(), btn, function (c) {
@@ -53044,11 +53055,40 @@ function akFindAddrBtn(g, redraw) {
       row.appendChild(h("button", { type: "button", class: "sm akven-find", "aria-label": "Find the address online", onClick: function () {
         akVenFindFlow(inn.value, "", this, function (c) { ia.value = c.address; var ph = m.querySelector("input[type=tel]"), wb = m.querySelector("input[type=url]"); if (ph && !ph.value.trim() && c.phone) ph.value = c.phone; if (wb && !wb.value.trim() && c.website) wb.value = c.website; toast("Address filled in. Tap Save to keep it."); });
       } }, "🔎 Find"));
+      row.appendChild(h("button", { type: "button", class: "sm akven-find", "aria-label": "Search Google Maps and paste the address", title: "Search Google Maps, then paste the address", onClick: function () {
+        akVenManual(inn.value, "", function (c) { ia.value = c.address; toast("Address filled in. Tap Save to keep it."); });
+      } }, "🗺"));
     } catch (e) {}
     return r;
   };
 })();
 akCss("akven3", ".akven-find{white-space:nowrap;flex:none}");
+
+/* ---------------------------------------------------------------- not found: search Google Maps yourself, paste the address */
+function akVenManual(name, hint, use) {
+  var town = akVenTown(hint) || akVenArea(), q = [name, town].filter(Boolean).join(" "), inp = h("input", { type: "text", placeholder: "Paste or type the address", "aria-label": "Address", autocapitalize: "words" });
+  modal("Not found online", h("div", null, h("p", null, "The free map search doesn't know “" + name + "”. Look it up on Google Maps, copy the address, and paste it here."),
+    h("p", null, h("a", { class: "btnlink", href: "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q), target: "_blank", rel: "noopener noreferrer" }, "🔎 Search Google Maps ↗")), h("label", { class: "fld" }, "Address", inp)),
+    [{ label: "Cancel" }, { label: "Use this address", primary: true, onClick: function () { var a = inp.value.replace(/\s+/g, " ").replace(/,\s*(United States( of America)?|USA)\s*$/i, "").trim(); if (!a) return false; use({ name: name, address: a }); } }]);
+}
+
+/* ---------------------------------------------------------------- public or private show, at a venue or a private home */
+function akGigIsHome(g) { return !!g && (g.place || (g.priv ? "home" : "venue")) === "home"; }
+(function () {
+  var vf = akVenueField;
+  akVenueField = function (g, redraw) {
+    var base = vf.apply(this, arguments), frag = document.createDocumentFragment(); frag.appendChild(base);
+    var home = akGigIsHome(g);
+    frag.appendChild(h("div", { class: "row akgig-kind", style: "margin:0 0 8px;flex-wrap:wrap" },
+      h("label", { class: "fld grow", style: "margin:0;min-width:120px" }, "Held at" + (g.priv ? " (🔒 private shows start as a private home)" : ""), h("select", { onChange: function () { g.place = this.value; save(); if (redraw) redraw(); } },
+        h("option", { value: "venue", selected: !home }, "A venue (looked up online)"), h("option", { value: "home", selected: home }, "A private home (house concert)")))));
+    if (home) frag.appendChild(h("p", { class: "hint", style: "margin:0 0 8px" }, "A private home isn't saved as a venue or looked up online, and its address stays off flyers unless you turn it on (Flyer › Address on the flyer)."));
+    return frag;
+  };
+  var fb = akFindAddrBtn;
+  akFindAddrBtn = function (g, redraw) { return akGigIsHome(g) ? null : fb.apply(this, arguments); };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Private home vs venue (house concerts) and Google Maps for an address", a: "Show page › under Venue: “Held at” A venue / A private home. Shows marked 🔒 Private default to a private home, public ones to a venue. Homes are never looked up online or saved as venues, and their address stays off flyers unless you turn it on. When 🔎 Find can't find a venue it offers Search Google Maps and a box to paste the address.", k: "private home house concert residence public venue google maps paste address", go: function () { go("shows"); } });
 
 /* ================= 18.7g: design templates =================
    A template is a saved design (a draft in My designs, d.tpl = true, name starts with ⭐) with everything that belongs to one show taken out:
