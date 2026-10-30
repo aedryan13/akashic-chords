@@ -36665,6 +36665,7 @@ function viewGfx() {
     P.layers.forEach(function (l) { try { akDrawLayer(ctx, l, P); } catch (e) {} });
     if (typeof akGfxPaintSel === "function") akGfxPaintSel(ctx, P, st, s);
     else { var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0]; if (L) { var b = akLayerBox(L, P); ctx.setLineDash([8 / s, 6 / s]); ctx.lineWidth = 2 / s; ctx.strokeStyle = "#00B7FF"; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); } }
+    if (st.multi && st.multi.length) st.multi.forEach(function (id) { var ML = P.layers.filter(function (x) { return x.id === id; })[0]; if (ML) { var mb = akLayerBox(ML, P); ctx.save(); ctx.setLineDash([8 / s, 6 / s]); ctx.lineWidth = 2.5 / s; ctx.strokeStyle = "#FF3DA5"; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h); ctx.restore(); } });
     cv._k = s; cv._k0 = k; cv._ox = ox; cv._oy = oy;
     edSync();
   }
@@ -36694,7 +36695,7 @@ function viewGfx() {
     }
     if (typeof akGfxPopSync === "function") akGfxPopSync(prevWrap, cv, X, !!(drag || pinch));
     if (typeof akGfxEdBar !== "function" || !edbar.isConnected) return;
-    var key = st.sel + "|" + seq + "|" + JSON.stringify(D.edit[st.sel] || {}) + "|" + (typeof akGfxCanUndo === "function" ? akGfxCanUndo() + "" + akGfxCanRedo() : "") + "|" + !!st.big;
+    var key = st.sel + "|" + seq + "|" + JSON.stringify(D.edit[st.sel] || {}) + "|" + (typeof akGfxCanUndo === "function" ? akGfxCanUndo() + "" + akGfxCanRedo() : "") + "|" + !!st.big + "|" + (st.multiMode ? 1 : 0) + (st.multi || []).join(",");
     if (!force && edbar._key === key) return;
     edbar._key = key; akGfxEdBar(edbar, X);
   }
@@ -36748,10 +36749,18 @@ function viewGfx() {
       if (canPan()) { drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false, unsel: true }; try { cv.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); return; }
       if (st.sel) { st.sel = ""; paint(); refill("parts"); } return;
     }
-    var E = D.edit[hit.id] = D.edit[hit.id] || {}, now = Date.now(), twice = lastTap.id === hit.id && now - lastTap.t < 400;
+    if (st.multiMode) {
+      st.multi = st.multi || []; st.sel = "";
+      if (hit.type === "gborder" || hit.type === "govl") return;
+      if (st.multi.indexOf(hit.id) < 0) { st.multi.push(hit.id); paint(); refill("parts", true); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); e.preventDefault(); return; }
+      var E2 = D.edit[hit.id] = D.edit[hit.id] || {};
+      drag = { id: hit.id, x: p.x, y: p.y, dx: E2.dx || 0, dy: E2.dy || 0, moved: false, multi: true, grp: st.multi.map(function (g) { var Eg = D.edit[g] || {}; return { id: g, dx: Eg.dx || 0, dy: Eg.dy || 0 }; }) };
+      try { cv.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); return;
+    }
+    var E = D.edit[hit.id] = D.edit[hit.id] || {}, wasSel = st.sel === hit.id, now = Date.now(), twice = lastTap.id === hit.id && now - lastTap.t < 400;
     lastTap = { id: hit.id, t: now };
-    st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false, twice: twice, box: akLayerBox(hit, st.P) };
-    if (hit.type === "gborder" || hit.type === "govl") { drag = null; setTimeout(paint, 30); } /* the border and overlays are only picked, never dragged */
+    st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false, twice: twice, box: akLayerBox(hit, st.P), wasSel: wasSel, bg: hit.type === "gbg" };
+    if (hit.type === "gborder" || hit.type === "govl") { drag = null; if (wasSel) { st.sel = ""; refill("parts"); } setTimeout(paint, 30); } /* the border and overlays are only picked, never dragged */
     try { cv.setPointerCapture(e.pointerId); } catch (er) {}
     e.preventDefault(); paint();
   });
@@ -36795,7 +36804,7 @@ function viewGfx() {
       var L = base.layers.filter(function (l) { return l.id === drag.id; })[0];
       if (L) { var b = akLayerBox(L, base), mid = b.x + b.w / 2 + nx - base.W / 2; if (Math.abs(mid) < base.W * 0.012) nx -= mid; }
     }
-    if (Math.abs(nx - (E.dx || 0)) + Math.abs(ny - (E.dy || 0)) > 0.5) { drag.moved = true; E.dx = Math.round(nx); E.dy = Math.round(ny); paint(); }
+    if (Math.abs(nx - (E.dx || 0)) + Math.abs(ny - (E.dy || 0)) > 0.5) { drag.moved = true; E.dx = Math.round(nx); E.dy = Math.round(ny); if (drag.grp) drag.grp.forEach(function (g) { var Eg = D.edit[g.id] = D.edit[g.id] || {}; Eg.dx = Math.round(g.dx + nx - drag.dx); Eg.dy = Math.round(g.dy + ny - drag.dy); }); paint(); }
   });
   function endDrag(e) {
     if (e && e.pointerId != null) delete ptrs[e.pointerId];
@@ -36803,7 +36812,9 @@ function viewGfx() {
     if (!drag) return;
     if (drag.kind === "pan") { var un = !drag.moved && drag.unsel; drag = null; if (un && st.sel) { st.sel = ""; paint(); } return; }
     if (drag.kind === "corner" || drag.kind === "side") { drag = null; save(); paint(); return; }
-    var moved = drag.moved, twice = drag.twice && !moved, id = drag.id; drag = null; st.guides = [];
+    var moved = drag.moved, twice = drag.twice && !moved, id = drag.id, unBg = !moved && drag.wasSel && drag.bg, drag0 = drag; drag = null; st.guides = [];
+    if (!moved && drag0.multi) { var mi = st.multi.indexOf(drag0.id); if (mi >= 0) st.multi.splice(mi, 1); paint(); refill("parts", true); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); return; }
+    if (unBg) { st.sel = ""; paint(); refill("parts", true); return; }
     if (moved) save(); else paint();
     if (twice && typeof akGfxWordsAsk === "function" && st.P) {
       var L = st.P.layers.filter(function (l) { return l.id === id; })[0], fr = typeof akGfxFreeOf === "function" ? akGfxFreeOf(D, id) : null;
@@ -47041,7 +47052,7 @@ akGfxPopSync = function (wrap, cv, X, busy) {
       akGfxEdBar(tmp, X);
       /* the part bar's own buttons (akGfxEdBar): same jobs */
       [].slice.call(tmp.querySelectorAll("button")).forEach(function (x) {
-        if (x.closest(".chips") || !/Words|Color|Duplicate|Lock|Unlock|Effects|Reshape|Flip/.test(x.textContent)) return;
+        if (x.closest(".chips") || !/Words|Color|Duplicate|Lock|Unlock|Effects|Reshape|Flip|Select/.test(x.textContent)) return;
         x.className = (x.className + " akg-popb akg-popt").replace(/\bsm\b/, ""); more.appendChild(x);
       });
       if (/^(gfree|gpic|gphoto)$/.test(L.type)) more.appendChild(h("button", { class: "akg-popb akg-popt", onClick: function () { X.cat("pics"); toast("Tap a picture to put it in its place."); } }, "🔁 Replace"));
@@ -52227,8 +52238,17 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7s";
+AK_VERSION = "18.7t";
 AK_WHATS_NEW = [
+  "🔳 The QR codes library now sits right under My links page at the top of the Graphics tab (open by default), so it is easy to find.",
+  "🔗 My links page is now at the top of the Graphics tab. Choose what people see after scanning your card QR code: heading, bio, which links show (website, social, booking, shows, tips) and your own extra links. Also reachable from 💼 On the card › All my links.",
+  "💼 Things you add to a business card (logo, pictures, words, shapes) now stay on the side you added them to. Front and back no longer share them.",
+  "📇 Business card: choose how the contact lines sit. In 💼 On the card › How the lines are laid out: Stacked, Close together, Run-on with • dots, or Two columns.",
+  "🎉 Cards and signs: optional “What I'm available for” lines (weddings, private parties, corporate events…). In 💼 On the card (or 🪧 On the sign), tick the ones you want and change the words if you like.",
+  "🔒 Locked parts are now left alone when you 🎲 randomize. 🎲 ▾ › “Kept: locked parts” switches it.",
+  "🏷 Cards and signs: say what each line is. In 💼 On the card, “Show what each line is”: Nothing extra, Words, Icons (small Instagram, YouTube, website, email, phone… symbols) or both.",
+  "☑ Graphics: a ☑ Select button under the picture. Deselect, or Select several parts: tap to add, drag one to move them all, make them smaller/bigger, see-through, give them an effect look, lock or hide. Tapping the selected background now deselects it.",
+  "💼 Business cards: leave off what you don't want (say Bandcamp). In 💼 On the card, untick it and it stays off every card, old and new (Remember my choices for every business card; ↺ Forget my card choices brings the standard ones back).",
   "🔍 Bigger picture in every Graphics screen: drag the little bar under the picture further down and the picture zooms in to fill the taller window (slide sideways to look around); drag it back up and it gets smaller. ⚙ beside the bar: keep my zoom (the window just slides over the picture), pinch zoom on or off, show the whole picture. You can now also pinch out past the whole picture.",
   "✨ Effects, rebuilt: stack up to 4 effects on a layer (vignette, glow, blur, pixelate, grain, brightness, contrast, color strength, color shift, black and white, sepia, color wash, negative). Each has its strength plus Where it works (everywhere, oval, circle, rectangle, rounded, diamond, a band, or an edge), inside or outside the shape, shape size (how far it reaches), edge softness, move and turn. They work on that layer and everything under it, not the layers above. ▲▼ reorder, ● turn one off.",
   "✨ Effects open in a window over the picture (drag its title, ▾ folds it, ⇲ Dock puts it in the panel, ⧉ brings the window back). The top box always says which layer you are editing, with a Change layer list. Every section folds.",
@@ -53531,6 +53551,7 @@ if (typeof AK_HELP_WHERE !== "undefined") [
   { t: "Organize pictures: albums, select many, add many", a: "Graphics tab › My pictures: ＋ Add pictures (pick many), 📷 Take a photo, search, album chips (Albums ▾ makes, renames and deletes your own albums), ☑ Select to move or take out several at once.", k: "albums organize pictures select move delete import many photos", go: function () { go("graphics"); } }
 ].forEach(function (e) { AK_HELP_WHERE.push(e); });
 
+var AKSG_PROMO = ["Available for weddings", "Available for private parties", "Corporate events and receptions", "Restaurants, wineries and venues", "Birthdays and anniversaries", "Live music for your event", "Now booking"];
 /* ak_v18m.js - 18.7l: Signs (was "Tip sign") and Business cards
    - kind "tip" is now called Sign: 12 layouts built like the flyer layouts (AKG_SIGNS), the old three (QR codes, Jar label, Big words) stay.
    - kind "card" is a Business card: 9 layouts (AKG_CARDS) for a card lying down, the same words standing up.
@@ -53586,13 +53607,19 @@ function akSgItems(D) {
   if (a.genres) out.push({ id: "genres", grp: "info", label: "Music", h: a.genres, url: "", qr: false });
   if (a.home) out.push({ id: "home", grp: "info", label: "Based in", h: a.home, url: "", qr: false });
   if (a.booking) out.push({ id: "booking", grp: "info", label: "Bookings", h: a.booking, url: "", qr: false });
+  AKSG_PROMO.forEach(function (t, i) { out.push({ id: "pr" + i, grp: "promo", label: "", h: t, url: "", qr: false }); });
   var vc = akSgVcard(); if (vc) out.push({ id: "vcard", grp: "vcard", label: "Save my contact", h: "", url: vc, qr: true });
   (sg.extra || []).forEach(function (x, i) { out.push({ id: "x" + i, grp: "extra", label: x.label || "", h: x.h || "", url: x.url || "", qr: !!x.url && !!x.qr, n: i, extra: true }); });
   return out;
 }
 function akSgGet(D) { var s = D.sign; if (!s || typeof s !== "object") s = D.sign = {}; if (!s.on) s.on = {}; if (!s.h) s.h = {}; if (!s.qr) s.qr = {}; if (!Array.isArray(s.extra)) s.extra = []; return s; }
+/* 18.7t: what you leave off the business cards is remembered for every card (settings().cardPrefs: key -> true/false) */
+function akSgPrefKey(it) { return it.grp + ":" + String(it.label || it.id || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+function akSgPrefs() { var s = settings(); if (!s.cardPrefs || typeof s.cardPrefs !== "object") s.cardPrefs = {}; return s.cardPrefs; }
+function akSgRemember() { var s = settings(); s.gfxHub = s.gfxHub || { open: {} }; return s.gfxHub.cardForget !== true; }
 function akSgDefOn(it, D, spec) {
   var card = D.kind === "card", want = (spec && spec.want) || [], skip = (spec && spec.skip) || [];
+  if (card && it.grp !== "vcard") { var pf = akSgPrefs()[akSgPrefKey(it)]; if (pf != null) return !!pf; }
   if (want.indexOf(it.grp) >= 0 || want.indexOf(it.id) >= 0) return true;
   if (skip.indexOf(it.grp) >= 0) return false;
   if (it.grp === "tip") return !card && it.n < 3 && !it.legacyOff;
@@ -53601,11 +53628,11 @@ function akSgDefOn(it, D, spec) {
   if (it.grp === "social") return it.n < 3;
   if (it.grp === "web") return true;
   if (it.grp === "contact") return card;
-  if (it.grp === "info") return false;
+  if (it.grp === "info" || it.grp === "promo") return false;
   if (it.grp === "vcard") return false;
   return true;
 }
-var AKSG_ORDER = { sign: ["links", "web", "social", "contact", "tip", "req", "info", "vcard", "extra"], card: ["links", "contact", "web", "social", "info", "tip", "req", "vcard", "extra"] };
+var AKSG_ORDER = { sign: ["links", "web", "social", "contact", "tip", "req", "info", "promo", "vcard", "extra"], card: ["links", "contact", "web", "social", "info", "promo", "tip", "req", "vcard", "extra"] };
 function akSignInfo(D) {
   var sg = akSgGet(D), spec = akGfxFlySpec(D.layout), items = akSgItems(D), ord = AKSG_ORDER[D.kind === "card" ? "card" : "sign"];
   items.forEach(function (it) {
@@ -53615,7 +53642,7 @@ function akSignInfo(D) {
     if (it.qr && !it.url) it.qr = false;
   });
   var S = { items: items, by: {}, qrs: [], lines: [] };
-  ["tip", "req", "links", "social", "web", "contact", "info", "vcard", "extra"].forEach(function (g) { S.by[g] = items.filter(function (it) { return it.grp === g && it.on; }); });
+  ["tip", "req", "links", "social", "web", "contact", "info", "promo", "vcard", "extra"].forEach(function (g) { S.by[g] = items.filter(function (it) { return it.grp === g && it.on; }); });
   ord.forEach(function (g) { S.by[g].forEach(function (it) { (it.qr ? S.qrs : S.lines).push(it); }); });
   S.qrs.sort(function (a, b) { return (a.grp === "vcard") - (b.grp === "vcard"); });
   return S;
@@ -53638,14 +53665,23 @@ function akSgQRs(B, list, x, y, w, h, o) {
 /* label small above, handle big below: a list of links */
 function akSgList(B, list, x, y, w, pitch, o) {
   o = o || {}; var al = o.align || "center", ax = al === "left" ? x : al === "right" ? x + w : x + w / 2, k = pitch, card = AKGJ.D.kind === "card", m = B.m;
-  var compact = card || o.nolabel || pitch < 9 * m;
+  var compact = card || o.nolabel || pitch < 9 * m, lm = akSgLblMode(AKGJ.D);
   list.forEach(function (it, i) {
     var yy = y + i * pitch;
     if (compact || !it.label) {
-      var txt = it.h || it.label, bare = /[@.\/]/.test(it.h || "");
+      var txt = it.h || it.label, bare = /[@.\/]/.test(it.h || ""), fs = Math.min(k * (card ? 0.46 : 0.5), (card ? 6.4 : 6) * m);
       if (!compact || !bare) txt = (it.label && it.h && !(it.grp === "info" && !it.label) ? it.label + ": " : "") + (it.h || "");
+      else if (compact && it.h && it.label && (lm === "words" || lm === "both") && it.grp !== "info") txt = it.label + "  " + it.h;
       if (!it.h) txt = it.label;
-      B.T((o.p || "") + "ln" + (i + 1), it.label || "Line", txt, ax, yy + pitch / 2, Math.min(k * (card ? 0.46 : 0.5), (card ? 6.4 : 6) * m), { align: al, maxW: w, fit: 1, weight: 700, color: o.color || B.C.ink, role: "rest" });
+      var ik = compact && (lm === "icon" || lm === "both") ? akSgIconKind(it) : "", tx = ax, tal = al, tw = w;
+      if (ik) {
+        var is = fs * 1.2, gap = is * 0.35, est = Math.min(w - is - gap, String(txt).length * fs * 0.56), ix;
+        if (al === "left") { ix = ax; tx = ax + is + gap; tw = w - is - gap; }
+        else if (al === "right") { ix = ax - est - gap - is; tx = ax; tw = w - is - gap; }
+        else { var tot = is + gap + est; ix = ax - tot / 2; tx = ix + is + gap; tal = "left"; tw = est * 1.08 + 1; }
+        B.lay.push({ id: (o.p || "") + "ic" + (i + 1), name: "Icon: " + (it.label || ik), type: "gicon", kind: ik, color: o.color || B.C.ink, x: ix, y: yy + pitch / 2 - is / 2, w: is, h: is });
+      }
+      B.T((o.p || "") + "ln" + (i + 1), it.label || "Line", txt, tx, yy + pitch / 2, fs, { align: tal, maxW: tw, fit: 1, weight: 700, color: o.color || B.C.ink, role: "rest" });
     } else {
       B.TS((o.p || "") + "lnl" + (i + 1), "Label: " + it.label, String(it.label).toUpperCase(), ax, yy + k * 0.2, k * 0.2, { align: al, maxW: w, fit: 1, weight: 800, spacing: k * 0.03, color: o.lc || B.C.a1 });
       B.T((o.p || "") + "ln" + (i + 1), it.label, it.h, ax, yy + k * 0.6, k * 0.38, { align: al, maxW: w, fit: 1, weight: 700, color: o.color || B.C.ink, role: "rest" });
@@ -54040,7 +54076,7 @@ AKG_SIGNS.forEach(function (f) { f.words = f.words || [["kicker", "Small heading
 
 /* ---------------------------------------------------------------- the "what's on it" panel */
 var AKSG_TOPS = [];
-var AKSG_GROUPS = [["tip", "💵 Tip links"], ["req", "🎶 Song requests"], ["links", "🔗 All my links (links page)"], ["web", "🌐 Website"], ["social", "📣 Social media and links"], ["contact", "✉ Contact"], ["info", "ℹ About me"], ["vcard", "📇 Contact QR"], ["extra", "✎ My own lines"]];
+var AKSG_GROUPS = [["tip", "💵 Tip links"], ["req", "🎶 Song requests"], ["links", "🔗 All my links (links page)"], ["web", "🌐 Website"], ["social", "📣 Social media and links"], ["contact", "✉ Contact"], ["info", "ℹ About me"], ["promo", "🎉 What I'm available for"], ["vcard", "📇 Contact QR"], ["extra", "✎ My own lines"]];
 function akGfxSignPanel(d, D, ch) {
   var card = D.kind === "card", sg = akSgGet(D);
   function draw() {
@@ -54051,15 +54087,22 @@ function akGfxSignPanel(d, D, ch) {
     d.appendChild(h("div", { class: "chips akg-chips", role: "group", "aria-label": "Quick choices" }, pre.map(function (p) {
       return h("button", { class: "chip", onClick: function () { S.items.forEach(function (it) { sg.on[it.id] = p[1] ? !!p[1][it.grp] : true; if (it.grp === "social" && p[1] && p[1].social) sg.on[it.id] = true; }); save(); draw(); ch(true); } }, p[0]);
     })));
+    if (card) d.appendChild(h("div", { class: "akg-sgrp" },
+      h("label", { class: "chk" }, h("input", { type: "checkbox", checked: akSgRemember(), onChange: function () { var c = settings(); c.gfxHub = c.gfxHub || { open: {} }; if (this.checked) delete c.gfxHub.cardForget; else c.gfxHub.cardForget = true; save(); } }), "Remember my choices for every business card"),
+      h("p", { class: "hint", style: "margin:2px 0 0" }, "Untick something (say Bandcamp) and it stays off every card, old and new. Tick it again to bring it back."),
+      Object.keys(akSgPrefs()).length ? h("button", { class: "sm", onClick: function () { settings().cardPrefs = {}; sg.on = {}; save(); draw(); ch(true); toast("Cards use the standard choices again."); } }, "↺ Forget my card choices") : null));
+    d.appendChild(h("div", { class: "fld" }, "Show what each line is", akSgChips([["none", "Nothing extra"], ["words", "Words"], ["icon", "Icons"], ["both", "Icons and words"]], akSgLblMode(D), function (v) { sg.lbl = v; save(); ch(true); draw(); })));
+    if (card) d.appendChild(h("div", { class: "fld" }, "How the lines are laid out", akSgChips([["", "Stacked"], ["tight", "Close together"], ["dots", "Run-on with • dots"], ["cols", "Two columns"]], sg.lay || "", function (v) { if (v) sg.lay = v; else delete sg.lay; save(); ch(true); draw(); })));
     var any = false;
     AKSG_GROUPS.forEach(function (gr) {
       var its = S.items.filter(function (it) { return it.grp === gr[0]; });
       if (!its.length) return; any = true;
       var box = h("div", { class: "akg-sgrp" }, h("div", { class: "akg-sub" }, gr[1]));
+      if (gr[0] === "links") box.appendChild(h("button", { class: "sm", onClick: function () { if (typeof akOpenLinksPage === "function") akOpenLinksPage(); } }, "✎ Choose what is on my links page"));
       its.forEach(function (it) {
         var hin = h("input", { type: "text", value: it.h || "", placeholder: it.grp === "vcard" ? "Saves your name, phone, email and links" : "Words to show", "aria-label": "Words for " + (it.label || "this line"), disabled: it.grp === "vcard" || it.grp === "req", onInput: function () { if (this.value.trim()) sg.h[it.id] = this.value.trim(); else delete sg.h[it.id]; if (it.extra) sg.extra[it.n].h = this.value.trim(); save(); ch(); } });
         var row = h("div", { class: "akg-row" + (it.on ? "" : " off") },
-          h("input", { type: "checkbox", checked: it.on, "aria-label": "Put " + (it.label || "this") + " on the " + (card ? "card" : "sign"), onChange: function () { sg.on[it.id] = this.checked; save(); ch(); row.classList.toggle("off", !this.checked); } }),
+          h("input", { type: "checkbox", checked: it.on, "aria-label": "Put " + (it.label || "this") + " on the " + (card ? "card" : "sign"), onChange: function () { sg.on[it.id] = this.checked; if (card && it.grp !== "vcard" && akSgRemember()) { akSgPrefs()[akSgPrefKey(it)] = this.checked; } save(); ch(); row.classList.toggle("off", !this.checked); } }),
           h("div", { class: "grow" }, h("div", { class: "t" }, it.label || "Line"), it.grp === "vcard" || it.grp === "req" ? null : hin),
           it.url && it.grp !== "vcard" && it.grp !== "tip" && it.grp !== "req" || it.grp === "tip" ? h("label", { class: "chk akg-qrchk", title: "Show this as a QR code" }, h("input", { type: "checkbox", checked: it.qr, onChange: function () { sg.qr[it.id] = this.checked; if (it.extra) sg.extra[it.n].qr = this.checked; save(); ch(true); draw(); } }), "QR") : null,
           it.extra ? h("button", { class: "icon sm", "aria-label": "Remove this line", onClick: function () { sg.extra.splice(it.n, 1); sg.on = {}; save(); draw(); ch(true); } }, "✕") : null);
@@ -54976,6 +55019,257 @@ akCss("akfx",
 
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Effects: up to 4 per layer (vignette, blur, color…), shape, size, softness, inside or outside", a: "Graphics studio › ✨ Effects (opens a window; ⇲ Dock puts it in the panel, ⧉ Pop out brings the window back). The top box says which layer you are editing; Change layer or tap a part on the picture. ＋ Add an effect (up to 4): Strength, Where it works (everywhere, oval, circle, rectangle, band, an edge…), outside the shape, Shape size, Edge softness, move and turn. “This layer + everything under it” or “This part only”. ▲▼ change the order, ● turns one off. Also in Selected › ✨ Effects." });
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Bigger picture / zoom in the Graphics studio (slider under the picture, pinch)", a: "Graphics studio: drag the little bar under the picture further down: the picture zooms in to fill the window (drag an empty spot to look around). Drag it up to make it smaller. ⚙ beside the bar: keep my zoom, pinch zoom on or off, show the whole picture, picture size back to normal. Pinch with two fingers, or − and +." });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Choose what goes on the business card (leave off Bandcamp, etc.)", a: "Graphics studio › 💼 On the card: tick or untick each line (website, each social link, email, phone, tagline…). Unticked items stay off every business card (Remember my choices for every business card). ↺ Forget my card choices undoes it. ＋ Add my own line adds one." });
+
+/* ================= 18.7t: what each line is (icons and words) on business cards and signs =================
+   D.sign.lbl = none | words | icon | both  (default: icon on cards, nothing extra on signs).
+   Icons are simple drawn symbols (not the official logos) as a "gicon" layer { kind, color, x, y, w, h } in the text color. */
+function akSgLblMode(D) { var sg = akSgGet(D); return sg.lbl || (D.kind === "card" ? "icon" : "none"); }
+var AKIC_MAP = [[/instagram\.com|instagr\.am/i, "instagram"], [/facebook\.com|fb\.com|fb\.me/i, "facebook"], [/youtube\.com|youtu\.be/i, "youtube"], [/tiktok\.com/i, "tiktok"], [/(^|[/.])(x|twitter)\.com/i, "x"], [/spotify\.com/i, "spotify"],
+  [/bandcamp\.com/i, "bandcamp"], [/soundcloud\.com/i, "soundcloud"], [/music\.apple\.com|itunes\.apple/i, "applemusic"], [/venmo\.com/i, "venmo"], [/cash\.app/i, "cashapp"], [/paypal\./i, "paypal"], [/linkedin\.com/i, "linkedin"], [/threads\.net/i, "threads"]];
+var AKIC_WORDS = [[/instagram|^ig$/i, "instagram"], [/facebook|^fb$/i, "facebook"], [/youtube|^yt$/i, "youtube"], [/tiktok/i, "tiktok"], [/^(x|twitter)$/i, "x"], [/spotify/i, "spotify"], [/bandcamp/i, "bandcamp"], [/soundcloud/i, "soundcloud"], [/apple music/i, "applemusic"], [/venmo/i, "venmo"], [/cash ?app/i, "cashapp"], [/paypal/i, "paypal"], [/linkedin/i, "linkedin"], [/threads/i, "threads"]];
+function akSgIconKind(it) {
+  if (!it || it.grp === "info" || it.grp === "extra" && !it.url) return "";
+  if (it.grp === "contact") return it.id === "phone" ? "phone" : "mail";
+  if (it.grp === "web") return "web";
+  var u = String(it.url || ""), l = String(it.label || "").trim(), i;
+  for (i = 0; i < AKIC_MAP.length; i++) if (AKIC_MAP[i][0].test(u)) return AKIC_MAP[i][1];
+  for (i = 0; i < AKIC_WORDS.length; i++) if (AKIC_WORDS[i][0].test(l)) return AKIC_WORDS[i][1];
+  if (/^mailto:/i.test(u)) return "mail"; if (/^tel:/i.test(u)) return "phone";
+  if (it.grp === "tip") return "coin";
+  return it.url ? "link" : "";
+}
+var AKIC_KINDS = ["web", "mail", "phone", "instagram", "facebook", "youtube", "tiktok", "x", "spotify", "bandcamp", "soundcloud", "applemusic", "venmo", "cashapp", "paypal", "linkedin", "threads", "coin", "link"];
+/* draws into a 100 x 100 box on its own canvas, so the cut-outs are see-through */
+function akSgIconPaint(c, kind, col) {
+  c.fillStyle = col; c.strokeStyle = col; c.lineCap = "round"; c.lineJoin = "round";
+  function rr(x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+  function cut(fn) { c.save(); c.globalCompositeOperation = "destination-out"; c.fillStyle = "#000"; c.strokeStyle = "#000"; fn(); c.restore(); }
+  function glyph(t, size, y) { cut(function () { c.font = "800 " + size + "px Arial, Helvetica, sans-serif"; c.textAlign = "center"; c.textBaseline = "alphabetic"; c.fillText(t, 50, y); }); }
+  function disc() { c.beginPath(); c.arc(50, 50, 46, 0, Math.PI * 2); c.fill(); }
+  switch (kind) {
+    case "web": c.lineWidth = 7; c.beginPath(); c.arc(50, 50, 41, 0, 7); c.stroke(); c.beginPath(); c.ellipse(50, 50, 17, 41, 0, 0, 7); c.stroke(); c.beginPath(); c.moveTo(9, 50); c.lineTo(91, 50); c.stroke(); c.beginPath(); c.moveTo(16, 29); c.lineTo(84, 29); c.moveTo(16, 71); c.lineTo(84, 71); c.stroke(); break;
+    case "mail": rr(6, 20, 88, 60, 9); c.fill(); cut(function () { c.lineWidth = 7; c.beginPath(); c.moveTo(14, 29); c.lineTo(50, 56); c.lineTo(86, 29); c.stroke(); }); break;
+    case "phone": rr(26, 6, 48, 88, 11); c.fill(); cut(function () { rr(33, 17, 34, 54, 3); c.fill(); c.beginPath(); c.arc(50, 82, 4.5, 0, 7); c.fill(); }); break;
+    case "instagram": c.lineWidth = 8; rr(11, 11, 78, 78, 24); c.stroke(); c.beginPath(); c.arc(50, 50, 19, 0, 7); c.stroke(); c.beginPath(); c.arc(73, 27, 5.5, 0, 7); c.fill(); break;
+    case "facebook": disc(); glyph("f", 92, 94); break;
+    case "youtube": rr(5, 22, 90, 56, 17); c.fill(); cut(function () { c.beginPath(); c.moveTo(40, 36); c.lineTo(40, 64); c.lineTo(66, 50); c.closePath(); c.fill(); }); break;
+    case "tiktok": c.lineWidth = 11; c.beginPath(); c.moveTo(56, 14); c.lineTo(56, 64); c.stroke(); c.beginPath(); c.arc(42, 68, 15, 0, 7); c.fill(); c.lineWidth = 10; c.beginPath(); c.moveTo(56, 14); c.quadraticCurveTo(60, 36, 82, 38); c.stroke(); break;
+    case "x": c.lineWidth = 11; c.beginPath(); c.moveTo(18, 14); c.lineTo(82, 86); c.moveTo(82, 14); c.lineTo(18, 86); c.stroke(); break;
+    case "spotify": disc(); cut(function () { c.lineWidth = 8; c.beginPath(); c.moveTo(22, 36); c.quadraticCurveTo(50, 26, 78, 40); c.stroke(); c.lineWidth = 7; c.beginPath(); c.moveTo(27, 53); c.quadraticCurveTo(50, 45, 73, 56); c.stroke(); c.lineWidth = 6; c.beginPath(); c.moveTo(32, 68); c.quadraticCurveTo(50, 62, 68, 70); c.stroke(); }); break;
+    case "bandcamp": c.beginPath(); c.moveTo(4, 72); c.lineTo(36, 28); c.lineTo(96, 28); c.lineTo(64, 72); c.closePath(); c.fill(); break;
+    case "soundcloud": c.beginPath(); c.arc(66, 50, 24, 0, 7); c.fill(); c.beginPath(); c.arc(44, 58, 19, 0, 7); c.fill(); rr(26, 56, 52, 22, 10); c.fill(); [[8, 54, 14], [16, 46, 28], [24, 42, 34]].forEach(function (b) { rr(b[0], b[1], 5, b[2], 2.5); c.fill(); }); break;
+    case "applemusic": rr(6, 6, 88, 88, 22); c.fill(); cut(function () { c.beginPath(); c.ellipse(38, 69, 11, 8.5, -0.35, 0, 7); c.fill(); c.fillRect(46, 27, 6, 42); c.beginPath(); c.moveTo(46, 27); c.lineTo(72, 22); c.lineTo(72, 34); c.lineTo(46, 40); c.closePath(); c.fill(); }); break;
+    case "venmo": disc(); glyph("V", 66, 70); break;
+    case "cashapp": rr(8, 8, 84, 84, 20); c.fill(); glyph("$", 70, 72); break;
+    case "paypal": disc(); glyph("P", 64, 70); break;
+    case "linkedin": rr(8, 8, 84, 84, 14); c.fill(); glyph("in", 50, 68); break;
+    case "threads": disc(); glyph("@", 66, 70); break;
+    case "coin": disc(); glyph("$", 66, 70); break;
+    default: c.lineWidth = 9; rr(6, 32, 50, 36, 18); c.stroke(); rr(44, 32, 50, 36, 18); c.stroke(); break;
+  }
+}
+function akSgIconDraw(ctx, l) {
+  var T = ctx.getTransform(), sc = Math.max(0.2, Math.hypot(T.a, T.b) || 1), px = Math.max(24, Math.min(256, Math.ceil(Math.max(l.w, l.h) * sc * 1.2)));
+  var cv = document.createElement("canvas"); cv.width = px; cv.height = px; var c = cv.getContext("2d"); c.scale(px / 100, px / 100);
+  akSgIconPaint(c, l.kind, l.color || "#fff");
+  ctx.save(); if (l.op != null && l.op < 1) ctx.globalAlpha *= l.op; ctx.drawImage(cv, l.x, l.y, l.w, l.h); ctx.restore();
+}
+AKG_TYPES.gicon = 1; AKG_TYPES2.gicon = 1;
+(function () {
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) { if (l && l.type === "gicon") return akSgIconDraw(ctx, l); return dl.apply(this, arguments); };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Say what each line on the card or sign is (Instagram, icons, words)", a: "Graphics studio › 💼 On the card (or 🪧 On the sign) › Show what each line is: Nothing extra, Words (Instagram @name), Icons (small symbols for Instagram, YouTube, website, email, phone, Spotify, Bandcamp, Venmo…) or Icons and words." });
+
+/* ================= 18.7u: deselect, and select several parts at once =================
+   st.multiMode (tap parts to add or remove them), st.multi = ids. Moving one moves them all; the bar changes size, see-through,
+   effects looks, hide and lock for all of them together. */
+function akGfxSelMenu(anchor) {
+  var st = akGfxState(), X = st.X, P = st.P;
+  menu(anchor, [
+    { label: "Deselect", disabled: !st.sel && !(st.multi && st.multi.length), onClick: function () { st.sel = ""; st.multi = []; X.paint(); X.refill("parts", true); akGfxEdRefresh(); } },
+    { label: st.multiMode ? "Stop selecting several" : "Select several parts…", onClick: function () { if (st.multiMode) { st.multiMode = false; st.multi = []; } else { st.multiMode = true; st.multi = st.sel ? [st.sel] : []; st.sel = ""; if (X.cat) X.cat("sel"); } X.paint(); akGfxEdRefresh(); } },
+    { label: "Select every part", onClick: function () { st.multiMode = true; st.multi = (P ? P.layers : []).filter(function (l) { return !l.fixed && !l.nohit && l.type !== "gbg" && l.type !== "gborder" && l.type !== "govl"; }).map(function (l) { return l.id; }); st.sel = ""; if (X.cat) X.cat("sel"); X.paint(); akGfxEdRefresh(); } }]);
+}
+(function () {
+  var t0 = akGfxTools;
+  akGfxTools = function (bar, X) {
+    t0.apply(this, arguments); var st = akGfxState();
+    bar.appendChild(h("button", { class: "sm", "aria-pressed": st.multiMode ? "true" : "false", title: "Deselect, or pick several parts", onClick: function () { akGfxSelMenu(this); } }, st.multiMode ? "☑ Several" : "☑ Select"));
+    var nx = bar.nextSibling; if (nx && nx.classList && nx.classList.contains("akg-multibar")) nx.parentNode.removeChild(nx);
+    if (st.multiMode && bar.parentNode) { var mb = h("div", { class: "akg-edbar akg-multibar" }); akGfxEdBar(mb, X); bar.parentNode.insertBefore(mb, bar.nextSibling); }
+  };
+})();
+function akGfxEdRefresh() { try { var st = akGfxState(); if (st.edSync) st.edSync(); } catch (e) {} }
+(function () {
+  var ob = akGfxEdBar;
+  akGfxEdBar = function (bar, X) {
+    var st = akGfxState(), D = X.D, P = st.P;
+    if (!st.multiMode) {
+      ob.apply(this, arguments);
+      var rows = bar.querySelectorAll(".row"), first = rows[0];
+      var sb = h("button", { class: "sm", title: "Deselect, or pick several parts", onClick: function () { akGfxSelMenu(this); } }, "☑ Select");
+      if (first) first.appendChild(sb);
+      return;
+    }
+    bar.textContent = "";
+    var ids = (st.multi || []).filter(function (id) { return P && P.layers.some(function (l) { return l.id === id; }); }); st.multi = ids;
+    function E(id) { return D.edit[id] = D.edit[id] || {}; }
+    function each(fn) { ids.forEach(function (id) { fn(E(id), id); }); X.ch(); }
+    bar.appendChild(h("div", { class: "row" }, h("span", { class: "akg-edname grow" }, "☑ " + ids.length + " selected" + (ids.length ? "" : " — tap parts on the picture")),
+      h("button", { class: "sm", onClick: function () { st.multi = []; X.paint(); akGfxEdRefresh(); } }, "Deselect all"),
+      h("button", { class: "sm", onClick: function () { st.multiMode = false; st.multi = []; X.paint(); akGfxEdRefresh(); } }, "✓ Done")));
+    if (!ids.length) return;
+    bar.appendChild(h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.k = Math.max(0.1, Math.round((Number(e.k) || 1) * 0.9 * 1000) / 1000); }); } }, "➖ Smaller"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.k = Math.min(8, Math.round((Number(e.k) || 1) * 1.1 * 1000) / 1000); }); } }, "➕ Bigger"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.dx = (e.dx || 0) - 10; }); } }, "◀"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.dx = (e.dx || 0) + 10; }); } }, "▶"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.dy = (e.dy || 0) - 10; }); } }, "▲"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.dy = (e.dy || 0) + 10; }); } }, "▼")));
+    bar.appendChild(h("div", { class: "row" },
+      X.slider("See-through", 0, 0, 95, 5, function (v) { ids.forEach(function (id) { var e = E(id); if (v) e.op = 1 - v / 100; else delete e.op; }); }, function (v) { return v ? v + "%" : "off"; }, true)));
+    var looks = typeof AKG_FX_LOOKS !== "undefined" ? AKG_FX_LOOKS : [];
+    if (looks.length) bar.appendChild(h("div", { class: "row" }, X.chips(looks.map(function (x) { return [x[0], x[1]]; }), "", function (v) {
+      var look = looks.filter(function (x) { return x[0] === v; })[0]; if (!look) return;
+      ids.forEach(function (id) { var e = E(id); delete e.fxs; e.fxo = JSON.parse(JSON.stringify(look[2])); if (!Object.keys(e.fxo).length) delete e.fxo; if (typeof akFxMigrate === "function") akFxMigrate(D, id); });
+      X.ch(true);
+    }, "Effect look for all")));
+    bar.appendChild(h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.lock = true; }); } }, "🔒 Lock"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { delete e.lock; }); } }, "🔓 Unlock"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { e.hide = true; }); st.multi = []; X.ch(true); } }, "👁 Hide"),
+      h("button", { class: "sm", onClick: function () { each(function (e) { delete e.dx; delete e.dy; delete e.k; delete e.rot; }); } }, "↺ Put back")));
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Deselect a part, or select several parts at once", a: "Graphics studio › under the picture › ☑ Select: Deselect, Select several parts (tap parts to add them; drag one to move them all; smaller, bigger, nudge, see-through, effect looks, lock, hide), Select every part. Tapping the selected background also deselects it." });
+
+/* ---- 🔒 locked parts are left alone by 🎲 (switch in the 🎲 ▾ menu: "Locked parts") */
+function akGfxKeepLocked() { var lk = akGfxLocks(); return lk.lockedParts !== false; }
+(function () {
+  var r0 = akGfxRoll;
+  akGfxRoll = function (D, only) {
+    var keep = {}, on = akGfxKeepLocked();
+    if (on) Object.keys(D.edit || {}).forEach(function (id) { if (D.edit[id] && D.edit[id].lock) keep[id] = JSON.parse(JSON.stringify(D.edit[id])); });
+    var r = r0.apply(this, arguments);
+    Object.keys(keep).forEach(function (id) { D.edit = D.edit || {}; D.edit[id] = keep[id]; });
+    return r;
+  };
+  var m0 = akGfxRollMenu;
+  akGfxRollMenu = function (anchor) {
+    var X = akGfxState().X; if (!X || !akGfxDiceKind(X.D.kind)) return;
+    var hit = false, orig = menu;
+    menu = function (a, items) {
+      menu = orig; if (!hit) { hit = true; items = items.concat([{ label: (akGfxKeepLocked() ? "🔒 Kept: " : "🎲 Changes: ") + "locked parts", onClick: function () { var lk = akGfxLocks(); lk.lockedParts = !akGfxKeepLocked(); save(); setTimeout(function () { akGfxRollMenu(anchor); }, 0); } }]); }
+      return orig.call(this, a, items);
+    };
+    try { m0.call(this, anchor); } finally { menu = orig; }
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Keep locked parts from randomizing", a: "🔒 Lock a part (under the picture), then 🎲 leaves it where it is. To let 🎲 change locked parts too: 🎲 ▾ › Kept: locked parts (tap to switch)." });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Put “available for weddings, private parties” on a card or sign", a: "Graphics studio › 💼 On the card (or 🪧 On the sign) › 🎉 What I am available for: tick the lines you want and edit the words. Add your own with ＋ Add a line." });
+
+/* ---- 18.7u: how the contact lines sit on a business card: stacked | tight | dots | cols  (D.sign.lay) */
+(function () {
+  var sl0 = akSgList;
+  akSgList = function (B, list, x, y, w, pitch, o) {
+    var D = AKGJ.D, lay = D && D.kind === "card" && D.sign && D.sign.lay;
+    if (!lay || (o && o._lay) || !list.length) return sl0.apply(this, arguments);
+    o = Object.assign({}, o || {}, { _lay: 1 }); var m = B.m, lm = akSgLblMode(D);
+    if (lay === "tight") return sl0(B, list, x, y, w, pitch * 0.78, o);
+    if (lay === "cols" && list.length > 1) {
+      var half = Math.ceil(list.length / 2), cw = (w - 2 * m) / 2;
+      sl0(B, list.slice(0, half), x, y, cw, pitch, o);
+      return sl0(B, list.slice(half), x + cw + 2 * m, y, cw, pitch, Object.assign({}, o, { p: (o.p || "") + "c2_" }));
+    }
+    if (lay === "dots") {
+      var fs = Math.min(pitch * 0.46, 6.4 * m), per = Math.max(8, Math.floor(w / (fs * 0.56))), lines = [], cur = "";
+      list.forEach(function (it) {
+        var t = (lm === "words" || lm === "both") && it.label && it.grp !== "info" ? it.label + " " + (it.h || "") : (it.h || it.label || "");
+        if (cur && (cur + "  •  " + t).length > per) { lines.push(cur); cur = t; } else cur = cur ? cur + "  •  " + t : t;
+      });
+      if (cur) lines.push(cur);
+      return sl0(B, lines.map(function (t, i) { return { id: "dl" + i, grp: "info", label: "", h: t, url: "", qr: false }; }), x, y, w, pitch, o);
+    }
+    return sl0.apply(this, arguments);
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Business card: how the name, phone, email and links are laid out", a: "Graphics studio › 💼 On the card › How the lines are laid out: Stacked, Close together, Run-on with • dots, or Two columns." });
+
+/* ---- 18.7u: things you add (pictures, words, shapes, overlays) belong to ONE side of a card or a design with a back.
+   Each added item carries side = "front" | "back"; one without is tagged with the side showing when it is first drawn. */
+(function () {
+  var L0 = akGfxLayers;
+  function lists(D) {
+    var out = []; if (Array.isArray(D.free)) out.push(["free", D]); if (Array.isArray(D.ovl)) out.push(["ovl", D]);
+    if (D.deco && Array.isArray(D.deco.shapes)) out.push(["shapes", D.deco]); return out;
+  }
+  akGfxLayers = function (D) {
+    var two = false; try { two = D && typeof akSgHasBack === "function" && akSgHasBack(D) && !(D.kind !== "card" && (D.bstyle || "qr") === "same"); } catch (e) {}
+    if (!two) return L0.apply(this, arguments);
+    var side = D.side === "back" ? "back" : "front", saved = [];
+    lists(D).forEach(function (p) {
+      var arr = p[1][p[0]]; arr.forEach(function (it) { if (it && typeof it === "object" && !it.side) it.side = side; });
+      saved.push([p, arr]); p[1][p[0]] = arr.filter(function (it) { return !it || (it.side || "front") === side; });
+    });
+    try { return L0.apply(this, arguments); }
+    finally { saved.forEach(function (s) { s[0][1][s[0][0]] = s[1]; }); }
+  };
+})();
+
+/* ================= 18.7u: "My links page" card: choose what people see after scanning the links QR code =================
+   settings().linkPage = { bio, custom, title, off: { web, s<i>, book, shows, p<i> : true }, extra: [{ label, url }] } */
+(function () {
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = prof.apply(this, arguments), c = akLinkCfg(); p.lp = p.lp || {};
+    p.lp.title = String(c.title || ""); p.lp.off = Object.assign({}, c.off || {}); p.lp.extra = (c.extra || []).filter(function (x) { return x && x.url; }).map(function (x) { return { label: x.label || "", url: x.url }; });
+    return p;
+  };
+})();
+function akLinksPageCard() {
+  var cfg = settings().gfxHub = settings().gfxHub || { open: {} }, lc = akLinkCfg(), lu = akLinksUrl(), p = {};
+  try { p = akLivePublicProfile(); } catch (e) {}
+  if (!lc.off) lc.off = {}; if (!Array.isArray(lc.extra)) lc.extra = [];
+  function chg(re) { save(); akLinkPublishSoon(); if (re) render(); }
+  var d = h("details", { class: "card akgh-card akqr-lpage", "data-bk": "gh-lpage", open: cfg.open.lpage !== false, onToggle: function () { cfg.open.lpage = d.open; } },
+    h("summary", null, h("b", null, "🔗 My links page: what people see after scanning")));
+  d.appendChild(h("p", { class: "hint" }, lu ? "This is the page your business card QR code opens. Choose what is on it here." : "Turn on Live requests (and sign in, or set the short address) and this page gets its address."));
+  if (lu) d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { window.open(lu, "_blank"); } }, "👁 Open it"), h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText(lu); toast("Link copied."); } catch (e) { toast(lu); } } }, "Copy link")));
+  d.appendChild(h("label", { class: "fld" }, "Heading (optional)", h("input", { type: "text", maxlength: 60, value: lc.title || "", placeholder: "Your name or band", onInput: function () { lc.title = this.value; chg(); } })));
+  d.appendChild(h("label", { class: "fld" }, "Bio", h("select", { onChange: function () { lc.bio = this.value; chg(true); } }, AKQR_BIOS.map(function (b) { return h("option", { value: b[0], selected: lc.bio === b[0] }, b[1]); }))));
+  if (lc.bio === "custom") d.appendChild(h("label", { class: "fld" }, "My own bio", h("textarea", { rows: 4, maxlength: 600, value: lc.custom || "", onInput: function () { lc.custom = this.value; chg(); } })));
+  var rows = [];
+  if (p.website) rows.push(["web", "🌐 Website"]);
+  (p.links || []).forEach(function (l, i) { if (l.url) rows.push(["s" + i, "📣 " + (l.label || "Link")]); });
+  if (p.booking && p.booking.on) rows.push(["book", "📅 Book me"]);
+  if ((p.shows || []).length) rows.push(["shows", "🎤 Upcoming shows"]);
+  (p.pay || []).forEach(function (x, i) { if (x.url) rows.push(["p" + i, "💵 Tip with " + (x.label || x.kind || "a link")]); });
+  d.appendChild(h("div", { class: "akg-sub" }, "Show on the page"));
+  if (!rows.length) d.appendChild(h("p", { class: "hint" }, "Nothing to show yet. Add your website, social links and tip links in Artist info."));
+  rows.forEach(function (r) { d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !lc.off[r[0]], onChange: function () { if (this.checked) delete lc.off[r[0]]; else lc.off[r[0]] = true; chg(); } }), r[1])); });
+  d.appendChild(h("div", { class: "akg-sub" }, "My own extra links"));
+  lc.extra.forEach(function (x, i) {
+    d.appendChild(h("div", { class: "row" }, h("input", { type: "text", value: x.label || "", placeholder: "Name", "aria-label": "Link name", style: "flex:1 1 7em", onInput: function () { x.label = this.value; chg(); } }),
+      h("input", { type: "url", value: x.url || "", placeholder: "https://…", "aria-label": "Link address", style: "flex:2 1 10em", onInput: function () { x.url = this.value.trim(); chg(); } }),
+      h("button", { class: "icon sm", "aria-label": "Remove this link", onClick: function () { lc.extra.splice(i, 1); chg(true); } }, "✕")));
+  });
+  d.appendChild(h("button", { class: "sm", onClick: function () { lc.extra.push({ label: "", url: "" }); chg(true); } }, "＋ Add a link"));
+  return d;
+}
+(function () {
+  var w = AK_VIEWS.graphics;
+  if (typeof w === "function") AK_VIEWS.graphics = function () {
+    var r = w.apply(this, arguments);
+    try { var body = r.querySelector(".akgh"); if (body && !body.querySelector('[data-bk="gh-lpage"]')) { var lpc = akLinksPageCard(); body.insertBefore(lpc, body.firstChild); var qc = body.querySelector('[data-bk="gh-qr"]'); if (qc) { lpc.parentNode.insertBefore(qc, lpc.nextSibling); var cf = settings().gfxHub = settings().gfxHub || { open: {} }; if (cf.open.qr == null) { cf.open.qr = true; qc.open = true; } } } } catch (e) {}
+    return r;
+  };
+})();
+function akOpenLinksPage() { var cfg = settings().gfxHub = settings().gfxHub || { open: {} }; cfg.open.lpage = true; go("graphics"); }
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Choose what is on my links page (what the QR code opens)", a: "Graphics tab › at the top: 🔗 My links page. Heading, bio, tick which links show (website, social, booking, shows, tips), add your own links, Open it / Copy link. The business card QR code opens this page.", go: function () { akOpenLinksPage(); } });
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "QR code library (all my QR codes, labeled and grouped)", a: "Graphics tab › right under 🔗 My links page: 🔳 QR codes. Every QR code with its name, grouped (payments, links page, website, social, requests, booking, contact). Tap one to show it big, copy, share or save it as a picture.", go: function () { akOpenLinksPage(); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
