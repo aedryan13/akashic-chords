@@ -36739,6 +36739,7 @@ function viewGfx() {
     var E = D.edit[hit.id] = D.edit[hit.id] || {}, now = Date.now(), twice = lastTap.id === hit.id && now - lastTap.t < 400;
     lastTap = { id: hit.id, t: now };
     st.sel = hit.id; drag = { id: hit.id, x: p.x, y: p.y, dx: E.dx || 0, dy: E.dy || 0, moved: false, twice: twice, box: akLayerBox(hit, st.P) };
+    if (hit.type === "gborder" || hit.type === "govl") { drag = null; setTimeout(paint, 30); } /* the border and overlays are only picked, never dragged */
     try { cv.setPointerCapture(e.pointerId); } catch (er) {}
     e.preventDefault(); paint();
   });
@@ -48746,6 +48747,7 @@ function akGfxIsSync(f) { return /syncopate/i.test(String(f || "")); }
 /* ---------------------------------------------------------------- shared bits */
 function akGfxDelPart(D, X, id) {
   var st = akGfxState(), f = akGfxFreeOf(D, id), s = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id);
+  if (id === "uborder") { akGfxDecoCfg(D).border.style = "none"; st.sel = ""; st.popMore = false; delete D.edit[id]; X.ch(true); toast("Border removed. ↶ brings it back."); return; }
   if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s), 1); else if (o) akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1);
   st.sel = ""; st.popMore = false;
   if (f || s || o) { delete D.edit[id]; X.ch(true); toast("Deleted. ↶ brings it back."); }
@@ -48777,6 +48779,15 @@ akGfxPopSync = function (wrap, cv, X, busy) {
     function z(how) { return function () { if (akGfxZMove(D, st.P || P, id, how)) X.ch(); }; }
     var row = h("div", { class: "akg-poprow" });
     if (L.type === "text") row.appendChild(b("Aa", "Text", function () { akGfxTextGo(X); }, { aria: "Text tools: words, font, size, color" }));
+    /* Replace and Effects are always right here, for every part (the border and overlays too) */
+    var isPic = /^(gfree|gpic|gphoto)$/.test(L.type), isOvl = L.type === "govl", isBd = L.type === "gborder" || L.type === "gshape" || L.type === "gdeco";
+    row.appendChild(b("🔁", "Replace", function () {
+      if (isPic) { X.cat("pics"); toast("Tap a picture to put it in its place."); }
+      else if (isOvl) { X.cat("ovl"); toast("Pick another overlay."); }
+      else if (isBd) { X.cat("deco"); toast("Pick another border or shape."); }
+      else akGfxTextGo(X);
+    }, { aria: isPic ? "Replace this picture" : isOvl ? "Pick another overlay" : isBd ? "Pick another border or shape" : "Change the words" }));
+    row.appendChild(b("✨", "Effects", function () { if (isOvl) X.cat("ovl"); else if (L.type === "gborder") X.cat("deco"); else X.cat("fx"); }, { aria: "Effects for this part" }));
     row.appendChild(b("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
     if (AKGFX.clip) row.appendChild(b("📥", "Paste", function () { akGfxPaste(D, X); }));
     row.appendChild(b("🗑", "Delete", function () { akGfxDelPart(D, X, id); }, { cls: "danger" }));
@@ -48793,7 +48804,6 @@ akGfxPopSync = function (wrap, cv, X, busy) {
       }
       akGfxBarBtns(X, /Lock|Unlock/).forEach(function (x) { var lk = /Unlock/.test(x.textContent); more.appendChild(b(lk ? "🔓" : "🔒", lk ? "Unlock" : "Lock", function () { x.click(); })); });
       akGfxBarBtns(X, /Flip/).forEach(function (x) { more.appendChild(b("⇆", "Flip", function () { x.click(); })); });
-      if (/^(gfree|gpic|gphoto)$/.test(L.type)) more.appendChild(b("🔁", "Replace", function () { X.cat("pics"); toast("Tap a picture to put it in its place."); }));
       more.appendChild(b("⚙", "Settings", function () { X.cat("sel"); }, { aria: "All settings for this part" }));
       pop.appendChild(more);
     }
@@ -48827,7 +48837,7 @@ document.addEventListener("pointerdown", function (e) {
     var hit = akGfxHit(P, p);
     if (!hit || hit.id === st.sel) return;
     var hb = akLayerBox(hit, P);
-    if (hit.type === "gphoto" || hit.type === "gbg" || hb.w * hb.h >= P.W * P.H * 0.5) { e.stopPropagation(); e.preventDefault(); akGfxLetGo(); }
+    if (hit.type !== "gborder" && (hit.type === "gphoto" || hit.type === "gbg" || hb.w * hb.h >= P.W * P.H * 0.5)) { e.stopPropagation(); e.preventDefault(); akGfxLetGo(); }
     return;
   }
   /* the part's tools, the tool groups, the divider and any button (↶, ＋ Words...) keep it picked; empty space lets go */
@@ -52186,6 +52196,7 @@ document.addEventListener("pointermove", function () { try { akPopBelowDivider()
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
 AK_VERSION = "18.7b";
 AK_WHATS_NEW = [
+  "Graphics: the border and overlays can now be tapped and picked like any other part (tap empty picture again to go on to the next one, then the background). The part pop-up has 🔁 Replace and ✨ Effects right on its first row for every part. 🎲 Random flyer starts clean (nothing left from the last flyer), and its overlay and border are sometimes absent and never repeat.",
   "Flyers: picking a show now fills in that show's own place, town, date and time (words left over from the last show are cleared; the venue comes from the saved venue when there is one). New 🎲 Random flyer: a random layout, colors and look for the show, always with one of your headshots (My pictures › Headshots).",
   "Write › Cards: Chords and Lyrics are now separate cards, and every card (Chords, Lyrics, Arranger, Chord workshop, Looper) has a ⠿ handle: hold it and slide the card up or down (▲▼ still work). The layout button now reads “Layout: Cards / Tabs / Halves”. Every Tip (ⓘ Tip everywhere, and 💡 Tip beside Chords / Bars / Rhythm / Jazz) now pops up as a small bubble with an ✕ instead of expanding the page. The lyrics window no longer grows or jumps as you scroll.",
   "Write › Rhythm / Bars / Jazz are now fully movable: drag a word to any beat of any bar, drag a chord to another beat or bar (it swaps if one is there), tap a chord or an empty ＋ beat to type a chord, drag a bar onto another to move it, and tap a bar (⋯ in Rhythm) to type its words, duplicate, add an empty bar, move or delete it.",
@@ -52287,14 +52298,24 @@ function akGfxHeads() { return (typeof akGfxLib === "function" ? akGfxLib() : []
 function akGfxRandomFlyer(g) {
   var D = akGfxDesign("flyer"), heads = akGfxHeads();
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function fresh(a, last) { var l = a.filter(function (x) { return last.indexOf(x) < 0; }); return pick(l.length ? l : a); }
   if (g) { akGfxShowSwitch(D, g.id); D.gigId = g.id; }
-  D.text = {}; D.rowEdit = D.rowEdit || {}; D.edit = {}; D.editBy = {}; D.free = D.free || undefined;
-  var specs = AKG_FLY.filter(function (f) { return !heads.length || / photo /.test(" " + f.tags + " "); });
+  /* a clean start: nothing left over from the last flyer (added words and pictures, overlays, border, word effects, typed rows) */
+  var gid = D.gigId; D.text = {}; D.edit = {}; D.editBy = {}; D.free = []; D.zord = []; delete D.tpos; D.deco = {}; D.ovl = []; D.tfx = {}; D.tbeh = null; D.panel = { on: false, color: "", alpha: 45 }; D.recipe = "";
+  if (D.rowEdit && gid) delete D.rowEdit[gid]; D.extraRows = [];
+  var last = D.lastRand || { ov: [], bd: "", th: "", lay: "" };
+  var specs = AKG_FLY.filter(function (f) { return f.id !== last.lay && (!heads.length || / photo /.test(" " + f.tags + " ")); });
   var spec = pick(specs.length ? specs : AKG_FLY);
   D.layout = spec.id; akGfxFlyApply(D, spec.id);
-  akGfxSurprise(D, true);
-  D.layout = spec.id;
+  /* overlays and borders are only sometimes there, and never the same ones twice in a row */
+  var n = Math.random(), ovs = [], presets = AKG_OVL_PRESETS.map(function (x) { return x[0]; });
+  if (n > 0.4) ovs.push(fresh(presets, last.ov)); if (n > 0.8) ovs.push(fresh(presets.filter(function (x) { return ovs.indexOf(x) < 0; }), last.ov));
+  var bds = ["line", "double", "rounded", "corners", "deco", "neon", "scallop", "brackets", "triple", "cornerdots", "dotsdash", "ornate", "roundd", "torn", "sketch", "notch", "bulbs", "piano"];
+  var bd = Math.random() < 0.45 ? "" : fresh(bds, [last.bd]), th = fresh(AKG_THEMES.map(function (x) { return x[0]; }), [last.th]);
+  akGfxRecipeApply(D, { id: "", th: th, ov: ovs, bd: bd, tfx: Math.random() < 0.4 ? pick(["glow", "outline", "lift", "shadow", "retro", "block", "neon", "gold"]) : "", filt: Math.random() < 0.2 ? pick(["warm", "cool", "fade", "vivid", "bw"]) : "" });
+  D.layout = spec.id; D.lastRand = { ov: ovs, bd: bd, th: th, lay: spec.id };
   if (heads.length) { var hd = pick(heads); D.bg = { src: "photo", id: hd.id, color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.3, blur: 0 }; }
+  else { var art = akGfxArtIds(); if (art.length) D.bg = { src: "art", id: pick(art), color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0 }; }
   D.logo = true;
   save(); go("gfx", { gfxKind: "flyer", gfxGig: g ? g.id : "" });
   toast(heads.length ? "Random flyer with your headshot. 🎲 again for another." : "Random flyer. Add headshots in My pictures (Headshots) and they go on these.");
@@ -52326,6 +52347,24 @@ akCss("akv187-tipbub", [
   ".aktipbub{position:fixed;z-index:200;box-sizing:border-box;padding:10px 34px 10px 12px;border:2px solid var(--accent,#c60);border-radius:10px;background:var(--panel,var(--bg,#222));color:var(--text,inherit);font-size:.9rem;line-height:1.4;box-shadow:0 6px 22px rgba(0,0,0,.5)}",
   "html body .aktipbub .aktb-x:not(#ak){position:absolute;top:4px;right:4px;min-height:28px !important;min-width:28px !important;width:28px !important;padding:0 !important;margin:0 !important}"
 ].join("\n"));
+
+
+/* ---------------------------------------------------------------- 18.7b: the border and overlays can be tapped and picked like any part.
+   A tap on empty picture picks (in turn) the border if the tap is on it, each overlay, then the background; tap again for the next one. */
+(function () {
+  var hit0 = akGfxHit;
+  akGfxHit = function (P, p, all) {
+    var hit = hit0.apply(this, arguments);
+    if (hit && hit.type !== "gbg" && hit.type !== "gphoto" && !(function () { var b = akLayerBox(hit, P); return b.w * b.h >= P.W * P.H * 0.9; })()) return hit;
+    var st = akGfxState(), c = [], d = Math.min(p.x, p.y, P.W - p.x, P.H - p.y);
+    P.layers.forEach(function (l) { if (l.type === "gborder" && d <= (l.inset || 0) + (l.lw || 8) * 2 + P.W * 0.012) c.push(l); });
+    P.layers.slice().reverse().forEach(function (l) { if (l.type === "govl") c.push(l); });
+    if (!c.length) return hit;
+    if (hit) c.push(hit);
+    var i = -1; c.forEach(function (l, j) { if (l.id === st.sel) i = j; });
+    return c[(i + 1) % c.length];
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
