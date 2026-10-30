@@ -36490,7 +36490,7 @@ function viewGfx() {
   function paint() {
     if (!base) return;
     var P = akGfxBake(base, D.edit); st.P = P;
-    var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? 120 : 220, window.innerHeight * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
+    var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? 120 : 220, (typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight) * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(P.W * k), chh = Math.round(P.H * k);
     var z = Math.max(1, Math.min(8, st.zoom || 1)), s = k * z, zc = st.zc || { x: P.W / 2, y: P.H / 2 };
     var ox = Math.min(0, Math.max(cw - P.W * s, cw / 2 - zc.x * s)), oy = Math.min(0, Math.max(chh - P.H * s, chh / 2 - zc.y * s));
@@ -36523,7 +36523,7 @@ function viewGfx() {
       refill("parts");
     }
     if (typeof akGfxTools === "function") {
-      var tk = (typeof akGfxCanUndo === "function" ? akGfxCanUndo() + "" + akGfxCanRedo() : "") + "|" + !!st.big + "|" + st.zoom + "|" + !!(AKGFX.clip);
+      var tk = (typeof akGfxCanUndo === "function" ? akGfxCanUndo() + "" + akGfxCanRedo() : "") + "|" + !!st.big + "|" + !!st.hand + "|" + st.zoom + "|" + !!(AKGFX.clip);
       if (force || tools._key !== tk) { tools._key = tk; akGfxTools(tools, X); }
     }
     if (typeof akGfxPopSync === "function") akGfxPopSync(prevWrap, cv, X, !!(drag || pinch));
@@ -36551,9 +36551,22 @@ function viewGfx() {
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault(); return;
     }
+    if (st.hand) {
+      /* hand tool: dragging only moves the view (zooms in a little first when the whole picture is showing) */
+      if ((st.zoom || 1) <= 1) { st.zoom = 2; paint(); }
+      drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false };
+      try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+      e.preventDefault(); return;
+    }
     var p = pt(e), k = cv._k || 1, hd = typeof akGfxOnHandle === "function" ? akGfxOnHandle(st.P, st, p, k) : null;
     if (hd && (hd.kind === "corner" || hd.kind === "side")) {
       drag = { id: hd.L.id, kind: hd.kind, i: hd.i, L: hd.L, H: hd.H, p0: p, moved: false };
+      try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+      e.preventDefault(); return;
+    }
+    if (hd && hd.kind === "move") {
+      var E1 = D.edit[hd.L.id] = D.edit[hd.L.id] || {};
+      drag = { id: hd.L.id, x: p.x, y: p.y, dx: E1.dx || 0, dy: E1.dy || 0, moved: false, box: akLayerBox(hd.L, st.P) };
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault(); return;
     }
@@ -36656,9 +36669,13 @@ function viewGfx() {
     return d;
   }
   function chips(list, cur, pick, label) { return h("div", { class: "chips akg-chips", role: "group", "aria-label": label || "" }, list.map(function (x) { return h("button", { class: "chip" + (String(cur) === String(x[0]) ? " on" : ""), "aria-pressed": String(cur) === String(x[0]) ? "true" : "false", onClick: function () { pick(x[0]); } }, x[1]); })); }
-  function slider(label, val, min, max, step, set, fmt, light) {
-    var out = h("span", { class: "akg-val" }, fmt ? fmt(val) : String(val));
-    return h("label", { class: "fld akg-slider" }, h("span", null, label, " ", out), h("input", { type: "range", min: min, max: max, step: step, value: val, onInput: function () { set(Number(this.value)); out.textContent = fmt ? fmt(Number(this.value)) : this.value; save(); if (light) paint(); else rebuild(); } }));
+  /* def = the value the ↺ button puts back (when left out: the value the slider had when it was drawn) */
+  function slider(label, val, min, max, step, set, fmt, light, def) {
+    var out = h("span", { class: "akg-val" }, fmt ? fmt(val) : String(val)), d0 = def == null ? val : def, inp;
+    function go(v) { set(v); out.textContent = fmt ? fmt(v) : String(v); save(); if (light) paint(); else rebuild(); }
+    var rs = h("button", { type: "button", class: "sm akg-rs", title: "Put this slider back", "aria-label": "Reset " + label, onClick: function (ev) { ev.preventDefault(); inp.value = d0; go(Number(d0)); } }, "↺");
+    inp = h("input", { type: "range", min: min, max: max, step: step, value: val, onInput: function () { go(Number(this.value)); } });
+    return h("label", { class: "fld akg-slider" }, h("span", { class: "akg-slhd" }, h("span", null, label, " ", out), rs), inp);
   }
   function check(label, on, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!on, onChange: function () { set(this.checked); ch(true); } }), label); }
   function fontSel(label, cur, set) {
@@ -48812,6 +48829,315 @@ akCss("akgfx-l", [
   "@media (max-width:420px){.akg-tsel{grid-template-columns:repeat(2,minmax(0,1fr))}}"
 ].join("\n"));
 akCss("akgfx-l2", ".akg-shell>.topbar .akg-undo,.akg-shell>.topbar .akg-redo{min-width:28px!important;padding:0 3px!important}");
+
+/* ================================================================ akgfx_m: Graphics studio, part 13 (version 18.4): the editor fixes
+   1  Keyboard: the picture is sized to what the screen really shows (visual viewport), so it stays in view when the keyboard is up,
+      and a field you tap is scrolled into the middle. New ✋ Pan tool in the tool row: while it is on, dragging only moves the view.
+   2  A ✥ move handle sits just outside the left side of the picked part; drag it to move the part (works when the part is small or covered).
+   3  ✨ Effects: "Add an effect" has its picker with that effect's slider right under it; the full list of sliders is folded under "All effects".
+   4  New bold effects: Pixelate, Poster (few colors), Two-color (duotone), Color split (3D glitch) and quick looks Comic, Pixel art, Neon,
+      Duotone, Glitch.
+   5  "On this design": tap an effect's name to open a drop-down with its settings (sliders, colors); ✕ still takes it off.
+   6  Every studio slider has a ↺ button that puts it back (see slider() in akgfx_b.js).
+   7  A scroll handle is always visible on the right edge (drag it, or tap the track); the content keeps clear of it so a slider is not hit by accident. */
+
+AK_VERSION = "18.4";
+AK_WHATS_NEW = [
+  "Graphics studio: ✋ Pan tool, a ✥ move handle on the picked part, the picture stays in view with the keyboard up, a ↺ reset on every slider, and a scroll bar that is always there on the right.",
+  "Graphics studio: ✨ Effects: pick an effect and its slider is right under it; tap a name in “On this design” to open its settings; new bold looks (Pixelate, Poster, Two-color, Color split; Comic, Pixel art, Neon, Duotone, Glitch)."
+].concat(AK_WHATS_NEW);
+
+var AKGM = { open: {}, add: "blur", all: false };
+
+/* ---------------------------------------------------------------- 1: what the screen really shows */
+function akGfxVH() {
+  var v = window.visualViewport;
+  return v && v.height ? Math.min(window.innerHeight, v.height) : window.innerHeight;
+}
+(function () {
+  var vv = window.visualViewport;
+  function kb() {
+    if (S.view !== "gfx") return;
+    var gap = vv ? Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)) : 0;
+    document.documentElement.style.setProperty("--akkb", Math.round(gap) + "px");
+    document.body.classList.toggle("akg-kbd", gap > 80);
+    clearTimeout(kb.t); kb.t = setTimeout(function () { if (S.view === "gfx" && S.akg && S.akg.paint) S.akg.paint(); }, 120);
+  }
+  if (vv) { vv.addEventListener("resize", kb); vv.addEventListener("scroll", function () { if (document.body.classList.contains("akg-kbd")) kb(); }); }
+  document.addEventListener("focusin", function (e) {
+    var t = e.target; if (S.view !== "gfx" || !t || !t.closest || !t.closest(".akg-panel, .akg-edbar")) return;
+    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.type === "range" || t.type === "checkbox") return;
+    setTimeout(function () { try { t.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (er) {} }, 350);
+  });
+})();
+
+/* ✋ Pan tool */
+(function () {
+  var t0 = akGfxTools;
+  akGfxTools = function (bar, X) {
+    t0.apply(this, arguments);
+    var st = akGfxState();
+    var b = h("button", { class: "sm", title: "Pan: drag to move the view", "aria-label": "Pan tool", "aria-pressed": st.hand ? "true" : "false", onClick: function () {
+      st.hand = !st.hand; var cv = document.querySelector(".akg-cv"); if (cv) cv.style.cursor = st.hand ? "grab" : ""; akGfxTools(bar, X);
+    } }, "✋ Pan");
+    var zm = bar.querySelector(".akg-zoom");
+    if (zm && zm.nextSibling) bar.insertBefore(b, zm.nextSibling); else bar.appendChild(b);
+  };
+})();
+
+/* ---------------------------------------------------------------- 2: ✥ move handle */
+(function () {
+  var h0 = akGfxHandles;
+  akGfxHandles = function (l, P, k) {
+    var out = h0.apply(this, arguments);
+    try {
+      var b = out.box, a = out.a, ca = Math.cos(a), sa = Math.sin(a), dx = -b.w / 2 - 26 / k;
+      out.move = { x: out.c.x + dx * ca, y: out.c.y + dx * sa };
+    } catch (e) {}
+    return out;
+  };
+  var o0 = akGfxOnHandle;
+  akGfxOnHandle = function (P, st, p, k) {
+    var r = o0.apply(this, arguments); if (r) return r;
+    var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
+    if (!L || L.lock || L.fixed) return null;
+    var H = akGfxHandles(L, P, k), q = H.move, rr = 26 / k;
+    if (q && Math.abs(p.x - q.x) <= rr && Math.abs(p.y - q.y) <= rr) return { kind: "move", L: L, H: H };
+    return null;
+  };
+  var s0 = akGfxPaintSel;
+  akGfxPaintSel = function (ctx, P, st, k) {
+    s0.apply(this, arguments);
+    var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0];
+    if (!L || L.lock || L.fixed) return;
+    var q = akGfxHandles(L, P, k).move; if (!q) return;
+    ctx.save(); ctx.beginPath(); ctx.arc(q.x, q.y, 13 / k, 0, Math.PI * 2); ctx.fillStyle = "#2BB673"; ctx.fill(); ctx.lineWidth = 2 / k; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + (16 / k) + "px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("✥", q.x, q.y + 1 / k);
+    ctx.restore();
+  };
+})();
+
+/* ---------------------------------------------------------------- 4: bold effects */
+[["pixel", "Pixelate (blocky)", 0, 100, "bold"], ["poster", "Poster (few colors)", 0, 100, "bold"], ["duo", "Two-color (duotone)", 0, 100, "bold"], ["rgb", "Color split (3D glitch)", 0, 100, "bold"]]
+  .forEach(function (x) { AKG_FXO.push(x); AKGK_FXN[x[0]] = x[1]; });
+AKG_FX_LOOKS.splice(AKG_FX_LOOKS.length - 1, 0,
+  ["comic", "Comic", { poster: 70, contrast: 30, outline: 30, outlineC: "#000000" }],
+  ["pixelart", "Pixel art", { pixel: 55, poster: 45 }],
+  ["duotone", "Duotone", { duo: 100, duoA: "#1b1464", duoB: "#ff5e8a" }],
+  ["neon", "Neon", { duo: 100, duoA: "#12002b", duoB: "#00f0ff", glow: 50 }],
+  ["glitch", "Glitch", { rgb: 60, contrast: 20 }]);
+function akgmHex(c, d) {
+  var m = /^#?([0-9a-f]{6})$/i.exec(String(c || "")) || /^#?([0-9a-f]{6})$/i.exec(d);
+  var n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function akgmBold(cv, f, P, M) {
+  var w = cv.width, hh = cv.height, c, o, id, d, i;
+  if (f.pixel) {
+    var bs = Math.max(2, f.pixel / 100 * 0.07 * M), sw = Math.max(1, Math.round(w / bs)), sh = Math.max(1, Math.round(hh / bs));
+    var sm = akGfxCv(sw, sh), sc = sm.getContext("2d"); sc.drawImage(cv, 0, 0, sw, sh);
+    o = akGfxCv(w, hh); c = o.getContext("2d"); c.imageSmoothingEnabled = false; c.drawImage(sm, 0, 0, sw, sh, 0, 0, w, hh); cv = o;
+  }
+  if (f.poster || f.duo || f.rgb) {
+    try {
+      c = cv.getContext("2d"); id = c.getImageData(0, 0, w, hh); d = id.data;
+      if (f.rgb) {
+        var sh2 = Math.max(1, Math.round(f.rgb / 100 * 0.02 * M)), src = new Uint8ClampedArray(d);
+        for (var y = 0; y < hh; y++) for (var x = 0; x < w; x++) {
+          i = (y * w + x) * 4;
+          var xl = Math.max(0, x - sh2), xr = Math.min(w - 1, x + sh2), il = (y * w + xl) * 4, ir = (y * w + xr) * 4;
+          d[i] = src[il]; d[i + 2] = src[ir + 2]; d[i + 3] = Math.max(src[il + 3], src[i + 3], src[ir + 3]);
+        }
+      }
+      if (f.poster) {
+        var n = Math.max(2, 8 - Math.round(f.poster / 100 * 6)), q = n - 1;
+        for (i = 0; i < d.length; i += 4) { d[i] = Math.round(d[i] / 255 * q) / q * 255; d[i + 1] = Math.round(d[i + 1] / 255 * q) / q * 255; d[i + 2] = Math.round(d[i + 2] / 255 * q) / q * 255; }
+      }
+      if (f.duo) {
+        var A = akgmHex(f.duoA, "#1b1464"), B = akgmHex(f.duoB, P && P.accent && /^#[0-9a-f]{6}$/i.test(P.accent) ? P.accent : "#ff5e8a"), mix = Math.min(1, f.duo / 100);
+        for (i = 0; i < d.length; i += 4) {
+          var lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+          for (var ch = 0; ch < 3; ch++) d[i + ch] = d[i + ch] * (1 - mix) + (A[ch] + (B[ch] - A[ch]) * lum) * mix;
+        }
+      }
+      c.putImageData(id, 0, 0);
+    } catch (e) {}
+  }
+  return cv;
+}
+(function () {
+  var a0 = akGfxFxApply;
+  akGfxFxApply = function (cv, l, P, sc, g) {
+    var f = l.fxo || {};
+    if (f.pixel || f.poster || f.duo || f.rgb) { try { cv = akgmBold(cv, f, P, Math.min(P.W, P.H) * sc); } catch (e) {} }
+    return a0.call(this, cv, l, P, sc, g);
+  };
+})();
+
+/* ---------------------------------------------------------------- 3 + 5: the ✨ Effects panel */
+var AKGM_COL = { tint: [["tintC", "Tint color"]], shadow: [["shadowC", "Shadow color"]], glow: [["glowC", "Glow color"]], outline: [["outlineC", "Outline color"]], duo: [["duoA", "Dark color"], ["duoB", "Light color"]] };
+function akgmDef(key) { return AKG_FXO.filter(function (x) { return x[0] === key; })[0]; }
+function akgmFmt(x) { return function (v) { return v ? (x[0] === "hue" ? v + "°" : (v > 0 && x[2] < 0 ? "+" : "") + v) : "off"; }; }
+function akgmFx(D, id, make) {
+  var e = D.edit[id] = D.edit[id] || {};
+  if (make && (!e.fxo || typeof e.fxo !== "object")) e.fxo = {};
+  return e.fxo || {};
+}
+/* the "On this design" box follows the sliders (a moment after you let go, so a slider is never rebuilt under your finger) */
+function akgmUseSoon(X) {
+  clearTimeout(akgmUseSoon.t);
+  akgmUseSoon.t = setTimeout(function () {
+    var old = document.querySelector(".akg-fxuse"); if (!old || old.contains(document.activeElement)) return;
+    try { old.parentNode.replaceChild(akGfxFxInUseBox(X.D, X), old); } catch (e) {}
+  }, 500);
+}
+/* a slider for one effect of one part, plus the color buttons that belong to it */
+function akgmEffectBits(X, id, key, onChange) {
+  var D = X.D, x = akgmDef(key), out = [], f = akgmFx(D, id);
+  if (!x) return out;
+  out.push(X.slider(x[1], f[key] || 0, x[2], x[3], key === "hue" ? 5 : 1, function (v) {
+    var g = akgmFx(D, id, true); if (v) g[key] = v; else delete g[key];
+    if (onChange) onChange(); else akgmUseSoon(X);
+  }, akgmFmt(x), true, 0));
+  if (AKGM_COL[key]) {
+    var row = h("div", { class: "row" });
+    AKGM_COL[key].forEach(function (c) {
+      var cur = akgmFx(D, id)[c[0]] || "";
+      row.appendChild(h("button", { class: "sm", onClick: function () {
+        akGfxColorAsk(c[1], akgmFx(D, id)[c[0]] || "", function (v) { var g = akgmFx(D, id, true); if (v) g[c[0]] = v; else delete g[c[0]]; save(); X.paint(); X.refill("fx"); });
+      } }, h("span", { style: "display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:-2px;margin-right:6px;border:1px solid rgba(127,127,127,.6);background:" + (cur || "transparent") }), c[1]));
+    });
+    out.push(row);
+  }
+  return out;
+}
+function akGfxFxInUseBox(D, X) {
+  var list = akGfxFxInUse(D), st = akGfxState(), box = h("div", { class: "akg-fxuse" });
+  box.appendChild(h("div", { class: "akg-grp" }, "On this design"));
+  if (!list.length) { box.appendChild(h("p", { class: "hint akg-fxnone" }, "No effects or filters anywhere on this design.")); return box; }
+  function again() { save(); X.ch(true); setTimeout(function () { X.refill("fx"); }, 500); }
+  list.forEach(function (x) {
+    var fo = D.edit && D.edit[x.id] && D.edit[x.id].fxo, keys = fo ? Object.keys(fo).filter(function (k) { return fo[k] && akgmDef(k); }) : [];
+    var canOpen = !x.warn && keys.length > 0, open = canOpen && !!AKGM.open[x.id];
+    var what = h("span", null, x.what), dd = h("div", { class: "akg-fxdd" + (open ? "" : " shut") });
+    function fill() {
+      dd.textContent = "";
+      var ks = Object.keys(akgmFx(D, x.id)).filter(function (k) { return akgmFx(D, x.id)[k] && akgmDef(k); });
+      ks.forEach(function (k) { akgmEffectBits(X, x.id, k, function () { var nu = akGfxFxInUse(D).filter(function (y) { return y.id === x.id; })[0]; if (nu) what.textContent = nu.what; }).forEach(function (n) { dd.appendChild(n); }); });
+      dd.appendChild(h("div", { class: "row" },
+        h("button", { class: "sm", onClick: function () { st.sel = x.id === "background" ? "" : x.id; X.paint(); X.refill("parts", true); X.refill("fx"); } }, "Pick this part"),
+        h("button", { class: "sm", onClick: function () { x.off(); again(); } }, "Take it off")));
+    }
+    if (open) fill();
+    var nameBtn = h("button", { class: "akg-fxname", "aria-expanded": open ? "true" : "false", title: canOpen ? "Open its settings" : "Pick this part", onClick: function () {
+      if (!canOpen) { st.sel = x.id === "background" ? "" : x.id; X.paint(); X.refill("parts", true); X.refill("fx"); return; }
+      var now = !AKGM.open[x.id]; AKGM.open[x.id] = now;
+      dd.classList.toggle("shut", !now); nameBtn.setAttribute("aria-expanded", now ? "true" : "false"); ic.textContent = now ? "▾" : "▸";
+      if (now) fill();
+    } });
+    var ic = h("span", { class: "akg-fxic", "aria-hidden": "true" }, canOpen ? (open ? "▾" : "▸") : "");
+    nameBtn.appendChild(ic); nameBtn.appendChild(h("b", null, " " + x.name)); nameBtn.appendChild(document.createTextNode(" ")); nameBtn.appendChild(what);
+    box.appendChild(h("div", { class: "akg-fxitem" },
+      h("div", { class: "akg-fxrow" + (x.warn ? " warn" : "") }, nameBtn,
+        x.off ? h("button", { class: "sm akg-fxoff", "aria-label": "Take off: " + x.name + " " + x.what, onClick: function () { x.off(); again(); } }, "✕") : null),
+      dd));
+  });
+  if (list.filter(function (x) { return x.off; }).length > 1) box.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () {
+    list.forEach(function (x) { if (x.off) x.off(); }); save(); X.ch(true); setTimeout(function () { X.refill("fx"); }, 500); toast("Took every effect and filter off."); } }, "Take them all off")));
+  return box;
+}
+
+akGfxEffectsFill = function (d, X) {
+  var D = X.D, st = akGfxState(), L = akGfxTargetOf(X, true);
+  if (!L) { d.appendChild(h("p", { class: "hint" }, "Drawing…")); return; }
+  var id = L.id, e0 = D.edit[id] || {}, f0 = e0.fxo || {};
+  function E() { return D.edit[id] = D.edit[id] || {}; }
+  function again() { save(); X.paint(); X.refill("fx"); }
+  try { d.appendChild(akGfxFxInUseBox(D, X)); } catch (e) {}
+  d.appendChild(h("div", { class: "akg-target" }, h("span", null, "Effects for:"), h("b", null, L.name),
+    st.sel && L.type !== "gbg" ? h("button", { class: "sm", onClick: function () { st.sel = ""; X.paint(); X.refill("fx"); } }, "The background instead") : h("span", { class: "hint" }, "Tap a part on the picture for its effects.")));
+  /* the picker, with its own slider right under it */
+  d.appendChild(h("div", { class: "akg-grp" }, "Add an effect"));
+  var groups = [["soft", "Soft and blurry"], ["color", "Color"], ["around", "Around it"], ["bold", "Bold"]];
+  if (!akgmDef(AKGM.add)) AKGM.add = "blur";
+  d.appendChild(h("label", { class: "fld" }, "Effect", h("select", { "aria-label": "Effect to add", onChange: function () { AKGM.add = this.value; X.refill("fx"); } },
+    groups.map(function (g) {
+      return h("optgroup", { label: g[1] }, AKG_FXO.filter(function (x) { return x[4] === g[0]; }).map(function (x) { return h("option", { value: x[0], selected: AKGM.add === x[0] }, x[1] + (f0[x[0]] ? "  ✓" : "")); }));
+    }))));
+  akgmEffectBits(X, id, AKGM.add, null).forEach(function (n) { d.appendChild(n); });
+  d.appendChild(h("div", { class: "akg-grp" }, "Quick looks"));
+  d.appendChild(X.chips(AKG_FX_LOOKS.map(function (x) { return [x[0], x[1]]; }), "", function (v) {
+    var look = AKG_FX_LOOKS.filter(function (x) { return x[0] === v; })[0], e = E();
+    e.fxo = clone(look[2]); if (!Object.keys(e.fxo).length) delete e.fxo; again();
+  }, "Quick looks"));
+  /* every slider, folded away until wanted */
+  var all = h("div", { class: "akg-allfx" + (AKGM.all ? "" : " shut") }), ic = h("span", { "aria-hidden": "true" }, AKGM.all ? "▾ " : "▸ ");
+  d.appendChild(h("button", { class: "sm akg-allhd", "aria-expanded": AKGM.all ? "true" : "false", onClick: function () {
+    AKGM.all = !AKGM.all; all.classList.toggle("shut", !AKGM.all); ic.textContent = AKGM.all ? "▾ " : "▸ "; this.setAttribute("aria-expanded", AKGM.all ? "true" : "false");
+  } }, ic, "All effects (every slider)"));
+  groups.forEach(function (g) {
+    all.appendChild(h("div", { class: "akg-grp" }, g[1]));
+    AKG_FXO.filter(function (x) { return x[4] === g[0]; }).forEach(function (x) { akgmEffectBits(X, id, x[0], null).forEach(function (n) { all.appendChild(n); }); });
+    if (g[0] === "color") all.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!f0.invert, onChange: function () { var f = akgmFx(D, id, true); if (this.checked) f.invert = 1; else delete f.invert; save(); X.paint(); } }), "Invert the colors"));
+  });
+  d.appendChild(all);
+  d.appendChild(h("div", { class: "akg-grp" }, "See-through and blending"));
+  d.appendChild(X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = E(); if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true, 0));
+  d.appendChild(akGfxSelect("Blend with what's under it", AKG_BLENDS, e0.blend || "", function (v) { var e = E(); if (v) e.blend = v; else delete e.blend; save(); X.paint(); }));
+  var w0 = e0.warp || {};
+  d.appendChild(h("div", { class: "row" },
+    h("button", { class: "sm", "aria-pressed": w0.fx ? "true" : "false", onClick: function () { var w = akGfxWarpOf(D, id); w.fx = !w.fx; again(); } }, "⇆ Flip sideways"),
+    h("button", { class: "sm", "aria-pressed": w0.fy ? "true" : "false", onClick: function () { var w = akGfxWarpOf(D, id); w.fy = !w.fy; again(); } }, "⇅ Flip upside down"),
+    h("button", { class: "sm", onClick: function () { var e = E(); delete e.fxo; delete e.blend; delete e.op; again(); } }, "No effects")));
+  if (!akGfxCanFilter()) d.appendChild(h("p", { class: "hint" }, "This browser blurs a little roughly; the saved picture looks the same as here."));
+};
+
+/* ---------------------------------------------------------------- 7: a scroll handle that is always there */
+(function () {
+  var bar = null, th = null, drag = null;
+  function sc() { return document.getElementById("mainScroll"); }
+  function remove() { if (bar && bar.parentNode) bar.parentNode.removeChild(bar); bar = th = null; document.body.classList.remove("akg-sb"); }
+  function make() {
+    bar = h("div", { class: "akg-sbar", "aria-hidden": "true" }); th = h("div", { class: "akg-sthumb" }); bar.appendChild(th); document.body.appendChild(bar);
+    th.addEventListener("pointerdown", function (e) { var m = sc(); if (!m) return; drag = { y: e.clientY, t: m.scrollTop }; try { th.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); e.stopPropagation(); });
+    th.addEventListener("pointermove", function (e) {
+      if (!drag) return; var m = sc(); if (!m) return;
+      var tr = bar.clientHeight - th.offsetHeight, room = m.scrollHeight - m.clientHeight;
+      if (tr > 0) m.scrollTop = drag.t + (e.clientY - drag.y) * room / tr;
+      e.preventDefault();
+    });
+    function up() { drag = null; }
+    th.addEventListener("pointerup", up); th.addEventListener("pointercancel", up);
+    bar.addEventListener("pointerdown", function (e) {
+      if (e.target !== bar) return; var m = sc(); if (!m) return;
+      var r = bar.getBoundingClientRect(), frac = (e.clientY - r.top) / r.height; m.scrollTop = frac * (m.scrollHeight - m.clientHeight); e.preventDefault();
+    });
+  }
+  function sync() {
+    var m = sc();
+    if (S.view !== "gfx" || !m) { if (bar) remove(); return; }
+    if (!bar) make();
+    var r = m.getBoundingClientRect(), room = m.scrollHeight - m.clientHeight;
+    bar.style.top = r.top + "px"; bar.style.height = r.height + "px";
+    if (room < 12) { bar.style.display = "none"; document.body.classList.remove("akg-sb"); return; }
+    bar.style.display = ""; document.body.classList.add("akg-sb");
+    var tr = r.height, hgt = Math.max(54, Math.round(tr * m.clientHeight / m.scrollHeight));
+    th.style.height = hgt + "px"; th.style.top = Math.round((tr - hgt) * m.scrollTop / room) + "px";
+  }
+  document.addEventListener("scroll", function (e) { if (bar && e.target && e.target.id === "mainScroll") sync(); }, true);
+  window.addEventListener("resize", function () { if (bar) sync(); });
+  setInterval(sync, 350);
+})();
+
+akCss("akgfx-m",
+  ".akg-slhd{display:flex;justify-content:space-between;align-items:center;gap:6px}" +
+  ".akg .akg-rs,html body .akg-slider button.akg-rs:not(#ak){min-height:24px;height:24px;min-width:28px;padding:0 6px;font-size:14px;line-height:1;flex:0 0 auto;margin:0}" +
+  ".akg-fxitem{margin:4px 0}.akg-fxitem .akg-fxrow{margin:0}.akg-fxic{display:inline-block;width:1em;opacity:.7}" +
+  ".akg-fxdd{padding:6px 8px 6px 12px;margin:2px 0 4px 6px;border-left:3px solid #C8962E}.akg-fxdd.shut,.akg-allfx.shut{display:none}" +
+  ".akg-allhd{display:block;width:100%;text-align:left;margin:8px 0 4px}" +
+  "body.akg-sb .akg{padding-right:26px}" +
+  ".akg-sbar{position:fixed;right:0;width:24px;z-index:60;background:rgba(127,127,127,.14);touch-action:none}" +
+  ".akg-sthumb{position:absolute;left:3px;right:3px;border-radius:4px;background:#C8962E;opacity:.9;touch-action:none;cursor:grab;box-shadow:0 0 0 1px rgba(0,0,0,.35)}" +
+  "body.akg-kbd #mainScroll{padding-bottom:var(--akkb,0)}");
 
 /* ================================================================ ak_v18a: version 18.0, bug fixes first (queue items 37, 39, 45, 38)
    37 Auto-scroll: a press while it scrolls PAUSES, the next press RESUMES (play.js autoToggle, akPause).
