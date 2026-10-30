@@ -30897,7 +30897,7 @@ akProgWheel = function (o) {
   function choose(c, how) {
     var k = key(), raw = typeof c === "string" ? c : akPwRaw(c, k), cc = typeof c === "string" ? akPwParse(c) : c;
     /* 18.5: while a chord pop-up is open, a tap only auditions the chord; "Use in bar" (AKTRY.use) puts it in */
-    if (ws.sel && how !== "hear" && how !== "commit" && typeof AKPICK !== "undefined" && AKPICK.what && typeof AKTRY !== "undefined") {
+    if (ws.sel && how !== "hear" && how !== "commit" && typeof AKPICK !== "undefined" && AKPICK.what && document.querySelector("[data-wsview=sections]") && typeof AKTRY !== "undefined") {
       AKTRY.raw = raw; akWsHear(raw, ws.shape); if (cc) ws.from = cc; if (typeof akTryPaint === "function") akTryPaint(); return;
     }
     if (ws.sel && how !== "hear") {
@@ -30922,6 +30922,7 @@ akProgWheel = function (o) {
     ws.sel = same && i < 0 ? null : { s: si, b: bi, t: t };
     if (i >= 0 && bar.c[i].ch) { akWsHear(bar.c[i].ch, bar.c[i].p); var pc = akPwParse(bar.c[i].ch); if (pc) ws.from = pc; }
     save(); draw();
+    if (typeof akPickAuto === "function") akPickAuto(!!ws.sel);
   }
   function moveChord(from, to) {
     var a = ws.secs[from.s].bars[from.b], i = akWsFind(a, from.t); if (i < 0) return;
@@ -50328,15 +50329,26 @@ function akArrBuild() {
       h("button", { class: "sm akarr-play", "aria-pressed": "false", "aria-label": "Play", title: "Play (records if a track is armed)", onClick: play }, "▶"),
       h("button", { class: "sm akarr-stop", "aria-label": "Stop", title: "Stop", disabled: true, onClick: stopAll }, "■"),
       h("button", { class: "sm akarr-rec", "aria-pressed": "false", "aria-label": "Arm a track for recording", title: "Arm a track to record, then press play", onClick: recBtn }, "●"),
-      tog("🔁", a.loop, function () { a.loop = !a.loop; save(); if (AKWS.on && AKARR.mode) AKWS.loop = a.loop; draw(); }, "Loop the arrangement"),
-      tog("⏱", ws.count, function () { ws.count = !ws.count; save(); draw(); }, "Count one bar in first"),
-      tog("⟦⟧", a.regionOn, function () { regionToggle(a, ws); }, "Loop just a part (the bracket on the ruler)"),
-      snapSel, h("span", { class: "grow" }),
+      h("button", { class: "sm akarr-setb" + (host._set ? " on" : ""), "aria-expanded": host._set ? "true" : "false", "aria-label": "Arranger settings: click, tempo, loop, count-in, snap", title: "Click, tempo, loop, count-in, snap", onClick: function () { host._set = !host._set; draw(); } }, "⚙ ▾"),
+      h("span", { class: "grow" }),
       ib("↶", "Undo", undo),
       h("button", { class: "sm akarr-add", "aria-label": "Add a track", onClick: function () {
         menu(this, AK_ARR_MENU.map(function (k) { var K = AK_ARR_KINDS[k]; return { label: K.icon + " " + K.label + (K.audio ? " (audio)" : "") + (K.sound ? "" : " · no sound yet"), onClick: function () { addTrack(k); } }; }));
       } }, "+ Track"),
       ib(full ? "✕" : "⛶", full ? "Leave full screen" : "Full screen", function () { setFull(!full); })));
+    /* the settings drop-down: click, tempo, loop, count-in, loop-a-part, snap */
+    if (host._set) {
+      var bpmIn = h("input", { type: "number", min: "30", max: "300", value: String(st.bpm || 80), "aria-label": "Tempo, beats a minute", class: "akarr-bpm", onChange: function () {
+        st.bpm = Math.max(30, Math.min(300, Number(this.value) || 80)); save(); try { var sg = akW9Song(); if (sg && sg.wheel === st) aklSetTempo(sg, st.bpm); } catch (e) {}
+      } });
+      host.appendChild(h("div", { class: "akarr-set" },
+        tog("♪ Click", ws.click, function () { ws.click = !ws.click; save(); draw(); }, "Metronome click while it plays"),
+        h("label", { class: "akws-lab" }, "♩ =", bpmIn),
+        tog("🔁 Loop", a.loop, function () { a.loop = !a.loop; save(); if (AKWS.on && AKARR.mode) AKWS.loop = a.loop; draw(); }, "Loop the arrangement"),
+        tog("⏱ Count-in", ws.count, function () { ws.count = !ws.count; save(); draw(); }, "Count one bar in first"),
+        tog("⟦⟧ Part", a.regionOn, function () { regionToggle(a, ws); }, "Loop just a part (the bracket on the ruler)"),
+        snapSel));
+    }
     /* row 2: scroll and zoom */
     host.appendChild(h("div", { class: "akarr-view" },
       ib("◀", "Scroll left", function () { scrollBy(-1); }), ib("▶", "Scroll right", function () { scrollBy(1); }),
@@ -51015,6 +51027,8 @@ function akTryPaint() {
       });
       akTryPaint();
       document.body.classList.toggle("akw-on", !!document.querySelector(".akw9"));
+      document.body.classList.toggle("akw-halves", !!document.querySelector(".akw18-halves"));
+      akFitHalves();
       document.body.setAttribute("data-akwin", akW185().win);
     } catch (e) { if (window.console) console.warn("ak185", e); }
   };
@@ -51036,8 +51050,83 @@ function akTryPaint() {
         bars.removeChild(tb);
       }
     } catch (e) { if (window.console) console.warn("ak185 top", e); }
+    try { akHalvesTidy(el); } catch (e) { if (window.console) console.warn("ak185 halves", e); }
   };
 })();
+
+/* ---------------------------------------------------------------- two halves: just the two windows
+   Nothing underneath them: the chord workshop and the looper card that were left below are tucked away (the Wheel / Suggestions pop-ups still open
+   from the Sections bars: the workshop stays in the page, invisible, to serve them), and the tools row folds into a 🛠 Tools menu. The halves
+   are sized to the room left on the screen. */
+function akHalvesTidy(el) {
+  var box = el.querySelector(".akw18-halves"); if (!box) return;
+  var wheel = el.querySelector('[data-bk="wheel"]'), aloop = el.querySelector('[data-bk="aloop"]');
+  if (wheel && !box.contains(wheel)) { wheel.classList.add("akw-ghost"); wheel.setAttribute("data-wsview", "sections"); wheel.hidden = false; wheel.open = true; }
+  if (aloop && !box.contains(aloop)) aloop.hidden = true;
+  var tools = el.querySelector(".akw9-tools"), tb = tools && tools.previousElementSibling && tools.previousElementSibling.classList.contains("akfold-bar") ? tools.previousElementSibling : null;
+  var bars = el.querySelector(".akw18-bars");
+  if (tools && bars && !bars.querySelector(".akw18-tools")) {
+    tools.classList.add("akw-gone"); if (tb) tb.classList.add("akw-gone");
+    bars.appendChild(h("button", { class: "akw18-bar akw18-tools", "aria-label": "Writing tools", onClick: function () {
+      var items = [].slice.call(tools.querySelectorAll("button")).filter(function (b) { return b.textContent.trim() && b.textContent.trim() !== "⋯"; })
+        .map(function (b) { return { label: b.textContent.trim(), onClick: function () { b.click(); } }; });
+      var more = [].slice.call(tools.querySelectorAll("button")).filter(function (b) { return b.textContent.trim() === "⋯"; })[0];
+      if (more) items.push({ label: "More…", onClick: function () { more.click(); } });
+      menu(this, items);
+    } }, h("span", null, "🛠 Tools")));
+  }
+}
+function akFitHalves() {
+  var box = document.querySelector(".akw18-halves"), ms = document.getElementById("mainScroll"); if (!box || !ms) return;
+  var vv = window.visualViewport, nav = document.querySelector(".tabbar, nav, .bottomnav"), navH = nav && nav.getBoundingClientRect().height || 62;
+  var bottom = Math.min(window.innerHeight, vv && vv.height ? vv.height : window.innerHeight) - navH, top = box.getBoundingClientRect().top;
+  var room = Math.round(bottom - top - 4); if (room > 200) box.style.height = room + "px";
+}
+window.addEventListener("resize", function () { setTimeout(akFitHalves, 80); });
+setInterval(function () { if (S.view === "write") akFitHalves(); }, 1200);
+
+/* a tap on a square in the bars opens the chord pop-up (the last one used), a tap off closes it */
+function akPickAuto(on) {
+  if (akW18b().autoPop === false) return;
+  if (!document.querySelector("[data-wsview=sections]")) return;
+  if (on) { if (!AKPICK.what) akPickSet(AKPICK.last || "pal"); } else if (AKPICK.what) akPickSet("");
+}
+(function () {
+  var ps = akPickSet;
+  akPickSet = function (what) { if (what) AKPICK.last = what; return ps.apply(this, arguments); };
+})();
+
+akCss("akv185b", [
+  ".akw-gone{display:none !important}",
+  "details.card.akw-ghost{position:absolute !important;left:0;right:0;height:0 !important;overflow:visible !important;visibility:hidden;padding:0 !important;margin:0 !important;border:0 !important;pointer-events:none}",
+  "details.card.akw-ghost .akws > .akws-pal,details.card.akw-ghost .akws > .akws-main{visibility:visible;pointer-events:auto}",
+  "details.card.akw-ghost > summary,details.card.akw-ghost > .akfold-parts{display:none !important}",
+  /* thin top for the halves screen */
+  "body.akw-halves .akfold-all{display:none !important}",
+  "html body.akw-halves .topbar:not(#ak){padding:2px 4px;min-height:0;gap:3px}",
+  "body.akw-halves .topbar h1{font-size:.95rem !important;margin:0}",
+  "html body.akw-halves .topbar .libbtn:not(#ak),html body.akw-halves .topbar button.icon:not(#ak){min-height:0 !important;height:28px !important;padding:0 8px !important;font-size:.76rem}",
+  "html body.akw-halves .topbar .ttl:not(#ak){display:flex;flex-direction:row;align-items:center;gap:6px;height:auto}",
+  "html body.akw-halves .akw18-bar:not(#ak){min-height:0 !important;height:24px !important;padding:0 8px !important;font-size:.74rem !important;margin:0 !important}",
+  "body.akw-halves .akw18-bars{margin:2px 0;gap:3px}",
+  "html body.akw-halves .akw9-title:not(#ak){height:24px !important;min-height:0 !important;font-size:.8rem !important;padding:0 8px !important;margin:0}",
+  "body.akw-halves .akw9-head{margin:0}body.akw-halves .akw9-card{padding-top:2px !important}",
+  "body.akw-halves .akw18-halves{margin:2px 0 !important;border-left:0 !important;border-right:0 !important;border-radius:0 !important}",
+  "html body.akw-halves .akw18-hh:not(#ak){padding:1px 3px;gap:3px}",
+  "html body.akw-halves .akw18-hh select:not(#ak),html body.akw-halves .akw18-hh button:not(#ak){height:22px !important;min-height:0 !important;padding:0 6px !important;font-size:.74rem !important;margin:0 !important;line-height:1 !important}",
+  "body.akw-halves .akw18-slot{padding:2px}",
+  /* arranger: transport row, settings drop-down, nothing scrolls sideways */
+  ".akarr-tools,.akarr-view{flex-wrap:wrap !important;overflow:visible !important}",
+  ".akarr-set{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 4px;padding:3px 6px;border-left:3px solid var(--accent,#c60);background:color-mix(in srgb,var(--accent,#c60) 14%,transparent)}",
+  "html body .akarr-set button:not(#ak),html body .akarr-set select:not(#ak),html body .akarr-set input:not(#ak){min-height:0 !important;height:26px !important;padding:0 8px !important;font-size:.76rem !important;margin:0 !important;width:auto !important}",
+  "html body .akarr-set input.akarr-bpm:not(#ak){width:58px !important;text-align:center;padding:0 4px !important}",
+  "html body .akarr-tools button.akarr-setb.on:not(#ak){background:var(--accent,#c60) !important;color:#fff !important}",
+  /* inside the halves: no card headings, small controls, smaller lyric text */
+  "body.akw-halves .akw18-slot > details.card > summary{display:none}body.akw-halves .akw18-slot > details.card{border:0 !important;padding:0 !important;background:none !important}",
+  "html body.akw-halves .akw18-slot .akarr-tools button:not(#ak),html body.akw-halves .akw18-slot .akarr-view button:not(#ak){min-height:0 !important;height:26px !important;padding:0 8px !important;font-size:.76rem !important}",
+  "body.akw-halves .akw18-slot .akarr{margin:0}",
+  "body.akw-halves .akw18-slot .akw9-pad{font-size:1rem !important;line-height:1.45 !important}"
+].join("\n"));
 
 akCss("akv185", [
   /* pop-up try strip */
