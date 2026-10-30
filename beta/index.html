@@ -52196,8 +52196,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7d";
+AK_VERSION = "18.7e";
 AK_WHATS_NEW = [
+  "Song length now follows your recordings: each song's length is the average of its recordings that look like the whole song (default 4:00–5:00). A recording a little outside that gets a one-time \"Was that the whole song?\" question; ones far outside (practice bits, forgot to stop) are ignored. Settings › Songs and shows › Song length from recordings to switch it off or change the range. A length you set by hand stays.",
   "Flyers: the show's address is added automatically in small type, near the bottom (or right under the venue name: Flyer › Address on the flyer, or off). 🎲 now lives inside the flyer view only: the 🎲 at the top rolls everything, ▾ beside it rolls just one thing (layout, colors, fonts, background, border and effects, overlays, where the words sit, your headshot) or picks what 🎲 keeps, and Background, Fonts, Colors, Overlays and Border each have their own 🎲 at the top. The 🎲 beside the Flyer button on the show page is gone.",
   "Graphics: overlays, borders and backgrounds have modifiers instead of lots of near-copies. Dots can now be circles, squares, diamonds, triangles, stars, hearts, hexagons, pluses or rings (and the many dot presets are trimmed). New overlays: gradient wash / glow / sweep, aurora ribbons, light leaks, glitch bars, film dust and scratches, art-deco fans, quatrefoil tiles, mandala. New borders with their own options (pattern size, spacing, corners, lines, filled or outline, second color): curly scrolls, squiggle, vine, regal flourishes, Greek key, Mayan step-fret, chain, arches, star and diamond chains. New Gradient background (straight, from a point or around a point; 2-3 colors, angle, grain). 🎲 Random flyer uses all of these, with random modifiers.",
   "Graphics: the border and overlays can now be tapped and picked like any other part (tap empty picture again to go on to the next one, then the background). The part pop-up has 🔁 Replace and ✨ Effects right on its first row for every part. 🎲 Random flyer starts clean (nothing left from the last flyer), and its overlay and border are sometimes absent and never repeat.",
@@ -52790,6 +52791,95 @@ function akGfxDiceRow(key, label) {
   var vg = go; /* the studio is built through go(): AK_VIEWS.gfx is what it calls */
 })();
 akCss("akv187-i", ".akg-dicerow{margin:2px 0 6px}.akg-shell>.topbar button.akg-dicemore{font-size:13px;padding:0 2px;min-width:20px;margin-left:-4px}");
+
+/* ================= 18.7e: song length from recordings =================
+   When a song has recordings, its length (song.duration, used everywhere: auto-scroll by length, set times, "songs left", flyers) follows the average
+   length of those recordings. Only recordings that look like the whole song count:
+     counted     = between settings().autoLen.lo and .hi (default 4:00 – 5:00), or you answered "Yes, the full song"
+     asked       = within .ask seconds outside that band (default 60 s): a pop-up asks "Was this the whole song?" once
+     left out    = anything further out (practice bits, forgot to stop), or you answered "No"
+   A song whose length you changed by hand since the app last set it is left alone. Switch: Settings › Songs and shows › Song length from recordings. */
+function akLenOpt() {
+  var s = settings(), d = { on: true, lo: 240, hi: 300, ask: 60, quiet: false };
+  if (!s.autoLen || typeof s.autoLen !== "object") s.autoLen = {};
+  Object.keys(d).forEach(function (k) { if (s.autoLen[k] === undefined) s.autoLen[k] = d[k]; });
+  return s.autoLen;
+}
+function akLenAnswers() { var l = lib(); if (!l.recLen || typeof l.recLen !== "object") l.recLen = {}; return l.recLen; }
+/* "ok" counts, "ask" waits for an answer, "no" is left out */
+function akLenClass(e) {
+  var o = akLenOpt(), a = akLenAnswers()[e.rid], t = e.secs || 0;
+  if (a === "y") return "ok"; if (a === "n") return "no";
+  if (t >= o.lo && t <= o.hi) return "ok";
+  if (t >= o.lo - o.ask && t <= o.hi + o.ask) return "ask";
+  return "no";
+}
+function akLenRecs(songId) {
+  var seen = {}, out = [];
+  (typeof akRcList === "function" ? akRcList() : []).forEach(function (e) {
+    if (e.songId !== songId || e.combined || (e.marks && e.marks.length) || !(e.secs > 0) || seen[e.rid]) return;
+    seen[e.rid] = 1; out.push(e);
+  });
+  return out;
+}
+function akLenAverage(songId) {
+  var ok = akLenRecs(songId).filter(function (e) { return akLenClass(e) === "ok"; });
+  if (!ok.length) return 0;
+  return Math.round(ok.reduce(function (a, e) { return a + e.secs; }, 0) / ok.length);
+}
+/* set the lengths; returns how many songs changed */
+function akLenApply() {
+  if (!akLenOpt().on || typeof lib !== "function") return 0;
+  var n = 0;
+  (lib().songs || []).forEach(function (s) {
+    var avg = akLenAverage(s.id); if (!avg) return;
+    if (s.durAuto != null && s.duration !== s.durAuto) return; /* changed by hand since: leave it */
+    if (s.duration !== avg || s.durAuto !== avg) { s.duration = avg; s.durAuto = avg; n++; }
+  });
+  if (n) { try { save(); } catch (e) {} }
+  return n;
+}
+var AKLEN = { asked: {}, busy: false };
+function akLenAskNext() {
+  if (!akLenOpt().on || akLenOpt().quiet || AKLEN.busy) return;
+  if (typeof autoOn !== "undefined" && autoOn) { setTimeout(akLenAskNext, 30000); return; }
+  var cut = Date.now() - 6 * 3600e3, a = akLenAnswers(), hit = null;
+  (typeof akRcList === "function" ? akRcList() : []).forEach(function (e) {
+    if (hit || !e.songId || e.combined || (e.marks && e.marks.length) || (e.at || 0) < cut || a[e.rid] || AKLEN.asked[e.rid]) return;
+    if (akLenClass(e) === "ask") hit = e;
+  });
+  if (!hit) return;
+  var song = (lib().songs || []).filter(function (x) { return x.id === hit.songId; })[0]; if (!song) return;
+  AKLEN.asked[hit.rid] = 1; AKLEN.busy = true;
+  var done = function (v) { AKLEN.busy = false; if (v) { akLenAnswers()[hit.rid] = v; akLenApply(); save(); if (v === "y") toast("Counted: the song's length is now " + fmtTime(song.duration || 0) + "."); } setTimeout(akLenAskNext, 400); };
+  modal("Was that the whole song?", h("p", null, "“" + (song.title || hit.title || "This song") + "” was recorded for " + fmtTime(hit.secs) + ", a little outside the usual " + fmtTime(akLenOpt().lo) + "–" + fmtTime(akLenOpt().hi) + ". Should it count toward the song's length?"),
+    [{ label: "Not now", onClick: function () { done(""); } }, { label: "No, leave it out", onClick: function () { done("n"); } }, { label: "Yes, the full song", primary: true, onClick: function () { done("y"); } }]);
+}
+(function () {
+  var r0 = akRcRefresh;
+  akRcRefresh = function () {
+    var p = r0.apply(this, arguments);
+    Promise.resolve(p).then(function () { try { akLenApply(); setTimeout(akLenAskNext, 600); } catch (e) {} });
+    return p;
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    sx.apply(this, arguments);
+    c.again("songs-and-shows");
+    var o = akLenOpt();
+    c.section("Song length from recordings", "A song's length follows its recordings; odd ones are left out");
+    c.check("Set each song's length from its recordings (the average)", function () { return o.on; }, function (v) { o.on = v; if (v) akLenApply(); });
+    c.range("Counts as a full song from", function () { return o.lo; }, function (v) { o.lo = Math.min(v, o.hi); }, 60, 600, 15, function (v) { return fmtTime(v); });
+    c.range("…up to", function () { return o.hi; }, function (v) { o.hi = Math.max(v, o.lo); }, 60, 900, 15, function (v) { return fmtTime(v); });
+    c.range("Ask “was this the whole song?” when it's this close outside", function () { return o.ask; }, function (v) { o.ask = v; }, 0, 180, 15, function (v) { return v ? v + " s" : "never ask; just leave it out"; });
+    c.check("Don't pop up the question (those recordings stay out)", function () { return o.quiet; }, function (v) { o.quiet = v; });
+    c.out.appendChild(h("p", { class: "hint" }, "Recordings further outside than that (a practice bit, or you forgot to stop) never count. A song whose length you set by hand stays as you set it. Your answers are saved with the library."));
+    c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () {
+      var s0 = (lib().songs || []); s0.forEach(function (s) { delete s.durAuto; }); var n = akLenApply(); toast(n ? "Updated " + n + (n === 1 ? " song's length." : " songs' lengths.") : "No song has a counted recording yet.");
+    } }, "Update every song now (also overrides lengths I set by hand)")));
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Song length from recordings (and the “was this the whole song?” question)", a: "Settings › Songs and shows › Song length from recordings. Turn it on or off, set what counts as a full song (default 4:00–5:00) and how close outside it asks you. Recordings far outside (practice bits, forgot to stop) are ignored.", k: "song length duration recording average analytics full song 4 5 minutes", go: function () { go("settings"); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
