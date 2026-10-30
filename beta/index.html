@@ -35192,21 +35192,31 @@ function akW18Drag(e, row, o, k, at0, drop, li) {
   }
   chip.addEventListener("pointermove", mv); chip.addEventListener("pointerup", up); chip.addEventListener("pointercancel", up);
 }
-/* drag a word to another beat of its bar */
-function akW18DragWord(e, btn, cell, n, wi, si, bi, w, dropWord) {
-  var x0 = e.clientX, y0 = e.clientY, go = false, slot = -1;
-  try { btn.setPointerCapture(e.pointerId); } catch (x) {}
+/* drag a word or a chord from where it is to any beat of any bar (drop(si, bi, slot)); drag a bar onto another bar */
+function akW18DragAny(e, el, drop, what) {
+  if (e.button != null && e.button > 0) return;
+  var x0 = e.clientX, y0 = e.clientY, go = false, tgt = null, wasPe = el.style.pointerEvents;
+  try { el.setPointerCapture(e.pointerId); } catch (x) {}
+  function clear() { Array.prototype.forEach.call(document.querySelectorAll(".ak18-rb i.aim, [data-si].aim, .ak18-rb.aimbar"), function (n) { n.classList.remove("aim", "aimbar"); }); }
   function mv(ev) {
     if (!go && Math.abs(ev.clientX - x0) < 6 && Math.abs(ev.clientY - y0) < 6) return;
-    go = true; ev.preventDefault(); btn.classList.add("drag"); btn.style.transform = "translate(" + (ev.clientX - x0) + "px," + (ev.clientY - y0) + "px)";
-    var r = cell.getBoundingClientRect(); slot = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - r.left) / r.width * n)));
-    Array.prototype.forEach.call(cell.querySelectorAll("i"), function (el, k) { el.classList.toggle("aim", k === slot); });
+    go = true; ev.preventDefault(); el.classList.add("drag"); el.style.pointerEvents = "none"; el.style.transform = "translate(" + (ev.clientX - x0) + "px," + (ev.clientY - y0) + "px)";
+    clear(); tgt = null;
+    var u = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (what === "bar") {
+      var bar = u && u.closest && u.closest("[data-si]"); if (bar && bar.getAttribute("data-si") != null) { bar.classList.add(bar.classList.contains("ak18-rb") ? "aimbar" : "aim"); var r0 = bar.getBoundingClientRect(); tgt = { si: +bar.getAttribute("data-si"), bi: +bar.getAttribute("data-bi"), after: ev.clientX > r0.left + r0.width / 2 }; }
+      return;
+    }
+    var cell = u && u.closest && u.closest(".ak18-rb"); if (!cell || cell.getAttribute("data-si") == null) return;
+    var n = Number(cell.getAttribute("data-n")) || 1, r = cell.getBoundingClientRect(), slot = Math.max(0, Math.min(n - 1, Math.floor((ev.clientX - r.left) / r.width * n)));
+    var is = cell.querySelectorAll("i"); if (is[slot]) is[slot].classList.add("aim");
+    tgt = { si: +cell.getAttribute("data-si"), bi: +cell.getAttribute("data-bi"), slot: slot };
   }
   function up() {
-    btn.removeEventListener("pointermove", mv); btn.removeEventListener("pointerup", up); btn.removeEventListener("pointercancel", up);
-    if (go) { btn._moved = true; setTimeout(function () { btn._moved = false; }, 400); btn.style.transform = ""; btn.classList.remove("drag"); if (slot >= 0) dropWord(si, bi, wi, slot); }
+    el.removeEventListener("pointermove", mv); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up);
+    if (go) { el._moved = true; setTimeout(function () { el._moved = false; }, 400); el.style.transform = ""; el.style.pointerEvents = wasPe; el.classList.remove("drag"); clear(); if (tgt) drop(tgt); }
   }
-  btn.addEventListener("pointermove", mv); btn.addEventListener("pointerup", up); btn.addEventListener("pointercancel", up);
+  el.addEventListener("pointermove", mv); el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
 }
 
 /* the chord pane (split / side) and the line editor (strip) */
@@ -35225,10 +35235,12 @@ function akW18Pane(ctx) {
   }
   function once(label) { if (snapped !== label + JSON.stringify(sel)) { snapped = label + JSON.stringify(sel); snap(label); } }
   function pick(s) { sel = sel && JSON.stringify(sel) === JSON.stringify(s) ? null : s; draw(); }
+  var tipOn = false;
   function viewChips() {
     views.textContent = "";
     if (ctx.strip) return;
     AK18_VIEWS.forEach(function (v) { views.appendChild(h("button", { class: "chip" + (c.cview === v[0] ? " on" : ""), onClick: function () { c.cview = v[0]; sel = null; save(); draw(); } }, v[1])); });
+    views.appendChild(h("button", { type: "button", class: "chip ak18-tipbtn" + (tipOn ? " on" : ""), "aria-pressed": tipOn ? "true" : "false", "aria-label": "Show or hide the tip", onClick: function (e) { e.preventDefault(); e.stopPropagation(); akTipBubble(e.currentTarget, c.cview === "words" ? "Tap a chord to slide it, or drag it over the word it belongs to." : c.cview === "rhythm" ? "Tap a word, then tap a beat to move it there. You can also drag it." : c.cview === "bars" ? "Tap a bar to type its words or move it. Drag a chord to another beat." : "Chords follow the words. Slide them in Chords over words."); } }, "💡 Tip"));
   }
   function moveChord(d, word) {
     var ls = lines(); if (!sel || !ls[sel.li]) return;
@@ -35239,11 +35251,55 @@ function akW18Pane(ctx) {
     var x = o.ch[k]; x.at = Math.max(0, Math.min(o.t.length, col)); o.ch.sort(function (a, b) { return a.at - b.at; });
     ls[li] = akW18Join(o); sel = null; setText(ls.join("\n"), li); draw();
   }
-  function dropWord(si, bi, wi, k) {
-    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), b = r && r.m.sections[si] && r.m.sections[si].bars[bi]; if (!b) return;
-    var wa = akR9Wa(b), lo = wi > 0 ? wa[wi - 1] : 0, hi = wi < wa.length - 1 ? wa[wi + 1] : b.s.length - 1;
-    k = Math.max(lo, Math.min(hi, k)); if (k === wa[wi]) return;
-    snap("move a word"); wa[wi] = k; b.wa = wa; akMKeep(s0, r.m); sel = null; draw();
+  /* a word to any beat of any bar (it keeps its place in the order of that bar's words) */
+  function dropWord(si, bi, wi, t) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), m = r && r.m, b1 = m && m.sections[si] && m.sections[si].bars[bi], b2 = m && m.sections[t.si] && m.sections[t.si].bars[t.bi]; if (!b1 || !b2) return;
+    var w1 = akR9Words(b1), a1 = akR9Wa(b1); if (!w1[wi]) return;
+    if (b1 === b2 && a1[wi] === t.slot) return;
+    snap("move a word");
+    var word = w1[wi]; w1.splice(wi, 1); a1.splice(wi, 1); b1.w = w1.join(" "); b1.wa = a1;
+    var w2 = b1 === b2 ? w1 : akR9Words(b2), a2 = b1 === b2 ? a1 : akR9Wa(b2), at = 0; while (at < a2.length && a2[at] <= t.slot) at++;
+    w2.splice(at, 0, word); a2.splice(at, 0, Math.max(0, Math.min(b2.s.length - 1, t.slot))); b2.w = w2.join(" "); b2.wa = a2;
+    akMKeep(s0, m); sel = null; draw();
+  }
+  /* a chord to any beat of any bar (swaps with a chord that is already there) */
+  function dropSlot(si, bi, k, t) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), m = r && r.m, b1 = m && m.sections[si] && m.sections[si].bars[bi], b2 = m && m.sections[t.si] && m.sections[t.si].bars[t.bi]; if (!b1 || !b2) return;
+    if (b1 === b2 && k === t.slot) return;
+    snap("move a chord"); var x = b1.s[k]; b1.s[k] = b2.s[t.slot] || ""; b2.s[t.slot] = x; akMKeep(s0, m); sel = null; draw();
+  }
+  function slotChord(si, bi, k) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), m = r && r.m, b = m && m.sections[si] && m.sections[si].bars[bi]; if (!b) return;
+    askText("Chord on this beat", b.s[k] || "", "Save", function (v) {
+      v = String(v || "").trim();
+      if (v && !(isChordTok(v) || isChordLike(v))) { toast("That isn't a chord I know. Try something like G, Am7 or D/F#."); return; }
+      snap("change a chord"); b.s[k] = v; akMKeep(s0, m); draw();
+    }, "Empty to take it off");
+  }
+  /* a bar: type its words, duplicate, insert, delete, move */
+  function barOp(si, bi, how) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), m = r && r.m, sc = m && m.sections[si], b = sc && sc.bars[bi]; if (!b) return;
+    snap("change the bars");
+    if (how === "dup") sc.bars.splice(bi + 1, 0, JSON.parse(JSON.stringify(b)));
+    else if (how === "ins") sc.bars.splice(bi + 1, 0, { s: b.s.map(function () { return ""; }), w: "" });
+    else if (how === "del") { if (sc.bars.length < 2 && m.sections.length > 1) m.sections.splice(si, 1); else if (sc.bars.length < 2) { toast("A chart needs at least one bar."); return; } else sc.bars.splice(bi, 1); }
+    else if (how === "left" || how === "right") { var j = bi + (how === "left" ? -1 : 1); if (j < 0 || j >= sc.bars.length) return; var t = sc.bars[j]; sc.bars[j] = b; sc.bars[bi] = t; }
+    akMKeep(s0, m); sel = null; draw();
+  }
+  function moveBar(si, bi, t) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), m = r && r.m, sc = m && m.sections[si], sc2 = m && m.sections[t.si]; if (!sc || !sc2 || !sc.bars[bi]) return;
+    if (si === t.si && (bi === t.bi || (t.after && bi === t.bi + 1 && false))) return;
+    snap("move a bar"); var b = sc.bars.splice(bi, 1)[0], at = t.bi + (t.after ? 1 : 0); if (sc === sc2 && bi < t.bi) at--; at = Math.max(0, Math.min(sc2.bars.length, at)); sc2.bars.splice(at, 0, b);
+    akMKeep(s0, m); sel = null; draw();
+  }
+  function barMenu(anchor, si, bi) {
+    menu(anchor, [
+      { label: "✎ Type the words of this bar", onClick: function () { editBarWords(si, bi); } },
+      { label: "⧉ Duplicate this bar", onClick: function () { barOp(si, bi, "dup"); } },
+      { label: "＋ Add an empty bar after", onClick: function () { barOp(si, bi, "ins"); } },
+      { label: "← Move earlier", onClick: function () { barOp(si, bi, "left"); } },
+      { label: "→ Move later", onClick: function () { barOp(si, bi, "right"); } },
+      { label: "🗑 Delete this bar", danger: true, onClick: function () { barOp(si, bi, "del"); } }]);
   }
   function dropChord() { var ls = lines(), o = akW18Parse(ls[sel.li]); snap("remove a chord"); o.ch.splice(sel.k, 1); ls[sel.li] = akW18Join(o); var li = sel.li; sel = null; setText(ls.join("\n"), li); draw(); }
   function moveWord(d) {
@@ -35258,7 +35314,7 @@ function akW18Pane(ctx) {
   }
   function drawNudge() {
     nudge.textContent = "";
-    if (!sel) { nudge.appendChild(h("span", { class: "hint" }, ctx.strip || c.cview === "words" ? "Tap a chord to slide it." : c.cview === "rhythm" ? "Tap a word to move it to another beat." : "Chords follow the words. Slide them in Chords over words.")); return; }
+    if (!sel) { if (tipOn && !ctx.strip) nudge.appendChild(h("span", { class: "hint" }, c.cview === "words" ? "Tap a chord to slide it. Drag it over the word it belongs to." : c.cview === "rhythm" ? "Tap a word to move it to another beat." : "Chords follow the words. Slide them in Chords over words.")); return; }
     if (sel.kind === "chord") {
       var o = akW18Parse(lines()[sel.li]), x = o.ch[sel.k]; if (!x) { sel = null; drawNudge(); return; }
       var w = (/\S+/.exec(o.t.slice(x.at)) || [""])[0];
@@ -35348,21 +35404,21 @@ function akW18Pane(ctx) {
       var grid = h("div", { class: "ak18-bars ak18-" + kind });
       sc.bars.forEach(function (b, bi) {
         var chs = b.s.filter(Boolean);
-        if (kind === "bars") grid.appendChild(h("div", { class: "ak18-bar", role: "button", tabindex: "0", title: "Tap to type the words of this bar", onClick: function () { editBarWords(si, bi); } }, h("b", null, chs.join("  ") || "·"), h("span", null, b.w || "✎ words")));
-        else if (kind === "jazz") { var prev = bi > 0 ? sc.bars[bi - 1].s.filter(Boolean).join(" ") : null; grid.appendChild(h("div", { class: "ak18-jz" }, chs.length && chs.join(" ") === prev ? "%" : chs.join("  ") || "")); }
+        if (kind === "bars") grid.appendChild(h("div", { class: "ak18-bar", role: "button", tabindex: "0", "data-si": String(si), "data-bi": String(bi), title: "Tap for this bar's options. Drag it to move it", onPointerDown: function (e) { akW18DragAny(e, e.currentTarget, function (t) { moveBar(si, bi, t); }, "bar"); }, onClick: function (e) { if (this._moved) { this._moved = false; return; } barMenu(this, si, bi); } }, h("b", null, chs.join("  ") || "·"), h("span", null, b.w || "✎ words")));
+        else if (kind === "jazz") { var prev = bi > 0 ? sc.bars[bi - 1].s.filter(Boolean).join(" ") : null; grid.appendChild(h("div", { class: "ak18-jz", role: "button", tabindex: "0", "data-si": String(si), "data-bi": String(bi), title: "Tap for this bar's options. Drag it to move it", onPointerDown: function (e) { akW18DragAny(e, e.currentTarget, function (t) { moveBar(si, bi, t); }, "bar"); }, onClick: function () { if (this._moved) { this._moved = false; return; } barMenu(this, si, bi); } }, chs.length && chs.join(" ") === prev ? "%" : chs.join("  ") || "")); }
         else {
-          var n = b.s.length, wa = akR9Wa(b), words = akR9Words(b), cell = h("div", { class: "ak18-rb", style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
-          b.s.forEach(function (x) { cell.appendChild(h("b", null, x || "")); });
+          var n = b.s.length, wa = akR9Wa(b), words = akR9Words(b), cell = h("div", { class: "ak18-rb", "data-si": String(si), "data-bi": String(bi), "data-n": String(n), style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
+          b.s.forEach(function (x, ck) { cell.appendChild(h("b", { class: "ak18-sl" + (x ? "" : " empty"), role: "button", tabindex: "0", "aria-label": x ? "Chord " + x + ": tap to change, drag to another beat or bar" : "Empty beat: tap to add a chord", onPointerDown: x ? function (e) { akW18DragAny(e, e.currentTarget, function (t) { dropSlot(si, bi, ck, t); }, "chord"); } : null, onClick: function () { if (this._moved) { this._moved = false; return; } slotChord(si, bi, ck); } }, x || "＋")); });
           for (var k = 0; k < n; k++) cell.appendChild(h("i", { "aria-hidden": "true" }, k % sub ? "↑" : "↓"));
           for (var k2 = 0; k2 < n; k2++) {
             var here = h("span");
             words.forEach(function (w, wi) {
               if (wa[wi] !== k2) return;
-              here.appendChild(h("button", { class: "ak18-wd" + (sel && sel.kind === "word" && sel.si === si && sel.bi === bi && sel.wi === wi ? " on" : ""), onPointerDown: function (e) { akW18DragWord(e, e.currentTarget, cell, n, wi, si, bi, w, dropWord); }, onClick: function () { if (this._moved) { this._moved = false; return; } pick({ kind: "word", si: si, bi: bi, wi: wi, w: w, beat: akW18Beat(wa[wi], sub) }); } }, w));
+              here.appendChild(h("button", { class: "ak18-wd" + (sel && sel.kind === "word" && sel.si === si && sel.bi === bi && sel.wi === wi ? " on" : ""), onPointerDown: function (e) { akW18DragAny(e, e.currentTarget, function (t) { dropWord(si, bi, wi, t); }, "word"); }, onClick: function () { if (this._moved) { this._moved = false; return; } pick({ kind: "word", si: si, bi: bi, wi: wi, w: w, beat: akW18Beat(wa[wi], sub) }); } }, w));
             });
             cell.appendChild(here);
           }
-          cell.appendChild(h("button", { class: "sm ak18-ed", "aria-label": "Type the words of this bar", title: "Type the words of this bar", onClick: function () { editBarWords(si, bi); } }, "✎"));
+          cell.appendChild(h("button", { class: "sm ak18-ed", "aria-label": "This bar: type words, duplicate, move, delete", title: "This bar: type words, duplicate, move, delete", onPointerDown: function (e) { akW18DragAny(e, e.currentTarget, function (t) { moveBar(si, bi, t); }, "bar"); }, onClick: function () { if (this._moved) { this._moved = false; return; } barMenu(this, si, bi); } }, "⋯"));
           grid.appendChild(cell);
         }
       });
@@ -35449,7 +35505,7 @@ akCss("ak18-a", [
   ".ak18-rhythm{grid-template-columns:minmax(0,1fr)}",
   ".ak18-rb{display:grid;border:1px solid var(--line,#8886);border-radius:8px;padding:6px 4px;text-align:center;row-gap:2px;font-size:.85em}.ak18-rb b{color:var(--chord,var(--accent,#c90));min-height:1.2em}.ak18-rb i{font-style:normal;opacity:.6}.ak18-rb span{display:flex;flex-direction:column;align-items:flex-start;min-width:0;overflow:visible}",
   ".ak18-wd{font:inherit;font-size:.8em;padding:1px 2px;border:1px solid transparent;border-radius:5px;background:none;color:inherit;cursor:pointer;white-space:nowrap;position:relative}.ak18-wd.on{border-color:var(--accent,#c90);background:color-mix(in srgb,var(--accent,#c90) 20%,transparent)}",
-  ".ak18-nudge{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:36px}.ak18-nudge button.sm{min-width:40px;min-height:38px}.ak18-what{flex:1 1 auto;text-align:center;font-size:13px}",
+  ".ak18-nudge:empty{display:none}.ak18-tipbtn{margin-left:auto}.ak18-nudge{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:36px}.ak18-nudge button.sm{min-width:40px;min-height:38px}.ak18-what{flex:1 1 auto;text-align:center;font-size:13px}",
   ".ak18-quick{display:flex;gap:6px;align-items:center;overflow-x:auto;flex-wrap:nowrap}.ak18-quick .chip{font-weight:700;white-space:nowrap}.ak18-quick .muted{font-size:12px;white-space:nowrap}",
   ".ak18-hand{display:flex;gap:8px;align-items:center;flex-wrap:wrap}",
   ".ak18-grip{height:14px;margin:0 auto 6px;width:90px;border-radius:7px;cursor:row-resize;touch-action:none;background:linear-gradient(var(--line,#8888),var(--line,#8888)) center/60px 5px no-repeat}",
@@ -36044,7 +36100,7 @@ function akGfxTimes(g) {
   if (!b) return f(a) + (a.pm ? "PM" : "AM");
   return f(a) + (a.pm === b.pm ? "" : (a.pm ? "PM" : "AM")) + "-" + f(b) + (b.pm ? "PM" : "AM");
 }
-function akGfxVenue(g) { return g.venue || ((typeof akVenueFor === "function" ? akVenueFor(g) : null) || {}).name || g.name || "Show"; }
+function akGfxVenue(g) { var vr = typeof akVenueFor === "function" ? akVenueFor(g) : null; return (vr && vr.name) || g.venue || ((typeof akVenueFor === "function" ? akVenueFor(g) : null) || {}).name || g.name || "Show"; }
 /* the dates a shows poster covers -> { from, to, title (two lines for My weekly style), sub } */
 function akGfxRange(D) {
   var r = D.range, today = akTodayKey(), from, to, title, sub;
@@ -36548,6 +36604,7 @@ function akGfxState() { if (!S.akg) S.akg = { sel: "", open: { what: true } }; r
 function akGfxOpen(kind, g) {
   var D = akGfxDesign(kind);
   if (g) {
+    if (typeof akGfxShowSwitch === "function") akGfxShowSwitch(D, g.id);
     D.gigId = g.id;
     if (kind === "week" && g.date) {
       if (D.range.mode !== "week") D.range.mode = "week";
@@ -36558,6 +36615,8 @@ function akGfxOpen(kind, g) {
   save(); go("gfx", { gfxKind: kind, gfxGig: g ? g.id : "" });
 }
 function akFlyerOpen(gig) { akGfxOpen("flyer", gig || null); }
+/* a random flyer for a show: random layout, colors and look, always with one of my headshots when I have some (see akGfxRandomFlyer) */
+function akFlyerRandom(gig) { if (typeof akGfxRandomFlyer === "function") akGfxRandomFlyer(gig || null); else akGfxOpen("flyer", gig || null); }
 function akTipSignOpen() { akGfxOpen("tip", null); }
 
 function viewGfx() {
@@ -36783,7 +36842,7 @@ function viewGfx() {
   function gigPick(label) {
     /* private shows only for invoices (or the private show a flyer was asked for) */
     var g0 = akGfxGig(D), allowP = kind === "invoice" || !!(g0 && g0.priv), up = akGigsIn(akTodayKey(), "9999", false, allowP), past = akGigs().filter(function (g) { return g.date && g.date < akTodayKey() && (allowP || !g.priv); }).sort(function (a, b) { return b.date.localeCompare(a.date); }).slice(0, 40);
-    var sel = h("select", { "aria-label": label, onChange: function () { D.gigId = this.value; ch(true); } });
+    var sel = h("select", { "aria-label": label, onChange: function () { if (typeof akGfxShowSwitch === "function") akGfxShowSwitch(D, this.value); D.gigId = this.value; ch(true); } });
     if (!up.length && !past.length) return h("p", { class: "hint" }, "No shows yet. Add one on the Shows tab first.");
     if (up.length) sel.appendChild(h("optgroup", { label: "Coming up" }, up.map(function (g) { return h("option", { value: g.id, selected: g0 && g0.id === g.id }, akDateShort(g.date) + " · " + akGigTitle(g)); })));
     if (past.length) sel.appendChild(h("optgroup", { label: "Past" }, past.map(function (g) { return h("option", { value: g.id, selected: g0 && g0.id === g.id }, akDateShort(g.date) + " · " + akGigTitle(g)); })));
@@ -36851,6 +36910,7 @@ function viewGfx() {
       d.appendChild(check("Capital letters in the rows", D.upper !== false, function (v) { D.upper = v; }));
     } else if (kind === "flyer") {
       d.appendChild(gigPick("Show"));
+      d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", title: "A random layout, colors and look for this show, with one of my headshots", onClick: function () { akGfxRandomFlyer(akGfxGig(D)); } }, "🎲 Random flyer")));
     } else if (kind === "tip") {
       var pays = akGfxPays(); D.pay = D.pay || {};
       if (!pays.length) d.appendChild(h("p", { class: "hint" }, "No tip links yet. Add them in Settings › Requests and tips (Venmo, Cash App, PayPal…)."));
@@ -37206,6 +37266,7 @@ function akGfxMenuItems() { return [{ label: "🎨 Graphics studio: posters, fly
     if (S.view !== "gig" || !g || !g.id) return card;
     var row = h("div", { class: "row akg-gigrow", "data-bk": "graphics", "data-bt": "Graphics" },
       h("button", { class: "sm", onClick: function () { akGfxOpen("flyer", g); } }, "🎨 Flyer"),
+      h("button", { class: "sm", "aria-label": "Random flyer for this show", title: "Random flyer with my headshot", onClick: function () { akFlyerRandom(g); } }, "🎲"),
       h("button", { class: "sm", onClick: function () { akGfxOpen("week", g); } }, "📅 Week poster"),
       h("button", { class: "sm", onClick: function () { akGfxOpen("invoice", g); } }, "🧾 Invoice" + (g.inv && g.inv.no ? " #" + g.inv.no : "")));
     var frag = document.createDocumentFragment(); frag.appendChild(row); frag.appendChild(card);
@@ -38189,7 +38250,7 @@ var AKCOL_RULES = [
   /* Write tab */
   { sel: ".akw9-card > .ak18-lays", mode: "head", key: "w:layout" },
   { sel: ".akw9-card .akw9-tempo", mode: "bar", key: "w:tempo", title: "Tempo and click" },
-  { sel: ".akw9-card:not(.ak18-L-strip) .ak18-pane", mode: "inner", key: "w:pane", title: "Chords" },
+  { sel: ".akw9-card:not(.ak18-L-strip):not(.akcard-chords) .ak18-pane", mode: "inner", key: "w:pane", title: "Chords" },
   { sel: ".akw9-card .akw9-secs", mode: "bar", key: "w:secs", title: "Song parts" },
   { sel: ".akw9-card .akw9-rhy", mode: "inner", key: "w:rhy", title: "Rhyme helper" },
   { sel: ".akw9-card .akw9-tools", mode: "bar", key: "w:tools", title: "Tools" }
@@ -46071,11 +46132,11 @@ function akGfxRecipeApply(D, r) {
   if (r.filt) D.filt = { mode: r.filt, c1: "#1d1446", c2: "#ff8a5c" };
   D.recipe = r.id || "";
 }
-function akGfxSurprise(D) {
+function akGfxSurprise(D, keepLay) {
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
   var r = { id: "", th: pick(AKG_THEMES)[0], ov: [pick(AKG_OVL_PRESETS)[0]], bd: pick(["none", "none", "line", "double", "rounded", "corners", "deco", "neon", "scallop", "brackets", "triple", "cornerdots", "dotsdash"]), tfx: Math.random() < 0.5 ? pick(["glow", "outline", "lift", "shadow", "retro", "block", "neon", "gold"]) : "" };
   if (Math.random() < 0.4) r.ov.push(pick(AKG_OVL_PRESETS)[0]);
-  if (D.kind === "flyer" && Math.random() < 0.7) r.lay = pick(AKG_FLY).id;
+  if (D.kind === "flyer" && !keepLay && Math.random() < 0.7) r.lay = pick(AKG_FLY).id;
   if (Math.random() < 0.3) r.filt = pick(["warm", "cool", "fade", "vivid", "bw"]);
   akGfxRecipeApply(D, r);
 }
@@ -49944,7 +50005,7 @@ function akW18bApply(el) {
     var drawer = h("div", { class: "akw18-drawer", hidden: true }), open = "", panels = {};
     function mk(id, kids) { var p = h("div", { class: "akw18-panel", hidden: true }); kids.forEach(function (k) { if (k) p.appendChild(k); }); panels[id] = p; drawer.appendChild(p); }
     mk("song", [quick, resume]);
-    mk("layout", [lays, prefs]);
+    mk("layout", [prefs]); if (lays) lays.hidden = true;
     mk("tempo", [tempo]);
     if (tempoBar) tempoBar.hidden = true;
     var lay = akW18Lay(), btns = {};
@@ -49958,7 +50019,7 @@ function akW18bApply(el) {
     }
     var bars = h("div", { class: "akw18-bars", "data-bk": "w18bars", "data-bt": "Write top bars" },
       bar("song", "📄 " + (song && song.title ? song.title : "New song") + " "),
-      bar("layout", "▦ " + akW18bName(AK_W18_SCR, c.scr).replace(/^Cards one under the other$/, "Stacked") + " · " + akW18bName(AK18_LAYS, lay) + " "),
+      bar("layout", "▦ Layout: " + ({ stack: "Cards", tabs: "Tabs", halves: "Halves" }[c.scr] || "Cards") + " "),
       bar("tempo", "♩ " + bpmText().replace(/^♩\s*/, "") + " "));
     body.insertBefore(drawer, body.firstChild); body.insertBefore(bars, drawer);
   } else if (lays) lays.parentNode.insertBefore(prefs, lays.nextSibling);
@@ -51056,10 +51117,8 @@ function akTipsFold(root) {
     var txt = el.textContent.trim(), min = el.classList.contains("hint") ? 70 : 110;
     if (txt.length < min || el.querySelector("button,a,input,select,textarea")) return;
     var key = akTipKey(el), shut = akTipShut(key);
-    var btn = h("button", { type: "button", class: "akhint-btn", "aria-expanded": shut ? "false" : "true", "aria-label": "Tip: tap to read", onClick: function () {
-      var now = !el.classList.contains("akhint-shut"); el.classList.toggle("akhint-shut", now); btn.setAttribute("aria-expanded", now ? "false" : "true"); akColSet(key, now);
-    } }, "ⓘ Tip");
-    el.setAttribute("data-aktip", key); el.classList.toggle("akhint-shut", shut);
+    var btn = h("button", { type: "button", class: "akhint-btn", "aria-label": "Tip: tap to read", onClick: function (e) { e.preventDefault(); e.stopPropagation(); akTipBubble(btn, el.textContent.trim()); } }, "ⓘ Tip");
+    el.setAttribute("data-aktip", key); el.classList.add("akhint-shut");
     el.parentNode.insertBefore(btn, el);
   });
 }
@@ -51077,7 +51136,7 @@ function akTipsAll(main, shut) {
     try { akTipsFold(root); } catch (e) { if (window.console) console.warn("ak18d tips", e); }
     try {
       var app = $("app"), main = app && app.querySelector(".main"), row = main && main.querySelector(":scope > .akfold-all");
-      if (row && akTipsOn() && !row.querySelector(".akhint-all") && main.querySelector("[data-aktip]")) {
+      if (false && row && akTipsOn() && !row.querySelector(".akhint-all") && main.querySelector("[data-aktip]")) {
         row.appendChild(h("button", { type: "button", class: "akfold-allb akhint-all", onClick: function () { var anyShut = !!main.querySelector(".akhint-shut"); akTipsAll(main, !anyShut); } }, "ⓘ Tips"));
       }
     } catch (e) {}
@@ -51678,7 +51737,8 @@ function akBarSyncBtn(el) {
 function akFitMain() {
   var ta = document.querySelector(".akw9-card:not([hidden]) .akw9-pad"); if (!ta || ta.closest(".akw18-halves, .ak18-L-side") || !ta.offsetParent) return;
   var nav = document.querySelector(".tabbar, nav, .bottomnav"), navH = nav && nav.getBoundingClientRect().height || 62, vv = window.visualViewport;
-  var bottom = Math.min(window.innerHeight, vv && vv.height ? vv.height : window.innerHeight) - navH, room = Math.round(bottom - ta.getBoundingClientRect().top - 10);
+  var sc = document.getElementById("mainScroll"), top0 = ta.getBoundingClientRect().top + (sc ? sc.scrollTop : 0); /* where it starts with the page at the top, so scrolling never makes it taller */
+  var bottom = Math.min(window.innerHeight, vv && vv.height ? vv.height : window.innerHeight) - navH, room = Math.round(bottom - top0 - 10);
   if (room > 160) ta.style.height = room + "px";
 }
 function akHalvesTidy(el) {
@@ -51831,13 +51891,14 @@ var AKCARDS = { open: {} };
 akW18bChips = function () {
   var c = akW18b(), box = h("div", { class: "akw18-layl" });
   function group(title, list, cur, set) {
-    box.appendChild(h("div", { class: "akw18-lh" }, title));
+    var gd = h("details", { class: "akw18-lg", open: AKCARDS.lg && AKCARDS.lg[title] === false ? false : true, onToggle: function () { AKCARDS.lg = AKCARDS.lg || {}; AKCARDS.lg[title] = gd.open; } }, h("summary", { class: "akw18-lh" }, title));
+    box.appendChild(gd);
     list.forEach(function (x) {
-      box.appendChild(h("button", { type: "button", class: "akw18-lo" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { set(x[0]); save(); rerenderKeepScroll(); } },
+      gd.appendChild(h("button", { type: "button", class: "akw18-lo" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { set(x[0]); save(); rerenderKeepScroll(); } },
         h("span", { class: "akw18-lk" }, cur === x[0] ? "✓" : ""), x[1]));
     });
   }
-  group("Layout", [["tabs", "Tabs"], ["halves", "Halves (split)"], ["stack", "Cards, one under the other"]], c.scr, function (v) { c.scr = v; });
+  group("Layout style", [["tabs", "Tabs"], ["halves", "Halves (two windows)"], ["stack", "Cards (one under the other)"]], c.scr, function (v) { c.scr = v; });
   if (c.scr === "halves") group("Split", [["stack", "Top and bottom"], ["side", "Side by side"], ["auto", "Automatic"]], c.dir || "auto", function (v) { c.dir = v; });
   return box;
 };
@@ -51878,8 +51939,15 @@ akW18bChips = function () {
         return;
       }
       /* cards: each one folds, starts minimized (the lyrics one stays open), and moves up and down */
-      var ids = { lyrics: card, arranger: arr, wheel: wheel, aloop: aloop }, order = (c.cardOrd || []).filter(function (k) { return ids[k]; });
-      Object.keys(ids).forEach(function (k) { if (ids[k] && order.indexOf(k) < 0) order.push(k); });
+      var chordsCard = null, pn = card.querySelector(".ak18-pane"), gr = card.querySelector(".ak18-grip");
+      if (pn) {
+        chordsCard = h("div", { class: "akw9-card akcard-chords" }); card.parentNode.insertBefore(chordsCard, card); chordsCard.appendChild(pn);
+        pn.style.height = ""; if (gr) gr.hidden = true;
+        var fb = pn.previousElementSibling; if (fb && fb.classList.contains("akfold-bar")) { fb.hidden = true; pn.hidden = false; pn.style.display = ""; }
+        chordsCard.addEventListener("click", function () { setTimeout(pn._sync, 0); });
+      }
+      var ids = { chords: chordsCard, lyrics: card, arranger: arr, wheel: wheel, aloop: aloop }, order = (c.cardOrd || []).filter(function (k) { return ids[k]; });
+      Object.keys(ids).forEach(function (k) { if (ids[k] && order.indexOf(k) < 0) { if (k === "chords" && order.indexOf("lyrics") >= 0) order.splice(order.indexOf("lyrics"), 0, k); else order.push(k); } });
       var first = order.map(function (k) { return ids[k]; }).filter(function (e) { return e.parentNode === body; })[0];
       if (first) {
         var mark = document.createComment("cards"); body.insertBefore(mark, first);
@@ -51889,6 +51957,32 @@ akW18bChips = function () {
         var i = order.indexOf(k), j = i + d; if (j < 0 || j >= order.length) return;
         var t = order[i]; order[i] = order[j]; order[j] = t; c.cardOrd = order.slice(); save(); rerenderKeepScroll();
       }
+      /* a handle on every card title: hold it and slide the card to where it belongs */
+      function dragger(k, e) {
+        var g = h("span", { class: "akcard-grab", role: "button", tabindex: "0", "aria-label": "Drag this card to move it", title: "Drag to move" }, "⠿");
+        g.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+        g.addEventListener("pointerdown", function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          var to = -1, bodyEl = e.parentNode;
+          function cards() { return order.map(function (kk) { return ids[kk]; }); }
+          function mark(ix) { cards().forEach(function (x, i) { x.classList.toggle("akcard-aim", i === ix && i !== order.indexOf(k)); }); }
+          function mv(m) {
+            e.classList.add("akcard-drag"); var cs = cards(); to = -1;
+            for (var i = 0; i < cs.length; i++) { var r = cs[i].getBoundingClientRect(); if (m.clientY >= r.top && m.clientY <= r.bottom) { to = i; break; } }
+            if (to < 0) to = m.clientY < cs[0].getBoundingClientRect().top ? 0 : cs.length - 1;
+            mark(to);
+          }
+          function up() {
+            window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up);
+            e.classList.remove("akcard-drag"); mark(-1);
+            var i = order.indexOf(k);
+            if (to >= 0 && to !== i) { order.splice(i, 1); order.splice(to, 0, k); c.cardOrd = order.slice(); save(); rerenderKeepScroll(); }
+          }
+          window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+        });
+        g.addEventListener("keydown", function (ev) { if (ev.key === "ArrowUp") { ev.preventDefault(); move(k, -1); } else if (ev.key === "ArrowDown") { ev.preventDefault(); move(k, 1); } });
+        return g;
+      }
       function arrows(k) {
         return h("span", { class: "akcard-mvs" },
           h("button", { type: "button", class: "sm akpart-mv", "aria-label": "Move this card up", title: "Move up", onClick: function (e) { e.preventDefault(); e.stopPropagation(); move(k, -1); } }, "▲"),
@@ -51896,17 +51990,19 @@ akW18bChips = function () {
       }
       order.forEach(function (k) {
         var e = ids[k];
-        if (k === "lyrics") {
-          var shut = AKCARDS.open.lyrics === false, head = e.querySelector(".akw9-head");
-          e.classList.toggle("akcard-shut", shut);
-          var bar = h("div", { class: "akcard-hd" }, h("button", { type: "button", class: "akcard-tg", "aria-expanded": shut ? "false" : "true", onClick: function () {
-            var s = !e.classList.contains("akcard-shut"); e.classList.toggle("akcard-shut", s); AKCARDS.open.lyrics = !s; this.setAttribute("aria-expanded", s ? "false" : "true"); this.firstChild.textContent = s ? "▸" : "▾";
-          } }, h("span", null, shut ? "▸" : "▾"), " Lyrics"), arrows(k));
+        if (k === "lyrics" || k === "chords") {
+          var shut = AKCARDS.open[k] === false, head = k === "lyrics" ? e.querySelector(".akw9-head") : null;
+          e.classList.toggle("akcard-shut", shut); e.setAttribute("data-akcard", k);
+          var bar = h("div", { class: "akcard-hd" }, dragger(k, e), h("button", { type: "button", class: "akcard-tg", "aria-expanded": shut ? "false" : "true", onClick: function () {
+            var s = !e.classList.contains("akcard-shut"); e.classList.toggle("akcard-shut", s); AKCARDS.open[k] = !s; this.setAttribute("aria-expanded", s ? "false" : "true"); this.firstChild.textContent = s ? "▸" : "▾";
+          } }, h("span", null, shut ? "▸" : "▾"), k === "chords" ? " Chords" : " Lyrics"), arrows(k));
+          if (k === "chords") { e.insertBefore(bar, e.firstChild); return; }
           if (head && head.nextSibling) e.insertBefore(bar, head.nextSibling); else e.appendChild(bar);
         } else {
           e.open = AKCARDS.open[k] === true;
           e.addEventListener("toggle", function () { AKCARDS.open[k] = e.open; });
-          var sm = e.querySelector(":scope > summary"); if (sm) { sm.classList.add("akcard-sm"); sm.appendChild(arrows(k)); }
+          e.setAttribute("data-akcard", k);
+          var sm = e.querySelector(":scope > summary"); if (sm) { sm.classList.add("akcard-sm"); sm.insertBefore(dragger(k, e), sm.firstChild); sm.appendChild(arrows(k)); }
         }
       });
     } catch (e) { if (window.console) console.warn("ak186 cards", e); }
@@ -51914,12 +52010,15 @@ akW18bChips = function () {
 })();
 
 akCss("akv186", [
+  ".akw18-lg>summary{cursor:pointer;list-style:none}.akw18-lg>summary::before{content:\"▾ \"}.akw18-lg:not([open])>summary::before{content:\"▸ \"}.akw18-lg>summary::-webkit-details-marker{display:none}",
   ".akhalf-tg{flex:none;width:34px;min-height:32px;border:0;border-radius:6px;background:var(--accent,#c60);color:var(--on-accent,#000);font-weight:700;cursor:pointer;padding:0}",
   
   ".akcard-hd{display:flex;align-items:center;gap:4px;margin:2px 0}.akcard-tg{flex:1;text-align:left;background:none;border:0;color:inherit;font:inherit;font-weight:600;padding:6px 2px;cursor:pointer}",
   ".akcard-shut>*:not(.akw9-head):not(.akcard-hd){display:none !important}",
   ".akcard-sm{display:flex !important;align-items:center;gap:4px}.akcard-sm>*:first-child{flex:1}",
   ".akcard-mvs{display:inline-flex;gap:2px;margin-left:auto}",
+  ".akcard-grab{flex:none;display:inline-grid;place-items:center;width:28px;min-height:28px;border-radius:6px;cursor:grab;touch-action:none;user-select:none;font-size:1.1rem;opacity:.75}.akcard-drag{opacity:.55}.akcard-aim{outline:3px solid var(--accent,#c60);outline-offset:-2px}",
+  ".akcard-chords>.ak18-pane{margin:2px 0;display:flex !important}.akcard-chords>.akfold-bar{display:none !important}",
   "html body .akcard-mvs button:not(#ak){min-height:28px !important;min-width:30px;padding:0 6px !important;margin:0 !important;width:auto !important}"
 ].join("\n"));
 
@@ -51967,14 +52066,15 @@ akCss("akv186c", [
   if (typeof AK_HELP_WHERE === "undefined") return;
   var W = function () { return akHelpView("write"); };
   [
-    { t: "Switch the Write layout (Tabs, Halves, Cards)", a: "Write tab › the ▦ bar at the top. Tabs: Lyrics / Arranger / Sections / Looper. Halves: two windows you choose and slide. Cards: everything one under the other, folded away except Lyrics.", k: "layout write tabs halves split cards stack screen view arrange", go: W },
+    { t: "Switch the Write layout (Tabs, Halves, Cards)", a: "Write tab › the ▦ Layout bar at the top (reads Layout: Cards / Tabs / Halves). Tabs: Lyrics / Arranger / Sections / Looper. Halves: two windows you choose and slide. Cards: Chords, Lyrics, Arranger, Chord workshop and Looper, one under the other.", k: "layout write tabs halves split cards stack screen view arrange", go: W },
     { t: "Choose what each half shows, or move the divider", a: "Halves layout: the drop-down at the top of each half picks what it shows (⇅ swaps them). Drag the bright bar between them to share the room. Settings › Write screen sets top-and-bottom or side by side.", k: "halves split divider slider two windows top bottom side vertical horizontal drag swap", go: W },
     { t: "Fold or collapse anything on the Write screen", a: "Tap any bar with the coloured ▾ arrow, a card title, or a half's ▾ button. Each one remembers how you left it (cards start folded when you open Write).", k: "collapse fold close open hide minimize arrow section card half", go: W },
-    { t: "Move cards, song parts or sections up and down", a: "Cards layout: ▲▼ on each card title. Sections tab: ▲▼ on each part's bar. Song parts (Verse, Chorus…) move with ▲▼ too.", k: "move reorder order up down card part section rearrange", go: W },
+    { t: "Move cards, song parts or sections up and down", a: "Cards layout: hold the ⠿ handle on a card title and slide it (or tap ▲▼). Sections tab: ▲▼ on each part's bar. Song parts (Verse, Chorus…) move with ▲▼ too.", k: "move reorder order up down card part section rearrange", go: W },
     { t: "Change how the lyrics look (Chords over words, Bars, Rhythm, Jazz chart)", a: "Write tab › Lyrics window (the Chords pane): the row Chords over words / Bars / Rhythm / Jazz chart. It is in the Lyrics tab, the Chords half, and the Lyrics card.", k: "view lyrics chords over words bars rhythm jazz chart chord pro switch", go: W },
     { t: "Put chords on the lyrics, and slide them", a: "Chords over words: tap Add a chord (or Other…) and the chord goes where the cursor is, or on the line you were typing in. Drag a chord sideways to the word it belongs over (it moves a letter at a time and lands where you let go). Or tap it and slide with ◀ ▶ (a letter) or ⏮ ⏭ (a word). Lines are typeable right there.", k: "add chord lyrics words slide move attach type over line", go: W },
     { t: "Type the words of a bar (Bars and Rhythm)", a: "Bars: tap a bar. Rhythm: tap the ✎ at the end of a bar. Type the words sung in that bar. In Rhythm, drag a word to another beat of its bar (or tap it and use ◀ ▶).", k: "words bar rhythm type edit lyrics beat", go: W },
     { t: "Rebuild from the lyrics", a: "Shows in Bars / Rhythm / Jazz when you edited the chart by hand. It redraws the bars from the chords in your lyrics and drops hand edits (Undo brings them back). Words on a line under a chord line spread over that line's bars.", k: "refill rebuild redo chart lyrics hand edit reset bars", go: W },
+    { t: "Show the tip for the chord views", a: "Write tab › the row Chords over words / Bars / Rhythm / Jazz chart › 💡 Tip at the right end. Tapping it pops up a small bubble with the tip; ✕ closes it.", k: "tip hint help chords words", go: W },
     { t: "Open the Jazz chart", a: "Chords pane › Jazz chart › Open the full jazz chart. It opens its own screen (the Play screen's jazz chart); Back returns to Write.", k: "jazz chart real book repeats endings screen play", go: W },
     { t: "Hear a chord, then add it to a bar", a: "Sections tab (or a half): tap a bar square, tap chords in the Wheel or Suggestions pop-up to hear them, then ✓ Add. The pop-up stays open for the next bar (Settings › Write screen sets size, and whether it opens by itself).", k: "chord workshop wheel suggestions palette hear audition add bar pop-up popup", go: W },
     { t: "Play the bars to hear them", a: "Sections tab › Bars header: the ▶ Play button at the left (■ Stop while it plays). The Play and tempo row, with Loop, ♩ tempo and Click, is lower in the same section.", k: "play bars listen hear measures progression start stop", go: W },
@@ -52084,8 +52184,11 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7";
+AK_VERSION = "18.7b";
 AK_WHATS_NEW = [
+  "Flyers: picking a show now fills in that show's own place, town, date and time (words left over from the last show are cleared; the venue comes from the saved venue when there is one). New 🎲 Random flyer: a random layout, colors and look for the show, always with one of your headshots (My pictures › Headshots).",
+  "Write › Cards: Chords and Lyrics are now separate cards, and every card (Chords, Lyrics, Arranger, Chord workshop, Looper) has a ⠿ handle: hold it and slide the card up or down (▲▼ still work). The layout button now reads “Layout: Cards / Tabs / Halves”. Every Tip (ⓘ Tip everywhere, and 💡 Tip beside Chords / Bars / Rhythm / Jazz) now pops up as a small bubble with an ✕ instead of expanding the page. The lyrics window no longer grows or jumps as you scroll.",
+  "Write › Rhythm / Bars / Jazz are now fully movable: drag a word to any beat of any bar, drag a chord to another beat or bar (it swaps if one is there), tap a chord or an empty ＋ beat to type a chord, drag a bar onto another to move it, and tap a bar (⋯ in Rhythm) to type its words, duplicate, add an empty bar, move or delete it.",
   "Graphics studio: 📁 File ▾ has ＋ New design (a blank page or a flyer, poster, tip sign or invoice, in any size), 📁 My designs (every saved design with a picture; open, rename, copy, delete, and Use parts from this design to bring its words, pictures and shapes into another), and 🖨 Print or send to a printer (this size, or fit on Letter or A4, or share the PDF to a printer app).",
   "Graphics studio: every part now has one ✨ Effects box right under its words or picture options. Pick an effect and its slider, shadow style and a color pop-up are right under it; the loose Effect dropdown and color swatches are gone. More effects to choose from.",
   "Arranger: ■ Stop now stops everything that is making sound (the looper, vocal takes, clips still playing) and is never greyed out while you hear something; ▶ while sound is running stops it too.",
@@ -52165,6 +52268,64 @@ if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Chord placer 
 
 /* the arranger's ▶ and ■ follow whatever is really making sound (the looper, a vocal take, a clip still ringing), so ■ is never greyed out while you hear something */
 setInterval(function () { try { if (document.querySelector(".akarr-stop") && typeof akArrBtns === "function") akArrBtns(); } catch (e) {} }, 500);
+
+akCss("akbars-drag",
+  ".ak18-rb b.ak18-sl{cursor:grab;touch-action:none;border-radius:5px}.ak18-rb b.ak18-sl.empty{opacity:.28;font-weight:400}.ak18-rb b.ak18-sl.drag{position:relative;z-index:5;background:var(--card,#222);box-shadow:0 2px 8px rgba(0,0,0,.5)}" +
+  ".ak18-bar{touch-action:none}.ak18-bar.drag,.ak18-rb .ak18-ed.drag{position:relative;z-index:6;box-shadow:0 2px 8px rgba(0,0,0,.5);opacity:.9}.ak18-bar.aim,.ak18-rb.aimbar{outline:2px solid var(--accent,#c60);outline-offset:1px}" +
+  ".ak18-jz{cursor:pointer;touch-action:none}.ak18-jz.aim{outline:2px solid var(--accent,#c60)}.ak18-jz.drag{position:relative;z-index:6;opacity:.9}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Move words, chords and bars around in Bars, Rhythm and Jazz", a: "Write › Rhythm: drag a word to any beat of any bar; drag a chord to another beat or bar (it swaps if one is there); tap a chord or an empty ＋ beat to type a chord. Bars and Jazz: drag a bar onto another to move it. Tap a bar (or ⋯ in Rhythm) to type its words, duplicate, add an empty bar, move or delete it.", k: "rhythm bars jazz drag move words chords bar beat swap duplicate delete insert rearrange flexible write", go: function () { go("write"); } });
+
+
+/* ---------------------------------------------------------------- 18.7b: a flyer follows the show it is made for; random flyers with a headshot */
+var AKG_SHOWTXT = ["title", "town", "time", "date", "kicker", "note", "artist"];
+function akGfxShowSwitch(D, id) {
+  /* words typed for one show (place, town, time, date…) must not stay on the flyer when another show is picked */
+  if (!D || D.gigId === id) return;
+  if (D.kind === "flyer" || D.kind === "invoice") { D.text = D.text || {}; AKG_SHOWTXT.forEach(function (k) { if (k !== "artist") delete D.text[k]; }); }
+}
+function akGfxHeads() { return (typeof akGfxLib === "function" ? akGfxLib() : []).filter(function (x) { return x.al === "head" && IMG[x.id]; }); }
+function akGfxRandomFlyer(g) {
+  var D = akGfxDesign("flyer"), heads = akGfxHeads();
+  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  if (g) { akGfxShowSwitch(D, g.id); D.gigId = g.id; }
+  D.text = {}; D.rowEdit = D.rowEdit || {}; D.edit = {}; D.editBy = {}; D.free = D.free || undefined;
+  var specs = AKG_FLY.filter(function (f) { return !heads.length || / photo /.test(" " + f.tags + " "); });
+  var spec = pick(specs.length ? specs : AKG_FLY);
+  D.layout = spec.id; akGfxFlyApply(D, spec.id);
+  akGfxSurprise(D, true);
+  D.layout = spec.id;
+  if (heads.length) { var hd = pick(heads); D.bg = { src: "photo", id: hd.id, color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.3, blur: 0 }; }
+  D.logo = true;
+  save(); go("gfx", { gfxKind: "flyer", gfxGig: g ? g.id : "" });
+  toast(heads.length ? "Random flyer with your headshot. 🎲 again for another." : "Random flyer. Add headshots in My pictures (Headshots) and they go on these.");
+}
+(function () {
+  if (typeof AK_HELP_WHERE === "undefined") return;
+  AK_HELP_WHERE.push({ t: "Make a random flyer for a show", a: "Show page › Graphics › 🎲 next to 🎨 Flyer, or Graphics studio › Flyer › 🎲 Random flyer. It picks a layout, colors and look at random and always puts one of your headshots (My pictures › Headshots) on it; every tap is a new one. ↶ Undo goes back.", k: "random flyer surprise headshot poster shuffle", go: function () { go("shows"); } });
+  AK_HELP_WHERE.push({ t: "A flyer takes its place, town and time from the show", a: "Pick the show at the top of the Flyer options: the place comes from the show's venue (or the venue saved under Venues), and the date, time and town follow. Words you typed for another show are cleared when you pick a different one.", k: "flyer venue place show information automatic fill town time date wrong", go: function () { go("shows"); } });
+})();
+
+
+/* ---------------------------------------------------------------- 18.7b: every Tip is a small floating bubble with an ✕ (nothing expands and pushes the page) */
+var AKTIPB = null;
+function akTipBubble(anchor, text) {
+  var was = AKTIPB && AKTIPB._a === anchor;
+  akTipClose(); if (was) return;
+  var b = h("div", { class: "aktipbub", role: "status" }, h("div", { class: "aktb-t" }, text), h("button", { type: "button", class: "aktb-x", "aria-label": "Close the tip", onClick: function (e) { e.stopPropagation(); akTipClose(); } }, "✕"));
+  b._a = anchor; document.body.appendChild(b); AKTIPB = b;
+  var r = anchor.getBoundingClientRect(), w = Math.min(320, window.innerWidth - 16);
+  b.style.width = w + "px"; b.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  var below = r.bottom + 8, bh = b.offsetHeight;
+  b.style.top = (below + bh > window.innerHeight - 8 ? Math.max(8, r.top - bh - 8) : below) + "px";
+  setTimeout(function () { document.addEventListener("pointerdown", akTipOut, true); }, 0);
+}
+function akTipOut(e) { if (AKTIPB && !AKTIPB.contains(e.target) && !(AKTIPB._a && AKTIPB._a.contains(e.target))) akTipClose(); }
+function akTipClose() { document.removeEventListener("pointerdown", akTipOut, true); if (AKTIPB && AKTIPB.parentNode) AKTIPB.parentNode.removeChild(AKTIPB); AKTIPB = null; }
+(function () { var g = go; go = function () { akTipClose(); return g.apply(this, arguments); }; })();
+akCss("akv187-tipbub", [
+  ".aktipbub{position:fixed;z-index:200;box-sizing:border-box;padding:10px 34px 10px 12px;border:2px solid var(--accent,#c60);border-radius:10px;background:var(--panel,var(--bg,#222));color:var(--text,inherit);font-size:.9rem;line-height:1.4;box-shadow:0 6px 22px rgba(0,0,0,.5)}",
+  "html body .aktipbub .aktb-x:not(#ak){position:absolute;top:4px;right:4px;min-height:28px !important;min-width:28px !important;width:28px !important;padding:0 !important;margin:0 !important}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
