@@ -13555,20 +13555,28 @@ function akMGuess(song) {
     if (/^\s*\[[^\]]+\]\s*$/.test(l)) return l;
     var toks = l.trim().split(/\s+/); return toks.length && toks.every(function (t) { return !t || isChordLike(t) || /^[|:/.-]+$/.test(t); }) ? toks.filter(function (t) { return isChordLike(t); }).map(function (t) { return "[" + t + "]"; }).join(" ") : "";
   }).join("\n");
-  var rows = text.replace(/\r\n?/g, "\n").split("\n"), skip = 0;
+  var rows = text.replace(/\r\n?/g, "\n").split("\n"), skip = 0, pend = null;
   rows.forEach(function (raw, ri) {
     if (ri < skip) return;
     var te = tabRunEnd(rows, ri); if (te > ri) { skip = te; return; }
     var line = splitCues(raw).text, t = line.trim(); if (!t) return;
     var sm = /^\[([^\]]+)\]$/.exec(t);
     if (sm && !isChordLike(sm[1].trim())) { sec(sm[1].trim()); return; }
-    var parts = line.split(/(\[[^\]]+\])/), b = null;
+    /* a line of words under a line of chords: share the words out over those chords' bars (18.5f) */
+    if (pend && pend.length && !/\[[^\]]*\]/.test(line)) {
+      var wd = t.split(/\s+/), per = Math.ceil(wd.length / pend.length);
+      pend.forEach(function (pb, k) { var w = wd.slice(k * per, (k + 1) * per).join(" "); if (w) addWords(pb, w); });
+      pend = null; return;
+    }
+    pend = null;
+    var parts = line.split(/(\[[^\]]+\])/), b = null, made = [], onlyCh = true;
     parts.forEach(function (p) {
       var m = /^\[([^\]]+)\]$/.exec(p);
-      if (m && isChordLike(m[1].trim())) { b = bar(m[1].trim()); return; }
+      if (m && isChordLike(m[1].trim())) { b = bar(m[1].trim()); made.push(b); return; }
       if (!p.trim()) return;
-      addWords(b || lastBar(), p);
+      onlyCh = false; addWords(b || lastBar(), p);
     });
+    if (onlyCh && made.length) pend = made;
   });
   secs = secs.filter(function (s) { return s.bars.length; });
   return { v: 1, sub: sub, auto: true, sections: secs };
@@ -23478,7 +23486,7 @@ function akFsShow(el) {
   if (!el || AKFS.drag) return;
   var doc = el === document.scrollingElement || el === document.documentElement;
   var ch = doc ? window.innerHeight : el.clientHeight, sh = el.scrollHeight;
-  if (sh < ch * 2.2 || ch < 160) return;
+  if (sh < ch * 1.25 || ch < 160) return;
   if (!AKFS.thumb) {
     AKFS.thumb = h("div", { class: "ak9-fs", role: "scrollbar", "aria-label": "Drag to scroll quickly", "aria-orientation": "vertical" });
     AKFS.thumb.addEventListener("pointerdown", function (e) {
@@ -35176,6 +35184,10 @@ function akW18Pane(ctx) {
     k = Math.max(lo, Math.min(hi, k)); if (k === wa[sel.wi]) return;
     once("move a word"); wa[sel.wi] = k; b.wa = wa; akMKeep(s, r.m); draw();
   }
+  function editBarWords(si, bi) {
+    var s0 = song(), r = s0 && akW18M(s0, ctx.ta.value), b = r && r.m.sections[si] && r.m.sections[si].bars[bi]; if (!b) return;
+    askText("Words in bar " + (bi + 1), b.w || "", "Save", function (v) { snap("edit the words of a bar"); b.w = String(v || "").trim(); delete b.wa; akMKeep(s0, r.m); draw(); }, "The words sung in this bar");
+  }
   function drawNudge() {
     nudge.textContent = "";
     if (!sel) { nudge.appendChild(h("span", { class: "hint" }, ctx.strip || c.cview === "words" ? "Tap a chord to slide it." : c.cview === "rhythm" ? "Tap a word to move it to another beat." : "Chords follow the words. Slide them in Chords over words.")); return; }
@@ -35208,7 +35220,7 @@ function akW18Pane(ctx) {
   }
   function addChord(x) {
     snap("add a chord");
-    if (ctx.strip) {
+    if (ctx.strip || c.cview === "words") {
       var ae = document.activeElement; if (ae && ae.classList && ae.classList.contains("ak18-in")) { focusLine = +ae.getAttribute("data-li"); focusAt = ae.selectionStart || 0; }
       var ls = lines(), li = focusLine >= 0 && focusLine < ls.length ? focusLine : ls.length - 1, o = akW18Parse(ls[li]);
       o.ch.push({ c: x, at: focusAt }); o.ch.sort(function (a, b) { return a.at - b.at; }); ls[li] = akW18Join(o); setText(ls.join("\n"), li); draw();
@@ -35247,27 +35259,28 @@ function akW18Pane(ctx) {
     return inp;
   }
   function drawWords() {
-    var ls = lines();
+    var ls = lines(), edit = ctx.strip || c.cview === "words";
     ls.forEach(function (line, li) {
-      if (akW18IsHead(line)) { body.appendChild(h("div", { class: "ak18-head" }, line.trim().slice(1, -1))); if (!ctx.strip) return; }
+      if (akW18IsHead(line)) { body.appendChild(h("div", { class: "ak18-head" }, line.trim().slice(1, -1))); if (!edit) return; }
       var o = akW18Parse(akW18IsHead(line) ? "" : line);
-      if (!ctx.strip && !o.t.trim() && !o.ch.length) { body.appendChild(h("div", { class: "ak18-gap" })); return; }
-      if (ctx.strip && akW18IsHead(line)) return;
-      body.appendChild(h("div", { class: "ak18-ln" }, akW18Strip(o, li, sel, pick), ctx.strip ? lineInput(o, li) : h("div", { class: "ak18-tx" }, o.t || " ")));
+      if (!edit && !o.t.trim() && !o.ch.length) { body.appendChild(h("div", { class: "ak18-gap" })); return; }
+      if (edit && akW18IsHead(line)) return;
+      body.appendChild(h("div", { class: "ak18-ln" }, akW18Strip(o, li, sel, pick), edit ? lineInput(o, li) : h("div", { class: "ak18-tx" }, o.t || " ")));
     });
     if (!ls.join("").trim() && !ctx.strip) body.appendChild(h("p", { class: "hint" }, "Your lyrics and their [chords] show here as you write."));
+    if (edit && !ctx.strip) body.appendChild(h("button", { class: "sm ak18-addln", onClick: function () { snap("add a line"); var v = ctx.ta.value; setText(v + (v && !/\n$/.test(v) ? "\n" : "") + " ", lines().length); focusLine = lines().length - 1; focusAt = 0; draw(true); } }, "＋ Add a line of words"));
   }
   function drawBars(kind) {
     var s = song(), r = akW18M(s, ctx.ta.value), m = r.m, sub = m.sub || 2;
-    if (r.hand) body.appendChild(h("div", { class: "ak18-hand" }, h("span", { class: "hint" }, "This chart was set by hand, so new lyrics don't flow in by themselves."),
-      h("button", { class: "sm", onClick: function () { if (!s) return; snap("refill the chart"); delete s.measure; save(); sel = null; draw(); } }, "Refill from the lyrics")));
+    if (r.hand) body.appendChild(h("div", { class: "ak18-hand" }, h("span", { class: "hint" }, "You edited this chart by hand, so new lyrics don't flow in by themselves. Rebuild redraws the bars and rhythm from the chords in your lyrics and drops those hand edits (Undo brings them back)."),
+      h("button", { class: "sm", onClick: function () { if (!s) return; snap("refill the chart"); delete s.measure; save(); sel = null; draw(); } }, "↻ Rebuild from the lyrics")));
     if (!m.sections.length) { body.appendChild(h("p", { class: "hint" }, "Put chords in the lyrics, like [G]Headlights [Em]low, and the bars fill in.")); return; }
     m.sections.forEach(function (sc, si) {
       if (sc.name) body.appendChild(h("div", { class: "ak18-head" }, sc.name));
       var grid = h("div", { class: "ak18-bars ak18-" + kind });
       sc.bars.forEach(function (b, bi) {
         var chs = b.s.filter(Boolean);
-        if (kind === "bars") grid.appendChild(h("div", { class: "ak18-bar" }, h("b", null, chs.join("  ") || "·"), h("span", null, b.w || "")));
+        if (kind === "bars") grid.appendChild(h("div", { class: "ak18-bar", role: "button", tabindex: "0", title: "Tap to type the words of this bar", onClick: function () { editBarWords(si, bi); } }, h("b", null, chs.join("  ") || "·"), h("span", null, b.w || "✎ words")));
         else if (kind === "jazz") { var prev = bi > 0 ? sc.bars[bi - 1].s.filter(Boolean).join(" ") : null; grid.appendChild(h("div", { class: "ak18-jz" }, chs.length && chs.join(" ") === prev ? "%" : chs.join("  ") || "")); }
         else {
           var n = b.s.length, wa = akR9Wa(b), words = akR9Words(b), cell = h("div", { class: "ak18-rb", style: "grid-template-columns:repeat(" + n + ",minmax(0,1fr))" });
@@ -35281,12 +35294,13 @@ function akW18Pane(ctx) {
             });
             cell.appendChild(here);
           }
+          cell.appendChild(h("button", { class: "sm ak18-ed", "aria-label": "Type the words of this bar", title: "Type the words of this bar", onClick: function () { editBarWords(si, bi); } }, "✎"));
           grid.appendChild(cell);
         }
       });
       body.appendChild(grid);
     });
-    if (kind === "jazz" && s) body.appendChild(h("button", { class: "sm", onClick: function () { s.lyrics = ctx.ta.value; save(); akJzOpen(s); } }, "🎼 Open the full jazz chart"));
+    if (kind === "jazz" && s) body.appendChild(h("button", { class: "sm", onClick: function () { s.lyrics = ctx.ta.value; save(); toast("Opening the jazz chart on the Play screen. Back returns to Write."); akJzOpen(s); } }, "🎼 Open the full jazz chart (Play screen)"));
   }
   function draw(keepFocus) {
     var ae = document.activeElement, fl = ae && ae.classList && ae.classList.contains("ak18-in") ? +ae.getAttribute("data-li") : -1, fp = fl >= 0 ? ae.selectionStart : 0;
@@ -49949,6 +49963,11 @@ function akArrTimeline(st) {
       }
     });
   });
+  if (ws.click && ws.secs && ws.secs.length) {
+    ev = ev.filter(function (e) { return e.kind !== "click"; });
+    var ts0 = ws.secs[first < 0 ? 0 : first].ts || [4, 4], bt0 = akWsBeatT(ts0), per = Math.max(1, ts0[0]), t0 = reg ? ra : 0, t1 = reg ? rb : total;
+    for (var bi = 0, tk = t0; tk < t1 && bi < 4000; bi++, tk += bt0) ev.push({ at: (tk - t0) * spt, kind: "click", acc: bi % per === 0 ? 2 : 0 });
+  }
   ev.sort(function (x, y) { return x.at - y.at || (x.kind === "click" ? -1 : 1); });
   var f = first < 0 ? 0 : first, bT = akWsBarT(ws.secs[f].ts);
   return { ev: ev, bars: [{ si: f, bi: 0, at: 0, len: bT * spt, t: bT }], len: (reg ? rb - ra : total) * spt };
@@ -50328,9 +50347,10 @@ function akArrBuild() {
     var snapSel = h("select", { class: "akarr-snap", "aria-label": "Snap clips to" }, AK_ARR_SNAPS.map(function (x) { return h("option", { value: x[0], selected: x[0] === a.snap }, "Snap: " + x[1]); }));
     snapSel.addEventListener("change", function () { a.snap = snapSel.value; save(); draw(); });
     host.appendChild(h("div", { class: "akarr-tools" },
+      h("div", { class: "akarr-tp", role: "group", "aria-label": "Transport" },
       h("button", { class: "sm akarr-play", "aria-pressed": "false", "aria-label": "Play", title: "Play (records if a track is armed)", onClick: play }, "▶"),
       h("button", { class: "sm akarr-stop", "aria-label": "Stop", title: "Stop", disabled: true, onClick: stopAll }, "■"),
-      h("button", { class: "sm akarr-rec", "aria-pressed": "false", "aria-label": "Arm a track for recording", title: "Arm a track to record, then press play", onClick: recBtn }, "●"),
+      h("button", { class: "sm akarr-rec", "aria-pressed": "false", "aria-label": "Arm a track for recording", title: "Arm a track to record, then press play", onClick: recBtn }, "●")),
       h("button", { class: "sm akarr-setb" + (setOpen() ? " on" : ""), "aria-expanded": setOpen() ? "true" : "false", "aria-label": "Arranger settings: click, tempo, loop, count-in, snap", title: "Click, tempo, loop, count-in, snap", onClick: function () { host._set = !setOpen(); draw(); } }, "⚙ ▾"),
       h("span", { class: "grow" }),
       ib("↶", "Undo", undo),
@@ -50530,6 +50550,8 @@ akCss("akv18-arranger", [
   ".akarr{margin:4px 0}.akarr-tools,.akarr-view{display:flex;gap:4px;align-items:center;margin:0 0 4px;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}",
   ".akarr-tools>*,.akarr-view>*{flex:none}.akarr-tools .grow{flex:1 1 0;min-width:0}",
   "html body .akarr-tools button,html body .akarr-view button{min-height:32px !important;padding:0 10px !important;margin:0 !important;width:auto !important}",
+  ".akarr-tp{display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--panel,#8883);border:1px solid var(--accent,#c60)}.akarr-tp button{font-size:1.05rem}",
+  ".akarr-view{padding:2px 4px;border-radius:8px;background:var(--panel,#8881);border:1px dashed var(--line,#8886)}",
   ".akarr-snap{font-size:.8rem;min-height:32px;padding:0 6px;max-width:112px}.akarr-vl{font-size:.8rem;opacity:.7;padding:0 2px}",
   ".akarr-wrap{display:flex;align-items:flex-start;border:1px solid var(--line,#8886);border-radius:6px;overflow-y:auto;overflow-x:hidden;min-height:90px}",
   ".akarr-names{flex:none;width:98px;border-right:1px solid var(--line,#8886);background:var(--panel,#8881);position:sticky;left:0;z-index:4}",
@@ -51349,6 +51371,182 @@ akCss("akv185", [
   "body[data-akwin=black].akw-on .akws-gridwrap,body[data-akwin=black].akw-on .akw9-pad,body[data-akwin=black].akw-on .ak18-pane,body[data-akwin=black].akw-on .ak18-body{background:#000 !important;color:#eee !important;--fg:#eee;--line:#555}",
   "body[data-akwin=black].akw-on .akw9-pad{border-color:#444 !important}"
 ].join("\n"));
+
+/* ================================================================ 18.5f: three layouts only (Tabs / Halves / Cards), the lyric views always there,
+   cards that fold, minimize on open and move, and nothing extra under the tabs or halves. */
+var AKCARDS = { open: {} };
+(function () {
+  var g = go;
+  go = function (view) { if (view !== "write") AKCARDS.open = {}; return g.apply(this, arguments); };
+  /* one words-and-chords layout: the Split one (a Chords window with the view switcher + the lyrics window). Chord Pro style is a view inside it. */
+  function migrate() {
+    var w = akW18b(), c = akW18();
+    if (c.lay !== "split") c.lay = "split";
+    if (c.layLand !== "same") c.layLand = "same";
+    if (!w.f186) { w.f186 = 1; if ((c.splitH || 0) < 42) c.splitH = 44; save(); }
+  }
+  var vw = viewWrite;
+  viewWrite = function () { try { migrate(); } catch (e) {} return vw.apply(this, arguments); };
+  AK_VIEWS.write = viewWrite;
+})();
+
+akW18bChips = function () {
+  var c = akW18b(), box = h("div", { class: "akw18-layl" });
+  function group(title, list, cur, set) {
+    box.appendChild(h("div", { class: "akw18-lh" }, title));
+    list.forEach(function (x) {
+      box.appendChild(h("button", { type: "button", class: "akw18-lo" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { set(x[0]); save(); rerenderKeepScroll(); } },
+        h("span", { class: "akw18-lk" }, cur === x[0] ? "✓" : ""), x[1]));
+    });
+  }
+  group("Layout", [["tabs", "Tabs"], ["halves", "Halves (split)"], ["stack", "Cards, one under the other"]], c.scr, function (v) { c.scr = v; });
+  if (c.scr === "halves") group("Split", [["stack", "Top and bottom"], ["side", "Side by side"], ["auto", "Automatic"]], c.dir || "auto", function (v) { c.dir = v; });
+  return box;
+};
+
+(function () {
+  var ap = akW18bApply;
+  akW18bApply = function (el) {
+    ap.apply(this, arguments);
+    try {
+      var body = el.querySelector(".akw9"), c = akW18b(); if (!body) return;
+      var card = body.querySelector(".akw9-card"), arr = body.querySelector(".akarr-card"), wheel = body.querySelector('[data-bk="wheel"]'), aloop = body.querySelector('[data-bk="aloop"]');
+      var dets = [arr, wheel, aloop].filter(Boolean);
+      dets.forEach(function (d) { d.setAttribute("data-akcold", "1"); d._layInit = true; });
+      if (c.scr !== "stack") {
+        dets.forEach(function (d) { d.open = true; });
+        if (c.scr === "halves") {
+          var box = body.querySelector(".akw18-halves"); if (arr && !(box && box.contains(arr))) arr.hidden = true;
+          if (box) {
+            var halves = box.querySelectorAll(":scope > .akw18-half"), grip = box.querySelector(":scope > .akw18-grip"), keys = ["shutA", "shutB"];
+            function paint() {
+              Array.prototype.forEach.call(halves, function (hf, i) {
+                var shut = !!c[keys[i]], sl = hf.querySelector(".akw18-slot"), tg = hf.querySelector(".akhalf-tg");
+                if (sl) sl.hidden = shut; hf.classList.toggle("akhalf-shut", shut);
+                if (tg) { tg.setAttribute("aria-expanded", shut ? "false" : "true"); tg.firstChild.textContent = shut ? "▸" : "▾"; }
+              });
+              var any = !!(c.shutA || c.shutB); if (grip) grip.hidden = any;
+              if (any) { halves[0].style.flex = c.shutA ? "0 0 auto" : "1 1 0"; halves[1].style.flex = c.shutB ? "0 0 auto" : "1 1 0"; }
+              else { halves[0].style.flex = "0 0 " + (c.pct || 50) + "%"; halves[1].style.flex = "1 1 0"; }
+            }
+            Array.prototype.forEach.call(halves, function (hf, i) {
+              var hh = hf.querySelector(".akw18-hh"); if (!hh || hh.querySelector(".akhalf-tg")) return;
+              hh.insertBefore(h("button", { type: "button", class: "akhalf-tg", "aria-label": "Fold this half away", title: "Fold this half away", onClick: function () { c[keys[i]] = !c[keys[i]]; save(); paint(); } }, h("span", null, "▾")), hh.firstChild);
+            });
+            paint();
+          }
+        }
+        return;
+      }
+      /* cards: each one folds, starts minimized (the lyrics one stays open), and moves up and down */
+      var ids = { lyrics: card, arranger: arr, wheel: wheel, aloop: aloop }, order = (c.cardOrd || []).filter(function (k) { return ids[k]; });
+      Object.keys(ids).forEach(function (k) { if (ids[k] && order.indexOf(k) < 0) order.push(k); });
+      var first = order.map(function (k) { return ids[k]; }).filter(function (e) { return e.parentNode === body; })[0];
+      if (first) {
+        var mark = document.createComment("cards"); body.insertBefore(mark, first);
+        order.forEach(function (k) { body.insertBefore(ids[k], mark); }); body.removeChild(mark);
+      }
+      function move(k, d) {
+        var i = order.indexOf(k), j = i + d; if (j < 0 || j >= order.length) return;
+        var t = order[i]; order[i] = order[j]; order[j] = t; c.cardOrd = order.slice(); save(); rerenderKeepScroll();
+      }
+      function arrows(k) {
+        return h("span", { class: "akcard-mvs" },
+          h("button", { type: "button", class: "sm akpart-mv", "aria-label": "Move this card up", title: "Move up", onClick: function (e) { e.preventDefault(); e.stopPropagation(); move(k, -1); } }, "▲"),
+          h("button", { type: "button", class: "sm akpart-mv", "aria-label": "Move this card down", title: "Move down", onClick: function (e) { e.preventDefault(); e.stopPropagation(); move(k, 1); } }, "▼"));
+      }
+      order.forEach(function (k) {
+        var e = ids[k];
+        if (k === "lyrics") {
+          var shut = AKCARDS.open.lyrics === false, head = e.querySelector(".akw9-head");
+          e.classList.toggle("akcard-shut", shut);
+          var bar = h("div", { class: "akcard-hd" }, h("button", { type: "button", class: "akcard-tg", "aria-expanded": shut ? "false" : "true", onClick: function () {
+            var s = !e.classList.contains("akcard-shut"); e.classList.toggle("akcard-shut", s); AKCARDS.open.lyrics = !s; this.setAttribute("aria-expanded", s ? "false" : "true"); this.firstChild.textContent = s ? "▸" : "▾";
+          } }, h("span", null, shut ? "▸" : "▾"), " Lyrics"), arrows(k));
+          if (head && head.nextSibling) e.insertBefore(bar, head.nextSibling); else e.appendChild(bar);
+        } else {
+          e.open = AKCARDS.open[k] === true;
+          e.addEventListener("toggle", function () { AKCARDS.open[k] = e.open; });
+          var sm = e.querySelector(":scope > summary"); if (sm) { sm.classList.add("akcard-sm"); sm.appendChild(arrows(k)); }
+        }
+      });
+    } catch (e) { if (window.console) console.warn("ak186 cards", e); }
+  };
+})();
+
+akCss("akv186", [
+  ".akhalf-tg{flex:none;width:34px;min-height:32px;border:0;border-radius:6px;background:var(--accent,#c60);color:var(--on-accent,#000);font-weight:700;cursor:pointer;padding:0}",
+  ".akhalf-shut{flex:0 0 auto !important}",
+  ".akcard-hd{display:flex;align-items:center;gap:4px;margin:2px 0}.akcard-tg{flex:1;text-align:left;background:none;border:0;color:inherit;font:inherit;font-weight:600;padding:6px 2px;cursor:pointer}",
+  ".akcard-shut>*:not(.akw9-head):not(.akcard-hd){display:none !important}",
+  ".akcard-sm{display:flex !important;align-items:center;gap:4px}.akcard-sm>*:first-child{flex:1}",
+  ".akcard-mvs{display:inline-flex;gap:2px;margin-left:auto}",
+  "html body .akcard-mvs button:not(#ak){min-height:28px !important;min-width:30px;padding:0 6px !important;margin:0 !important;width:auto !important}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- the divider is plainly a divider; the side slider stays on screen wherever the page scrolls */
+akCss("akv186b", [
+  ".akw18-grip{height:22px !important;background:var(--accent,#c60) !important;border-block:2px solid var(--on-accent,#000) !important;box-shadow:0 0 0 1px var(--accent,#c60)}",
+  ".akw18-grip::after{width:64px !important;height:5px !important;border-radius:3px;background:var(--on-accent,#000) !important;opacity:.85}",
+  ".akw18-grip.v{height:auto !important;width:22px !important;border-block:0 !important;border-inline:2px solid var(--on-accent,#000) !important}.akw18-grip.v::after{width:5px !important;height:64px !important}",
+  "@media (max-width:699px){.akw18-halves{margin-inline:calc(50% - 50vw) !important;border-radius:0 !important;border-inline:0 !important}}",
+  /* fold arrows you can see */
+  ".akfold-bar .akfold-arr{display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border-radius:5px;background:var(--accent,#c60);color:var(--on-accent,#000);font-size:.8rem;line-height:1}",
+  ".akfold-bar .akfold-arr::before{font-weight:700}",
+  ".akcard-tg>span:first-child{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:5px;background:var(--accent,#c60);color:var(--on-accent,#000)}",
+  ".ak9-fs.vis,.ak9-fs.on{opacity:.9}"
+].join("\n"));
+akFsHideSoon = function () { /* stays on screen while the page can scroll (see the check below) */ };
+var AKFSLAST = 0;
+document.addEventListener("scroll", function () { AKFSLAST = Date.now(); }, true);
+setInterval(function () {
+  try {
+    if (settings().fastScroll === false || document.querySelector(".modal, .menu") || AKFS.drag || Date.now() - AKFSLAST < 2500) return;
+    var m = document.querySelector(".main"), el = m && m.clientHeight >= 160 && m.scrollHeight > m.clientHeight * 1.25 ? m : (document.scrollingElement || document.documentElement), th = AKFS.thumb;
+    var ch = el === m ? m.clientHeight : window.innerHeight;
+    if (el.scrollHeight > ch * 1.25) { if (!th || !th.classList.contains("vis") || AKFS.el !== el) { AKFS.el = null; akFsShow(el); } else akFsPlace(); }
+    else if (th) th.classList.remove("vis");
+  } catch (e) {}
+}, 700);
+
+/* the bar editor (Bar / Chord / N.C. / Remove / Done, arrows) and the hear-and-add strip fold too */
+[
+  { sel: ".akws > .akws-sel", mode: "bar", key: "ws:sel", title: "Bar editor" },
+  { sel: ".akws > .aktry-inline", mode: "bar", key: "ws:try", title: "Hear and add" },
+  { sel: ".akw9 .akw9-padrow", mode: "bar", key: "w:pad", title: "Lyrics text" },
+  { sel: ".akws > .akpw-legend", mode: "bar", key: "ws:legend", title: "What the colors mean" }
+].forEach(function (r) { AKCOL_RULES.push(r); });
+
+akCss("akv186c", [
+  ".ak18-rb .ak18-ed{grid-column:1/-1;justify-self:end;min-height:24px !important;padding:0 8px !important;opacity:.8}",
+  ".ak18-bar[role=button]{cursor:pointer}.ak18-addln{margin:6px 0}"
+].join("\n"));
+
+/* ---------------------------------------------------------------- the "Where is…?" index: the Write screen as it is now.
+   RULE (Aedryan, 10-29): every new feature or move adds or updates an entry here (and tests/ak_t498 keeps these findable). */
+(function () {
+  if (typeof AK_HELP_WHERE === "undefined") return;
+  var W = function () { return akHelpView("write"); };
+  [
+    { t: "Switch the Write layout (Tabs, Halves, Cards)", a: "Write tab › the ▦ bar at the top. Tabs: Lyrics / Arranger / Sections / Looper. Halves: two windows you choose and slide. Cards: everything one under the other, folded away except Lyrics.", k: "layout write tabs halves split cards stack screen view arrange", go: W },
+    { t: "Choose what each half shows, or move the divider", a: "Halves layout: the drop-down at the top of each half picks what it shows (⇅ swaps them). Drag the bright bar between them to share the room. Settings › Write screen sets top-and-bottom or side by side.", k: "halves split divider slider two windows top bottom side vertical horizontal drag swap", go: W },
+    { t: "Fold or collapse anything on the Write screen", a: "Tap any bar with the coloured ▾ arrow, a card title, or a half's ▾ button. Each one remembers how you left it (cards start folded when you open Write).", k: "collapse fold close open hide minimize arrow section card half", go: W },
+    { t: "Move cards, song parts or sections up and down", a: "Cards layout: ▲▼ on each card title. Sections tab: ▲▼ on each part's bar. Song parts (Verse, Chorus…) move with ▲▼ too.", k: "move reorder order up down card part section rearrange", go: W },
+    { t: "Change how the lyrics look (Chords over words, Bars, Rhythm, Jazz chart)", a: "Write tab › Lyrics window (the Chords pane): the row Chords over words / Bars / Rhythm / Jazz chart. It is in the Lyrics tab, the Chords half, and the Lyrics card.", k: "view lyrics chords over words bars rhythm jazz chart chord pro switch", go: W },
+    { t: "Put chords on the lyrics, and slide them", a: "Chords over words: tap Add a chord (or Other…) and the chord goes where the cursor is, or on the line you were typing in. Tap a chord to slide it with ◀ ▶ (a letter) or ⏮ ⏭ (a word). Lines are typeable right there.", k: "add chord lyrics words slide move attach type over line", go: W },
+    { t: "Type the words of a bar (Bars and Rhythm)", a: "Bars: tap a bar. Rhythm: tap the ✎ at the end of a bar. Type the words sung in that bar. In Rhythm, tap a word to move it to another beat.", k: "words bar rhythm type edit lyrics beat", go: W },
+    { t: "Rebuild from the lyrics", a: "Shows in Bars / Rhythm / Jazz when you edited the chart by hand. It redraws the bars from the chords in your lyrics and drops hand edits (Undo brings them back). Words on a line under a chord line spread over that line's bars.", k: "refill rebuild redo chart lyrics hand edit reset bars", go: W },
+    { t: "Open the Jazz chart", a: "Chords pane › Jazz chart › Open the full jazz chart. It opens its own screen (the Play screen's jazz chart); Back returns to Write.", k: "jazz chart real book repeats endings screen play", go: W },
+    { t: "Hear a chord, then add it to a bar", a: "Sections tab (or a half): tap a bar square, tap chords in the Wheel or Suggestions pop-up to hear them, then ✓ Add. The pop-up stays open for the next bar (Settings › Write screen sets size, and whether it opens by itself).", k: "chord workshop wheel suggestions palette hear audition add bar pop-up popup", go: W },
+    { t: "Make the bars one size, add or remove bars", a: "Sections tab › Bars: the bars are equal size on every row. + Bar sits in the Bars header next to the zoom buttons; the bar editor (Bar / Chord / N.C. / Remove / Done) opens under the bars when you tap one.", k: "bars add remove size zoom plus bar row grid", go: W },
+    { t: "Arranger: play, record, click, tempo, loop", a: "Arranger tab (or half or card): ▶ ■ ● are the transport; ⚙ opens Click, tempo, Loop, Count-in, Part and Snap. Under it, ◀ ▶ − + scroll and zoom. + Track adds chords, drums or audio tracks.", k: "arranger transport play stop record click metronome tempo bpm loop count in track zoom scroll", go: W },
+    { t: "Audio looper", a: "Looper tab (or half or card): record layers over the beat and play the order. Its clips also show as tracks in the Arranger.", k: "looper loop audio layers record beat", go: W },
+    { t: "Sync chords between the bars and the lyrics", a: "Write tab › ⇄ Sync (top bar). It lists what differs and copies Bars → lyrics or Lyrics → bars, only when you press it.", k: "sync copy bars lyrics chords match update two way", go: W },
+    { t: "Writing tools (rhymes, tempo, graphics…)", a: "Write tab › 🛠 Tools (top bar). 📖 Rhymes brings back the rhyme helper; the other tools of the Write screen are in the same menu.", k: "tools rhyme rhymes dictionary write graphics menu", go: W },
+    { t: "The side slider (fast scroll)", a: "A bar on the right edge of any screen that scrolls: drag it to move through the screen. Settings › “Show a handle on the right edge of long lists” turns it off.", k: "slider scroll fast scrub bar handle side right scrollbar", go: W },
+    { t: "Black windows or theme colours in Write", a: "Settings › Write screen › Window background: black windows with theme colours around them, or theme colours everywhere.", k: "black window background theme color contrast dark write", go: W }
+  ].forEach(function (e) { AK_HELP_WHERE.push(e); });
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
