@@ -51174,6 +51174,47 @@ function akToolsMenu(el) {
     } }, h("span", null, "🛠 Tools")));
   }
 }
+/* ---------------------------------------------------------------- ⇄ Sync: copy chords between the bars (Sections) and the lyrics, one way at a time, on request */
+function akBarSyncParse(lyrics) {
+  var ls = String(lyrics || "").split("\n"), blocks = akwrBlocks(ls), out = [];
+  function grab(a, b) { var chs = []; for (var i = a; i < b; i++) { var re = /\[([^\[\]]+)\]/g, m; while ((m = re.exec(ls[i]))) { var tok = m[1].trim(); if (akPwParse(tok)) chs.push(tok); } } return chs; }
+  if (!blocks.length) { var all = grab(0, ls.length); return all.length ? [{ name: "Verse", chs: all }] : []; }
+  blocks.forEach(function (b) { var chs = grab(b.a + 1, b.b); if (chs.length) out.push({ name: b.name, chs: chs }); });
+  return out;
+}
+function akBarSyncBarsOf(ws) {
+  return ws.secs.map(function (sec) { var chs = []; sec.bars.forEach(function (b) { b.c.forEach(function (e) { if (e.ch) chs.push(e.ch); }); }); return { name: String(sec.name || "Section"), chs: chs }; }).filter(function (x) { return x.chs.length; });
+}
+function akBarSyncOpen() {
+  var song = akW9Song(), st = akArrState(); if (!song || !st || !st.ws) { toast("Open a song in Write first."); return; }
+  var fromBars = akBarSyncBarsOf(st.ws), fromWords = akBarSyncParse(song.lyrics);
+  function list(a) { return a.length ? h("ul", { class: "aksync-l" }, a.map(function (x) { return h("li", null, h("b", null, x.name), " · " + x.chs.length + " chord" + (x.chs.length === 1 ? "" : "s") + ": " + x.chs.slice(0, 8).join(" ") + (x.chs.length > 8 ? " …" : "")); })) : h("p", { class: "hint" }, "Nothing to copy from here."); }
+  var body = h("div", { class: "aksync" },
+    h("p", { class: "hint" }, "Pick which way to copy. Nothing changes until you choose, and ↶ undoes it."),
+    h("div", { class: "akw18-lh" }, "Bars → lyrics"), list(fromBars),
+    h("div", { class: "akw18-lh" }, "Lyrics → bars"), list(fromWords),
+    h("p", { class: "hint" }, "Bars → lyrics writes each section's chords as a [Section] line of [chords] (your words stay). Lyrics → bars gives each [chord] its own bar; a section with the same name is replaced, others stay."));
+  modal("⇄ Sync bars and lyrics", body, [{ label: "Cancel" },
+    { label: "Bars → lyrics", disabled: !fromBars.length, onClick: function () {
+      if (!fromBars.length) return false;
+      snap("sync bars to lyrics"); song.lyrics = akwrPutSecs(String(song.lyrics || ""), st.ws); song.updated = akW9Now(); save(); rerenderKeepScroll(); toast("Chords from " + fromBars.length + " section" + (fromBars.length === 1 ? "" : "s") + " went into the lyrics.");
+    } },
+    { label: "Lyrics → bars", primary: true, onClick: function () {
+      if (!fromWords.length) { toast("No [chords] found in the lyrics."); return false; }
+      snap("sync lyrics to bars");
+      fromWords.forEach(function (p) {
+        var sec = st.ws.secs.filter(function (x) { return String(x.name).toLowerCase() === p.name.toLowerCase(); })[0];
+        if (!sec) { sec = akWsNewSec(p.name, [4, 4], 1); st.ws.secs.push(sec); }
+        sec.bars = p.chs.map(function (ch) { return { c: [{ t: 0, ch: ch }] }; });
+      });
+      st.ws.sel = null; if (!(st.ws.cur >= 0 && st.ws.cur < st.ws.secs.length)) st.ws.cur = 0;
+      save(); rerenderKeepScroll(); toast("Built bars from the lyrics: " + fromWords.length + " section" + (fromWords.length === 1 ? "" : "s") + ".");
+    } }]);
+}
+function akBarSyncBtn(el) {
+  var bars = el.querySelector(".akw18-bars"); if (!bars || bars.querySelector(".akw18-sync")) return;
+  bars.appendChild(h("button", { class: "akw18-bar akw18-sync", "aria-label": "Sync bars and lyrics", onClick: akBarSyncOpen }, h("span", null, "⇄ Sync")));
+}
 function akFitMain() {
   var ta = document.querySelector(".akw9-card:not([hidden]) .akw9-pad"); if (!ta || ta.closest(".akw18-halves, .ak18-L-side") || !ta.offsetParent) return;
   var nav = document.querySelector(".tabbar, nav, .bottomnav"), navH = nav && nav.getBoundingClientRect().height || 62, vv = window.visualViewport;
@@ -51184,6 +51225,7 @@ function akHalvesTidy(el) {
   var cw = akW18b();
   if (!cw.rhy185) { cw.rhy185 = 1; if (cw.rhymes) { cw.rhymes = false; save(); } } /* 18.5: the rhyme helper starts folded away; 📖 Rhymes in Tools brings it back */
   if (window.innerWidth < 700) akToolsMenu(el);
+  akBarSyncBtn(el);
   var box = el.querySelector(".akw18-halves"); if (!box) return;
   var wheel = el.querySelector('[data-bk="wheel"]'), aloop = el.querySelector('[data-bk="aloop"]');
   if (wheel && !box.contains(wheel)) { wheel.classList.add("akw-ghost"); wheel.setAttribute("data-wsview", "sections"); wheel.hidden = false; wheel.open = true; }
@@ -51223,6 +51265,7 @@ function akPickAuto(on) {
 
 akCss("akv185b", [
   ".akw-gone{display:none !important}",
+  ".aksync-l{margin:2px 0 6px;padding-left:18px;font-size:.84rem}.aksync-l li{margin:1px 0}",
   "details.card.akw-ghost{position:absolute !important;left:0;right:0;height:0 !important;overflow:visible !important;visibility:hidden;padding:0 !important;margin:0 !important;border:0 !important;pointer-events:none}",
   "details.card.akw-ghost .akws > .akws-pal,details.card.akw-ghost .akws > .akws-main{visibility:visible;pointer-events:auto}",
   "details.card.akw-ghost > summary,details.card.akw-ghost > .akfold-parts{display:none !important}",
