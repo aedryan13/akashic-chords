@@ -52200,8 +52200,10 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7o";
+AK_VERSION = "18.7p";
 AK_WHATS_NEW = [
+  "↔ A Back button on every design: in the Graphics studio it sits right where the 🎙 button was (business cards show it as Back/Front). Posters, glass-window signs, the request QR sign, flyers, invoices, any design can have a back (off unless you add it, on for business cards): ▾ beside it picks QR + website, same as the front, a plain colour or a thank-you. Print and share do the back too.",
+  "🎙 The Recorder button now shows only on Songs, Shows (set lists) and Play. Settings › has a switch to show it on every screen again.",
   "💼 Business card photo, fixed: a card you started earlier was in the Classic layout, which has no picture, so your photo had nowhere to go. It now moves to the Photo side layout (once) and your headshot shows on the front.",
   "💼 Business cards: your photo now goes on the front by itself: the first picture in Graphics › My pictures › Headshots, or else the main photo from Artist info (copied into your headshots once). 📷 Use my headshot in the 💼 On the card tab does it again any time.",
   "💼 Business cards now have a back. Standard: info and a photo in front, a big QR code with your website under it on the back (the code is never smaller than a fifth of the card). Card setup in the 💼 On the card tab: QR in front, on both sides, QR with links, name only, or no back. Front/Back switch, and printing does the back sheet too, lined up for two-sided printing.",
@@ -54104,7 +54106,7 @@ function akSgPagesHtml(nm, pages, pw, ph) {
   var p0 = akGfxPrint;
   akGfxPrint = function (P, nm) {
     var cfg = akGfxCfg(), fit = cfg.printFit || "actual", up = cfg.printUp || 1, cut = cfg.printCut !== false;
-    var X0 = akGfxState().X, D0 = X0 && X0.D, card = !!(D0 && D0.kind === "card" && akSgCard(D0).back);
+    var X0 = akGfxState().X, D0 = X0 && X0.D, card = !!(D0 && akSgHasBack(D0));
     var dw = P.size[4] || P.W / 150, dh = P.size[5] || P.H / 150;
     var inch = P.size[4] ? P.size[4] + " × " + P.size[5] + " in" : "as it is";
     var paperSel = h("select", { "aria-label": "Paper" }, [["actual", "The size of the design (" + inch + ")"], ["letter", "Letter sheet"], ["a4", "A4 sheet"]].map(function (o) { return h("option", { value: o[0], selected: (fit === o[0]) }, o[1]); }));
@@ -54122,7 +54124,7 @@ function akSgPagesHtml(nm, pages, pw, ph) {
     function save2() { cfg.printFit = paperSel.value; cfg.printUp = Number(upSel.value); cfg.printCut = cutBox.checked; if (card) cfg.printBack = backBox.checked; save(); }
     function sheetOf(Px, mirror) { var n = Number(upSel.value); return paperSel.value !== "actual" && n > 1 ? akSgSheet(Px, paperSel.value, n, cutBox.checked, mirror) : null; }
     modal("Print", h("div", null, h("label", { class: "fld" }, "Paper", paperSel), upBox,
-      card ? h("label", { class: "chk" }, backBox, "Print the back too (a second sheet, lined up for two-sided printing: flip on the long edge)") : null,
+      card ? h("label", { class: "chk" }, backBox, "Print the back too (a second sheet or page, lined up for two-sided printing: flip on the long edge)") : null,
       h("p", { class: "hint" }, "Print opens your device's print window, where you pick the printer. No printer here? Use “Send to a printer app”: it shares the page so a printer app, AirPrint or Save to Files can take it.")),
       [{ label: "Cancel" }, { label: "↗ Send to a printer app", onClick: function () {
         save2(); var both = card && backBox.checked;
@@ -54285,6 +54287,115 @@ function akSgAutoPhoto(D, force) {
     d.insertBefore(box, d.children[1] || null);
   });
 })();
+
+/* ---------------------------------------------------------------- 18.7p: a back for any design, and the Back button */
+function akSgBackInfo(D) { if (D.kind === "card") { var c = akSgCard(D); return { on: !!c.back, style: c.bstyle }; } return { on: !!D.backOn, style: D.bstyle || "qr" }; }
+function akSgHasBack(D) { return akSgBackInfo(D).on; }
+/* where the QR code on the back points */
+function akSgBackUrl(D) {
+  var it = akSgItems(D), m = D.backQr || "site", pick = function (g) { return it.filter(function (x) { return x.grp === g; })[0]; };
+  if (m === "custom" && D.backUrl) return { url: D.backUrl, text: String(D.backUrl).replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "") };
+  if (m === "request" && pick("req")) return { url: pick("req").url, text: "Request a song" };
+  if (m === "tip" && pick("tip")) { var t = pick("tip"); return { url: t.url, text: (t.label || "Tip") + (t.h ? "  " + t.h : "") }; }
+  var w = pick("web"); if (w) return { url: w.url, text: w.h || akGfxSite() };
+  var site = akGfxSite(); return site ? { url: "https://" + String(site).replace(/^https?:\/\//i, ""), text: site } : { url: "", text: "" };
+}
+/* the colors and fonts of the back come from the design's own look */
+function akSgSynth(D) {
+  var sp = akGfxFlySpec(D.layout), p = (sp && sp.p) || {}, paper = D.paper || (p.full ? "" : p.paper) || (D.bg && D.bg.color) || "#14101c";
+  function lum(c) { var m = /^#([0-9a-f]{6})$/i.exec(String(c || "").trim()); if (!m) return 0.1; var n = parseInt(m[1], 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; }
+  var ink = D.fg && D.fg !== "auto" ? D.fg : (p.ink && p.ink !== "auto" ? p.ink : (lum(paper) > 0.55 ? "#1b1822" : "#f4efe6")), a1 = D.accent && D.accent !== "auto" ? D.accent : (p.a1 || "#ffb347");
+  return { id: "back", name: "Back", tags: "", p: { paper: paper, ink: ink, a1: a1, a2: D.accent2 || p.a2 || a1, fonts: JSON.parse(JSON.stringify(D.fonts)), tw: 700, mw: 700, sw: 600 }, b: akSgBackGeneric };
+}
+function akSgBackGeneric(B) {
+  var D = AKGJ.D, X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, U = B.U, st = D.bstyle || "qr", q = akSgBackUrl(D), I = B.I, name = (D.text && D.text.artist) || akGfxName();
+  B.BG();
+  var tag = (akArtist().tagline || "");
+  if (st === "plain" || !q.url) {
+    B.TT("b_artist", "Name", name, W / 2, 38 * Y, 13 * m, { fit: 2, maxW: 86 * X, maxH: 30 * Y, lh: 0.98 });
+    if (tag) B.TS("b_title", "Title line", tag, W / 2, 56 * Y, 4.4 * m, { color: C.a1, fit: 2, maxW: 86 * X, maxH: 12 * Y });
+    B.T("footer1", "Website", (D.text && D.text.footer1) || akGfxSite(), W / 2, 74 * Y, 5.4 * m, { fit: 1, maxW: 86 * X, weight: 700 });
+    return;
+  }
+  var side = Math.min(W * 0.66, H * 0.5), top = 17 * Y;
+  B.TS("b_kicker", "Small heading", U((D.text && D.text.kicker) || (D.backQr === "request" ? "Got a favorite?" : "Scan me")), W / 2, 9 * Y, 4.4 * m, { color: C.a1, weight: 800, spacing: 0.6 * m, fit: 1, maxW: 84 * X });
+  akSgQRs(B, [{ id: "bq", grp: "web", label: "QR code", h: "", url: q.url }], (W - side) / 2, top, side, side, { nolabel: true, p: "b_" });
+  B.T("footer1", "Website", (D.text && D.text.footer1) || q.text, W / 2, top + side + 7 * Y, 5.4 * m, { fit: 1, maxW: 90 * X, weight: 700 });
+  B.TS("b_artist", "Name", U(name), W / 2, 94 * Y, 3.6 * m, { color: C.a1, fit: 1, maxW: 80 * X, weight: 800, spacing: 0.5 * m });
+}
+(function () {
+  var L1 = akGfxLayers;
+  akGfxLayers = function (D) {
+    if (D.kind !== "card" && D.side === "back" && D.backOn) {
+      if ((D.bstyle || "qr") === "same") { var Dc = JSON.parse(JSON.stringify(D)); Dc.side = "front"; return L1.call(this, Dc); }
+      return akGfxFlyBuild(D, akSgSynth(D));
+    }
+    return L1.apply(this, arguments);
+  };
+  var fn0 = akGfxFileName;
+  akGfxFileName = function (D) { var n = fn0.apply(this, arguments); return D.side === "back" && !/ back$/.test(n) ? n + " back" : n; };
+})();
+function akSgFlipRefresh() {
+  var b = document.querySelector(".akg-flip"); if (!b) return;
+  var X = akGfxState().X, D = X && X.D; if (!D) return;
+  var bi = akSgBackInfo(D), t = !bi.on ? "＋ Back" : D.side === "back" ? "⇄ Front" : "⇄ Back";
+  b.querySelector(".t").textContent = t; b.classList.toggle("on", bi.on && D.side === "back");
+  b.setAttribute("aria-label", !bi.on ? "Add a back to this design" : D.side === "back" ? "Show the front" : "Show the back");
+}
+function akSgSetBack(D, style) {
+  if (D.kind === "card") { var c = akSgCard(D); c.back = true; c.bstyle = style; } else { D.backOn = true; D.bstyle = style; }
+  D.side = "back"; save(); var X = akGfxState().X; if (X) X.ch(true); akSgFlipRefresh();
+}
+function akSgBackMenu(anchor) {
+  var X = akGfxState().X; if (!X) return; var D = X.D, bi = akSgBackInfo(D), card = D.kind === "card";
+  var items = [{ head: "The back of this design" }];
+  (card ? [["qr", "Big QR code and website"], ["qrinfo", "QR code and links"], ["plain", "Name only"]] : [["same", "Same as the front"], ["qr", "Big QR code and website"], ["plain", "Name only"]]).forEach(function (st) {
+    items.push({ label: (bi.on && bi.style === st[0] ? "✓ " : "") + st[1], onClick: function () { akSgSetBack(D, st[0]); } });
+  });
+  if (!card) {
+    items.push({ sep: true }, { head: "QR code on the back points to" });
+    [["site", "My website"], ["request", "Song requests"], ["tip", "My first tip link"]].forEach(function (x) { items.push({ label: ((D.backQr || "site") === x[0] ? "✓ " : "") + x[1], onClick: function () { D.backQr = x[0]; save(); X.ch(true); } }); });
+    items.push({ label: (D.backQr === "custom" ? "✓ " : "") + "A link I type…", onClick: function () { askText("Link for the QR code", D.backUrl || "", "Use", function (v) { D.backUrl = String(v || "").trim(); D.backQr = D.backUrl ? "custom" : "site"; save(); X.ch(true); }); } });
+  } else items.push({ sep: true }, { label: "Which links the code holds: 💼 On the card tab", disabled: true });
+  if (bi.on) items.push({ sep: true }, { label: "Remove the back", danger: true, onClick: function () { if (card) akSgCard(D).back = false; else D.backOn = false; D.side = "front"; save(); X.ch(true); akSgFlipRefresh(); } });
+  menu(anchor, items);
+}
+(function () {
+  var v0 = AK_VIEWS.gfx;
+  AK_VIEWS.gfx = function () {
+    var wrap = v0.apply(this, arguments);
+    try {
+      var kind = S.gfxKind, D0 = akGfxDesign(kind); if (D0.side === "back") D0.side = "front";
+      var tb = wrap.querySelector(".topbar");
+      if (tb && !tb.querySelector(".akg-flip")) {
+        var b = h("button", { class: "akg-flip", onClick: function () {
+          var X = akGfxState().X; if (!X) return; var D = X.D;
+          if (!akSgHasBack(D)) { akSgBackMenu(this); return; }
+          D.side = D.side === "back" ? "front" : "back"; save(); X.ch(true); akSgFlipRefresh();
+        } }, h("span", { class: "t" }, "＋ Back"));
+        var more = h("button", { class: "icon akg-flipmore", "aria-label": "Back options", title: "Choose what the back shows, or remove it", onClick: function () { akSgBackMenu(this); } }, "▾");
+        var rr = tb.querySelector(".ak16g-rr");
+        if (rr) { tb.insertBefore(b, rr); tb.insertBefore(more, rr); rr.remove(); } else { tb.appendChild(b); tb.appendChild(more); }
+        setTimeout(akSgFlipRefresh, 0); setTimeout(akSgFlipRefresh, 600);
+      }
+    } catch (e) {}
+    return wrap;
+  };
+})();
+akCss("akv187-p", ".akg-flip{background:var(--accent,#00B7FF);color:#041b24;font-weight:800;border:0;border-radius:10px;padding:0 10px;min-height:34px;font-size:14px}.akg-flip.on{outline:3px solid #fff;outline-offset:-3px}.akg-flipmore{margin-left:-6px;min-width:22px;padding:0 2px}");
+
+/* the 🎙 Recorder button is only on Songs, Shows, Setlists and Play (Settings can bring it back everywhere) */
+(function () {
+  var s0 = akRr142Show;
+  akRr142Show = function () { return !!(s0.apply(this, arguments) && (settings().rrBtnAll === true || /^(songs|shows|show|play|setlist|setlists)$/.test(S.view))); };
+  var s25 = akSettingsExtra25;
+  akSettingsExtra25 = function (c) {
+    c.again("songs-and-shows");
+    c.check("Also show the 🎙 Recorder button on the other screens (it is on Songs, Shows, Setlists and Play)", function () { return settings().rrBtnAll === true; }, function (v) { settings().rrBtnAll = v; });
+    return s25.apply(this, arguments);
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "A back for a sign, poster or card (two-sided, glass window)", a: "Graphics studio, top right: the ＋ Back button adds a back to any design (cards have one already). Then ⇄ Back / ⇄ Front flips between the sides, and ▾ chooses the back: same as the front, big QR code and website, or name only, and what the QR code points to (website, song requests, tip link, a link you type). File ▾ › Print prints the back sheet too.", k: "back side two sided window glass poster sign card flip front qr", go: function () { akGfxOpen("tip"); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
