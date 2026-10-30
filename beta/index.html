@@ -36913,6 +36913,8 @@ function viewGfx() {
     } else if (kind === "flyer") {
       d.appendChild(gigPick("Show"));
       if (typeof akGfxAddrPick === "function") d.appendChild(akGfxAddrPick(D, ch));
+    } else if ((kind === "tip" && akGfxFlySpec(D.layout)) || kind === "card") {
+      akGfxSignPanel(d, D, ch, gigPick);
     } else if (kind === "tip") {
       var pays = akGfxPays(); D.pay = D.pay || {};
       if (!pays.length) d.appendChild(h("p", { class: "hint" }, "No tip links yet. Add them in Settings › Requests and tips (Venmo, Cash App, PayPal…)."));
@@ -36956,7 +36958,7 @@ function viewGfx() {
   }
   function wordKeys() {
     var L = D.layout;
-    if (kind === "flyer" && typeof akGfxFlyWords === "function" && akGfxFlyWords(L)) return akGfxFlyWords(L);
+    if ((kind === "flyer" || kind === "tip" || kind === "card") && typeof akGfxFlyWords === "function" && akGfxFlyWords(L)) return akGfxFlyWords(L);
     if (kind === "week") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "list" ? [["title", "Title"], ["sub", "Dates line"], ["footer1", "Website"]] : [["title", "Title"], ["sub", "Line under the title"], ["footer1", "Website"]];
     if (kind === "flyer") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "spot" ? [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date"], ["time", "Time"], ["town", "Town"], ["note", "Note", 1], ["footer1", "Website"]] : [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date and time"], ["town", "Town"], ["footer1", "Website"]];
     if (kind === "tip") return L === "jar" ? [["title", "Big word"], ["sub", "Thank you line"], ["name", "Name"]] : L === "big" ? [["title", "Big word"], ["sub", "Line under it"], ["handles", "Handles", 1]] : [["title", "Heading", 1], ["sub", "Line under the heading"], ["footer1", "Website"]];
@@ -37076,7 +37078,7 @@ function viewGfx() {
     });
   }
   function cats() {
-    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? "💵 Tip links" : "🧾 Details";
+    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? (akGfxFlySpec(D.layout) ? "🪧 On the sign" : "💵 Tip links") : kind === "card" ? "💼 On the card" : "🧾 Details";
     var L = [];
     function f(fn) { return function (d) { fn(d, X); }; }
     if (typeof akGfxIdeasFill === "function") L.push(["ideas", "💡 Ideas", f(akGfxIdeasFill)]);
@@ -37175,7 +37177,7 @@ function akGfxFileName(D) {
   if (D.kind === "flyer") return clean("Flyer " + (g ? (g.date || "") + " " + akGfxVenue(g) : ""));
   if (D.kind === "invoice") return clean("Invoice " + (g && g.inv ? g.inv.no + " " : "") + (g ? akGfxVenue(g) : ""));
   if (D.kind === "blank") return clean(D.name || "Design");
-  return "Tip sign";
+  return D.kind === "card" ? "Business card" : "Sign";
 }
 /* a photo for backgrounds: kept sharp enough for a letter poster, saved on this device */
 function akGfxPhotoIn(file) {
@@ -39884,6 +39886,7 @@ var AKG_FLY = [
 ];
 var AKG_FLY_OLD_TAGS = { mine: "photo night", spot: "photo night", band: "photo" };
 AKG_LAYOUTS.flyer = AKG_LAYOUTS.flyer.concat(AKG_FLY.map(function (f) { return [f.id, f.name]; }));
+function akGfxUsesSpec(D, id, old) { return D.kind === "flyer" || (["week", "tip", "card"].indexOf(D.kind) >= 0 && !!(akGfxFlySpec(id) || akGfxFlySpec(old || D.layout))); }
 function akGfxFlySpec(id) { return AKG_FLY.filter(function (f) { return f.id === id; })[0] || null; }
 
 /* the words of a show for a flyer */
@@ -39940,9 +39943,9 @@ function akGfxFlyBuild(D, spec) {
 }
 /* picking a layout puts its own look in the design; the old three go back to the studio's own look */
 function akGfxFlyApply(D, id) {
-  var spec = akGfxFlySpec(id), def = akGfxDefault("flyer");
+  var spec = akGfxFlySpec(id), def = akGfxDefault(D.kind === "tip" || D.kind === "card" ? D.kind : "flyer");
   D.fg = "auto"; D.accent = "auto"; D.accent2 = ""; D.accent3 = ""; D.paper = ""; D.tfx = {}; D.tbeh = null;
-  if (!spec) { D.fonts = clone(def.fonts); D.overlay = 0; D.filt = { mode: "none" }; if (D.bg.src === "color") { D.bg.src = def.bg.src; D.bg.id = def.bg.id; } return; }
+  if (!spec) { D.fonts = D.kind === "tip" ? { title: GSX("Syncopate"), main: GSX("Outfit"), small: GSX("Outfit") } : clone(def.fonts); D.overlay = 0; D.filt = { mode: "none" }; if (D.bg.src === "color") { D.bg.src = def.bg.src; D.bg.id = def.bg.id; } return; }
   var p = spec.p;
   D.fonts = clone(p.fonts); D.overlay = p.overlay || 0; D.filt = p.filt ? clone(p.filt) : { mode: "none" };
   if (p.photo || p.full) {
@@ -39953,7 +39956,7 @@ function akGfxFlyApply(D, id) {
 function akGfxLayoutSwitch(D, old, id) {
   if (old === id) return;
   D.editBy = D.editBy || {}; D.editBy[old] = D.edit || {}; D.edit = D.editBy[id] || {}; delete D.editBy[id];
-  if (D.kind === "flyer" || (D.kind === "week" && (akGfxFlySpec(id) || akGfxFlySpec(old)))) akGfxFlyApply(D, id);
+  if (akGfxUsesSpec(D, id, old)) akGfxFlyApply(D, id);
 }
 function akGfxFlyWords(id) {
   var spec = akGfxFlySpec(id); if (!spec) return null;
@@ -39998,7 +40001,7 @@ function akGfxExtras(D, P) {
 (function () {
   var L0 = akGfxLayers;
   akGfxLayers = function (D) {
-    var spec = D.kind === "flyer" || D.kind === "week" ? akGfxFlySpec(D.layout) : null;
+    var spec = D.kind === "flyer" || D.kind === "week" || D.kind === "tip" || D.kind === "card" ? akGfxFlySpec(D.layout) : null;
     var P = spec ? akGfxFlyBuild(D, spec) : L0.apply(this, arguments);
     akGfxExtras(D, P);
     return P;
@@ -40024,11 +40027,11 @@ akCss("akgfx-d", ".akg-gal .akg-galgrid{display:grid;grid-template-columns:repea
   ".akg-sub{margin:10px 0 4px;font-weight:700}.akg-two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.akg-pedit select{max-width:100%}");
 function akGfxThumbDesign(D, id) {
   var Dc = JSON.parse(JSON.stringify(D));
-  if (id !== D.layout) { Dc.layout = id; Dc.edit = (D.editBy || {})[id] || {}; if (D.kind === "flyer" || (D.kind === "week" && (akGfxFlySpec(id) || akGfxFlySpec(D.layout)))) akGfxFlyApply(Dc, id); if (D.kind === "tip" && id === "jar") Dc.size = "jar"; if (id === "cal") Dc.size = "letter"; }
+  if (id !== D.layout) { Dc.layout = id; Dc.edit = (D.editBy || {})[id] || {}; if (akGfxUsesSpec(D, id)) akGfxFlyApply(Dc, id); if (D.kind === "tip" && id === "jar") Dc.size = "jar"; if (id === "cal") Dc.size = "letter"; }
   return Dc;
 }
 function akGfxGallery(D, kind, pick) {
-  var list = AKG_LAYOUTS[kind], st = akGfxState(), tags = kind === "flyer" ? [["", "All"], ["side", "Off-center"], ["photo", "Photo"], ["paper", "Paper"], ["bold", "Bold"], ["retro", "Retro"], ["night", "Night"], ["elegant", "Elegant"], ["minimal", "Minimal"]] : null;
+  var list = AKG_LAYOUTS[kind], st = akGfxState(), tags = kind === "flyer" ? [["", "All"], ["side", "Off-center"], ["photo", "Photo"], ["paper", "Paper"], ["bold", "Bold"], ["retro", "Retro"], ["night", "Night"], ["elegant", "Elegant"], ["minimal", "Minimal"]] : (typeof akGfxSignTags === "function" ? akGfxSignTags(kind) : null);
   var grid = h("div", { class: "akg-galgrid", role: "group", "aria-label": "Layouts" }), wrap = h("div", { class: "akg-gal" });
   function tagOf(id) { var s = akGfxFlySpec(id); return s ? s.tags : AKG_FLY_OLD_TAGS[id] || ""; }
   if (tags) wrap.appendChild(h("div", { class: "chips akg-chips", role: "group", "aria-label": "Show layouts that are" }, tags.map(function (t) { return h("button", { class: "chip" + ((st.galTag || "") === t[0] ? " on" : ""), "aria-pressed": (st.galTag || "") === t[0] ? "true" : "false", onClick: function () { st.galTag = t[0]; var n = akGfxGallery(D, kind, pick); wrap.replaceWith(n); } }, t[1]); })));
@@ -40122,7 +40125,7 @@ function akGfxDecoFill(d, X) {
   d.appendChild(h("div", { class: "fld" }, "Graphics color (empty = the highlight)", colorPicker(dc.gc || "", function (c) { dc.gc = c || ""; X.ch(); })));
 }
 function akGfxBgExtra(d, X) {
-  var D = X.D, spec = D.kind === "flyer" ? akGfxFlySpec(D.layout) : null, f = D.filt = D.filt || { mode: "none" };
+  var D = X.D, spec = D.kind === "flyer" || D.kind === "tip" || D.kind === "card" ? akGfxFlySpec(D.layout) : null, f = D.filt = D.filt || { mode: "none" };
   if (D.bg.src === "color" && !(spec && spec.p.photo)) return;
   d.appendChild(h("div", { class: "akg-sub" }, "Photo filter"));
   d.appendChild(X.chips(AKG_FILTERS, f.mode || "none", function (v) { f.mode = v; if (v === "duo" && !f.c1) { f.c1 = "#1d1446"; f.c2 = "#ff8a5c"; } X.ch(true); }, "Photo filter"));
@@ -40132,7 +40135,7 @@ function akGfxBgExtra(d, X) {
   }
 }
 function akGfxLookExtra(d, X) {
-  var D = X.D, spec = D.kind === "flyer" ? akGfxFlySpec(D.layout) : null;
+  var D = X.D, spec = D.kind === "flyer" || D.kind === "tip" || D.kind === "card" ? akGfxFlySpec(D.layout) : null;
   if (spec) {
     d.appendChild(h("div", { class: "akg-sub" }, "Layout colors"));
     if (!spec.p.full) d.appendChild(h("div", { class: "fld" }, "Paper (empty = the layout's)", colorPicker(D.paper || "", function (c) { D.paper = c || ""; X.ch(); })));
@@ -45912,7 +45915,7 @@ var AKG_THEMES = [
 function akGfxTheme(id) { return (AKG_THEMES.filter(function (t) { return t[0] === id; })[0] || [])[2] || null; }
 function akGfxThemeApply(D, id, t) {
   t = t || akGfxTheme(id); if (!t) return;
-  var spec = (D.kind === "flyer" || D.kind === "week") && typeof akGfxFlySpec === "function" ? akGfxFlySpec(D.layout) : null, onPhoto = spec ? !!spec.p.full : D.bg && D.bg.src !== "color";
+  var spec = (D.kind === "flyer" || D.kind === "week" || D.kind === "tip" || D.kind === "card") && typeof akGfxFlySpec === "function" ? akGfxFlySpec(D.layout) : null, onPhoto = spec ? !!spec.p.full : D.bg && D.bg.src !== "color";
   D.fg = onPhoto ? "auto" : t.fg; D.accent = t.a1; D.accent2 = t.a2 || ""; D.accent3 = t.a3 || ""; D.paper = t.paper || "";
   if (D.bg && D.bg.src === "color") { D.bg.color = t.bg; D.bg.color2 = t.bg2 || ""; }
   if (D.panel) D.panel.color = "";
@@ -46947,7 +46950,7 @@ function akGfxSplitEl(X) {
 }
 
 /* ---------------------------------------------------------------- the top bar */
-var AKG_KIND_SHORT = { week: "Poster", flyer: "Flyer", tip: "Tip sign", invoice: "Invoice", blank: "Blank design" };
+var AKG_KIND_SHORT = { week: "Poster", flyer: "Flyer", tip: "Sign", card: "Business card", invoice: "Invoice", blank: "Blank design" };
 function akGfxKindBtn(kind) {
   var k0 = AKG_KINDS.filter(function (k) { return k[0] === kind; })[0] || AKG_KINDS[0];
   return h("button", { class: "akg-kindb", "aria-label": "What to make: " + k0[1].replace(/^\S+\s/, "") + ". Tap to change", onClick: function () {
@@ -47480,7 +47483,7 @@ var AKGJ_TPOS = [["", "Layout's own"], ["left", "Left"], ["right", "Right"], ["t
 function akGfxTposOf(k) { return { left: ["left", "middle"], right: ["right", "middle"], top: ["center", "top"], bottom: ["center", "bottom"], tl: ["left", "top"], tr: ["right", "top"], bl: ["left", "bottom"], br: ["right", "bottom"] }[k] || null; }
 function akGfxTposOk(D) {
   if (D.kind === "invoice" || (D.kind === "week" && D.layout === "cal") || (D.kind === "flyer" && D.layout === "band")) return false;
-  var spec = (D.kind === "flyer" || D.kind === "week") ? akGfxFlySpec(D.layout) : null;
+  var spec = (D.kind === "flyer" || D.kind === "week" || D.kind === "tip" || D.kind === "card") ? akGfxFlySpec(D.layout) : null;
   return !spec || !!spec.p.full;
 }
 function akGfxTpos(D, P) {
@@ -47488,7 +47491,7 @@ function akGfxTpos(D, P) {
   var W = P.W, H = P.H, side = hv[0] !== "center", cw = side ? W * 0.58 : W * 0.84, x0 = hv[0] === "left" ? W * 0.06 : hv[0] === "right" ? W * 0.94 - cw : (W - cw) / 2, k = cw / W;
   var MOVE = { text: 1, gpic: 1, grows: 1, gbadge: 1, gstairs: 1, gspiral: 1, qr: 1, gshape: 1, grect: 1 };
   var L = P.layers.filter(function (l) {
-    if (!MOVE[l.type] || l.fixed || l.nohit || /^(uf_|us_|uo_)/.test(l.id) || (l.type === "qr" && D.kind === "flyer")) return false;
+    if (!MOVE[l.type] || l.fixed || l.nohit || /^(uf_|us_|uo_)/.test(l.id) || (l.type === "qr" && (D.kind === "flyer" || akGfxFlySpec(D.layout)))) return false;
     if ((l.type === "gshape" || l.type === "grect") && (l.id !== "panel" && l.w > W * 0.8)) return false;
     return true;
   });
@@ -47543,8 +47546,8 @@ function akGfxRoll(D) {
   var keep = JSON.parse(JSON.stringify({ fonts: D.fonts, ovl: D.ovl || [], bg: D.bg, filt: D.filt || null, fg: D.fg, accent: D.accent, accent2: D.accent2 || "", accent3: D.accent3 || "", paper: D.paper || "", theme: D.theme || "",
     panel: D.panel, deco: akGfxDecoCfg(D), tfx: D.tfx || {}, tbeh: D.tbeh || null, tpos: D.tpos || "" }));
   /* layout */
-  if (!lk.layout && (D.kind === "flyer" || D.kind === "week")) {
-    var mine = (D.kind === "flyer" ? AKGJ_FLY : AKGJ_WEEK).map(function (f) { return f.id; }), all = AKG_LAYOUTS[D.kind].map(function (l) { return l[0]; }).filter(function (id) { return id !== "cal" && id !== D.layout; });
+  if (!lk.layout && (D.kind === "flyer" || D.kind === "week" || D.kind === "tip" || D.kind === "card")) {
+    var mine = (D.kind === "flyer" ? AKGJ_FLY : D.kind === "week" ? AKGJ_WEEK : D.kind === "tip" ? AKG_SIGNS : AKG_CARDS).map(function (f) { return f.id; }), all = AKG_LAYOUTS[D.kind].map(function (l) { return l[0]; }).filter(function (id) { return id !== "cal" && id !== D.layout && !((D.kind === "tip" || D.kind === "card") && !akGfxFlySpec(id)); });
     var pool = R() < 0.6 ? mine.filter(function (id) { return id !== D.layout; }) : all, id = pick(pool.length ? pool : all), old = D.layout;
     if (id) { D.layout = id; akGfxLayoutSwitch(D, old, id); }
   }
@@ -52197,8 +52200,10 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7k";
+AK_VERSION = "18.7l";
 AK_WHATS_NEW = [
+  "🪧 Signs (the old Tip sign) and 💼 Business cards: 12 sign layouts (chalkboard A-frame, bold tip poster, follow me, link list, neon, request a song, photo, old-time bill, book me, sunburst, table tent…) and 9 card layouts, lying down or standing up. A new “On the sign / On the card” tab lets you tick what goes on it (tips, song requests, website, social media, email, phone, tagline, a contact QR that saves you to a phone), change the words, add your own lines, or grab it all again from Artist info. 🎲 and the per-part dice work here too. New sizes: half letter, quarter, A-frame 24×36, poster 18×24, business card. Print: 2, 4, 6, 8, 10 or 12 to a sheet with cut lines.",
+  "Phone: Graphics is now in the More menu when it is not on the bottom bar (it was missing).",
   "New 🎨 Graphics tab: make a flyer, poster, tip sign or invoice (or start from a ⭐ template), see all your saved designs and templates, and manage your pictures: add many at once or take a photo, albums (make your own), search, select several to move or take out. Tap a picture to edit it: crop (free or 1:1, 4:5, 16:9…), rotate, flip, straighten, brightness, contrast, color, warmth and filters. Save a copy or replace the original. On a phone it is under More, or pick it in More › Choose the tabs.",
   "Graphics studio: the ⬇ Save ▾ menu is merged into 📁 File ▾, so saving, sharing (PNG, PDF), printing, My designs and templates are all in one place.",
   "Flyers: when the address already includes the town, the separate town line is left off (a town you typed in by hand stays).",
@@ -52760,9 +52765,9 @@ var AKGH_FEATS = [["layout", "Layout"], ["colors", "Colors"], ["fonts", "Fonts"]
     if (only) keys.forEach(function (k) { lk[k] = k !== only; });
     try {
       roll0(D);
-      if (D.kind !== "flyer") return;
-      var heads = akGfxHeads(), useHead = heads.length && !lk.head && (!lk.photo || only === "head");
-      if (useHead && !isPhotoLay(D.layout) && !lk.layout || (useHead && only === "head" && !isPhotoLay(D.layout))) {
+      if (!akGfxDiceKind(D.kind)) return;
+      var fly = D.kind === "flyer", heads = akGfxHeads(), useHead = heads.length && !lk.head && (!lk.photo || only === "head") && (fly || isPhotoLay(D.layout));
+      if (fly && (useHead && !isPhotoLay(D.layout) && !lk.layout || (useHead && only === "head" && !isPhotoLay(D.layout)))) {
         var ps = AKG_FLY.filter(function (f) { return f.id !== D.layout && / photo /.test(" " + f.tags + " "); }); if (ps.length) { var old = D.layout; D.layout = pick(ps).id; akGfxLayoutSwitch(D, old, D.layout); }
       }
       var dc = akGfxDecoCfg(D), b = dc.border;
@@ -52775,13 +52780,14 @@ var AKGH_FEATS = [["layout", "Layout"], ["colors", "Colors"], ["fonts", "Fonts"]
   };
   akGfxSurprise = function (D) { akGfxRoll(D); };
 })();
+function akGfxDiceKind(k) { return k === "flyer" || k === "tip" || k === "card"; }
 function akGfxRollOne(X, key) {
-  if (!X || X.D.kind !== "flyer") return;
+  if (!X || !akGfxDiceKind(X.D.kind)) return;
   akGfxRoll(X.D, key); akGfxState().sel = ""; X.ch(true);
   var f = AKGH_FEATS.filter(function (x) { return x[0] === key; })[0]; toast("🎲 " + (f ? f[1] : "A new mix") + ". Tap again for another; ↶ Undo goes back.");
 }
 function akGfxRollMenu(anchor) {
-  var X = akGfxState().X, lk = akGfxLocks(); if (!X || X.D.kind !== "flyer") return;
+  var X = akGfxState().X, lk = akGfxLocks(); if (!X || !akGfxDiceKind(X.D.kind)) return;
   menu(anchor, [{ label: "🎲 Randomize everything (not the 🔒 kept ones)", onClick: function () { akGfxRollGo(akGfxState().X); } }, { head: "Randomize just…" }]
     .concat(AKGH_FEATS.map(function (f) { return { label: "🎲 " + f[1], onClick: function () { akGfxRollOne(akGfxState().X, f[0]); } }; }))
     .concat([{ sep: true }, { head: "🎲 everything keeps… (tap to switch)" }])
@@ -52793,7 +52799,7 @@ function akGfxDiceRow(key, label) {
 (function () {
   function top(name, key, label) {
     var f0 = window[name]; if (typeof f0 !== "function") return;
-    window[name] = function (d, X) { var r = f0.apply(this, arguments); try { if (X && X.D && X.D.kind === "flyer") d.insertBefore(akGfxDiceRow(key, label), d.firstChild); } catch (e) {} return r; };
+    window[name] = function (d, X) { var r = f0.apply(this, arguments); try { if (X && X.D && akGfxDiceKind(X.D.kind)) d.insertBefore(akGfxDiceRow(key, label), d.firstChild); } catch (e) {} return r; };
   }
   top("akGfxBgExtra", "photo", "background"); top("akGfxFontsExtra", "fonts", "fonts"); top("akGfxThemesFill", "colors", "colors"); top("akGfxOvlFill", "ovl", "overlays"); top("akGfxDecoFill", "extras", "border and effects");
   var v0 = AK_VIEWS.gfx;
@@ -52801,7 +52807,7 @@ function akGfxDiceRow(key, label) {
     var wrap = v0.apply(this, arguments);
     try {
       var d = wrap.querySelector(".topbar .akg-dice");
-      if (d && S.gfxKind === "flyer") d.parentNode.insertBefore(h("button", { class: "icon akg-dice akg-dicemore", "aria-label": "Choose what to randomize", title: "Randomize just one thing, or choose what 🎲 keeps", onClick: function (e) { akGfxRollMenu(e.currentTarget); } }, "▾"), d.nextSibling);
+      if (d && akGfxDiceKind(S.gfxKind)) d.parentNode.insertBefore(h("button", { class: "icon akg-dice akg-dicemore", "aria-label": "Choose what to randomize", title: "Randomize just one thing, or choose what 🎲 keeps", onClick: function (e) { akGfxRollMenu(e.currentTarget); } }, "▾"), d.nextSibling);
     } catch (e) {}
     return wrap;
   };
@@ -53424,6 +53430,21 @@ AK_TAB_ALL.push(["graphics", "Graphics"]);
   tabBarEl = function (o) {
     var bar = tb.apply(this, arguments);
     try {
+      /* the phone's More menu lists Graphics when it is not on the bar. (The menu() swap is made again at every tap, so it is done as a one-shot in a capture click, like Artist info.) */
+      var mb = bar.querySelector(".ak8-more");
+      if (mb && !mb.__gfxMore) {
+        mb.__gfxMore = 1;
+        mb.addEventListener("click", function () {
+          if (akTabPick().indexOf("graphics") >= 0) return;
+          var m1 = menu;
+          menu = function (a, list) {
+            menu = m1; list = (list || []).slice();
+            if (!list.some(function (i) { return /^Graphics$/.test((i && i.label) || ""); })) { var at = list.findIndex(function (i) { return /^Tidy my library/.test((i && i.label) || ""); }); if (at < 0) at = list.length; list.splice(at, 0, { label: "🎨 Graphics", onClick: function () { go("graphics"); } }); }
+            return m1(a, list);
+          };
+          setTimeout(function () { menu = m1; }, 0);
+        }, true);
+      }
       if (bar.querySelector('[data-tab="graphics"]')) return bar;
       var more = akTabsMore(), want = more ? akTabPick().indexOf("graphics") >= 0 : settings().gfxTab !== false;
       if (!want) return bar;
@@ -53437,7 +53458,7 @@ AK_TAB_ALL.push(["graphics", "Graphics"]);
   var m0 = menu;
   menu = function (anchor, items) {
     try {
-      if (anchor && anchor.classList && anchor.classList.contains("ak8-more") && items && !items.some(function (i) { return /^Graphics$/.test(i.label || ""); }) && akTabPick().indexOf("graphics") < 0) {
+      if (anchor && anchor.classList && anchor.classList.contains("ak8-more") && items && !items.some(function (i) { return /^(🎨 )?Graphics$/.test(i.label || ""); }) && akTabPick().indexOf("graphics") < 0) {
         var at = items.findIndex(function (i) { return /^Tidy my library/.test(i.label || ""); }); if (at < 0) at = items.length;
         items.splice(at, 0, { label: "Graphics", onClick: function () { go("graphics"); } });
       }
@@ -53469,6 +53490,579 @@ if (typeof AK_HELP_WHERE !== "undefined") [
   { t: "Graphics tab: designs, pictures, templates", a: "Bottom bar › 🎨 Graphics (tablet: on by default; phone: More › Graphics, or More › Choose the tabs to put it on the bar). Make something (flyer, poster, tip sign, invoice, blank or from a ⭐ template), My designs and templates, and My pictures.", k: "graphics tab hub designs pictures templates studio organize", go: function () { go("graphics"); } },
   { t: "Edit a picture: crop, rotate, flip, straighten, brightness, filters", a: "Graphics tab › My pictures › tap a picture (or ⋯ › Edit). ✂ Crop (free, 1:1, 4:5, 16:9…), ⟳ Rotate and flip, straighten, ☀ Adjust (brightness, contrast, color, warmth) and ✨ Filters. Save a copy or replace the original.", k: "crop rotate flip straighten brightness contrast filter edit picture photo headshot", go: function () { go("graphics"); } },
   { t: "Organize pictures: albums, select many, add many", a: "Graphics tab › My pictures: ＋ Add pictures (pick many), 📷 Take a photo, search, album chips (Albums ▾ makes, renames and deletes your own albums), ☑ Select to move or take out several at once.", k: "albums organize pictures select move delete import many photos", go: function () { go("graphics"); } }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+/* ak_v18m.js - 18.7l: Signs (was "Tip sign") and Business cards
+   - kind "tip" is now called Sign: 12 layouts built like the flyer layouts (AKG_SIGNS), the old three (QR codes, Jar label, Big words) stay.
+   - kind "card" is a Business card: 9 layouts (AKG_CARDS) for a card lying down, the same words standing up.
+   - "What's on it" panel: every tip link, song-request QR, social link, website, email, phone, tagline and a contact (vCard) QR from Artist info,
+     each with a tick, a handle you can change, and a QR tick; plus lines of your own.
+   - Sizes: Letter, half letter, quarter, A-frame 24x36, poster 18x24, 5x7, 8x10, business card (lying and standing).
+   - Print: copies per sheet (1, 2, 4, 6, 8, 10) on Letter or A4 with cut lines.
+   Both kinds use the flyer layout builder (akGfxFlySpec / akGfxFlyBuild), the flyer randomizer and the same extras. */
+
+/* ---------------------------------------------------------------- sizes, kinds */
+[["half", "Half letter 5.5×8.5 in (a folded sheet)", 1650, 2550, 5.5, 8.5], ["poster18", "Poster 18×24 in", 2700, 3600, 18, 24], ["aframe", "A-frame sign 24×36 in", 3600, 5400, 24, 36],
+  ["bizcard", "Business card 3.5×2 in (lying down)", 1050, 600, 3.5, 2], ["bizcardv", "Business card 2×3.5 in (standing up)", 600, 1050, 2, 3.5]].forEach(function (s) { AKG_SIZES.push(s); });
+AKG_KSIZES.tip = ["letter", "half", "quarter", "card46", "frame57", "frame810", "tabloid", "poster18", "aframe", "a4", "jar", "square", "post", "story"];
+AKG_KSIZES.card = ["bizcard", "bizcardv", "square", "post"];
+AKG_KSIZES.blank = AKG_KSIZES.blank.concat(["half", "poster18", "aframe", "bizcard", "bizcardv"]);
+AKG_KINDS.forEach(function (k) { if (k[0] === "tip") { k[1] = "🪧 Sign"; k[2] = "For an A-frame, a frame or a table: tips, follow me, contact, or just your name"; } });
+AKG_KINDS.splice(AKG_KINDS.map(function (k) { return k[0]; }).indexOf("tip") + 1, 0, ["card", "💼 Business card", "Your details, links and a contact QR, to print many to a sheet"]);
+AKG_LAYOUTS.card = [];
+
+/* ---------------------------------------------------------------- what goes on a sign or card */
+function akSgHandleOf(label, url) {
+  var u = String(url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  var m = /^(?:instagram\.com|tiktok\.com|twitter\.com|x\.com|threads\.net|facebook\.com|youtube\.com|m\.youtube\.com)\/@?([\w.\-]+)$/i.exec(u);
+  if (m && !/^(channel|user|c|watch|pages)$/i.test(m[1])) return "@" + m[1];
+  return u;
+}
+function akSgVcard() {
+  var a = akArtist(), name = akArtistName(); if (!name) return "";
+  var v = ["BEGIN:VCARD", "VERSION:3.0", "FN:" + name, "N:;" + name + ";;;", "ORG:" + name];
+  if (a.tagline) v.push("TITLE:" + String(a.tagline).replace(/[\r\n;]+/g, " ").slice(0, 60));
+  if (a.phone) v.push("TEL;TYPE=CELL:" + a.phone);
+  if (a.email) v.push("EMAIL:" + a.email);
+  var web = akGfxSite(); if (web) v.push("URL:https://" + String(web).replace(/^https?:\/\//i, ""));
+  (a.links || []).forEach(function (l) { if (l && l.url && !/website/i.test(l.label || "")) v.push("URL;TYPE=" + String(l.label || "link").replace(/[^\w]/g, "") + ":" + l.url); });
+  v.push("END:VCARD"); return v.join("\r\n");
+}
+function akSgItems(D) {
+  var out = [], a = akArtist(), pays = akGfxPays(), sg = akSgGet(D), ns = 0;
+  pays.forEach(function (p, i) { var key = "h_" + (p.kind || p.label); out.push({ id: "tip" + i, grp: "tip", label: p.label || p.kind || "Tip", h: (D.pay && D.pay[key]) || akGfxHandle(p) || "", url: p.url, qr: true, n: i, legacyOff: !!(D.pay && D.pay["off" + i]) }); });
+  var ru = typeof akPosterUrlFor === "function" ? akPosterUrlFor("request") : ""; if (ru) out.push({ id: "req", grp: "req", label: "Request a song", h: "", url: ru, qr: true });
+  var hasWeb = false, site = akGfxSite();
+  (a.links || []).forEach(function (l, i) {
+    if (!l || !l.url) return;
+    var web = /^(website|web|site|home ?page)$/i.test(String(l.label || "").trim());
+    if (web) { hasWeb = true; out.push({ id: "ln" + i, grp: "web", label: "Website", h: site || akSgHandleOf("", l.url), url: l.url, qr: false, n: 0 }); }
+    else out.push({ id: "ln" + i, grp: "social", label: l.label || "Link", h: akSgHandleOf(l.label, l.url), url: l.url, qr: false, n: ns++ });
+  });
+  if (!hasWeb && site) out.push({ id: "site", grp: "web", label: "Website", h: site, url: "https://" + String(site).replace(/^https?:\/\//i, ""), qr: false, n: 0 });
+  if (a.email) out.push({ id: "email", grp: "contact", label: "Email", h: a.email, url: "mailto:" + a.email, qr: false });
+  if (a.phone) out.push({ id: "phone", grp: "contact", label: "Phone", h: a.phone, url: "tel:" + String(a.phone).replace(/[^\d+]/g, ""), qr: false });
+  if (a.tagline) out.push({ id: "tagline", grp: "info", label: "", h: a.tagline, url: "", qr: false });
+  if (a.genres) out.push({ id: "genres", grp: "info", label: "Music", h: a.genres, url: "", qr: false });
+  if (a.home) out.push({ id: "home", grp: "info", label: "Based in", h: a.home, url: "", qr: false });
+  if (a.booking) out.push({ id: "booking", grp: "info", label: "Bookings", h: a.booking, url: "", qr: false });
+  var vc = akSgVcard(); if (vc) out.push({ id: "vcard", grp: "vcard", label: "Save my contact", h: "", url: vc, qr: true });
+  (sg.extra || []).forEach(function (x, i) { out.push({ id: "x" + i, grp: "extra", label: x.label || "", h: x.h || "", url: x.url || "", qr: !!x.url && !!x.qr, n: i, extra: true }); });
+  return out;
+}
+function akSgGet(D) { var s = D.sign; if (!s || typeof s !== "object") s = D.sign = {}; if (!s.on) s.on = {}; if (!s.h) s.h = {}; if (!s.qr) s.qr = {}; if (!Array.isArray(s.extra)) s.extra = []; return s; }
+function akSgDefOn(it, D, spec) {
+  var card = D.kind === "card", want = (spec && spec.want) || [], skip = (spec && spec.skip) || [];
+  if (want.indexOf(it.grp) >= 0 || want.indexOf(it.id) >= 0) return true;
+  if (skip.indexOf(it.grp) >= 0) return false;
+  if (it.grp === "tip") return !card && it.n < 3 && !it.legacyOff;
+  if (it.grp === "req") return !card && !!D.reqQr;
+  if (it.grp === "social") return it.n < 3;
+  if (it.grp === "web") return true;
+  if (it.grp === "contact") return card;
+  if (it.grp === "info") return card && it.id === "tagline";
+  if (it.grp === "vcard") return card;
+  return true;
+}
+var AKSG_ORDER = { sign: ["web", "social", "contact", "tip", "req", "info", "vcard", "extra"], card: ["contact", "web", "social", "info", "tip", "req", "vcard", "extra"] };
+function akSignInfo(D) {
+  var sg = akSgGet(D), spec = akGfxFlySpec(D.layout), items = akSgItems(D), ord = AKSG_ORDER[D.kind === "card" ? "card" : "sign"];
+  items.forEach(function (it) {
+    it.on = sg.on[it.id] != null ? !!sg.on[it.id] : akSgDefOn(it, D, spec);
+    if (sg.h[it.id] != null && sg.h[it.id] !== "") it.h = sg.h[it.id];
+    if (sg.qr[it.id] != null) it.qr = !!sg.qr[it.id];
+    if (it.qr && !it.url) it.qr = false;
+  });
+  var S = { items: items, by: {}, qrs: [], lines: [] };
+  ["tip", "req", "social", "web", "contact", "info", "vcard", "extra"].forEach(function (g) { S.by[g] = items.filter(function (it) { return it.grp === g && it.on; }); });
+  ord.forEach(function (g) { S.by[g].forEach(function (it) { (it.qr ? S.qrs : S.lines).push(it); }); });
+  S.qrs.sort(function (a, b) { return (a.grp === "vcard") - (b.grp === "vcard"); });
+  return S;
+}
+
+/* ---------------------------------------------------------------- builder helpers */
+/* QR codes with a label under each, fitted in a box */
+function akSgQRs(B, list, x, y, w, h, o) {
+  o = o || {}; var n = list.length; if (!n) return 0;
+  var cols = o.cols || (o.col ? 1 : o.row ? n : n <= 3 ? n : Math.ceil(n / 2)), rows = Math.ceil(n / cols), cw = w / cols, ch = h / rows, lab = o.nolabel ? 0 : 0.26, s0 = 0;
+  var s = Math.min(cw * 0.88, ch / (1 + lab) * 0.96, o.max || 1e9);
+  list.forEach(function (it, i) {
+    var c = i % cols, r = Math.floor(i / cols), inRow = r === rows - 1 ? n - r * cols : cols, cx = x + cw * (c + 0.5) + (r === rows - 1 ? (cols - inRow) * cw / 2 : 0), top = y + r * ch + (ch - s * (1 + lab)) / 2;
+    B.lay.push({ id: "qr" + (i + 1), name: "QR: " + it.label, type: "qr", url: it.url, x: cx - s / 2, y: top, s: s });
+    if (!o.nolabel) B.T("qrl" + (i + 1), "Label: " + it.label, (it.grp === "vcard" ? "SAVE MY CONTACT" : String(it.label).toUpperCase()) + (it.h ? "\n" + it.h : ""), cx, top + s + s * lab / 2 + s * 0.02, Math.min(s * 0.12, s * lab / 2.5), { weight: 700, maxW: cw * 0.98, maxH: s * lab, fit: 2, lh: 1.1, color: o.color || B.C.ink, role: "small" });
+    s0 = s;
+  });
+  return s0;
+}
+/* label small above, handle big below: a list of links */
+function akSgList(B, list, x, y, w, pitch, o) {
+  o = o || {}; var al = o.align || "center", ax = al === "left" ? x : al === "right" ? x + w : x + w / 2, k = pitch, card = AKGJ.D.kind === "card", m = B.m;
+  var compact = card || o.nolabel || pitch < 9 * m;
+  list.forEach(function (it, i) {
+    var yy = y + i * pitch;
+    if (compact || !it.label) {
+      var txt = it.h || it.label, bare = /[@.\/]/.test(it.h || "");
+      if (!compact || !bare) txt = (it.label && it.h && !(it.grp === "info" && !it.label) ? it.label + ": " : "") + (it.h || "");
+      if (!it.h) txt = it.label;
+      B.T("ln" + (i + 1), it.label || "Line", txt, ax, yy + pitch / 2, Math.min(k * (card ? 0.46 : 0.5), (card ? 6.4 : 6) * m), { align: al, maxW: w, fit: 1, weight: 700, color: o.color || B.C.ink, role: "rest" });
+    } else {
+      B.TS("lnl" + (i + 1), "Label: " + it.label, String(it.label).toUpperCase(), ax, yy + k * 0.2, k * 0.2, { align: al, maxW: w, fit: 1, weight: 800, spacing: k * 0.03, color: o.lc || B.C.a1 });
+      B.T("ln" + (i + 1), it.label, it.h, ax, yy + k * 0.6, k * 0.38, { align: al, maxW: w, fit: 1, weight: 700, color: o.color || B.C.ink, role: "rest" });
+    }
+  });
+}
+/* the usual mix: QR codes on top, links under them, all in one box */
+function akSgBlock(B, S, x, y, w, h, o) {
+  o = o || {}; var nq = S.qrs.length, nl = S.lines.length, m = B.m;
+  if (!nq && !nl) { B.T("empty", "Hint", "Choose what goes here\nin the 🪧 panel", x + w / 2, y + h / 2, 3.6 * m, { maxW: w, fit: 2, weight: 500 }); return; }
+  var qh = nq && nl ? h * (o.qf || 0.6) : nq ? h : 0, lh = h - qh;
+  if (nq) akSgQRs(B, S.qrs, x, y, w, qh, { cols: o.cols, max: o.qmax, color: o.qc, row: o.row });
+  if (nl) akSgList(B, S.lines, x, y + qh, w, Math.min((o.pmax || 11) * m, lh / nl), { align: o.align, color: o.lcolor, lc: o.lc, nolabel: o.nolabel });
+}
+function akSgName(B, cx, y, w) { B.WM(cx, y, w); }
+
+/* ---------------------------------------------------------------- the signs */
+var SGF = akGfxStack;
+function akSgW(B, k, def) { return B.I.tx(k, def); }
+var AKG_SIGNS = [
+  { id: "s_chalk", name: "Chalkboard A-frame", tags: "dark bold", words: null,
+    p: { paper: "#1f2723", ink: "#f3efe4", a1: "#f4c95d", a2: "#9fd3c7", fonts: { title: SGF("Bebas Neue"), main: SGF("Montserrat"), small: SGF("Quicksand") }, tw: 400, mw: 700, sw: 700 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, U = B.U, S = akSignInfo(AKGJ.D), i = 3 * m;
+      B.BG(); B.DECO("speckle" in {} ? "speckle" : "grain", 22);
+      B.SH("frame", "Chalk frame", "frame", i, i, W - i * 2, H - i * 2, { color: C.ink, lw: 0.5 * m });
+      B.SH("frame2", "Inner frame", "frame", i + 1.4 * m, i + 1.4 * m, W - i * 2 - 2.8 * m, H - i * 2 - 2.8 * m, { color: C.ink, lw: 0.2 * m });
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Live music tonight")), W / 2, 9 * Y, 3.6 * m, { color: C.a2, spacing: 0.6 * m, fit: 1, maxW: 76 * X });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tips are\nappreciated")), W / 2, 22 * Y, 15 * m, { color: C.a1, fit: 2, maxW: 82 * X, maxH: 22 * Y, lh: 0.95 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Thank you for supporting live music"), W / 2, 36 * Y, 3.4 * m, { fit: 2, maxW: 76 * X });
+      akSgBlock(B, S, 12 * X, 42 * Y, 76 * X, 44 * Y, { qc: C.ink });
+      akSgName(B, W / 2, 92.5 * Y, 56 * X);
+    } },
+  { id: "s_tipposter", name: "Bold tip poster", tags: "bold paper", 
+    p: { paper: "#fff4dc", ink: "#1b1b1b", a1: "#e4572e", a2: "#17bebb", fonts: { title: SGF("League Spartan"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 900, mw: 700, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.SH("band", "Color block", "rect", 0, 0, W, 33 * Y, { color: C.a1 }); B.SH("band2", "Strip", "rect", 0, 33 * Y, W, 1.6 * Y, { color: C.a2 });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tips")), W / 2, 15 * Y, 26 * m, { color: C.paper, fit: 1, maxW: 86 * X, maxH: 24 * Y });
+      B.TS("sub", "Line under it", U(akSgW(B, "sub", "Scan, tap, thank you!")), W / 2, 28 * Y, 3.8 * m, { color: C.paper, weight: 800, spacing: 0.5 * m, fit: 1, maxW: 80 * X });
+      akSgBlock(B, S, 10 * X, 39 * Y, 80 * X, 47 * Y, { qf: 0.64 });
+      akSgName(B, W / 2, 93.5 * Y, 56 * X);
+    } },
+  { id: "s_follow", name: "Follow me", tags: "bold paper", skip: ["tip"], want: ["social", "web"],
+    p: { paper: "#f1ece2", ink: "#1a1a1a", a1: "#d6336c", a2: "#2b2d42", fonts: { title: SGF("Bebas Neue"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 400, mw: 700, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.SH("bar", "Side bar", "rect", 0, 0, 7 * X, B.H, { color: C.a1 });
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Enjoying the music?")), 57 * X, 8 * Y, 3.2 * m, { color: C.a1, weight: 800, spacing: 0.5 * m, fit: 1, maxW: 80 * X });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Follow me")), 57 * X, 19 * Y, 21 * m, { color: C.a2, fit: 2, maxW: 82 * X, maxH: 20 * Y, lh: 0.9 });
+      B.SH("rule", "Line", "rect", 17 * X, 31 * Y, 80 * X, 0.7 * m, { color: C.a1 });
+      var nq = S.qrs.length, nl = S.lines.length;
+      if (nl) akSgList(B, S.lines, 17 * X, 34 * Y, 80 * X, Math.min(13 * m, 34 * Y / nl), { align: "left" });
+      if (nq) akSgQRs(B, S.qrs, 14 * X, nl ? 70 * Y : 36 * Y, 80 * X, nl ? 21 * Y : 55 * Y, { row: nl > 0 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", ""), 57 * X, 96 * Y, 2.6 * m, { fit: 1, maxW: 80 * X });
+      akSgName(B, 57 * X, nl || nq ? 95 * Y : 90 * Y, 52 * X);
+    } },
+  { id: "s_split", name: "Photo and tips", tags: "photo side", 
+    p: { paper: "#14121a", ink: "#f6f2ea", a1: "#ffb347", photo: true, art: "a_orion", fonts: { title: SGF("Playfair Display"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 800, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.PH(0, 0, W, 38 * Y); B.SH("band", "Color strip", "rect", 0, 38 * Y, W, 1.4 * Y, { color: C.a1 });
+      B.TT("title", "Big heading", akSgW(B, "title", "Tips & follows"), W / 2, 46 * Y, 11 * m, { fit: 1, maxW: 86 * X });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Thank you for listening"), W / 2, 53 * Y, 3.2 * m, { color: C.a1, fit: 1, maxW: 80 * X, spacing: 0.3 * m });
+      akSgBlock(B, S, 9 * X, 57 * Y, 82 * X, 33 * Y, { qf: 0.62 });
+      akSgName(B, W / 2, 95 * Y, 52 * X);
+    } },
+  { id: "s_neon", name: "Neon sign", tags: "dark night bold",
+    p: { paper: "#08060d", ink: "#f4f0ff", a1: "#ff3cac", a2: "#2bd2ff", fonts: { title: SGF("Righteous"), main: SGF("Outfit"), small: SGF("Quicksand") }, tw: 400, mw: 600, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, U = B.U, S = akSignInfo(AKGJ.D), i = 5 * m;
+      B.BG(); B.DECO("vignette", 40);
+      B.SH("tube", "Neon frame", "frame", i, i, W - i * 2, H - i * 2, { color: C.a2, lw: 0.9 * m });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tip jar")), W / 2, 18 * Y, 17 * m, { color: C.a1, fit: 1, maxW: 78 * X, maxH: 18 * Y, fx: "neon", fxc: C.a1 });
+      B.TS("sub", "Line under it", U(akSgW(B, "sub", "Live music tonight")), W / 2, 30 * Y, 3.4 * m, { color: C.a2, weight: 700, spacing: 0.7 * m, fit: 1, maxW: 76 * X, fx: "glow", fxc: C.a2 });
+      akSgBlock(B, S, 12 * X, 37 * Y, 76 * X, 50 * Y, { lc: C.a2 });
+      akSgName(B, W / 2, 93 * Y, 50 * X);
+    } },
+  { id: "s_minimal", name: "Quiet and clean", tags: "paper minimal elegant",
+    p: { paper: "#fbfaf7", ink: "#222222", a1: "#9b7b4f", fonts: { title: SGF("Cinzel"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 500, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Live music")), W / 2, 11 * Y, 2.6 * m, { color: C.a1, spacing: 1 * m, weight: 700, fit: 1, maxW: 70 * X });
+      B.SH("rule1", "Line", "rect", 44 * X, 15 * Y, 12 * X, 0.3 * m, { color: C.a1 });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Support the artist")), W / 2, 23 * Y, 8.5 * m, { fit: 2, maxW: 80 * X, maxH: 13 * Y, lh: 1.05 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Tips are always appreciated, never expected."), W / 2, 33 * Y, 2.8 * m, { fit: 2, maxW: 70 * X, maxH: 7 * Y });
+      akSgBlock(B, S, 12 * X, 41 * Y, 76 * X, 46 * Y, { qf: 0.62, lc: C.a1 });
+      B.SH("rule2", "Line", "rect", 44 * X, 89.5 * Y, 12 * X, 0.3 * m, { color: C.a1 });
+      akSgName(B, W / 2, 94 * Y, 48 * X);
+    } },
+  { id: "s_stack", name: "Link list", tags: "bold paper minimal", skip: ["tip"], want: ["social", "web"],
+    p: { paper: "#101820", ink: "#f2f2f2", a1: "#fee715", fonts: { title: SGF("Montserrat"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 900, mw: 800, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); akSgName(B, 12 * X + 24 * X, 8 * Y, 48 * X);
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Find me online")), 8 * X, 15 * Y, 3 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.6 * m, fit: 1, maxW: 80 * X });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Links")), 8 * X, 24 * Y, 16 * m, { align: "left", fit: 1, maxW: 84 * X, maxH: 14 * Y });
+      var nl = S.lines.length, nq = S.qrs.length, p = Math.min(13 * m, (nq ? 40 : 64) * Y / Math.max(1, nl));
+      S.lines.forEach(function (it, k) { B.SH("sep" + k, "Line " + (k + 1), "rect", 8 * X, 33 * Y + k * p, 84 * X, 0.25 * m, { color: C.a1 }); });
+      akSgList(B, S.lines, 8 * X, 33 * Y, 84 * X, p, { align: "left" });
+      if (nq) akSgQRs(B, S.qrs, 8 * X, 33 * Y + nl * p + 3 * Y, 84 * X, 91 * Y - (33 * Y + nl * p + 3 * Y), { row: true });
+      B.TS("sub", "Line under it", akSgW(B, "sub", ""), W / 2, 96 * Y, 2.4 * m, { fit: 1, maxW: 80 * X });
+    } },
+  { id: "s_request", name: "Request a song", tags: "bold paper",
+    p: { paper: "#f5e9d8", ink: "#2a1b3d", a1: "#7b2cbf", a2: "#f72585", fonts: { title: SGF("Pacifico"), main: SGF("Quicksand"), small: SGF("Quicksand") }, tw: 400, mw: 700, sw: 700 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D), req = S.by.req[0] && S.by.req[0].qr ? S.by.req[0] : null;
+      B.BG(); B.DECO("stars", 24);
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Got a favorite?")), W / 2, 8 * Y, 3.4 * m, { color: C.a2, weight: 800, spacing: 0.6 * m, fit: 1, maxW: 80 * X });
+      B.TT("title", "Big heading", akSgW(B, "title", "Request a song"), W / 2, 19 * Y, 12.5 * m, { color: C.a1, fit: 2, maxW: 86 * X, maxH: 18 * Y, lh: 1 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Scan the code and pick it"), W / 2, 31 * Y, 3.4 * m, { fit: 1, maxW: 80 * X });
+      var rest = { qrs: S.qrs.filter(function (q) { return q !== req; }), lines: S.lines };
+      if (req) { akSgQRs(B, [req], 22 * X, 36 * Y, 56 * X, 33 * Y, { nolabel: true }); akSgBlock(B, rest, 10 * X, 71 * Y, 80 * X, 19 * Y, { qf: 0.5, row: true, pmax: 7 }); }
+      else akSgBlock(B, S, 10 * X, 36 * Y, 80 * X, 54 * Y);
+      akSgName(B, W / 2, 95 * Y, 52 * X);
+    } },
+  { id: "s_photo", name: "Full photo", tags: "photo night",
+    p: { paper: "#0c0a10", ink: "#ffffff", a1: "#ffd166", full: true, art: "a_inferno", overlay: 38, fonts: { title: SGF("Bebas Neue"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 400, mw: 700, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.SH("shade", "Dark panel", "rect", 0, 46 * Y, W, 54 * Y, { color: "#000000", alpha: 0.55 });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Thank you!")), W / 2, 15 * Y, 22 * m, { fit: 1, maxW: 86 * X, maxH: 22 * Y, shadow: { c: "rgba(0,0,0,0.6)", b: 0.8 * m, x: 0, y: 0.3 * m } });
+      B.TS("sub", "Line under it", U(akSgW(B, "sub", "Tips and follows keep the music going")), W / 2, 28 * Y, 3.4 * m, { color: C.a1, weight: 800, spacing: 0.5 * m, fit: 2, maxW: 80 * X, maxH: 8 * Y });
+      akSgBlock(B, S, 9 * X, 49 * Y, 82 * X, 40 * Y, { qf: 0.62 });
+      akSgName(B, W / 2, 94.5 * Y, 54 * X);
+    } },
+  { id: "s_retro", name: "Old-time bill", tags: "paper retro bold",
+    p: { paper: "#efe3c8", ink: "#231c16", a1: "#b3261e", a2: "#1d3557", fonts: { title: SGF("Bebas Neue"), main: SGF("Bebas Neue"), small: SGF("Montserrat") }, tw: 400, mw: 400, sw: 700 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, U = B.U, S = akSignInfo(AKGJ.D), i = 3.4 * m;
+      B.BG(); B.DECO("grain", 28);
+      B.SH("frame", "Frame", "frame", i, i, W - i * 2, H - i * 2, { color: C.ink, lw: 0.55 * m }); B.SH("frame2", "Inner frame", "frame", i + 1.3 * m, i + 1.3 * m, W - i * 2 - 2.6 * m, H - i * 2 - 2.6 * m, { color: C.ink, lw: 0.2 * m });
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Live music")), W / 2, 10 * Y, 3.2 * m, { color: C.a1, weight: 800, spacing: 0.6 * m, fit: 1, maxW: 60 * X });
+      B.SH("s1", "Star", "star", W / 2 - 38 * m, 10 * Y - 1.5 * m, 3 * m, 3 * m, { color: C.a1 }); B.SH("s2", "Star", "star", W / 2 + 35 * m, 10 * Y - 1.5 * m, 3 * m, 3 * m, { color: C.a1 });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tips gratefully\naccepted")), W / 2, 24 * Y, 15 * m, { color: C.a2, fit: 2, maxW: 82 * X, maxH: 24 * Y, lh: 0.95 });
+      B.SH("rule", "Line", "rect", 14 * X, 38 * Y, 72 * X, 0.9 * m, { color: C.a1 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "A little something for the band"), W / 2, 42 * Y, 3 * m, { fit: 1, maxW: 76 * X });
+      akSgBlock(B, S, 12 * X, 47 * Y, 76 * X, 40 * Y, { qf: 0.62 });
+      akSgName(B, W / 2, 93 * Y, 50 * X);
+    } },
+  { id: "s_booking", name: "Book me", tags: "paper bold minimal", want: ["contact", "info", "web", "vcard"], skip: ["tip"],
+    p: { paper: "#0f2a2e", ink: "#f4efe6", a1: "#f2b84b", a2: "#7fd1c1", fonts: { title: SGF("Playfair Display"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 800, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D), a = akArtist();
+      B.BG(); B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Available for")), W / 2, 9 * Y, 3 * m, { color: C.a2, weight: 800, spacing: 0.7 * m, fit: 1, maxW: 76 * X });
+      B.TT("title", "Big heading", akSgW(B, "title", "Weddings, parties\n& events"), W / 2, 22 * Y, 10 * m, { color: C.a1, fit: 2, maxW: 84 * X, maxH: 22 * Y, lh: 1.05 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", a.tagline || ""), W / 2, 36 * Y, 3 * m, { fit: 2, maxW: 76 * X, maxH: 8 * Y });
+      akSgBlock(B, S, 10 * X, 43 * Y, 80 * X, 46 * Y, { qf: 0.5, row: true });
+      akSgName(B, W / 2, 94 * Y, 50 * X);
+    } },
+  { id: "s_sun", name: "Sunburst", tags: "bold retro",
+    p: { paper: "#ffd23f", ink: "#1b1b3a", a1: "#ee4266", a2: "#3bceac", fonts: { title: SGF("Righteous"), main: SGF("Quicksand"), small: SGF("Quicksand") }, tw: 400, mw: 700, sw: 700 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.DECO("rays", 30);
+      B.SH("disc", "Circle", "circle", 12 * X, 6 * Y, 76 * X, 76 * X * 0.82, { color: C.a1 });
+      B.TS("kicker", "Small heading", U(akSgW(B, "kicker", "Live music")), W / 2, 13 * Y, 3.4 * m, { color: C.paper, weight: 800, spacing: 0.7 * m, fit: 1, maxW: 52 * X });
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tips")), W / 2, 25 * Y, 20 * m, { color: C.paper, fit: 1, maxW: 56 * X, maxH: 18 * Y });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Thank you!"), W / 2, 37 * Y, 4 * m, { color: C.paper, fit: 1, maxW: 52 * X });
+      akSgBlock(B, S, 9 * X, 52 * Y, 82 * X, 38 * Y, { qf: 0.66 });
+      akSgName(B, W / 2, 95 * Y, 52 * X);
+    } },
+  { id: "s_tent", name: "Table tent (fold in half)", tags: "paper minimal",
+    p: { paper: "#ffffff", ink: "#1c1c1c", a1: "#2a6f97", fonts: { title: SGF("Montserrat"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 800, mw: 700, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D);
+      B.BG(); B.SH("fold", "Fold line", "rect", 0, 49.8 * Y, W, 0.4 * m, { color: C.a1, alpha: 0.35 });
+      /* the top half is upside down so the back reads right when folded */
+      var top = { qrs: S.qrs, lines: S.lines };
+      B.TT("title", "Big heading", U(akSgW(B, "title", "Tips")), W / 2, 62 * Y, 12 * m, { color: C.a1, fit: 1, maxW: 80 * X });
+      akSgBlock(B, S, 10 * X, 68 * Y, 80 * X, 27 * Y, { qf: 0.62, pmax: 8 });
+      B.TS("sub", "Line under it", akSgW(B, "sub", "Fold along the line"), W / 2, 98 * Y, 2 * m, { fit: 1, maxW: 60 * X, color: C.a1 });
+      B.TT("title2", "Big heading (back)", U(akSgW(B, "title", "Tips")), W / 2, 38 * Y, 12 * m, { color: C.a1, fit: 1, maxW: 80 * X, rot: 180 });
+    } }
+];
+
+/* ---------------------------------------------------------------- the business cards (lying down; standing ones use cardUp) */
+var AKG_CARDS = [
+  { id: "c_classic", name: "Classic", tags: "paper elegant",
+    p: { paper: "#fbf7ee", ink: "#1f1b16", a1: "#a8452d", fonts: { title: SGF("Playfair Display"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 800, mw: 500, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.SH("bar", "Line", "rect", 7 * X, 0, 0.6 * X, B.H, { color: C.a1 });
+      B.TT("artist", "Name", I.artist, 12 * X, 20 * Y, 11.9 * m, { align: "left", fit: 1, maxW: q ? 58 * X : 80 * X });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || "Live music"), 12 * X, 34 * Y, 5.2 * m, { align: "left", color: C.a1, fit: 1, maxW: q ? 58 * X : 80 * X, spacing: 0.3 * m });
+      akSgList(B, ls, 12 * X, 48 * Y, q ? 54 * X : 80 * X, 11 * Y, { align: "left", nolabel: false });
+      if (q) akSgQRs(B, [q], 70 * X, 18 * Y, 24 * X, 64 * Y, { nolabel: true, max: 40 * Y * 1.6 });
+    } },
+  { id: "c_bold", name: "Bold color", tags: "bold",
+    p: { paper: "#111111", ink: "#ffffff", a1: "#ff5d2a", fonts: { title: SGF("League Spartan"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.SH("blk", "Color block", "rect", 0, 0, 40 * X, B.H, { color: C.a1 });
+      B.TT("artist", "Name", I.artist.toUpperCase(), 20 * X, 36 * Y, 9.2 * m, { color: "#111111", fit: 2, maxW: 34 * X, maxH: 60 * Y, lh: 0.95 });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 20 * X, 82 * Y, 5.2 * m, { color: "#111111", fit: 2, maxW: 34 * X, maxH: 14 * Y, weight: 700 });
+      akSgList(B, ls, 45 * X, 12 * Y, q ? 33 * X : 52 * X, 17 * Y, { align: "left" });
+      if (q) akSgQRs(B, [q], 80 * X, 52 * Y, 17 * X, 40 * Y, { nolabel: true });
+    } },
+  { id: "c_photo", name: "Photo side", tags: "photo",
+    p: { paper: "#15131a", ink: "#f5f1e8", a1: "#f2a65a", photo: true, art: "a_orion", fonts: { title: SGF("Bebas Neue"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 400, mw: 600, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.PH(0, 0, 38 * X, B.H); B.SH("edge", "Line", "rect", 38 * X, 0, 0.8 * X, B.H, { color: C.a1 });
+      B.TT("artist", "Name", I.artist.toUpperCase(), 43 * X, 15 * Y, 10.6 * m, { align: "left", fit: 1, maxW: 52 * X });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 43 * X, 29 * Y, 5.2 * m, { align: "left", color: C.a1, fit: 1, maxW: 52 * X, spacing: 0.2 * m });
+      akSgList(B, ls, 43 * X, 40 * Y, q ? 38 * X : 52 * X, 14 * Y, { align: "left" });
+      if (q) akSgQRs(B, [q], 80 * X, 40 * Y, 16 * X, 50 * Y, { nolabel: true });
+    } },
+  { id: "c_minimal", name: "Minimal", tags: "paper minimal",
+    p: { paper: "#ffffff", ink: "#222222", a1: "#888888", fonts: { title: SGF("Montserrat"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 600, mw: 500, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.TT("artist", "Name", I.artist.toUpperCase(), W / 2, 30 * Y, 7.0 * m, { fit: 1, maxW: 80 * X, spacing: 1.2 * m });
+      B.SH("rule", "Line", "rect", 44 * X, 42 * Y, 12 * X, 0.25 * m, { color: C.a1 });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), W / 2, 51 * Y, 5.2 * m, { color: C.a1, fit: 1, maxW: 80 * X });
+      B.T("inline", "Details", ls.map(function (it) { return it.h; }).join("   ·   "), W / 2, 72 * Y, 5.2 * m, { fit: 2, maxW: q ? 70 * X : 88 * X, maxH: 16 * Y, weight: 500 });
+      if (q) akSgQRs(B, [q], 86 * X, 74 * Y, 11 * X, 22 * Y, { nolabel: true });
+    } },
+  { id: "c_split", name: "Two halves", tags: "bold paper",
+    p: { paper: "#f4f1ea", ink: "#1d1d2b", a1: "#3a5a98", fonts: { title: SGF("Righteous"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 400, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.SH("top", "Top block", "rect", 0, 0, W, 44 * Y, { color: C.a1 });
+      B.TT("artist", "Name", I.artist, 8 * X, 20 * Y, 10.6 * m, { align: "left", color: C.paper, fit: 1, maxW: 84 * X });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 8 * X, 35 * Y, 5.2 * m, { align: "left", color: C.paper, fit: 1, maxW: 84 * X });
+      var half = Math.ceil(ls.length / 2);
+      akSgList(B, ls.slice(0, half), 8 * X, 50 * Y, 38 * X, 22 * Y, { align: "left" });
+      akSgList(B, ls.slice(half), 48 * X, 50 * Y, 30 * X, 22 * Y, { align: "left" });
+      if (q) akSgQRs(B, [q], 80 * X, 48 * Y, 16 * X, 47 * Y, { nolabel: true });
+    } },
+  { id: "c_neon", name: "Neon", tags: "dark night",
+    p: { paper: "#09070f", ink: "#f2eeff", a1: "#ff3cac", a2: "#2bd2ff", fonts: { title: SGF("Righteous"), main: SGF("Outfit"), small: SGF("Quicksand") }, tw: 400, mw: 600, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.SH("tube", "Neon frame", "frame", 3 * X, 5 * Y, W - 6 * X, B.H - 10 * Y, { color: C.a2, lw: 0.5 * m });
+      B.TT("artist", "Name", I.artist, 10 * X, 22 * Y, 10.0 * m, { align: "left", color: C.a1, fit: 1, maxW: q ? 58 * X : 80 * X, fx: "neon", fxc: C.a1 });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 10 * X, 36 * Y, 5.2 * m, { align: "left", color: C.a2, fit: 1, maxW: 58 * X });
+      akSgList(B, ls, 10 * X, 48 * Y, 58 * X, 11 * Y, { align: "left", lc: C.a2 });
+      if (q) akSgQRs(B, [q], 72 * X, 22 * Y, 21 * X, 60 * Y, { nolabel: true });
+    } },
+  { id: "c_retro", name: "Old-time", tags: "paper retro",
+    p: { paper: "#eee1c6", ink: "#231c16", a1: "#b3261e", a2: "#1d3557", fonts: { title: SGF("Bebas Neue"), main: SGF("Bebas Neue"), small: SGF("Montserrat") }, tw: 400, mw: 400, sw: 700 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, W = B.W, H = B.H, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 3), i = 2.4 * m;
+      B.BG(); B.SH("f1", "Frame", "frame", i, i, W - i * 2, H - i * 2, { color: C.ink, lw: 0.4 * m }); B.SH("f2", "Inner frame", "frame", i + 1 * m, i + 1 * m, W - i * 2 - 2 * m, H - i * 2 - 2 * m, { color: C.ink, lw: 0.16 * m });
+      B.TT("artist", "Name", I.artist.toUpperCase(), W / 2, 25 * Y, 12.5 * m, { color: C.a2, fit: 1, maxW: 80 * X });
+      B.SH("r", "Line", "rect", 20 * X, 40 * Y, 60 * X, 0.5 * m, { color: C.a1 });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), W / 2, 49 * Y, 5.2 * m, { fit: 1, maxW: 76 * X, color: C.a1, weight: 800 });
+      B.T("inline", "Details", ls.map(function (it) { return it.h; }).join("  ★  "), W / 2, 70 * Y, 5.4 * m, { fit: 2, maxW: q ? 66 * X : 84 * X, maxH: 22 * Y, color: C.ink });
+      if (q) akSgQRs(B, [q], 80 * X, 64 * Y, 14 * X, 28 * Y, { nolabel: true });
+    } },
+  { id: "c_qrfront", name: "Scan me", tags: "bold minimal",
+    p: { paper: "#f7f7f2", ink: "#111111", a1: "#e63946", fonts: { title: SGF("League Spartan"), main: SGF("Outfit"), small: SGF("Outfit") }, tw: 900, mw: 600, sw: 500 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 3);
+      B.BG(); if (q) akSgQRs(B, [q], 5 * X, 10 * Y, 34 * X * 0.98, 80 * Y, { nolabel: true });
+      B.TS("kicker", "Small heading", I.tx("kicker", q && q.grp === "vcard" ? "SCAN TO SAVE MY CONTACT" : "SCAN ME"), 44 * X, 14 * Y, 2.2 * m, { align: "left", color: C.a1, weight: 800, spacing: 0.4 * m, fit: 1, maxW: 52 * X });
+      B.TT("artist", "Name", I.artist.toUpperCase(), 44 * X, 33 * Y, 8.8 * m, { align: "left", fit: 2, maxW: 52 * X, maxH: 30 * Y, lh: 0.95 });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 44 * X, 56 * Y, 5.2 * m, { align: "left", fit: 1, maxW: 52 * X });
+      akSgList(B, ls, 44 * X, 66 * Y, 52 * X, 10 * Y, { align: "left", nolabel: true });
+    } },
+  { id: "c_stack", name: "Name and links", tags: "paper bold",
+    p: { paper: "#0e1b2c", ink: "#f2f4f8", a1: "#4fd1c5", fonts: { title: SGF("Montserrat"), main: SGF("Montserrat"), small: SGF("Montserrat") }, tw: 900, mw: 700, sw: 600 },
+    b: function (B) {
+      var X = B.X, Y = B.Y, m = B.m, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4);
+      B.BG(); B.SH("bar", "Line", "rect", 8 * X, 8 * Y, 8 * X, 1 * m, { color: C.a1 });
+      B.TT("artist", "Name", I.artist, 8 * X, 25 * Y, 11.2 * m, { align: "left", fit: 1, maxW: 84 * X });
+      B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), 8 * X, 40 * Y, 5.2 * m, { align: "left", color: C.a1, fit: 1, maxW: 84 * X });
+      akSgList(B, ls, 8 * X, 52 * Y, q ? 60 * X : 84 * X, 10.5 * Y, { align: "left" });
+      if (q) akSgQRs(B, [q], 74 * X, 52 * Y, 20 * X, 40 * Y, { nolabel: true });
+    } }
+];
+/* a card standing up (2 x 3.5 in): the same words in a column */
+function akSgCardUp(B, spec) {
+  var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, I = B.I, S = akSignInfo(AKGJ.D), q = S.qrs[0], ls = S.lines.slice(0, 4), m2 = Math.min(W / 100, B.H / 175);
+  B.BG(); if (/c_(bold|split|stack)/.test(spec.id)) B.SH("top", "Color block", "rect", 0, 0, W, 30 * Y, { color: C.a1 });
+  var onTop = /c_(bold|split)/.test(spec.id);
+  B.TT("artist", "Name", I.artist, W / 2, 16 * Y, 9 * m2, { color: onTop ? "#ffffff" : C.ink, fit: 2, maxW: 84 * X, maxH: 22 * Y, lh: 0.98 });
+  B.TS("title", "Title line", I.tx("title", akArtist().tagline || ""), W / 2, 35 * Y, 4.8 * m2, { color: C.a1, fit: 2, maxW: 84 * X, maxH: 8 * Y });
+  if (q) akSgQRs(B, [q], 22 * X, 41 * Y, 56 * X, 24 * Y, { nolabel: true });
+  akSgList(B, ls, 8 * X, (q ? 68 : 45) * Y, 84 * X, Math.min(8.5 * Y, 26 * Y / Math.max(1, ls.length)), { align: "center", nolabel: true });
+}
+/* a sign on its side (jar label size etc.): words on the left, codes on the right */
+function akSgSignWide(B, spec) {
+  var X = B.X, Y = B.Y, m = B.m, W = B.W, C = B.C, U = B.U, S = akSignInfo(AKGJ.D), m2 = Math.min(W / 100, B.H / 55);
+  B.BG(); B.SH("bar", "Line", "rect", 0, 0, 1.4 * X, B.H, { color: C.a1 });
+  B.TT("title", "Big heading", U(akSgW(B, "title", "Tips")), 30 * X, 36 * Y, 13 * m2, { fit: 1, maxW: 50 * X, maxH: 40 * Y });
+  B.TS("sub", "Line under it", akSgW(B, "sub", "Thank you!"), 30 * X, 62 * Y, 3.4 * m2, { fit: 1, maxW: 50 * X, color: C.a1 });
+  akSgName(B, 30 * X, 86 * Y, 46 * X);
+  akSgBlock(B, S, 58 * X, 8 * Y, 38 * X, 84 * Y, { cols: 1, qf: S.lines.length ? 0.7 : 1, pmax: 6 });
+}
+AKG_SIGNS.forEach(function (f) { f.sign = true; });
+AKG_CARDS.forEach(function (f) { f.card = true; f.words = [["artist", "Name"], ["title", "Title line"], ["kicker", "Small heading"]]; });
+AKG_SIGNS.forEach(function (f) { f.words = f.words || [["kicker", "Small heading"], ["title", "Big heading", 1], ["sub", "Line under it"], ["note", "Note", 1]]; });
+(function () {
+  function wrap(f) {
+    var b0 = f.b;
+    f.b = function (B) {
+      if (f.card && B.H > B.W * 1.1) return akSgCardUp(B, f);
+      if (f.sign && B.W > B.H * 1.15) return akSgSignWide(B, f);
+      return b0(B);
+    };
+  }
+  AKG_SIGNS.concat(AKG_CARDS).forEach(wrap);
+  var all = AKG_SIGNS.concat(AKG_CARDS);
+  AKG_LAYOUTS.tip = AKG_SIGNS.map(function (f) { return [f.id, f.name]; }).concat(AKG_LAYOUTS.tip);
+  AKG_LAYOUTS.card = AKG_CARDS.map(function (f) { return [f.id, f.name]; });
+  var fs0 = akGfxFlySpec;
+  akGfxFlySpec = function (id) { var s = fs0(id); if (s) return s; for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i]; return null; };
+  var fw0 = akGfxFlyWords;
+  akGfxFlyWords = function (id) { var s = akGfxFlySpec(id); return s && (s.sign || s.card) ? s.words : fw0(id); };
+  /* the flyer info needs no show for a sign or card */
+  var fi0 = akGfxFlyInfo;
+  akGfxFlyInfo = function (D) {
+    if (D.kind !== "tip" && D.kind !== "card") return fi0.apply(this, arguments);
+    var T = D.text || {}, tx = function (k, def) { return T[k] != null && T[k] !== "" ? T[k] : def; };
+    var I = { g: null, tx: tx, venue: "", town: "", time: "", wd: "", wd3: "", mon: "", mon3: "", day: "", num: "", date: "", dshort: "", note: tx("note", ""), artist: tx("artist", akGfxNameCase(D, akGfxName())), site: tx("footer1", akGfxSite()), today: false };
+    I.kick = function (def) { return tx("kicker", def || ""); };
+    return I;
+  };
+  /* a new sign or card starts in a layout of its own, in that layout's colors and fonts */
+  var d0 = akGfxDefault;
+  akGfxDefault = function (kind) {
+    var D = d0(kind);
+    if (kind === "tip" || kind === "card") {
+      var lay = kind === "tip" ? "s_chalk" : "c_classic", sp = akGfxFlySpec(lay);
+      D.layout = lay; D.size = kind === "tip" ? "letter" : "bizcard"; D.fonts = JSON.parse(JSON.stringify(sp.p.fonts)); D.sign = { on: {}, h: {}, qr: {}, extra: [] };
+      D.ovl = (AKGJ_LAY_OVL[lay] || []).map(function (p) { return akGfxOvlNew(p, { seed: 7 }); });
+      if (kind === "card") D.wordmark = false;
+    }
+    return D;
+  };
+  var tags = ["", "All"];
+  window.akGfxSignTags = function (kind) { return kind === "tip" || kind === "card" ? [["", "All"], ["photo", "Photo"], ["paper", "Paper"], ["dark", "Dark"], ["bold", "Bold"], ["retro", "Retro"], ["minimal", "Minimal"], ["elegant", "Elegant"]] : null; };
+  AKGJ_LAY_OVL.s_chalk = ["speckle"]; AKGJ_LAY_OVL.s_neon = ["rain"]; AKGJ_LAY_OVL.s_split = ["cornerrings"]; AKGJ_LAY_OVL.s_photo = ["bokeh"]; AKGJ_LAY_OVL.c_photo = []; AKGJ_LAY_OVL.c_neon = [];
+})();
+
+/* ---------------------------------------------------------------- the "what's on it" panel */
+var AKSG_GROUPS = [["tip", "💵 Tip links"], ["req", "🎶 Song requests"], ["web", "🌐 Website"], ["social", "📣 Social media and links"], ["contact", "✉ Contact"], ["info", "ℹ About me"], ["vcard", "📇 Contact QR"], ["extra", "✎ My own lines"]];
+function akGfxSignPanel(d, D, ch) {
+  var card = D.kind === "card", sg = akSgGet(D);
+  function draw() {
+    d.innerHTML = "";
+    var S = akSignInfo(D);
+    d.appendChild(h("p", { class: "hint" }, "Choose what goes on the " + (card ? "card" : "sign") + ". Everything starts from your Artist info and tip links; a change here changes this design only."));
+    var pre = card ? [["Contact", { contact: 1, web: 1, vcard: 1, info: 1 }], ["Links", { social: 1, web: 1, vcard: 1 }], ["Everything", null]] : [["Tips", { tip: 1, req: 1 }], ["Follow me", { social: 1, web: 1 }], ["Contact", { contact: 1, web: 1, vcard: 1, info: 1 }], ["Everything", null]];
+    d.appendChild(h("div", { class: "chips akg-chips", role: "group", "aria-label": "Quick choices" }, pre.map(function (p) {
+      return h("button", { class: "chip", onClick: function () { S.items.forEach(function (it) { sg.on[it.id] = p[1] ? !!p[1][it.grp] : true; if (it.grp === "social" && p[1] && p[1].social) sg.on[it.id] = true; }); save(); draw(); ch(true); } }, p[0]);
+    })));
+    var any = false;
+    AKSG_GROUPS.forEach(function (gr) {
+      var its = S.items.filter(function (it) { return it.grp === gr[0]; });
+      if (!its.length) return; any = true;
+      var box = h("div", { class: "akg-sgrp" }, h("div", { class: "akg-sub" }, gr[1]));
+      its.forEach(function (it) {
+        var hin = h("input", { type: "text", value: it.h || "", placeholder: it.grp === "vcard" ? "Saves your name, phone, email and links" : "Words to show", "aria-label": "Words for " + (it.label || "this line"), disabled: it.grp === "vcard" || it.grp === "req", onInput: function () { if (this.value.trim()) sg.h[it.id] = this.value.trim(); else delete sg.h[it.id]; if (it.extra) sg.extra[it.n].h = this.value.trim(); save(); ch(); } });
+        var row = h("div", { class: "akg-row" + (it.on ? "" : " off") },
+          h("input", { type: "checkbox", checked: it.on, "aria-label": "Put " + (it.label || "this") + " on the " + (card ? "card" : "sign"), onChange: function () { sg.on[it.id] = this.checked; save(); ch(); row.classList.toggle("off", !this.checked); } }),
+          h("div", { class: "grow" }, h("div", { class: "t" }, it.label || "Line"), it.grp === "vcard" || it.grp === "req" ? null : hin),
+          it.url && it.grp !== "vcard" && it.grp !== "tip" && it.grp !== "req" || it.grp === "tip" ? h("label", { class: "chk akg-qrchk", title: "Show this as a QR code" }, h("input", { type: "checkbox", checked: it.qr, onChange: function () { sg.qr[it.id] = this.checked; if (it.extra) sg.extra[it.n].qr = this.checked; save(); ch(true); draw(); } }), "QR") : null,
+          it.extra ? h("button", { class: "icon sm", "aria-label": "Remove this line", onClick: function () { sg.extra.splice(it.n, 1); sg.on = {}; save(); draw(); ch(true); } }, "✕") : null);
+        box.appendChild(row);
+      });
+      d.appendChild(box);
+    });
+    if (!any) d.appendChild(h("p", { class: "hint" }, "Nothing to put here yet. Add your links in Artist info, tip links in Settings › Requests and tips, or add your own line below."));
+    d.appendChild(h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () {
+        var l = h("input", { type: "text", placeholder: "Label, like Instagram or Booking" }), t = h("input", { type: "text", placeholder: "Words, like @name or a phone number" }), u = h("input", { type: "url", placeholder: "Link (optional, for a QR code)" });
+        modal("Add a line", h("div", null, h("label", { class: "fld" }, "Label", l), h("label", { class: "fld" }, "Words", t), h("label", { class: "fld" }, "Link", u)), [{ label: "Cancel" }, { label: "Add", primary: true, onClick: function () { if (!t.value.trim() && !u.value.trim()) return; sg.extra.push({ label: l.value.trim(), h: t.value.trim() || u.value.trim().replace(/^https?:\/\//, ""), url: u.value.trim(), qr: !!u.value.trim() }); save(); draw(); ch(true); } }]);
+      } }, "＋ Add my own line"),
+      h("button", { class: "sm", onClick: function () { sg.on = {}; sg.h = {}; sg.qr = {}; save(); draw(); ch(true); toast("Taken from Artist info again."); } }, "↺ Grab again from Artist info"),
+      h("button", { class: "sm", onClick: function () { go("artist"); } }, "Open Artist info")));
+  }
+  draw();
+}
+akCss("akv187-m", ".akg-sgrp{margin:6px 0}.akg-qrchk{font-size:12px;white-space:nowrap}.akg-sgrp .akg-row.off{opacity:.55}.akg-sgrp input[type=text]{width:100%}");
+
+/* ---------------------------------------------------------------- print: copies on a sheet */
+var AKSG_UP = [[1, "1 (one design)"], [2, "2 on a sheet"], [4, "4 on a sheet"], [6, "6 on a sheet"], [8, "8 on a sheet"], [10, "10 on a sheet (business cards)"], [12, "12 on a sheet"]];
+function akSgGrid(dw, dh, n, pw, ph, mg, allowScale) {
+  var best = null;
+  [0, 1].forEach(function (rot) {
+    var w = rot ? dh : dw, hh = rot ? dw : dh;
+    for (var cols = 1; cols <= n; cols++) {
+      var rows = Math.ceil(n / cols), s = Math.min((pw - 2 * mg) / (cols * w), (ph - 2 * mg) / (rows * hh)); if (!allowScale || s > 1) s = Math.min(s, 1);
+      if (!best || s > best.s + 1e-6) best = { rot: rot, cols: cols, rows: rows, s: s, w: w, h: hh };
+    }
+  });
+  return best;
+}
+function akSgSheet(P, paper, n, cut) {
+  var pw = paper === "a4" ? 8.27 : 8.5, ph = paper === "a4" ? 11.69 : 11, DPI = 200, mg = 0.1;
+  var dw = P.size[4] || P.W / 150, dh = P.size[5] || P.H / 150, g = akSgGrid(dw, dh, n, pw, ph, mg, true);
+  var cv = document.createElement("canvas"); cv.width = Math.round(pw * DPI); cv.height = Math.round(ph * DPI); var c = cv.getContext("2d");
+  c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height);
+  var art = akPosterCanvas(P), cw = g.w * g.s * DPI, chh = g.h * g.s * DPI, bw = cw * g.cols, bh = chh * g.rows, x0 = (cv.width - bw) / 2, y0 = (cv.height - bh) / 2;
+  for (var i = 0; i < n; i++) {
+    var col = i % g.cols, row = Math.floor(i / g.cols), x = x0 + col * cw, y = y0 + row * chh;
+    c.save(); c.translate(x, y);
+    if (g.rot) { c.translate(cw, 0); c.rotate(Math.PI / 2); c.drawImage(art, 0, 0, chh, cw); } else c.drawImage(art, 0, 0, cw, chh);
+    c.restore();
+  }
+  if (cut && n > 1) {
+    c.strokeStyle = "#8a8a8a"; c.lineWidth = 1; c.setLineDash([6, 6]);
+    var t = 0.12 * DPI;
+    for (var a = 0; a <= g.cols; a++) { var lx = Math.round(x0 + a * cw) + 0.5; c.beginPath(); c.moveTo(lx, Math.max(0, y0 - t)); c.lineTo(lx, Math.min(cv.height, y0 + bh + t)); c.stroke(); }
+    for (var b = 0; b <= g.rows; b++) { var ly = Math.round(y0 + b * chh) + 0.5; c.beginPath(); c.moveTo(Math.max(0, x0 - t), ly); c.lineTo(Math.min(cv.width, x0 + bw + t), ly); c.stroke(); }
+  }
+  return { canvas: cv, pw: pw, ph: ph, grid: g, n: n };
+}
+function akSgPrintFrame(html) {
+  try {
+    var f = document.createElement("iframe"); f.setAttribute("aria-hidden", "true"); f.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0";
+    document.body.appendChild(f);
+    var doc = f.contentDocument || f.contentWindow.document; doc.open(); doc.write(html); doc.close();
+    var go2 = function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { akGfxPrintWin(html); } setTimeout(function () { if (f.parentNode) f.parentNode.removeChild(f); }, 60000); };
+    var im = doc.querySelector("img"); if (im && !im.complete) im.onload = function () { setTimeout(go2, 150); }; else setTimeout(go2, 250);
+  } catch (e) { akGfxPrintWin(html); }
+}
+(function () {
+  var p0 = akGfxPrint;
+  akGfxPrint = function (P, nm) {
+    var cfg = akGfxCfg(), fit = cfg.printFit || "actual", up = cfg.printUp || 1, cut = cfg.printCut !== false;
+    var dw = P.size[4] || P.W / 150, dh = P.size[5] || P.H / 150;
+    var inch = P.size[4] ? P.size[4] + " × " + P.size[5] + " in" : "as it is";
+    var paperSel = h("select", { "aria-label": "Paper" }, [["actual", "The size of the design (" + inch + ")"], ["letter", "Letter sheet"], ["a4", "A4 sheet"]].map(function (o) { return h("option", { value: o[0], selected: (fit === o[0]) }, o[1]); }));
+    var upSel = h("select", { "aria-label": "Copies on a sheet" }, AKSG_UP.map(function (o) { return h("option", { value: o[0], selected: up === o[0] }, o[1]); }));
+    var cutBox = h("input", { type: "checkbox", checked: cut }), note = h("p", { class: "hint" });
+    var upBox = h("div", null, h("label", { class: "fld" }, "Copies on a sheet", upSel), h("label", { class: "chk" }, cutBox, "Cut lines between them"), note);
+    function upd() {
+      var sheet = paperSel.value !== "actual"; upBox.style.display = sheet ? "" : "none";
+      if (!sheet) { note.textContent = ""; return; }
+      var n = Number(upSel.value), g = akSgGrid(dw, dh, n, paperSel.value === "a4" ? 8.27 : 8.5, paperSel.value === "a4" ? 11.69 : 11, 0.1, true);
+      note.textContent = n === 1 ? "One copy, fitted on the sheet." : n + " copies in " + g.cols + " × " + g.rows + (g.rot ? ", turned sideways" : "") + ", " + (g.s >= 0.995 ? "at the real size" : "at " + Math.round(g.s * 100) + "% of the real size") + ". Print at 100%, not “fit to page”.";
+    }
+    paperSel.onchange = upd; upSel.onchange = upd; upd();
+    function save2() { cfg.printFit = paperSel.value; cfg.printUp = Number(upSel.value); cfg.printCut = cutBox.checked; save(); }
+    function sheetOrNull() { var n = Number(upSel.value); return paperSel.value !== "actual" && n > 1 ? akSgSheet(P, paperSel.value, n, cutBox.checked) : null; }
+    modal("Print", h("div", null, h("label", { class: "fld" }, "Paper", paperSel), upBox, h("p", { class: "hint" }, "Print opens your device's print window, where you pick the printer. No printer here? Use “Send to a printer app”: it shares the page so a printer app, AirPrint or Save to Files can take it.")),
+      [{ label: "Cancel" }, { label: "↗ Send to a printer app", onClick: function () {
+        save2(); var sh = sheetOrNull();
+        if (!sh) { akPosterPdf(P).then(function (b) { return akGfxShare(b, nm + ".pdf"); }); return; }
+        sh.canvas.toBlob(function (b) { akGfxShare(b, nm + " (" + sh.n + " per sheet).png"); }, "image/png");
+      } }, { label: "🖨 Print", primary: true, onClick: function () {
+        save2(); var sh = sheetOrNull();
+        if (!sh) return akGfxPrintGo(P, nm, paperSel.value);
+        var url = sh.canvas.toDataURL("image/jpeg", 0.93);
+        akSgPrintFrame("<!doctype html><title>" + String(nm).replace(/</g, "&lt;") + "</title><style>@page{size:" + sh.pw + "in " + sh.ph + "in;margin:0}html,body{margin:0}img{width:" + sh.pw + "in;height:" + sh.ph + "in;display:block}</style><img src='" + url + "'>");
+      } }]);
+  };
+})();
+
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Signs: A-frame, frame or table sign (tips, follow me, contact)", a: "Graphics tab › Make something › 🪧 Sign (or Graphics studio › File ▾ › New design). Pick a layout, a size (letter, half letter, quarter, A-frame, poster, frames) and choose what is on it in the 🪧 On the sign tab.", k: "sign signs tip sign a-frame aframe frame table tent follow me social qr", go: function () { akGfxOpen("tip"); } },
+  { t: "What goes on a sign or card (tips, social media, email, phone, contact QR)", a: "Graphics studio › 🪧 On the sign / 💼 On the card: tick each line, change its words, tick QR to make it a code, ＋ Add my own line, ↺ Grab again from Artist info. Quick choices: Tips, Follow me, Contact, Everything.", k: "what goes on sign card details artist info handles vcard contact qr social", go: function () { akGfxOpen("tip"); } },
+  { t: "Business cards", a: "Graphics tab › Make something › 💼 Business card (lying down or standing up, 9 layouts, a contact QR that saves you to a phone). Print 10 to a sheet from File ▾ › Print.", k: "business card cards contact vcard print sheet", go: function () { akGfxOpen("card"); } },
+  { t: "Print several to a sheet (signs, cards, flyers)", a: "Graphics studio › File ▾ › Print: choose Letter or A4, then Copies on a sheet (2, 4, 6, 8, 10, 12). Quarter pages 4 up, business cards 10 up, with cut lines.", k: "print sheet copies per page four quarter cards cut lines", go: function () { akGfxOpen("tip"); } }
 ].forEach(function (e) { AK_HELP_WHERE.push(e); });
 
 /* ---------- turning pasted charts into bracket form ---------- */
