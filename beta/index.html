@@ -36600,6 +36600,7 @@ function akGfxDraw(ctx, l, P) {
    picture per part, stacked), layers zip for Canva (akGfxZip), SVG with layers, print. Entry points: Shows ⋯, the 🎨 row on a show
    page (akGigPhotos wrapper), akFlyerOpen(gig) and akTipSignOpen() (used by the Help guide "Playing a show"). */
 
+var AKG_ZMIN = 0.4;
 function akGfxState() { if (!S.akg) S.akg = { sel: "", open: { what: true } }; return S.akg; }
 /* open the studio on a kind, starting from a show */
 function akGfxOpen(kind, g) {
@@ -36647,8 +36648,16 @@ function viewGfx() {
     var P = akGfxBake(base, D.edit); st.P = P;
     var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? 120 : 220, (typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight) * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(P.W * k), chh = Math.round(P.H * k);
-    var z = Math.max(1, Math.min(8, st.zoom || 1)), s = k * z, zc = st.zc || { x: P.W / 2, y: P.H / 2 };
-    var ox = Math.min(0, Math.max(cw - P.W * s, cw / 2 - zc.x * s)), oy = Math.min(0, Math.max(chh - P.H * s, chh / 2 - zc.y * s));
+    /* 18.7s: once the picture-size slider has been used, its height is the picture window. A window taller than the picture needs makes the picture zoom in to fill it
+       (or, with "keep my zoom", only changes the window and leaves the picture's size alone) */
+    var gc = typeof akGfxCfg === "function" ? akGfxCfg() : {};
+    if (!wide && !st.big && typeof gc.split === "number" && typeof akGfxVH === "function") {
+      var vhn = akGfxVH(), wh = Math.round(vhn * gc.split), contH = P.H * bw / P.W;
+      if (gc.keepZoom) { k = Math.min(bw / P.W, vhn * akGfxSplitDef(st, false) / P.H); cw = Math.round(bw); chh = wh; }
+      else if (wh > contH + 2) { k = wh / P.H; cw = Math.round(bw); chh = wh; }
+    }
+    var z = Math.max(AKG_ZMIN, Math.min(8, st.zoom || 1)), s = k * z, zc = st.zc || { x: P.W / 2, y: P.H / 2 };
+    var ox = P.W * s <= cw + 0.5 ? (cw - P.W * s) / 2 : Math.min(0, Math.max(cw - P.W * s, cw / 2 - zc.x * s)), oy = P.H * s <= chh + 0.5 ? (chh - P.H * s) / 2 : Math.min(0, Math.max(chh - P.H * s, chh / 2 - zc.y * s));
     st.zoom = z; st.zc = { x: (cw / 2 - ox) / s, y: (chh / 2 - oy) / s };
     if (cv.width !== Math.max(1, Math.round(cw * dpr)) || cv.height !== Math.max(1, Math.round(chh * dpr))) { cv.width = Math.max(1, Math.round(cw * dpr)); cv.height = Math.max(1, Math.round(chh * dpr)); }
     cv.style.width = cw + "px"; cv.style.height = chh + "px";
@@ -36659,12 +36668,14 @@ function viewGfx() {
     cv._k = s; cv._k0 = k; cv._ox = ox; cv._oy = oy;
     edSync();
   }
+  /* the picture is bigger than its window (zoomed in, or the window is short): a drag on an empty spot moves the view */
+  function canPan() { var P = st.P; return !!P && ((P.W * (cv._k || 0) > cv.clientWidth + 1) || (P.H * (cv._k || 0) > cv.clientHeight + 1)); }
   function paintSoon() { if (raf) return; raf = requestAnimationFrame(function () { raf = 0; paint(); }); }
   /* zoom to z with the point (px, py) (CSS pixels on the canvas) staying where it is */
   function zoomAt(z, px, py) {
     var k0 = cv._k0 || 1, s0 = cv._k || k0, ox0 = cv._ox || 0, oy0 = cv._oy || 0;
     if (px == null) { px = cv.clientWidth / 2; py = cv.clientHeight / 2; }
-    z = Math.max(1, Math.min(8, z));
+    z = Math.max(AKG_ZMIN, Math.min(8, z));
     var mx = (px - ox0) / s0, my = (py - oy0) / s0, s = k0 * z, ox = px - mx * s, oy = py - my * s;
     st.zoom = z; st.zc = { x: (cv.clientWidth / 2 - ox) / s, y: (cv.clientHeight / 2 - oy) / s };
     paintSoon();
@@ -36696,7 +36707,7 @@ function viewGfx() {
     if (!st.P) return;
     ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
     var pp = npt();
-    if (pp.length >= 2) {
+    if (pp.length >= 2 && akGfxCfg().pinch !== false) {
       /* two fingers: pinch to zoom, slide to move the view */
       if (drag && drag.moved) save();
       drag = null; st.guides = [];
@@ -36708,7 +36719,7 @@ function viewGfx() {
     }
     if (st.hand) {
       /* hand tool: dragging only moves the view (zooms in a little first when the whole picture is showing) */
-      if ((st.zoom || 1) <= 1) { st.zoom = 2; paint(); }
+      if (!canPan()) { st.zoom = 2; paint(); }
       drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false };
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault(); return;
@@ -36734,7 +36745,7 @@ function viewGfx() {
     var hit = typeof akGfxHit === "function" ? akGfxHit(st.P, p) : null;
     if (typeof akGfxHit !== "function") st.P.layers.slice().reverse().some(function (l) { if (l.fixed || l.nohit) return false; var b = akLayerBox(l, st.P); if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { hit = l; return true; } return false; });
     if (!hit) {
-      if ((st.zoom || 1) > 1) { drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false, unsel: true }; try { cv.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); return; }
+      if (canPan()) { drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false, unsel: true }; try { cv.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault(); return; }
       if (st.sel) { st.sel = ""; paint(); refill("parts"); } return;
     }
     var E = D.edit[hit.id] = D.edit[hit.id] || {}, now = Date.now(), twice = lastTap.id === hit.id && now - lastTap.t < 400;
@@ -36749,7 +36760,7 @@ function viewGfx() {
     if (pinch) {
       var pp = npt(); if (pp.length < 2) return;
       var r1 = cv.getBoundingClientRect(), d = Math.max(10, Math.hypot(pp[0].x - pp[1].x, pp[0].y - pp[1].y)), mx = (pp[0].x + pp[1].x) / 2 - r1.left, my = (pp[0].y + pp[1].y) / 2 - r1.top;
-      var z = Math.max(1, Math.min(8, pinch.z0 * d / pinch.d0)), s = (cv._k0 || 1) * z, ox = mx - pinch.p.x * s, oy = my - pinch.p.y * s;
+      var z = Math.max(AKG_ZMIN, Math.min(8, pinch.z0 * d / pinch.d0)), s = (cv._k0 || 1) * z, ox = mx - pinch.p.x * s, oy = my - pinch.p.y * s;
       st.zoom = z; st.zc = { x: (cv.clientWidth / 2 - ox) / s, y: (cv.clientHeight / 2 - oy) / s }; paintSoon();
       return;
     }
@@ -36803,7 +36814,7 @@ function viewGfx() {
   cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
   /* Ctrl + wheel (or a trackpad pinch) zooms; once zoomed in, the wheel moves the view */
   cv.addEventListener("wheel", function (e) {
-    var zm = e.ctrlKey || e.metaKey; if (!zm && (st.zoom || 1) <= 1) return;
+    var zm = e.ctrlKey || e.metaKey; if (!zm && !canPan()) return;
     e.preventDefault();
     var r = cv.getBoundingClientRect();
     if (zm) zoomAt((st.zoom || 1) * Math.exp(-e.deltaY * 0.0025), e.clientX - r.left, e.clientY - r.top);
@@ -44999,7 +45010,7 @@ function akGfxTools(bar, X) {
   bar.appendChild(btn("↶ Undo", "Undo", function () { akGfxUndoGo(-1, X); }, { disabled: !akGfxCanUndo() }));
   bar.appendChild(btn("↷ Redo", "Redo", function () { akGfxUndoGo(1, X); }, { disabled: !akGfxCanRedo() }));
   bar.appendChild(h("span", { class: "akg-zoom", role: "group", "aria-label": "Zoom" },
-    btn("−", "Zoom out", function () { X.zoomAt((st.zoom || 1) / 1.4); }, { disabled: z <= 1 }),
+    btn("−", "Zoom out", function () { X.zoomAt((st.zoom || 1) / 1.4); }, { disabled: z <= AKG_ZMIN + 0.01 }),
     btn(Math.round(z * 100) + "%", "See the whole picture", function () { st.zoom = 1; st.zc = null; X.paint(); }, { class: "sm zv" }),
     btn("+", "Zoom in", function () { akGfxZoomIn(X); })));
   bar.appendChild(btn(st.big ? "⛶ Smaller" : "⛶ Big view", st.big ? "Smaller picture" : "Big view", function () { st.big = !st.big; X.big(); }, { "aria-pressed": st.big ? "true" : "false" }));
@@ -46929,18 +46940,32 @@ function akGfxSplitFrac(st, wide) {
   if (wide || typeof s !== "number") return def;
   return st.min ? Math.max(s, 0.66) : s;
 }
+/* the picture window's normal share of the screen (what it is before the slider is used) */
+function akGfxSplitDef(st, wide) { return st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42; }
+function akGfxViewMenu(anchor, X) {
+  var cfg = akGfxCfg(), st = akGfxState();
+  menu(anchor, [
+    { head: "When the picture window gets taller" },
+    { label: (cfg.keepZoom ? "" : "✓ ") + "The picture zooms in to fill it", onClick: function () { delete cfg.keepZoom; save(); X.paint(); } },
+    { label: (cfg.keepZoom ? "✓ " : "") + "Keep my zoom: the window slides over the picture", onClick: function () { cfg.keepZoom = true; save(); X.paint(); } },
+    { sep: true },
+    { label: (cfg.pinch === false ? "" : "✓ ") + "Pinch with two fingers to zoom", onClick: function () { if (cfg.pinch === false) delete cfg.pinch; else cfg.pinch = false; save(); toast(cfg.pinch === false ? "Pinch zoom is off. − and + still work." : "Pinch zoom is on."); } },
+    { label: "Show the whole picture", onClick: function () { st.zoom = 1; st.zc = null; X.paint(); } },
+    { label: "Picture size back to normal", onClick: function () { delete cfg.split; st.zoom = 1; st.zc = null; save(); X.paint(); toast("Picture size back to normal."); } }]);
+}
 function akGfxSplitEl(X) {
   var cfg = akGfxCfg(), st = akGfxState(), d = null, lastTap = 0;
-  function set(v) { cfg.split = Math.max(0.15, Math.min(0.85, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
-  function reset() { delete cfg.split; save(); X.paint(); toast("Picture size back to normal."); }
-  var el = h("div", { class: "akg-split", role: "separator", tabindex: "0", "aria-orientation": "horizontal", "aria-label": "Picture size: drag up for more tools, down for a bigger picture", title: "Drag up for more tools, down for a bigger picture. Double tap: normal size.",
+  function set(v) { cfg.split = Math.max(0.15, Math.min(0.92, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
+  function reset() { delete cfg.split; st.zoom = 1; st.zc = null; save(); X.paint(); toast("Picture size back to normal."); }
+  var el = h("div", { class: "akg-split", role: "separator", tabindex: "0", "aria-orientation": "horizontal", "aria-label": "Picture size: drag up for more tools, down for a bigger, zoomed-in picture", title: "Drag up for more tools, down for a bigger picture. Double tap: normal size.",
     onKeydown: function (e) {
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return; e.preventDefault();
       set(akGfxSplitFrac(st, false) + (e.key === "ArrowUp" ? -0.05 : 0.05)); save();
-    } }, h("span", { class: "akg-grip" }));
+    } }, h("span", { class: "akg-grip" }), h("button", { type: "button", class: "akg-vmenu", "aria-label": "Picture view options: zoom, pinch, size", title: "Picture view options", onClick: function (ev) { ev.stopPropagation(); akGfxViewMenu(this, X); }, onPointerdown: function (ev) { ev.stopPropagation(); } }, "⚙"));
   el.addEventListener("pointerdown", function (e) {
     var now = Date.now(); if (now - lastTap < 350) { lastTap = 0; reset(); return; } lastTap = now;
-    d = { y: e.clientY, s: akGfxSplitFrac(st, false) }; el.classList.add("on");
+    var cvn = document.querySelector(".akg-cv"), vh = typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight;
+    d = { y: e.clientY, s: cvn ? Math.max(0.1, Math.min(0.92, cvn.clientHeight / Math.max(300, vh))) : akGfxSplitFrac(st, false) }; el.classList.add("on");
     try { el.setPointerCapture(e.pointerId); } catch (x) {}
     e.preventDefault();
   });
@@ -47048,6 +47073,7 @@ akCss("akgfx-i", [
   ".akg-hdmin .akg-hdshow{display:block}",
   /* the divider under the picture */
   ".akg-split{display:flex;align-items:center;justify-content:center;height:18px;margin:2px 0 0;cursor:ns-resize;touch-action:none;user-select:none;-webkit-user-select:none}",
+  ".akg-split{position:relative}.akg-vmenu{position:absolute;right:2px;top:-4px;height:26px;min-height:0;min-width:34px;padding:0 8px;font-size:14px;line-height:1;border-radius:8px}" +
   ".akg-grip{display:block;width:56px;height:5px;border-radius:3px;background:rgba(127,127,127,.6)}",
   ".akg-split:hover .akg-grip,.akg-split.on .akg-grip,.akg-split:focus-visible .akg-grip{background:#C8962E;width:76px}",
   "@media (min-width:900px){.akg-split{display:none}}",
@@ -52201,8 +52227,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7r";
+AK_VERSION = "18.7s";
 AK_WHATS_NEW = [
+  "🔍 Bigger picture in every Graphics screen: drag the little bar under the picture further down and the picture zooms in to fill the taller window (slide sideways to look around); drag it back up and it gets smaller. ⚙ beside the bar: keep my zoom (the window just slides over the picture), pinch zoom on or off, show the whole picture. You can now also pinch out past the whole picture.",
   "✨ Effects, rebuilt: stack up to 4 effects on a layer (vignette, glow, blur, pixelate, grain, brightness, contrast, color strength, color shift, black and white, sepia, color wash, negative). Each has its strength plus Where it works (everywhere, oval, circle, rectangle, rounded, diamond, a band, or an edge), inside or outside the shape, shape size (how far it reaches), edge softness, move and turn. They work on that layer and everything under it, not the layers above. ▲▼ reorder, ● turn one off.",
   "✨ Effects open in a window over the picture (drag its title, ▾ folds it, ⇲ Dock puts it in the panel, ⧉ brings the window back). The top box always says which layer you are editing, with a Change layer list. Every section folds.",
   "Fixed: the vignette (and color wash) was drawn off-center on a photo, worst when zoomed out. It is lined up now.",
@@ -54948,6 +54975,7 @@ akCss("akfx",
   "@media (min-width:700px){.akfx-win{left:auto;width:380px;right:14px;bottom:14px;max-height:62vh}}");
 
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Effects: up to 4 per layer (vignette, blur, color…), shape, size, softness, inside or outside", a: "Graphics studio › ✨ Effects (opens a window; ⇲ Dock puts it in the panel, ⧉ Pop out brings the window back). The top box says which layer you are editing; Change layer or tap a part on the picture. ＋ Add an effect (up to 4): Strength, Where it works (everywhere, oval, circle, rectangle, band, an edge…), outside the shape, Shape size, Edge softness, move and turn. “This layer + everything under it” or “This part only”. ▲▼ change the order, ● turns one off. Also in Selected › ✨ Effects." });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Bigger picture / zoom in the Graphics studio (slider under the picture, pinch)", a: "Graphics studio: drag the little bar under the picture further down: the picture zooms in to fill the window (drag an empty spot to look around). Drag it up to make it smaller. ⚙ beside the bar: keep my zoom, pinch zoom on or off, show the whole picture, picture size back to normal. Pinch with two fingers, or − and +." });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
