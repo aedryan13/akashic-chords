@@ -52196,8 +52196,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7e";
+AK_VERSION = "18.7f";
 AK_WHATS_NEW = [
+  "Venue addresses fill in by themselves: a venue with no address is looked up online (OpenStreetMap) and flyers and posters use it. If a name matches several places, a question asks \"Which one is it?\" with each address. Shows › Venues › ⚙ to turn it off, or tap 🔎 Find missing addresses now.",
   "Song length now follows your recordings: each song's length is the average of its recordings that look like the whole song (default 4:00–5:00). A recording a little outside that gets a one-time \"Was that the whole song?\" question; ones far outside (practice bits, forgot to stop) are ignored. Settings › Songs and shows › Song length from recordings to switch it off or change the range. A length you set by hand stays.",
   "Flyers: the show's address is added automatically in small type, near the bottom (or right under the venue name: Flyer › Address on the flyer, or off). 🎲 now lives inside the flyer view only: the 🎲 at the top rolls everything, ▾ beside it rolls just one thing (layout, colors, fonts, background, border and effects, overlays, where the words sit, your headshot) or picks what 🎲 keeps, and Background, Fonts, Colors, Overlays and Border each have their own 🎲 at the top. The 🎲 beside the Flyer button on the show page is gone.",
   "Graphics: overlays, borders and backgrounds have modifiers instead of lots of near-copies. Dots can now be circles, squares, diamonds, triangles, stars, hearts, hexagons, pluses or rings (and the many dot presets are trimmed). New overlays: gradient wash / glow / sweep, aurora ribbons, light leaks, glitch bars, film dust and scratches, art-deco fans, quatrefoil tiles, mandala. New borders with their own options (pattern size, spacing, corners, lines, filled or outline, second color): curly scrolls, squiggle, vine, regal flourishes, Greek key, Mayan step-fret, chain, arches, star and diamond chains. New Gradient background (straight, from a point or around a point; 2-3 colors, angle, grain). 🎲 Random flyer uses all of these, with random modifiers.",
@@ -52880,6 +52881,114 @@ function akLenAskNext() {
   };
 })();
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Song length from recordings (and the “was this the whole song?” question)", a: "Settings › Songs and shows › Song length from recordings. Turn it on or off, set what counts as a full song (default 4:00–5:00) and how close outside it asks you. Recordings far outside (practice bits, forgot to stop) are ignored.", k: "song length duration recording average analytics full song 4 5 minutes", go: function () { go("settings"); } });
+
+/* ================= 18.7f: find missing venue addresses by itself; ask which one when several places match =================
+   - Venues without an address are looked up online (OpenStreetMap, same lookup as before) without you pressing anything.
+     Flyers and posters read the address from the venue (akGigAddr), so they pick it up as soon as it is found.
+   - One match: filled in and marked "Found online, check it". Several different places match (two bars with the same name):
+     a question asks "Which one is it?" with each address; "None of these" remembers that and stops asking for 30 days.
+   - Switches (Shows › Venues › ⚙): settings().venueAuto.fill (find missing addresses, default on), .ask (ask when several match, default on;
+     off = take the best match). Both need "Look up … online" to be on. */
+function akVenFill() { var c = akVenCfg(); if (c.fill === undefined) c.fill = true; if (c.ask === undefined) c.ask = true; return c; }
+var AKVEN2 = { asking: false, asked: {} };
+
+/* the same lookup as before, but with every plausible place kept so we can ask */
+akVenLook = function (v, cb) {
+  var qs = akVenQueries(v), i = 0, c = akVenFill();
+  function finish(hits) {
+    var seen = {}, list = [];
+    hits.forEach(function (r) { var k = normTitle(r.address || ""); if (k && !seen[k]) { seen[k] = 1; list.push(r); } });
+    if (!list.length) { v.noAddr = Date.now(); cb(null); return; }
+    delete v.noAddr;
+    if (list.length > 1 && c.ask && !(v.address || "").trim()) {
+      v.pend = { at: Date.now(), cands: list.slice(0, 5) };
+      cb([]); setTimeout(akVenAskNext, 400); return;
+    }
+    akVenTake(v, list[0]); cb(v.found ? v.found.got : []);
+  }
+  function next() {
+    if (i >= qs.length) { cb(null); return; }
+    akVenueSearch(qs[i++], function (err, list) {
+      if (err) { cb(null, err); return; }
+      var hits = (list || []).filter(function (r) { return akVenNameHit(r.name, v.name); });
+      if (!hits.length) { if (i >= qs.length) { v.noAddr = Date.now(); cb(null); } else setTimeout(next, 1500); return; }
+      finish(hits);
+    });
+  }
+  next();
+};
+/* put one candidate into the venue (only empty fields) */
+function akVenTake(v, hit) {
+  var got = [], clean = akVenUntouched(v);
+  ["address", "phone", "website"].forEach(function (k) { if (hit[k] && !(v[k] || "").trim()) { v[k] = hit[k]; got.push(k); } });
+  if (hit.lat && !v.lat) { v.lat = hit.lat; v.lon = hit.lon; }
+  if (got.length && clean) v.autoSig = akVenSig(v);
+  if (got.length) v.found = { got: got, vals: got.reduce(function (o, k) { o[k] = v[k]; return o; }, {}), src: "OpenStreetMap", at: new Date().toISOString() };
+  return got;
+}
+
+/* the question */
+function akVenAskNext() {
+  if (AKVEN2.asking || typeof S === "undefined" || S.view === "play" || akVenTyping() || document.querySelector(".modal")) { if (!AKVEN2.asking && akVenPending()) setTimeout(akVenAskNext, 20000); return; }
+  var v = akVenPending(); if (!v) return;
+  AKVEN2.asking = true; AKVEN2.asked[v.id] = 1;
+  var close, fin = function () { AKVEN2.asking = false; save(); setTimeout(akVenAskNext, 500); };
+  var body = h("div", null, h("p", null, "Several places are called “" + v.name + "”. Which one do you play?"));
+  v.pend.cands.forEach(function (c) {
+    body.appendChild(h("button", { type: "button", class: "akven-cand", onClick: function () {
+      close(); delete v.pend; akVenTake(v, c); toast("Address of " + v.name + " saved. Flyers will use it.");
+      if (S.view === "gig") render(); fin();
+    } }, h("b", null, c.name), h("div", { class: "muted" }, c.address || "(no street address)")));
+  });
+  close = modal("Which one is it?", body, [
+    { label: "Ask me later", onClick: function () { delete AKVEN2.asked[v.id]; AKVEN2.asked[v.id] = 2; AKVEN2.asking = false; setTimeout(akVenAskNext, 500); } },
+    { label: "None of these", onClick: function () { delete v.pend; v.noAddr = Date.now(); fin(); } }]);
+}
+function akVenPending() { return akVenues().filter(function (v) { return v.pend && v.pend.cands && v.pend.cands.length && !(v.address || "").trim() && !AKVEN2.asked[v.id]; })[0] || null; }
+
+/* mark every venue without an address for a lookup (30 days between tries for ones nothing was found for) */
+function akVenMarkMissing(force) {
+  var c = akVenFill(); if (!c.look || !c.fill) return 0;
+  var n = 0, cut = Date.now() - 30 * 86400e3;
+  akVenues().forEach(function (v) {
+    if ((v.address || "").trim() || v.pend || (v.look && v.look.want)) return;
+    if (v.noAddr && v.noAddr > cut && !force) return;
+    if (force) delete v.noAddr;
+    v.look = { want: 1, tries: 0 }; n++;
+  });
+  return n;
+}
+(function () {
+  var t0 = akVenTick;
+  akVenTick = function () {
+    t0.apply(this, arguments);
+    try { if (akVenMarkMissing()) { save(); setTimeout(akVenPump, 500); } if (akVenPending()) setTimeout(akVenAskNext, 800); } catch (e) {}
+  };
+  setTimeout(function () { try { akVenFill(); akVenTick(); } catch (e) {} }, 9000);
+
+  var open = openVenues;
+  openVenues = function (onPick) {
+    var r = open.apply(this, arguments);
+    if (onPick) return r;
+    var body = [].slice.call(document.querySelectorAll(".modal .sheet > .body")).pop(), panel = body && body.querySelector(".akven-set");
+    if (!panel) return r;
+    var c = akVenFill();
+    function chk(label, key) { return h("label", { class: "akven-chk" }, h("input", { type: "checkbox", checked: !!c[key], onChange: function () { c[key] = this.checked; save(); if (key === "fill" && c.fill) { akVenMarkMissing(); akVenPump(); } } }), " " + label); }
+    var go = h("button", { type: "button", onClick: function () {
+      akVenSweep(true); var n = akVenMarkMissing(true); save(); akVenPump(true);
+      toast(n ? "Looking up " + n + (n === 1 ? " address" : " addresses") + "… I'll ask if a name matches more than one place." : "Every venue has an address already, or the lookup is off.");
+    } }, "🔎 Find missing addresses now");
+    panel.appendChild(chk("Find addresses for venues that don't have one, by itself (flyers and posters use them)", "fill"));
+    panel.appendChild(chk("Ask me which one it is when a name matches several places", "ask"));
+    panel.appendChild(h("div", { class: "row", style: "margin:4px 0 0" }, go));
+    return r;
+  };
+  /* the venue card's own lookup button: if a question came up, say so */
+  var card = akVenueCard;
+  akVenueCard = function (v) { if (v) delete v.noAddr; return card.apply(this, arguments); };
+})();
+akCss("akven2", ".akven-cand{display:block;width:100%;text-align:left;margin:6px 0;padding:8px 10px}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Find a venue's address automatically (and pick which one)", a: "Shows › Venues › ⚙ New venues: “Find addresses for venues that don't have one” (on by default) and “Ask me which one it is”. 🔎 Find missing addresses now does it right away. Flyers and posters use the venue's address.", k: "venue address find lookup automatic which one flyer poster openstreetmap", go: function () { go("shows"); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
