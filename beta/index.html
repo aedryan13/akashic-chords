@@ -45309,6 +45309,7 @@ function akGfxFxDraw(ctx, l, P, dl) {
     var cv = akGfxCv(R.w * sc, R.h * sc), c = cv.getContext("2d");
     c.setTransform(sc, 0, 0, sc, -R.x * sc, -R.y * sc);
     dl.call(this, c, l, P);
+    c.setTransform(1, 0, 0, 1, 0, 0); /* 18.7r: the effects work in canvas pixels; the part was drawn through a scaled, shifted transform (this is what put the vignette in the wrong place) */
     out = akGfxFxApply(cv, l, P, sc, g);
     var w = l.warp || {};
     if (w.fx || w.fy) { var fl = akGfxCv(out.width, out.height), fc = fl.getContext("2d"); fc.translate(w.fx ? fl.width : 0, w.fy ? fl.height : 0); fc.scale(w.fx ? -1 : 1, w.fy ? -1 : 1); fc.drawImage(out, 0, 0); out = fl; }
@@ -52200,8 +52201,11 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7q";
+AK_VERSION = "18.7r";
 AK_WHATS_NEW = [
+  "✨ Effects, rebuilt: stack up to 4 effects on a layer (vignette, glow, blur, pixelate, grain, brightness, contrast, color strength, color shift, black and white, sepia, color wash, negative). Each has its strength plus Where it works (everywhere, oval, circle, rectangle, rounded, diamond, a band, or an edge), inside or outside the shape, shape size (how far it reaches), edge softness, move and turn. They work on that layer and everything under it, not the layers above. ▲▼ reorder, ● turn one off.",
+  "✨ Effects open in a window over the picture (drag its title, ▾ folds it, ⇲ Dock puts it in the panel, ⧉ brings the window back). The top box always says which layer you are editing, with a Change layer list. Every section folds.",
+  "Fixed: the vignette (and color wash) was drawn off-center on a photo, worst when zoomed out. It is lined up now.",
   "🔗 Links page: a QR code that opens one page with your bio, website, social links, booking, shows and tip links (the request page without the song requests). It is now the default QR code on a business card, and the back of any design. Graphics tab › 🔳 QR codes › Links page: pick the bio (one line, short, medium, long, or your own).",
   "🔳 QR codes library (Graphics tab): every code labeled and grouped (Payments, Links page, Website, Social media, Song requests, Booking, Contact, Other). Tap one to show it big, copy the link, check it still works, share it, or save it as a picture (My pictures › QR codes). ＋ New QR code makes one for any link.",
   "↔ A Back button on every design: in the Graphics studio it sits right where the 🎙 button was (business cards show it as Back/Front). Posters, glass-window signs, the request QR sign, flyers, invoices, any design can have a back (off unless you add it, on for business cards): ▾ beside it picks QR + website, same as the front, a plain colour or a thank-you. Print and share do the back too.",
@@ -54566,6 +54570,384 @@ if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "QR codes: Venmo, Cash App, website, social, links page (labeled, grouped, save as pictures)", a: "Graphics tab › 🔳 QR codes. Tap a code to show it big, copy the link, check it still works, share it, or save it as a picture (My pictures › QR codes). ＋ New QR code adds any link. 🖼 Save all as pictures." });
   AK_HELP_WHERE.push({ t: "Links page (one QR for all your links and bio)", a: "Graphics tab › 🔳 QR codes › 🔗 Links page: what it shows (pick the bio). It is the default QR code on a business card. Address: your short address followed by ?links (needs Live requests on)." });
 }
+
+/* ================= 18.7r: stacked effects (up to 4 per layer), each with its own shape, reach and softness =================
+   D.edit[id].fxs = [{ t, on, amt, area, inv, rad, soft, cx, cy, ang, col, k }]  (up to 4, first = applied first)
+   D.edit[id].fxscope = "under" (default: the effects work on this layer AND everything under it, as if those layers were flattened
+                         beneath, inside this layer's box; layers above it are untouched) | "part" (this part's own pixels only).
+   An effect = a filter (vignette, blur, brightness...) let through a mask: area all | round | oval | rectangle | rounded | diamond |
+   band | upright band | top / bottom / left / right edge; inv = works outside the shape; rad = shape size; soft = softness;
+   cx / cy = move it; ang = turn it. The older single sliders (D.edit[id].fxo) still draw; opening a layer's effects moves the ones
+   that fit into the stack.
+   Where: ✨ Effects tab (a pop-up window, or docked in the panel), and the ✨ Effects box under Selected. Sections fold. */
+
+var AKFX = { open: {}, X: null, win: null, hosts: [], dismissed: false, cache: {} };
+var AKFX_MAX = 4;
+/* t: [label, min, max, default amount, area, inv, rad, soft, colorable, group, strength label] */
+var AKFXT = {
+  vig: ["Vignette (dark or light edges)", 0, 100, 60, "oval", 1, 72, 60, true, "Light and edges", "Strength"],
+  bloom: ["Glow (bloom)", 0, 100, 50, "all", 0, 70, 50, false, "Light and edges", "Strength"],
+  blur: ["Blur", 0, 100, 40, "all", 0, 70, 50, false, "Blur and texture", "Amount"],
+  pixelate: ["Pixelate", 0, 100, 30, "all", 0, 70, 40, false, "Blur and texture", "Block size"],
+  grain: ["Film grain", 0, 100, 40, "all", 0, 70, 40, false, "Blur and texture", "Amount"],
+  bright: ["Brightness", -100, 100, 30, "all", 0, 70, 50, false, "Color", "Amount"],
+  contrast: ["Contrast", -100, 100, 30, "all", 0, 70, 50, false, "Color", "Amount"],
+  sat: ["Color strength", -100, 100, 30, "all", 0, 70, 50, false, "Color", "Amount"],
+  hue: ["Color shift", -180, 180, 40, "all", 0, 70, 50, false, "Color", "Degrees"],
+  gray: ["Black and white", 0, 100, 100, "all", 0, 70, 50, false, "Color", "Amount"],
+  sepia: ["Sepia", 0, 100, 60, "all", 0, 70, 50, false, "Color", "Amount"],
+  tint: ["Color wash (tint)", 0, 100, 40, "all", 0, 70, 50, true, "Color", "Strength"],
+  invert: ["Negative (invert colors)", 0, 100, 100, "all", 0, 70, 50, false, "Color", "Amount"]
+};
+var AKFX_GROUPS = ["Light and edges", "Blur and texture", "Color"];
+var AKFX_AREAS = [["all", "Everywhere"], ["oval", "Oval (follows the shape of the part)"], ["round", "Circle"], ["rect", "Rectangle"], ["rrect", "Rounded rectangle"], ["diamond", "Diamond"], ["band", "Band across"], ["vband", "Band down"], ["top", "Top edge"], ["bottom", "Bottom edge"], ["left", "Left edge"], ["right", "Right edge"]];
+var AKFX_LEGACY = { vig: function (v) { return { t: "vig", amt: v, area: "oval", inv: 1, rad: 62, soft: 55 }; }, eblur: function (v) { return { t: "blur", amt: v, area: "oval", inv: 1, rad: 60, soft: 55 }; }, blur: function (v) { return { t: "blur", amt: v }; },
+  bright: function (v) { return { t: "bright", amt: v }; }, contrast: function (v) { return { t: "contrast", amt: v }; }, sat: function (v) { return { t: "sat", amt: v }; }, hue: function (v) { return { t: "hue", amt: v }; },
+  gray: function (v) { return { t: "gray", amt: v }; }, sepia: function (v) { return { t: "sepia", amt: v }; }, tint: function (v, f) { return { t: "tint", amt: v, col: f.tintC || "" }; }, invert: function () { return { t: "invert", amt: 100 }; } };
+
+function akFxNew(t) {
+  var d = AKFXT[t] || AKFXT.vig;
+  return { k: uid(), t: t, on: 1, amt: d[3], area: d[4], inv: d[5], rad: d[6], soft: d[7], cx: 0, cy: 0, ang: 0, col: t === "vig" ? "#000000" : "" };
+}
+function akFxList(D, id, make) { var e = D.edit[id]; if (!e) { if (!make) return []; e = D.edit[id] = {}; } if (!Array.isArray(e.fxs)) { if (!make) return []; e.fxs = []; } return e.fxs; }
+function akFxActive(list) { return (list || []).filter(function (x) { return x && x.on !== 0 && x.on !== false && AKFXT[x.t] && x.amt; }); }
+/* the single sliders that fit the stack move into it (up to 4); the rest keep working as they were */
+function akFxMigrate(D, id) {
+  var e = D.edit[id]; if (!e || !e.fxo) return;
+  var f = e.fxo, list = akFxList(D, id, true), moved = 0;
+  ["vig", "eblur", "blur", "bright", "contrast", "sat", "hue", "gray", "sepia", "tint", "invert"].forEach(function (k) {
+    if (!f[k] || !AKFX_LEGACY[k] || list.length >= AKFX_MAX) return;
+    var n = Object.assign(akFxNew(AKFX_LEGACY[k](f[k], f).t), AKFX_LEGACY[k](f[k], f)); list.push(n); delete f[k]; if (k === "tint") delete f.tintC; moved++;
+  });
+  if (!Object.keys(f).some(function (k) { return f[k]; })) delete e.fxo;
+  if (!list.length) delete e.fxs;
+  if (moved) save();
+}
+function akFxCount(D, id) { var e = D.edit[id] || {}, f = e.fxo || {}; return akFxActive(e.fxs).length + Object.keys(f).filter(function (k) { return f[k] && typeof f[k] === "number" && !/^shadow[DBA]$/.test(k); }).length; }
+
+/* ---------------------------------------------------------------- drawing */
+function akFxCopy(cv) { var o = akGfxCv(cv.width, cv.height); o.getContext("2d").drawImage(cv, 0, 0); return o; }
+function akFxMask(e, w, hh, b) {
+  var area = e.area || "all", inv = !!e.inv;
+  if (area === "all") { if (!inv) return null; return akGfxCv(w, hh); }
+  var mn = Math.min(b.w, b.h), soft = (e.soft == null ? 50 : e.soft) / 100 * 0.3 * mn, p = Math.ceil(soft * 2.6) + 2, big = Math.max(w, hh) * 2;
+  var mc = akGfxCv(w + p * 2, hh + p * 2), c = mc.getContext("2d"), r = (e.rad == null ? 70 : e.rad) / 100;
+  var cx = p + b.x + b.w * (0.5 + (e.cx || 0) / 100), cy = p + b.y + b.h * (0.5 + (e.cy || 0) / 100);
+  c.fillStyle = "#fff"; c.save(); c.translate(cx, cy); c.rotate((e.ang || 0) * Math.PI / 180);
+  var rx = r * b.w / 2, ry = r * b.h / 2;
+  c.beginPath();
+  if (area === "round") c.arc(0, 0, r * mn / 2, 0, Math.PI * 2);
+  else if (area === "oval") c.ellipse(0, 0, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+  else if (area === "rect") c.rect(-rx, -ry, rx * 2, ry * 2);
+  else if (area === "rrect") { var q = Math.min(rx, ry) * 0.4; c.moveTo(-rx + q, -ry); c.arcTo(rx, -ry, rx, ry, q); c.arcTo(rx, ry, -rx, ry, q); c.arcTo(-rx, ry, -rx, -ry, q); c.arcTo(-rx, -ry, rx, -ry, q); c.closePath(); }
+  else if (area === "diamond") { c.moveTo(0, -ry); c.lineTo(rx, 0); c.lineTo(0, ry); c.lineTo(-rx, 0); c.closePath(); }
+  else if (area === "band") c.rect(-big, -ry, big * 2, ry * 2);
+  else if (area === "vband") c.rect(-rx, -big, rx * 2, big * 2);
+  else {
+    c.restore(); c.save(); c.fillStyle = "#fff"; c.beginPath();
+    var ox = p, oy = p, dx = (e.cx || 0) / 100 * b.w, dy = (e.cy || 0) / 100 * b.h;
+    if (area === "top") c.rect(ox - big, oy - big, big * 2 + w, big + b.y + r * b.h + dy);
+    else if (area === "bottom") c.rect(ox - big, oy + b.y + b.h - r * b.h + dy, big * 2 + w, big + hh);
+    else if (area === "left") c.rect(ox - big, oy - big, big + b.x + r * b.w + dx, big * 2 + hh);
+    else c.rect(ox + b.x + b.w - r * b.w + dx, oy - big, big + w, big * 2 + hh);
+  }
+  c.fill(); c.restore();
+  if (soft > 0.6) mc = akGfxBlurCv(mc, soft);
+  var o = akGfxCv(w, hh), oc = o.getContext("2d"); oc.drawImage(mc, -p, -p);
+  if (inv) { var o2 = akGfxCv(w, hh), c2 = o2.getContext("2d"); c2.fillStyle = "#fff"; c2.fillRect(0, 0, w, hh); c2.globalCompositeOperation = "destination-out"; c2.drawImage(o, 0, 0); return o2; }
+  return o;
+}
+function akFxGrain(cv, amt, seed) {
+  var c = cv.getContext("2d"), im; try { im = c.getImageData(0, 0, cv.width, cv.height); } catch (er) { return cv; }
+  var d = im.data, a = amt / 100 * 70, s = (seed || 7) >>> 0;
+  for (var i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    s = (s + 0x6D2B79F5) >>> 0; var t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; var n = (((t ^ (t >>> 14)) >>> 0) / 4294967296 - 0.5) * 2 * a;
+    var r = d[i] + n, g = d[i + 1] + n, b = d[i + 2] + n; d[i] = r < 0 ? 0 : r > 255 ? 255 : r; d[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g; d[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b;
+  }
+  c.putImageData(im, 0, 0); return cv;
+}
+/* one effect: the filtered picture, let through the mask */
+function akFxOne(cv, e, P, sc, g, under) {
+  var t = e.t, amt = e.amt || 0, M = Math.min(P.W, P.H) * sc, w = cv.width, hh = cv.height, filt, c, op = 1;
+  var b = { x: (g.b.x - g.R.x) * sc, y: (g.b.y - g.R.y) * sc, w: g.b.w * sc, h: g.b.h * sc };
+  if (t === "bright" || t === "contrast" || t === "sat" || t === "hue" || t === "gray" || t === "sepia") { var f = {}; f[t] = amt; filt = akGfxColorAdj(akFxCopy(cv), f); }
+  else if (t === "invert") { filt = akGfxColorAdj(akFxCopy(cv), { invert: 1 }); op = amt / 100; }
+  else if (t === "tint" || t === "vig") {
+    filt = akFxCopy(cv); c = filt.getContext("2d"); c.save(); c.globalCompositeOperation = "source-atop"; c.globalAlpha = Math.min(1, (t === "vig" ? 0.96 : 1) * amt / 100);
+    c.fillStyle = e.col || (t === "vig" ? "#000000" : (P.accent || "#ff8a3d")); c.fillRect(0, 0, w, hh); c.restore();
+  }
+  else if (t === "blur") filt = akGfxBlurCv(cv, Math.max(0.5, amt / 100 * 0.05 * M));
+  else if (t === "pixelate") {
+    var blk = Math.max(2, amt / 100 * 0.07 * M), sm = akGfxCv(Math.max(1, w / blk), Math.max(1, hh / blk)); sm.getContext("2d").drawImage(cv, 0, 0, sm.width, sm.height);
+    filt = akGfxCv(w, hh); c = filt.getContext("2d"); c.imageSmoothingEnabled = false; c.drawImage(sm, 0, 0, w, hh);
+  }
+  else if (t === "grain") filt = akFxGrain(akFxCopy(cv), amt, e.seed || 7);
+  else if (t === "bloom") {
+    var hl = akGfxColorAdj(akFxCopy(cv), { bright: -30, contrast: 70 }), bl = akGfxBlurCv(hl, Math.max(1, 0.04 * M));
+    filt = akFxCopy(cv); c = filt.getContext("2d"); c.globalCompositeOperation = "screen"; c.globalAlpha = Math.min(1, amt / 100 * 1.2); c.drawImage(bl, 0, 0);
+  }
+  else return cv;
+  var mask = akFxMask(e, w, hh, b), out;
+  if (!mask && op >= 1) out = filt;
+  else {
+    out = akFxCopy(cv); var tmp = akGfxCv(w, hh), tc = tmp.getContext("2d");
+    tc.drawImage(filt, 0, 0); if (mask) { tc.globalCompositeOperation = "destination-in"; tc.drawImage(mask, 0, 0); }
+    c = out.getContext("2d"); c.globalAlpha = op; c.drawImage(tmp, 0, 0); c.globalAlpha = 1;
+  }
+  if (under && (t === "blur" || t === "pixelate" || t === "bloom")) { c = out.getContext("2d"); c.globalCompositeOperation = "destination-over"; c.drawImage(cv, 0, 0); }
+  return out;
+}
+function akFxStack(cv, list, P, sc, g, under) { akFxActive(list).forEach(function (e) { cv = akFxOne(cv, e, P, sc, g, under); }); return cv; }
+
+(function () {
+  var on0 = akGfxFxOn;
+  akGfxFxOn = function (l) { if (on0.apply(this, arguments)) return true; return !!(l && l.fxs && akFxActive(l.fxs).length); };
+  /* this part's own pixels */
+  var ap = akGfxFxApply;
+  akGfxFxApply = function (cv, l, P, sc, g) {
+    var out = ap.apply(this, arguments);
+    if (l.fxs && l.fxscope === "part") out = akFxStack(out, l.fxs, P, sc, g, false);
+    return out;
+  };
+  /* room for blur and glow */
+  var rg = akGfxFxRegion;
+  akGfxFxRegion = function (l, P) {
+    var r = rg.apply(this, arguments);
+    if (l.fxs && l.fxscope === "part") { var ex = 0; akFxActive(l.fxs).forEach(function (e) { if (e.t === "blur" || e.t === "bloom") ex = Math.max(ex, Math.abs(e.amt) / 100 * 0.06 * Math.min(P.W, P.H)); }); if (ex) r.R = { x: r.R.x - ex, y: r.R.y - ex, w: r.R.w + ex * 2, h: r.R.h + ex * 2 }; }
+    return r;
+  };
+  var fk = akGfxFxKey;
+  akGfxFxKey = function (l) { var bl = l && l._below; if (bl) delete l._below; var k = fk.apply(this, arguments); if (bl) l._below = bl; return k; };
+  /* the effects stack goes onto each baked layer; "under" ones also know the layers beneath them */
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) {
+      var e = E[l.id]; if (!e || !e.fxs || !akFxActive(e.fxs).length) return l;
+      var c = Object.assign({}, l); c.fxs = e.fxs; c.fxscope = e.fxscope === "part" ? "part" : "under"; return c;
+    });
+    out.layers.forEach(function (l, i) { if (l.fxs && l.fxscope === "under") l._below = out.layers.slice(0, i); });
+    return out;
+  };
+  /* effects that work on this layer and everything under it, inside this layer's box */
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    var r = dl.apply(this, arguments);
+    if (l && l._below && l.fxs && l.fxscope === "under" && akFxActive(l.fxs).length) { try { akFxUnder(ctx, l, P); } catch (er) { try { console.warn("effects under", er); } catch (e2) {} } }
+    return r;
+  };
+})();
+function akFxKeyOf(l) { return akGfxFxKey(l) + JSON.stringify([l.x, l.y, l.w, l.h]); }
+function akFxUnder(ctx, l, P) {
+  var T = ctx.getTransform(), sc = Math.max(0.15, Math.min(2, Math.hypot(T.a, T.b) || 1));
+  var b = akGfxFxRegion(l, P).b, M = Math.min(P.W, P.H), pad = M * 0.07;
+  var x0 = Math.max(0, b.x), y0 = Math.max(0, b.y), x1 = Math.min(P.W, b.x + b.w), y1 = Math.min(P.H, b.y + b.h);
+  if (x1 - x0 < 1 || y1 - y0 < 1) return;
+  b = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  var R = { x: Math.max(0, b.x - pad), y: Math.max(0, b.y - pad), w: 0, h: 0 }; R.w = Math.min(P.W, b.x + b.w + pad) - R.x; R.h = Math.min(P.H, b.y + b.h + pad) - R.y;
+  var area = R.w * R.h * sc * sc; if (area > 12e6) sc *= Math.sqrt(12e6 / area); sc = Math.round(sc * 100) / 100;
+  var key = l._below.map(akFxKeyOf).join("|") + akFxKeyOf(l) + "|" + sc + "|" + JSON.stringify([R, b, P.W, P.H]), hit = AKFX.cache[l.id], out;
+  if (hit && hit.key === key) out = hit.cv;
+  else {
+    var cv = akGfxCv(R.w * sc, R.h * sc), c = cv.getContext("2d");
+    c.setTransform(sc, 0, 0, sc, -R.x * sc, -R.y * sc);
+    l._below.forEach(function (s) { akDrawLayer(c, s, P); });
+    var self = Object.assign({}, l); delete self._below; self.fxs = null; akDrawLayer(c, self, P);
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    out = akFxStack(cv, l.fxs, P, sc, { b: b, R: R }, true);
+    AKFX.cache[l.id] = { key: key, cv: out, t: Date.now() };
+    var ks = Object.keys(AKFX.cache); if (ks.length > 12) ks.sort(function (a, z) { return AKFX.cache[a].t - AKFX.cache[z].t; }).slice(0, ks.length - 12).forEach(function (k) { delete AKFX.cache[k]; });
+  }
+  ctx.drawImage(out, (b.x - R.x) * sc, (b.y - R.y) * sc, b.w * sc, b.h * sc, b.x, b.y, b.w, b.h);
+}
+
+/* ---------------------------------------------------------------- the panel */
+var AKFX_ICON = { text: "✎", gphoto: "🖼", gpic: "🖼", gshape: "⬛", gbg: "🌄", govl: "🌀", gdeco: "✨", gborder: "▭", gfree: "✳", grect: "▭", qr: "🔳" };
+function akFxUi() { var s = settings(); s.gfxHub = s.gfxHub || { open: {} }; if (s.gfxHub.fxPop == null) s.gfxHub.fxPop = true; return s.gfxHub; }
+function akFxOpen(key, def) { return AKFX.open[key] == null ? !!def : !!AKFX.open[key]; }
+function akFxSec(key, title, kids, def, extra) {
+  var d = h("details", { class: "akfx-sec", open: akFxOpen(key, def), onToggle: function () { AKFX.open[key] = d.open; } }, h("summary", null, h("b", null, title), extra || null));
+  kids.forEach(function (k) { if (k) d.appendChild(k); }); return d;
+}
+function akFxLayers(X) { var b = X.base(); return b ? b.layers.slice().reverse() : []; }
+function akFxTarget(X) { return akGfxTargetOf(X, true); }
+function akFxAfter(X) { try { X.paint(); } catch (er) {} }
+function akFxRefresh(X) { akFxMountAll(X || AKFX.X); }
+
+function akFxEntryEl(X, id, e, i, list) {
+  var D = X.D, def = AKFXT[e.t], key = "e" + e.k;
+  var fmt = function (v) { return e.t === "hue" ? v + "°" : (v > 0 && def[1] < 0 ? "+" : "") + v + (e.t === "hue" ? "" : ""); };
+  function sum() { return (i + 1) + ". " + def[0] + " · " + fmt(e.amt) + (e.on === 0 ? " (off)" : ""); }
+  var title = h("b", null, sum());
+  function mk(label, aria, fn) { return h("button", { type: "button", class: "sm akfx-ib", "aria-label": aria, title: aria, onClick: function (ev) { ev.preventDefault(); ev.stopPropagation(); fn(); } }, label); }
+  var dd = h("details", { class: "akfx-ent" + (e.on === 0 ? " off" : ""), open: akFxOpen(key, true), onToggle: function () { AKFX.open[key] = dd.open; } },
+    h("summary", null, title, h("span", { class: "akfx-btns" },
+      mk(e.on === 0 ? "○" : "●", e.on === 0 ? "Turn " + def[0] + " on" : "Turn " + def[0] + " off", function () { e.on = e.on === 0 ? 1 : 0; save(); akFxAfter(X); akFxRefresh(X); }),
+      i > 0 ? mk("▲", "Move up (applied earlier)", function () { list.splice(i, 1); list.splice(i - 1, 0, e); save(); akFxAfter(X); akFxRefresh(X); }) : null,
+      i < list.length - 1 ? mk("▼", "Move down (applied later)", function () { list.splice(i, 1); list.splice(i + 1, 0, e); save(); akFxAfter(X); akFxRefresh(X); }) : null,
+      mk("✕", "Take off " + def[0], function () { list.splice(i, 1); if (!list.length) delete D.edit[id].fxs; save(); akFxAfter(X); akFxRefresh(X); }))));
+  function sl(label, val, min, max, step, set, fm, d0) { return X.slider(label, val, min, max, step, function (v) { set(v); if (label === def[10]) title.textContent = sum(); }, fm, true, d0); }
+  dd.appendChild(sl(def[10], e.amt, def[1], def[2], e.t === "hue" ? 5 : 1, function (v) { e.amt = v; }, fmt, def[3]));
+  if (def[8]) dd.appendChild(h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk(e.t === "vig" ? "Edge color (dark or light)" : "Color", e.col || "", function (v) { e.col = v || ""; save(); akFxAfter(X); akFxRefresh(X); }); } },
+    h("span", { class: "akg-fxdot", style: "background:" + (e.col || "transparent") }), (e.t === "vig" ? "Edge color" : "Color") + " ▾"));
+  dd.appendChild(akGfxSelect("Where it works", AKFX_AREAS, e.area || "all", function (v) { e.area = v; if (v !== "all" && e.rad == null) e.rad = def[6]; save(); akFxAfter(X); akFxRefresh(X); }));
+  if ((e.area || "all") !== "all") {
+    dd.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!e.inv, onChange: function () { e.inv = this.checked ? 1 : 0; save(); akFxAfter(X); } }), "Works outside the shape (not inside)"));
+    var edge = /^(top|bottom|left|right)$/.test(e.area);
+    dd.appendChild(sl(edge ? "How far it reaches in" : "Shape size", e.rad == null ? 70 : e.rad, 5, 150, 1, function (v) { e.rad = v; }, function (v) { return v + "%"; }, def[6]));
+    dd.appendChild(sl("Edge softness", e.soft == null ? 50 : e.soft, 0, 100, 1, function (v) { e.soft = v; }, function (v) { return v ? v + "%" : "sharp"; }, def[7]));
+    if (!edge) {
+      dd.appendChild(sl("Move left / right", e.cx || 0, -60, 60, 1, function (v) { e.cx = v; }, function (v) { return v ? (v > 0 ? "→ " : "← ") + Math.abs(v) : "center"; }, 0));
+      dd.appendChild(sl("Move up / down", e.cy || 0, -60, 60, 1, function (v) { e.cy = v; }, function (v) { return v ? (v > 0 ? "↓ " : "↑ ") + Math.abs(v) : "center"; }, 0));
+      if (e.area !== "round") dd.appendChild(sl("Turn the shape", e.ang || 0, -90, 90, 1, function (v) { e.ang = v; }, function (v) { return v ? v + "°" : "0°"; }, 0));
+    }
+    dd.appendChild(h("p", { class: "hint" }, e.inv ? "The effect is outside the shape: a bigger shape keeps it farther toward the edges." : "The effect is inside the shape."));
+  }
+  dd.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm", onClick: function () { Object.assign(e, akFxNew(e.t), { k: e.k, on: e.on }); save(); akFxAfter(X); akFxRefresh(X); } }, "↺ Put this effect back to normal")));
+  return dd;
+}
+
+function akFxBody(X, compact) {
+  var D = X.D, L = akFxTarget(X), st = akGfxState(), root = h("div", { class: "akfx-body" });
+  if (!L) { root.appendChild(h("p", { class: "hint" }, "Drawing…")); return root; }
+  var id = L.id; akFxMigrate(D, id);
+  var e0 = D.edit[id] || {}, list = akFxList(D, id), scope = e0.fxscope === "part" ? "part" : "under";
+  function E() { return D.edit[id] = D.edit[id] || {}; }
+  function again() { save(); akFxAfter(X); akFxRefresh(X); }
+  /* which layer */
+  var layers = akFxLayers(X), picker = h("select", { "aria-label": "Layer to edit", onChange: function () { var v = this.value; st.sel = v === "background" ? "" : v; akFxAfter(X); try { X.refill("parts", true); } catch (er) {} akFxRefresh(X); } },
+    layers.map(function (l) { var n = akFxCount(D, l.id); return h("option", { value: l.id, selected: l.id === id }, (AKFX_ICON[l.type] || "▫") + " " + (l.type === "gbg" ? "Background (the whole page)" : l.name || l.id) + (n ? "  ✨" + n : "")); }));
+  root.appendChild(h("div", { class: "akfx-target" }, h("div", { class: "akfx-tl" }, "Editing"), h("div", { class: "akfx-tn" }, (AKFX_ICON[L.type] || "▫") + " " + (L.type === "gbg" ? "Background (the whole page)" : L.name)), compact ? null : h("label", { class: "fld akfx-pick" }, "Change layer", picker),
+    h("p", { class: "hint", style: "margin:2px 0 0" }, L.type === "gbg" ? "Nothing is under the background, so the effects work on the background itself." : "Tap another part on the picture, or use Change layer. " + (scope === "under" ? "These effects work on this layer and everything under it, inside this layer's box. Layers above are not touched." : "These effects work on this part only."))));
+  if (L.type !== "gbg") root.appendChild(h("div", { class: "akfx-scope", role: "group", "aria-label": "What the effects work on" }, [["under", "This layer + everything under it"], ["part", "This part only"]].map(function (s) {
+    return h("button", { type: "button", class: "sm" + (scope === s[0] ? " primary" : ""), "aria-pressed": scope === s[0] ? "true" : "false", onClick: function () { var e = E(); if (s[0] === "under") delete e.fxscope; else e.fxscope = "part"; again(); } }, s[1]);
+  })));
+  /* text effect (words only) */
+  if (L.type === "text") {
+    var cur = e0.fx || L.fx || "none", tk = [akGfxSelect("Text effect", AKG_TFX, cur, function (v) { var e = E(); if (v === "" || v === "none") e.fx = "none"; else e.fx = v; again(); })];
+    if (cur !== "none") {
+      tk.push(X.slider("Effect strength", e0.fxk == null ? (L.fxk == null ? 50 : L.fxk) : e0.fxk, 0, 100, 5, function (v) { E().fxk = v; }, null, true));
+      tk.push(h("button", { type: "button", class: "sm akg-fxcol", "aria-label": "Effect color", onClick: function () { akGfxColorAsk("Effect color", E().fxc || "", function (c) { var e = E(); if (c) e.fxc = c; else delete e.fxc; again(); }); } }, h("span", { class: "akg-fxdot", style: "background:" + (e0.fxc || "transparent") }), "Effect color ▾"));
+    }
+    root.appendChild(akFxSec("text", "🔤 Text effect (neon, gold foil, outline…)", tk, true));
+  }
+  /* the stack */
+  var kids = [];
+  list.forEach(function (e, i) { if (AKFXT[e.t]) kids.push(akFxEntryEl(X, id, e, i, list)); });
+  var addBtn = h("button", { type: "button", class: "sm primary", disabled: list.length >= AKFX_MAX, onClick: function () {
+    var me = this, items = [];
+    AKFX_GROUPS.forEach(function (g) { items.push({ head: g }); Object.keys(AKFXT).filter(function (k) { return AKFXT[k][9] === g; }).forEach(function (k) { items.push({ label: AKFXT[k][0], onClick: function () { var l2 = akFxList(D, id, true); if (l2.length >= AKFX_MAX) return; var n = akFxNew(k); l2.push(n); AKFX.open["e" + n.k] = true; again(); } }); }); });
+    menu(me, items);
+  } }, "＋ Add an effect ▾");
+  root.appendChild(akFxSec("stack", "✨ Effects on this layer (" + list.length + " of " + AKFX_MAX + ")", [!kids.length ? h("p", { class: "hint" }, "No effects yet. Add up to " + AKFX_MAX + ". They run in order, top to bottom, each on the result of the one above.") : null].concat(kids).concat([h("div", { class: "row" }, addBtn, list.length ? h("button", { type: "button", class: "sm", onClick: function () { delete E().fxs; again(); } }, "Take them all off") : null)]), true));
+  /* quick looks */
+  root.appendChild(akFxSec("looks", "⭐ Quick looks", [X.chips(AKG_FX_LOOKS.map(function (x) { return [x[0], x[1]]; }), "", function (v) {
+    var look = AKG_FX_LOOKS.filter(function (x) { return x[0] === v; })[0]; if (!look) return;
+    var e = E(); delete e.fxs; e.fxo = clone(look[2]); if (!Object.keys(e.fxo).length) delete e.fxo; akFxMigrate(D, id); again();
+  }, "Quick looks"), h("p", { class: "hint" }, "A look replaces this layer's effects. Then change anything in the stack above.")], false));
+  /* shadows, glow, outline, soft edges and the bold looks keep their sliders */
+  var legacy = AKG_FXO.filter(function (x) { return x[4] === "around" || x[4] === "bold" || x[0] === "feather"; }), bits = [];
+  legacy.forEach(function (x) { akgmEffectBits(X, id, x[0], null).forEach(function (n) { bits.push(n); }); });
+  var sf = akgmFx(D, id);
+  bits.push(akGfxSelect("Shadow style", AKGN_SHSTYLES, sf.shadowS || "soft", function (v) { var g2 = akgmFx(D, id, true); if (v === "soft") delete g2.shadowS; else g2.shadowS = v; if (!g2.shadow) g2.shadow = 55; again(); }));
+  ["shadowD", "shadowB", "shadowA"].forEach(function (k) { akgmEffectBits(X, id, k, null).forEach(function (n) { if (!(n.classList && n.classList.contains("row"))) bits.push(n); }); });
+  root.appendChild(akFxSec("edges", "Soft edges, shadow, glow, outline and bold looks", bits, false));
+  /* see-through, blend, flips */
+  var w0 = e0.warp || {};
+  root.appendChild(akFxSec("blend", "See-through and blending", [
+    X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = E(); if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true, 0),
+    akGfxSelect("Blend with what's under it", AKG_BLENDS, e0.blend || "", function (v) { var e = E(); if (v) e.blend = v; else delete e.blend; save(); akFxAfter(X); }),
+    h("div", { class: "row" },
+      h("button", { class: "sm", "aria-pressed": w0.fx ? "true" : "false", onClick: function () { var w = akGfxWarpOf(D, id); w.fx = !w.fx; again(); } }, "⇆ Flip sideways"),
+      h("button", { class: "sm", "aria-pressed": w0.fy ? "true" : "false", onClick: function () { var w = akGfxWarpOf(D, id); w.fy = !w.fy; again(); } }, "⇅ Flip upside down"))], false));
+  /* everything on this design */
+  var rows = [];
+  akFxLayers(X).forEach(function (l) {
+    var n = akFxCount(D, l.id); if (!n) return;
+    rows.push(h("div", { class: "akfx-row" }, h("button", { type: "button", class: "akg-fxname", onClick: function () { st.sel = l.type === "gbg" ? "" : l.id; akFxAfter(X); try { X.refill("parts", true); } catch (er) {} akFxRefresh(X); } }, (AKFX_ICON[l.type] || "▫") + " ", h("b", null, l.type === "gbg" ? "Background" : l.name), " · " + n + (n === 1 ? " effect" : " effects")),
+      h("button", { type: "button", class: "sm", "aria-label": "Take every effect off " + l.name, onClick: function () { var e = D.edit[l.id]; if (e) { delete e.fxs; delete e.fxo; } again(); } }, "✕")));
+  });
+  var oldBox = null; if (!compact) { try { oldBox = akGfxFxInUseBox(D, X); } catch (er) {} }
+  root.appendChild(akFxSec("all", "On this design (" + rows.length + " layers with effects)", (rows.length ? rows : [h("p", { class: "hint" }, "No stacked effects anywhere yet.")]).concat([oldBox]), false));
+  if (!akGfxCanFilter()) root.appendChild(h("p", { class: "hint" }, "This browser blurs a little roughly; the saved picture looks the same as here."));
+  return root;
+}
+
+/* ---------------------------------------------------------------- where it lives: docked, or a pop-up window */
+function akFxMountAll(X) {
+  if (X) AKFX.X = X; X = AKFX.X; if (!X) return;
+  AKFX.hosts = AKFX.hosts.filter(function (hs) { return hs.isConnected; });
+  AKFX.hosts.forEach(function (hs) {
+    var scroll = hs.closest(".akfx-win-body") || null, y = scroll ? scroll.scrollTop : 0;
+    hs.textContent = ""; try { hs.appendChild(akFxBody(X, hs.getAttribute("data-compact") === "1")); } catch (er) { try { console.warn("fx panel", er); } catch (e2) {} }
+    if (scroll) scroll.scrollTop = y;
+  });
+  if (AKFX.win) { var t = AKFX.win.querySelector(".akfx-wt"); var L = akFxTarget(X); if (t && L) t.textContent = "✨ Effects · " + (L.type === "gbg" ? "Background" : L.name); }
+}
+function akFxHost(X, compact) { var hs = h("div", { class: "akfx-host", "data-compact": compact ? "1" : "0" }); AKFX.hosts.push(hs); hs.appendChild(akFxBody(X, compact)); return hs; }
+function akFxWinClose() { if (AKFX.win && AKFX.win.parentNode) AKFX.win.parentNode.removeChild(AKFX.win); AKFX.win = null; }
+function akFxWinOpen(X) {
+  AKFX.X = X; AKFX.dismissed = false;
+  if (AKFX.win && AKFX.win.isConnected) { akFxMountAll(X); return; }
+  var body = h("div", { class: "akfx-win-body" }), host = akFxHost(X, false), title = h("span", { class: "akfx-wt" }, "✨ Effects");
+  body.appendChild(host);
+  var win = h("div", { class: "akfx-win", role: "dialog", "aria-label": "Effects" });
+  var hd = h("div", { class: "akfx-wh" }, title,
+    h("button", { type: "button", class: "sm", "aria-label": "Fold or unfold the window", onClick: function () { win.classList.toggle("shut"); } }, "▾"),
+    h("button", { type: "button", class: "sm", "aria-label": "Dock these effects in the panel", title: "Dock in the panel", onClick: function () { akFxUi().fxPop = false; save(); akFxWinClose(); AKFX.dismissed = true; try { X.cat("fx"); X.refill("fx"); } catch (er) {} } }, "⇲ Dock"),
+    h("button", { type: "button", class: "sm", "aria-label": "Close the effects window", onClick: function () { akFxWinClose(); AKFX.dismissed = true; try { X.refill("fx"); } catch (er) {} } }, "✕"));
+  var drag = null;
+  hd.addEventListener("pointerdown", function (ev) { if (ev.target.closest("button")) return; var r = win.getBoundingClientRect(); drag = { dx: ev.clientX - r.left, dy: ev.clientY - r.top }; try { hd.setPointerCapture(ev.pointerId); } catch (er) {} ev.preventDefault(); });
+  hd.addEventListener("pointermove", function (ev) { if (!drag) return; win.style.left = Math.max(0, Math.min(window.innerWidth - 60, ev.clientX - drag.dx)) + "px"; win.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - drag.dy)) + "px"; win.style.right = "auto"; win.style.bottom = "auto"; });
+  hd.addEventListener("pointerup", function () { drag = null; }); hd.addEventListener("pointercancel", function () { drag = null; });
+  win.appendChild(hd); win.appendChild(body); document.body.appendChild(win); AKFX.win = win;
+  akFxMountAll(X);
+}
+setInterval(function () { if (AKFX.win && S.view !== "gfx") { akFxWinClose(); AKFX.dismissed = false; } }, 600);
+
+akGfxEffectsFill = function (d, X) {
+  AKFX.X = X;
+  var ui = akFxUi(), L = akFxTarget(X);
+  if (ui.fxPop) {
+    d.appendChild(h("div", { class: "akfx-stub" }, h("p", { class: "hint", style: "margin:0 0 6px" }, "Effects open in their own window so the picture stays in view. Dragging its title moves it; ▾ folds it."),
+      h("div", { class: "row" }, h("button", { type: "button", class: "primary sm", onClick: function () { akFxWinOpen(X); } }, "✨ Open the effects window"),
+        h("button", { type: "button", class: "sm", onClick: function () { ui.fxPop = false; save(); akFxWinClose(); X.refill("fx"); } }, "⇲ Dock here instead"))));
+    if (L) d.appendChild(h("p", { class: "hint" }, "Editing: " + (L.type === "gbg" ? "Background" : L.name)));
+    if (AKFX.win && AKFX.win.isConnected) akFxMountAll(X); else if (!AKFX.dismissed) akFxWinOpen(X);
+    return;
+  }
+  akFxWinClose();
+  d.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm", onClick: function () { ui.fxPop = true; save(); AKFX.dismissed = false; X.refill("fx"); } }, "⧉ Pop out into a window")));
+  d.appendChild(akFxHost(X, false));
+};
+/* the part's own ✨ Effects box under Selected */
+akGfxFxModule = function (X, L, l) {
+  AKFX.X = X;
+  var D = X.D, det = h("details", { class: "akg-fxmod", "data-bk": "fxmod", "data-akcold": "1", open: !!AKGM.mod });
+  det._layInit = true;
+  var n = akFxCount(D, L.id);
+  det.appendChild(h("summary", null, "✨ Effects" + (n ? " (" + n + ")" : ""), h("span", { class: "hint" }, " for " + L.name)));
+  det.addEventListener("toggle", function () { AKGM.mod = det.open; });
+  det.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm", onClick: function () { akFxWinOpen(X); } }, "⧉ Open in a window")));
+  det.appendChild(akFxHost(X, true));
+  return det;
+};
+
+akCss("akfx",
+  ".akfx-target{border:1px solid rgba(127,127,127,.4);border-left:4px solid #C8962E;border-radius:8px;padding:6px 10px;margin:4px 0 8px;background:rgba(200,150,46,.1)}" +
+  ".akfx-tl{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;opacity:.7}.akfx-tn{font-weight:800;font-size:1.05rem}.akfx-pick{margin:4px 0 0}" +
+  ".akfx-scope{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}" +
+  ".akfx-sec{border:1px solid rgba(127,127,127,.35);border-radius:8px;padding:4px 8px;margin:6px 0}.akfx-sec>summary{cursor:pointer;min-height:34px;display:flex;align-items:center;gap:6px}.akfx-sec[open]>summary{margin-bottom:6px}" +
+  ".akfx-ent{border:1px solid rgba(127,127,127,.35);border-left:3px solid #C8962E;border-radius:8px;padding:2px 8px;margin:6px 0}.akfx-ent.off{opacity:.65}.akfx-ent>summary{cursor:pointer;min-height:36px;display:flex;align-items:center;justify-content:space-between;gap:6px}" +
+  ".akfx-btns{display:inline-flex;gap:4px}.akfx-ib{min-width:34px;padding:0 8px}" +
+  ".akfx-row{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:3px 0}" +
+  ".akfx-win{position:fixed;left:6px;right:6px;bottom:6px;max-height:40vh;z-index:80;display:flex;flex-direction:column;background:var(--panel,#1e1b2b);color:var(--fg,#eee);border:1px solid rgba(127,127,127,.55);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5)}" +
+  ".akfx-win.shut .akfx-win-body{display:none}.akfx-wh{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.35);cursor:grab;touch-action:none}.akfx-wt{flex:1;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+  ".akfx-win-body{overflow:auto;padding:6px 10px 10px;-webkit-overflow-scrolling:touch}" +
+  "@media (min-width:700px){.akfx-win{left:auto;width:380px;right:14px;bottom:14px;max-height:62vh}}");
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Effects: up to 4 per layer (vignette, blur, color…), shape, size, softness, inside or outside", a: "Graphics studio › ✨ Effects (opens a window; ⇲ Dock puts it in the panel, ⧉ Pop out brings the window back). The top box says which layer you are editing; Change layer or tap a part on the picture. ＋ Add an effect (up to 4): Strength, Where it works (everywhere, oval, circle, rectangle, band, an edge…), outside the shape, Shape size, Edge softness, move and turn. “This layer + everything under it” or “This part only”. ▲▼ change the order, ● turns one off. Also in Selected › ✨ Effects." });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
