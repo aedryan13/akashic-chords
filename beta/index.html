@@ -52200,8 +52200,10 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7p";
+AK_VERSION = "18.7q";
 AK_WHATS_NEW = [
+  "🔗 Links page: a QR code that opens one page with your bio, website, social links, booking, shows and tip links (the request page without the song requests). It is now the default QR code on a business card, and the back of any design. Graphics tab › 🔳 QR codes › Links page: pick the bio (one line, short, medium, long, or your own).",
+  "🔳 QR codes library (Graphics tab): every code labeled and grouped (Payments, Links page, Website, Social media, Song requests, Booking, Contact, Other). Tap one to show it big, copy the link, check it still works, share it, or save it as a picture (My pictures › QR codes). ＋ New QR code makes one for any link.",
   "↔ A Back button on every design: in the Graphics studio it sits right where the 🎙 button was (business cards show it as Back/Front). Posters, glass-window signs, the request QR sign, flyers, invoices, any design can have a back (off unless you add it, on for business cards): ▾ beside it picks QR + website, same as the front, a plain colour or a thank-you. Print and share do the back too.",
   "🎙 The Recorder button now shows only on Songs, Shows (set lists) and Play. Settings › has a switch to show it on every screen again.",
   "💼 Business card photo, fixed: a card you started earlier was in the Classic layout, which has no picture, so your photo had nowhere to go. It now moves to the Photo side layout (once) and your headshot shows on the front.",
@@ -53538,14 +53540,15 @@ function akSgItems(D) {
   var out = [], a = akArtist(), pays = akGfxPays(), sg = akSgGet(D), ns = 0;
   pays.forEach(function (p, i) { var key = "h_" + (p.kind || p.label); out.push({ id: "tip" + i, grp: "tip", label: p.label || p.kind || "Tip", h: (D.pay && D.pay[key]) || akGfxHandle(p) || "", url: p.url, qr: true, n: i, legacyOff: !!(D.pay && D.pay["off" + i]) }); });
   var ru = typeof akPosterUrlFor === "function" ? akPosterUrlFor("request") : ""; if (ru) out.push({ id: "req", grp: "req", label: "Request a song", h: "", url: ru, qr: true });
+  var lu = typeof akLinksUrl === "function" ? akLinksUrl() : ""; if (lu) out.push({ id: "links", grp: "links", label: "All my links", h: "", url: lu, qr: D.kind === "card" });
   var hasWeb = false, site = akGfxSite();
   (a.links || []).forEach(function (l, i) {
     if (!l || !l.url) return;
     var web = /^(website|web|site|home ?page)$/i.test(String(l.label || "").trim());
-    if (web) { hasWeb = true; out.push({ id: "ln" + i, grp: "web", label: "Website", h: site || akSgHandleOf("", l.url), url: l.url, qr: D.kind === "card", n: 0 }); }
+    if (web) { hasWeb = true; out.push({ id: "ln" + i, grp: "web", label: "Website", h: site || akSgHandleOf("", l.url), url: l.url, qr: D.kind === "card" && !lu, n: 0 }); }
     else out.push({ id: "ln" + i, grp: "social", label: l.label || "Link", h: akSgHandleOf(l.label, l.url), url: l.url, qr: false, n: ns++ });
   });
-  if (!hasWeb && site) out.push({ id: "site", grp: "web", label: "Website", h: site, url: "https://" + String(site).replace(/^https?:\/\//i, ""), qr: D.kind === "card", n: 0 });
+  if (!hasWeb && site) out.push({ id: "site", grp: "web", label: "Website", h: site, url: "https://" + String(site).replace(/^https?:\/\//i, ""), qr: D.kind === "card" && !lu, n: 0 });
   if (a.email) out.push({ id: "email", grp: "contact", label: "Email", h: a.email, url: "mailto:" + a.email, qr: false });
   if (a.phone) out.push({ id: "phone", grp: "contact", label: "Phone", h: a.phone, url: "tel:" + String(a.phone).replace(/[^\d+]/g, ""), qr: false });
   if (a.tagline) out.push({ id: "tagline", grp: "info", label: "", h: a.tagline, url: "", qr: false });
@@ -53563,6 +53566,7 @@ function akSgDefOn(it, D, spec) {
   if (skip.indexOf(it.grp) >= 0) return false;
   if (it.grp === "tip") return !card && it.n < 3 && !it.legacyOff;
   if (it.grp === "req") return !card && !!D.reqQr;
+  if (it.grp === "links") return card;
   if (it.grp === "social") return it.n < 3;
   if (it.grp === "web") return true;
   if (it.grp === "contact") return card;
@@ -53570,7 +53574,7 @@ function akSgDefOn(it, D, spec) {
   if (it.grp === "vcard") return false;
   return true;
 }
-var AKSG_ORDER = { sign: ["web", "social", "contact", "tip", "req", "info", "vcard", "extra"], card: ["contact", "web", "social", "info", "tip", "req", "vcard", "extra"] };
+var AKSG_ORDER = { sign: ["links", "web", "social", "contact", "tip", "req", "info", "vcard", "extra"], card: ["links", "contact", "web", "social", "info", "tip", "req", "vcard", "extra"] };
 function akSignInfo(D) {
   var sg = akSgGet(D), spec = akGfxFlySpec(D.layout), items = akSgItems(D), ord = AKSG_ORDER[D.kind === "card" ? "card" : "sign"];
   items.forEach(function (it) {
@@ -53580,7 +53584,7 @@ function akSignInfo(D) {
     if (it.qr && !it.url) it.qr = false;
   });
   var S = { items: items, by: {}, qrs: [], lines: [] };
-  ["tip", "req", "social", "web", "contact", "info", "vcard", "extra"].forEach(function (g) { S.by[g] = items.filter(function (it) { return it.grp === g && it.on; }); });
+  ["tip", "req", "links", "social", "web", "contact", "info", "vcard", "extra"].forEach(function (g) { S.by[g] = items.filter(function (it) { return it.grp === g && it.on; }); });
   ord.forEach(function (g) { S.by[g].forEach(function (it) { (it.qr ? S.qrs : S.lines).push(it); }); });
   S.qrs.sort(function (a, b) { return (a.grp === "vcard") - (b.grp === "vcard"); });
   return S;
@@ -54005,7 +54009,7 @@ AKG_SIGNS.forEach(function (f) { f.words = f.words || [["kicker", "Small heading
 
 /* ---------------------------------------------------------------- the "what's on it" panel */
 var AKSG_TOPS = [];
-var AKSG_GROUPS = [["tip", "💵 Tip links"], ["req", "🎶 Song requests"], ["web", "🌐 Website"], ["social", "📣 Social media and links"], ["contact", "✉ Contact"], ["info", "ℹ About me"], ["vcard", "📇 Contact QR"], ["extra", "✎ My own lines"]];
+var AKSG_GROUPS = [["tip", "💵 Tip links"], ["req", "🎶 Song requests"], ["links", "🔗 All my links (links page)"], ["web", "🌐 Website"], ["social", "📣 Social media and links"], ["contact", "✉ Contact"], ["info", "ℹ About me"], ["vcard", "📇 Contact QR"], ["extra", "✎ My own lines"]];
 function akGfxSignPanel(d, D, ch) {
   var card = D.kind === "card", sg = akSgGet(D);
   function draw() {
@@ -54293,8 +54297,9 @@ function akSgBackInfo(D) { if (D.kind === "card") { var c = akSgCard(D); return 
 function akSgHasBack(D) { return akSgBackInfo(D).on; }
 /* where the QR code on the back points */
 function akSgBackUrl(D) {
-  var it = akSgItems(D), m = D.backQr || "site", pick = function (g) { return it.filter(function (x) { return x.grp === g; })[0]; };
+  var it = akSgItems(D), m = D.backQr || (typeof akLinksUrl === "function" && akLinksUrl() ? "links" : "site"), pick = function (g) { return it.filter(function (x) { return x.grp === g; })[0]; };
   if (m === "custom" && D.backUrl) return { url: D.backUrl, text: String(D.backUrl).replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, "") };
+  if (m === "links" && pick("links")) return { url: pick("links").url, text: "All my links" };
   if (m === "request" && pick("req")) return { url: pick("req").url, text: "Request a song" };
   if (m === "tip" && pick("tip")) { var t = pick("tip"); return { url: t.url, text: (t.label || "Tip") + (t.h ? "  " + t.h : "") }; }
   var w = pick("web"); if (w) return { url: w.url, text: w.h || akGfxSite() };
@@ -54354,7 +54359,8 @@ function akSgBackMenu(anchor) {
   });
   if (!card) {
     items.push({ sep: true }, { head: "QR code on the back points to" });
-    [["site", "My website"], ["request", "Song requests"], ["tip", "My first tip link"]].forEach(function (x) { items.push({ label: ((D.backQr || "site") === x[0] ? "✓ " : "") + x[1], onClick: function () { D.backQr = x[0]; save(); X.ch(true); } }); });
+    var lk = typeof akLinksUrl === "function" && akLinksUrl(), curQ = D.backQr || (lk ? "links" : "site");
+    (lk ? [["links", "All my links page"]] : []).concat([["site", "My website"], ["request", "Song requests"], ["tip", "My first tip link"]]).forEach(function (x) { items.push({ label: (curQ === x[0] ? "✓ " : "") + x[1], onClick: function () { D.backQr = x[0]; save(); X.ch(true); } }); });
     items.push({ label: (D.backQr === "custom" ? "✓ " : "") + "A link I type…", onClick: function () { askText("Link for the QR code", D.backUrl || "", "Use", function (v) { D.backUrl = String(v || "").trim(); D.backQr = D.backUrl ? "custom" : "site"; save(); X.ch(true); }); } });
   } else items.push({ sep: true }, { label: "Which links the code holds: 💼 On the card tab", disabled: true });
   if (bi.on) items.push({ sep: true }, { label: "Remove the back", danger: true, onClick: function () { if (card) akSgCard(D).back = false; else D.backOn = false; D.side = "front"; save(); X.ch(true); akSgFlipRefresh(); } });
@@ -54396,6 +54402,170 @@ akCss("akv187-p", ".akg-flip{background:var(--accent,#00B7FF);color:#041b24;font
   };
 })();
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "A back for a sign, poster or card (two-sided, glass window)", a: "Graphics studio, top right: the ＋ Back button adds a back to any design (cards have one already). Then ⇄ Back / ⇄ Front flips between the sides, and ▾ chooses the back: same as the front, big QR code and website, or name only, and what the QR code points to (website, song requests, tip link, a link you type). File ▾ › Print prints the back sheet too.", k: "back side two sided window glass poster sign card flip front qr", go: function () { akGfxOpen("tip"); } });
+
+/* ================= 18.7q: the links page and the QR codes library =================
+   settings().linkPage = { bio: none|line|short|medium|long|custom, custom }  - the bio shown on the links page
+   settings().qrLib = { custom: [{ id, label, url, grp }], open: {} }          - QR codes the performer typed in
+   The links page is the request page opened with go=links (short address: <base><slug>/?links): bio, website, social links,
+   booking, shows and tips, with no song requests. It is the default QR code on a business card.
+   The QR codes library (Graphics tab) lists every QR code with a label, grouped: Payments, Links page, Website, Social media,
+   Song requests, Booking, Contact, Other. Each can be enlarged, copied, shared, saved as a picture (album "QR codes"),
+   and checked that the link still opens. */
+
+var AKQR_GROUPS = [["pay", "💵 Payments"], ["links", "🔗 Links page"], ["web", "🌐 Website"], ["social", "📣 Social media"], ["req", "🎶 Song requests"], ["book", "📅 Booking"], ["contact", "📇 Contact"], ["other", "🔳 Other"]];
+var AKQR_BIOS = [["none", "No bio"], ["line", "One line"], ["short", "Short"], ["medium", "Medium"], ["long", "Long"], ["custom", "Write my own"]];
+
+function akLinkCfg() { var s = settings(); if (!s.linkPage || typeof s.linkPage !== "object") s.linkPage = {}; if (!s.linkPage.bio) s.linkPage.bio = "short"; return s.linkPage; }
+function akLinkBioText() {
+  var c = akLinkCfg(), a = akArtist();
+  if (c.bio === "none") return "";
+  if (c.bio === "custom") return String(c.custom || "");
+  return String((a.bios || {})[c.bio] || (a.bios || {}).short || (a.bios || {}).line || "");
+}
+/* the address of a tab of the request page, or "" when there is no page to open yet */
+function akPageGoUrl(go) {
+  try {
+    var L = akLive();
+    if (L.on && (L.mode !== "cloud" || AKL.uid)) { var u = akLivePageUrl(); return /\/$/.test(u) ? u + "?" + go : u + (u.indexOf("?") >= 0 ? "&" : "?") + "go=" + go; }
+  } catch (e) {}
+  var s = typeof akShortUrl === "function" ? akShortUrl() : ""; return s ? s + "?" + go : "";
+}
+function akLinksUrl() { return akPageGoUrl("links"); }
+function akQrPretty(u) { return String(u || "").replace(/^https?:\/\/(www\.)?/i, "").replace(/\/$/, ""); }
+
+(function () {
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = prof.apply(this, arguments); p.lp = { bio: akLinkBioText() }; return p; };
+})();
+var AKQ = { t: 0 };
+function akLinkPublishSoon() { clearTimeout(AKQ.t); AKQ.t = setTimeout(function () { try { if (AKL.conn) akLivePublish().catch(function () {}); } catch (e) {} }, 700); }
+
+/* ---------------------------------------------------------------- the list */
+function akQrCustom() { var s = settings(); if (!s.qrLib || typeof s.qrLib !== "object") s.qrLib = {}; if (!Array.isArray(s.qrLib.custom)) s.qrLib.custom = []; if (!s.qrLib.open) s.qrLib.open = {}; return s.qrLib; }
+function akQrLib() {
+  var out = [], map = { tip: "pay", req: "req", links: "links", web: "web", social: "social", vcard: "contact" };
+  var items = []; try { items = akSgItems({ kind: "sign" }); } catch (e) {}
+  items.forEach(function (it) {
+    if (!it.url || !map[it.grp]) return;
+    out.push({ id: it.id, grp: map[it.grp], label: it.grp === "vcard" ? "Save my contact" : it.grp === "tip" ? (it.label || "Tip") : it.label, h: it.grp === "links" ? "Bio, website, social media, tips, shows, booking" : it.grp === "req" ? "Pick a song and send it" : (it.h || ""), url: it.url, auto: true });
+  });
+  try { var bu = akPageGoUrl("book"), p = akLivePublicProfile(); if (bu && p.booking && p.booking.on) out.push({ id: "book", grp: "book", label: "Book me", h: "Booking inquiry form", url: bu, auto: true }); } catch (e) {}
+  akQrCustom().custom.forEach(function (x) { if (x.url) out.push({ id: x.id, grp: x.grp || "other", label: x.label || "QR code", h: akQrPretty(x.url), url: x.url, custom: x }); });
+  return out;
+}
+
+/* ---------------------------------------------------------------- pictures */
+function akQrPng(e, px) {
+  px = px || 1000;
+  return new Promise(function (res, rej) {
+    try {
+      var q = qrcode(0, "M"); q.addData(e.url); q.make();
+      var n = q.getModuleCount(), m = 4, tot = n + m * 2, lab = 150, cv = document.createElement("canvas"); cv.width = px; cv.height = px + lab;
+      var c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height);
+      var k = px / tot; c.fillStyle = "#000";
+      for (var r = 0; r < n; r++) for (var cc = 0; cc < n; cc++) if (q.isDark(r, cc)) c.fillRect(Math.floor((cc + m) * k), Math.floor((r + m) * k), Math.ceil(k), Math.ceil(k));
+      c.textAlign = "center"; c.textBaseline = "middle"; c.fillStyle = "#111"; c.font = "800 64px system-ui,sans-serif"; c.fillText(String(e.label || "").slice(0, 28), px / 2, px + 52, px * 0.92);
+      c.font = "500 38px system-ui,sans-serif"; c.fillStyle = "#444"; c.fillText(akQrPretty(e.url).slice(0, 44), px / 2, px + 112, px * 0.92);
+      cv.toBlob(function (b) { b ? res(b) : rej(new Error("no picture")); }, "image/png");
+    } catch (err) { rej(err); }
+  });
+}
+function akQrFile(e) { return "QR " + String(e.label || "code").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, " ") + ".png"; }
+function akQrSave(list) {
+  if (!list.length) return Promise.resolve(0);
+  var lib = akGfxLib(), done = 0;
+  return list.reduce(function (pr, e) {
+    return pr.then(function () {
+      var nm = "QR: " + e.label;
+      if (lib.some(function (x) { return x.name === nm && x.al === "qr" && x.qrUrl === e.url; })) return;
+      return akQrPng(e).then(function (b) { return akGfxLibIn(new File([b], akQrFile(e), { type: "image/png" })); }).then(function (r) {
+        lib.unshift({ id: r.id, name: nm, al: "qr", at: Date.now(), ar: r.ar, qrUrl: e.url }); done++;
+      }, function () {});
+    });
+  }, Promise.resolve()).then(function () { save(); return done; });
+}
+function akQrCheck(e, cb) {
+  if (/^(mailto|tel|BEGIN)/i.test(e.url) || !/^https?:/i.test(e.url)) { cb(undefined); return; }
+  var t = setTimeout(function () { cb(undefined); cb = function () {}; }, 8000);
+  fetch(e.url, { mode: "no-cors", cache: "no-store" }).then(function () { clearTimeout(t); cb(true); }, function () { clearTimeout(t); cb(false); });
+}
+function akQrBig(e) {
+  var st = h("p", { class: "hint", role: "status" }, "");
+  var body = h("div", { class: "center akqr-big" }, h("div", { class: "akqr" }, akQrSvg(e.url, 300)), h("p", { style: "margin:6px 0 0" }, h("b", null, e.label)), h("p", { class: "hint", style: "word-break:break-all" }, e.url), st);
+  modal("QR code", body, [
+    { label: "Copy link", onClick: function () { try { navigator.clipboard.writeText(e.url); toast("Link copied."); } catch (x) { toast(e.url); } return false; } },
+    { label: "Check it works", onClick: function () { st.textContent = "Checking…"; akQrCheck(e, function (ok) { st.textContent = ok === undefined ? "Can't check this kind of link from here." : ok ? "✓ The address answers." : "✗ The address didn't answer (offline, or the link is wrong)."; }); return false; } },
+    { label: "Share picture", onClick: function () { akQrPng(e).then(function (b) { akGfxShare(b, akQrFile(e)); }); return false; } },
+    { label: "Close" }]);
+}
+function akQrAdd(e0) {
+  var o = e0 || { label: "", url: "https://", grp: "other" };
+  var lab = h("input", { type: "text", value: o.label, placeholder: "Label, e.g. Venmo, My channel", "aria-label": "Label" });
+  var url = h("input", { type: "url", value: o.url, placeholder: "https://…", "aria-label": "Link" });
+  var grp = h("select", { "aria-label": "Group" }, AKQR_GROUPS.map(function (g) { return h("option", { value: g[0], selected: g[0] === o.grp }, g[1]); }));
+  modal(e0 ? "Change this QR code" : "New QR code", h("div", null, h("label", { class: "fld" }, "Label", lab), h("label", { class: "fld" }, "Link", url), h("label", { class: "fld" }, "Group", grp)), [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () {
+    var u = url.value.trim(); if (!/^(https?:\/\/|mailto:|tel:)\S+/i.test(u) || u === "https://") { toast("Type the link it should open."); return false; }
+    var c = akQrCustom();
+    if (e0 && e0.custom) { e0.custom.label = lab.value.trim() || "QR code"; e0.custom.url = u; e0.custom.grp = grp.value; }
+    else c.custom.push({ id: "q" + uid(), label: lab.value.trim() || "QR code", url: u, grp: grp.value });
+    save(); render();
+  } }]);
+}
+
+/* ---------------------------------------------------------------- the Graphics card */
+function akQrHubCard() {
+  var c = akQrCustom(), list = akQrLib(), cfg = settings().gfxHub = settings().gfxHub || { open: {} };
+  var d = h("details", { class: "card akgh-card akqr-card", "data-bk": "gh-qr", open: !!cfg.open.qr, onToggle: function () { cfg.open.qr = d.open; } }, h("summary", null, h("b", null, "🔳 QR codes (" + list.length + ")")));
+  d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akQrAdd(); } }, "＋ New QR code"),
+    h("button", { class: "sm", onClick: function () { var b = this; b.disabled = true; akQrSave(list).then(function (n) { toast(n ? "Saved " + n + " in My pictures › QR codes." : "They are all in My pictures already."); render(); }); } }, "🖼 Save all as pictures")));
+  /* links page setup */
+  var lu = akLinksUrl(), lc = akLinkCfg();
+  var lp = h("details", { class: "akqr-lp" }, h("summary", null, "🔗 Links page: what it shows"));
+  lp.appendChild(h("p", { class: "hint" }, lu ? "The QR code on your business card opens this page: your bio, website, social links, booking, shows and tip links (no song requests). " : "Turn on Live requests (and sign in, or set the short address) and the links page gets its address. "));
+  lp.appendChild(h("label", { class: "fld" }, "Bio on the page", h("select", { onChange: function () { lc.bio = this.value; save(); akLinkPublishSoon(); render(); } }, AKQR_BIOS.map(function (b) { return h("option", { value: b[0], selected: lc.bio === b[0] }, b[1]); }))));
+  if (lc.bio === "custom") lp.appendChild(h("label", { class: "fld" }, "My own bio", h("textarea", { rows: 4, maxlength: 600, value: lc.custom || "", onInput: function () { lc.custom = this.value; save(); akLinkPublishSoon(); } })));
+  else lp.appendChild(h("p", { class: "hint" }, akLinkBioText() ? "“" + akLinkBioText().slice(0, 160) + (akLinkBioText().length > 160 ? "…" : "") + "”" : "Write your bios under 🎤 Artist info."));
+  lp.appendChild(h("p", { class: "hint" }, "Your photo and tagline come from Artist info › Show on the request page."));
+  if (lu) lp.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { window.open(lu, "_blank"); } }, "Open it"), h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText(lu); toast("Link copied."); } catch (e) { toast(lu); } } }, "Copy link")));
+  d.appendChild(lp);
+  AKQR_GROUPS.forEach(function (g) {
+    var es = list.filter(function (e) { return e.grp === g[0]; }); if (!es.length) return;
+    d.appendChild(h("div", { class: "akqr-gh" }, g[1]));
+    var grid = h("div", { class: "akqr-grid" });
+    es.forEach(function (e) {
+      var sv = akQrSvg(e.url, 120);
+      grid.appendChild(h("div", { class: "akqr-it" }, h("button", { class: "akqr-q", "aria-label": "Show the " + e.label + " QR code big", onClick: function () { akQrBig(e); } }, sv),
+        h("div", { class: "t" }, e.label), h("div", { class: "hint" }, e.h || akQrPretty(e.url)),
+        h("button", { class: "sm", "aria-label": "More for " + e.label, onClick: function () { menu(this, [
+          { label: "Show big", onClick: function () { akQrBig(e); } },
+          { label: "Copy link", onClick: function () { try { navigator.clipboard.writeText(e.url); toast("Link copied."); } catch (x) { toast(e.url); } } },
+          { label: "Check it works", onClick: function () { toast("Checking…"); akQrCheck(e, function (ok) { toast(ok === undefined ? "Can't check this kind of link from here." : ok ? "✓ The address answers." : "✗ The address didn't answer."); }); } },
+          { label: "Share picture", onClick: function () { akQrPng(e).then(function (b) { akGfxShare(b, akQrFile(e)); }); } },
+          { label: "Save as picture (My pictures › QR codes)", onClick: function () { akQrSave([e]).then(function (n) { toast(n ? "Saved in My pictures › QR codes." : "Already in My pictures."); render(); }); } },
+          e.custom ? { label: "Change…", onClick: function () { akQrAdd(e); } } : null,
+          e.custom ? { label: "Delete", danger: true, onClick: function () { confirmBox("Delete the " + e.label + " QR code?", "Delete", function () { var cc = akQrCustom().custom; cc.splice(cc.indexOf(e.custom), 1); save(); render(); }); } } : null].filter(Boolean)); } }, "⋯")));
+    });
+    d.appendChild(grid);
+  });
+  d.appendChild(h("p", { class: "hint" }, "Payment, website and social codes come from 🎤 Artist info and Live requests. A code is just the link drawn as squares, so it works for as long as the link does. The links page and song request codes use your short address, so they can be pointed somewhere new without printing again."));
+  return d;
+}
+(function () {
+  if (!AKG_ALBUMS.some(function (a) { return a[0] === "qr"; })) AKG_ALBUMS.splice(Math.max(0, AKG_ALBUMS.length - 1), 0, ["qr", "QR codes"]);
+  var v0 = AK_VIEWS.graphics;
+  AK_VIEWS.graphics = function () {
+    var el = v0.apply(this, arguments);
+    try { var body = el.querySelector(".akgh"), pics = body && body.querySelector('[data-bk="gh-pics"]'); if (body) body.insertBefore(akQrHubCard(), pics || null); } catch (e) {}
+    return el;
+  };
+  var css = document.createElement("style");
+  css.textContent = ".akqr-gh{margin:12px 0 4px;font-weight:700}.akqr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}.akqr-it{text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px}.akqr-q{padding:4px;border-radius:10px;background:#fff;border:1px solid var(--line,#444);line-height:0;min-height:0}.akqr-q svg{width:104px;height:104px}.akqr-it .t{font-weight:700;font-size:.9rem}.akqr-it .hint{font-size:.72rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.akqr-lp{margin:8px 0}.akqr-big svg{max-width:100%;height:auto}";
+  document.head.appendChild(css);
+})();
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "QR codes: Venmo, Cash App, website, social, links page (labeled, grouped, save as pictures)", a: "Graphics tab › 🔳 QR codes. Tap a code to show it big, copy the link, check it still works, share it, or save it as a picture (My pictures › QR codes). ＋ New QR code adds any link. 🖼 Save all as pictures." });
+  AK_HELP_WHERE.push({ t: "Links page (one QR for all your links and bio)", a: "Graphics tab › 🔳 QR codes › 🔗 Links page: what it shows (pick the bio). It is the default QR code on a business card. Address: your short address followed by ?links (needs Live requests on)." });
+}
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
