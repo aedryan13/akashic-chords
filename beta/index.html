@@ -30897,7 +30897,7 @@ akProgWheel = function (o) {
   function choose(c, how) {
     var k = key(), raw = typeof c === "string" ? c : akPwRaw(c, k), cc = typeof c === "string" ? akPwParse(c) : c;
     /* 18.5: while a chord pop-up is open, a tap only auditions the chord; "Use in bar" (AKTRY.use) puts it in */
-    if (ws.sel && how !== "hear" && how !== "commit" && typeof AKPICK !== "undefined" && AKPICK.what && document.querySelector("[data-wsview=sections]") && typeof AKTRY !== "undefined") {
+    if (ws.sel && how !== "hear" && how !== "commit" && how !== "midi" && typeof AKTRY !== "undefined") {
       AKTRY.raw = raw; akWsHear(raw, ws.shape); if (cc) ws.from = cc; if (typeof akTryPaint === "function") akTryPaint(); return;
     }
     if (ws.sel && how !== "hear") {
@@ -30912,7 +30912,7 @@ akProgWheel = function (o) {
   if (typeof AKTRY !== "undefined") AKTRY.use = function () {
     var r = AKTRY.raw; if (!r) return false;
     if (!ws.sel) { toast("Tap a square in the bars first."); return false; }
-    AKTRY.raw = ""; choose(r, "commit"); if (typeof akTryPaint === "function") akTryPaint(); return true;
+    AKTRY.raw = ""; choose(r, "commit"); if (typeof akTryPaint === "function") akTryPaint(); if (typeof akTryAfter === "function") akTryAfter(); return true;
   };
   function cellTap(si, bi, t) {
     var bar = ws.secs[si].bars[bi], i = akWsFind(bar, t);
@@ -31123,10 +31123,11 @@ akProgWheel = function (o) {
       h("b", { style: "color:" + (sc.col || "inherit") }, sc.name), h("button", { class: "sm", onClick: function () { tsDialog(sc); } }, akWsTsName(sc.ts) + (sc.grp ? " (" + sc.grp + ")" : "")),
       h("button", { class: "sm", onClick: function () { strumMenu(this, sc, null); } }, "Strum: " + akWsStrumLabel(sc.st) + (sc.gv ? " · " + akwrGrooveName(sc.gv) : "") + (sc.s16 ? " · 16ths" : "") + " ▾"),
       stepSel, h("span", { class: "grow" }),
+      h("button", { class: "sm akws-addbar", "aria-label": "Add a bar", onClick: function () { keep(); sc.bars.push(akWsNewBar()); changed(); } }, "+ Bar"),
       h("button", { class: "sm", "aria-label": "Zoom out", onClick: function () { zoom(-0.25); } }, "−"), h("span", { class: "akws-zoom" }, "🔍"), h("button", { class: "sm", "aria-label": "Zoom in", onClick: function () { zoom(0.25); } }, "+"),
       h("button", { class: "sm akws-tg" + (ws.paint ? " on" : ""), "aria-pressed": ws.paint ? "true" : "false", title: "Paint: every cell you tap gets the last chord you chose", onClick: function () { ws.paint = !ws.paint; save(); draw(); } }, "✎ Paint" + (ws.paint && pend ? " " + pend : "")),
       h("button", { class: "sm akws-tg" + (ws.lane ? " on" : ""), "aria-pressed": ws.lane ? "true" : "false", title: "The strum row under each bar", onClick: function () { ws.lane = !ws.lane; save(); draw(); } }, "♪ Strums")));
-    var gridEl = akDragHost(h("div", { class: "akws-grid", style: "--akws-w:" + Math.max(24, Math.round(7.3 * step * ws.zoom)) + "px" }));
+    var gridEl = akDragHost(h("div", { class: "akws-grid", style: "--akws-w:" + Math.max(24, Math.round(7.3 * step * ws.zoom)) + "px;--akws-bw:calc(" + Math.max(24, Math.round(7.3 * step * ws.zoom)) + "px * " + cells + " + 3px)" }));
     var startOf = ws.secs.slice(0, si).reduce(function (a, s) { return a + s.bars.length; }, 0);
     sc.bars.forEach(function (bar, bi) {
       var bEl = h("div", { class: "akws-bar", "data-k": si + ":" + bi, style: "flex:1 0 calc(var(--akws-w) * " + cells + " + 3px)" });
@@ -31162,7 +31163,6 @@ akProgWheel = function (o) {
       }
       gridEl.appendChild(bEl);
     });
-    gridEl.appendChild(h("button", { class: "akws-addbar", "aria-label": "Add a bar", onClick: function () { keep(); sc.bars.push(akWsNewBar()); changed(); } }, "+ Bar"));
     var ph = h("div", { class: "akws-ph", "aria-hidden": "true" }); ph.style.display = "none"; gridEl.appendChild(ph);
     wrap.appendChild(gridEl);
     return wrap;
@@ -38145,6 +38145,7 @@ function akColRun(root) {
 /* taps: a bar, or the title of a "head" section */
 document.addEventListener("click", function (e) {
   var t = e.target && e.target.closest ? e.target : null; if (!t) return;
+  if (t.closest(".akpart-mv")) return; /* 18.5: the move arrows on a part header */
   var bar = t.closest(".akfold-bar"), el = null;
   if (bar) el = bar.parentNode && bar.parentNode.classList.contains("akfold") && bar.parentNode.firstElementChild === bar ? bar.parentNode : bar.nextElementSibling;
   else {
@@ -49607,7 +49608,6 @@ function akW18bApply(el) {
     var w = akW18b();
     c.again("songs-and-shows");
     c.section("Write screen", "How the Write tab is laid out");
-    c.select("Top of the Write screen", function () { return w.top; }, function (v) { w.top = v; }, AK_W18_TOP);
     c.select("Show the writing area as", function () { return w.scr; }, function (v) { w.scr = v; }, AK_W18_SCR);
     c.select("Two halves: arranged", function () { return w.dir || "auto"; }, function (v) { w.dir = v; }, [["auto", "Side by side when the screen is wide"], ["stack", "Top and bottom"], ["side", "Side by side"]]);
     c.select("Two halves: first half shows", function () { return w.hA; }, function (v) { w.hA = v; if (akW18Fam(w.hB) === akW18Fam(v)) w.hB = v === "lyrics" ? "chords" : "lyrics"; }, AK_W18_SECS);
@@ -50178,6 +50178,8 @@ function akArrBuild() {
     setArm(a, t, true); toast("“" + t.name + "” is armed. Press ▶ to record.");
   }
   function setArm(a, t, on) { a.tracks.forEach(function (x) { x.arm = false; }); t.arm = !!on; save(); draw(); }
+  /* phone first: the settings sit in a drop-down; on a wide screen (tablet) they are open by default since there is room */
+  function setOpen() { return host._set === undefined ? window.innerWidth >= 700 : !!host._set; }
   function tog(label, on, fn, aria) { return h("button", { class: "sm akws-tg" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": aria || label, title: aria || label, onClick: fn }, label); }
   function ib(label, aria, fn, off) { return h("button", { class: "sm", "aria-label": aria, title: aria, disabled: !!off, onClick: fn }, label); }
   function newName(a, base) { var n = base, i = 2; while (a.tracks.some(function (t) { return t.name === n; })) n = base + " " + i++; return n; }
@@ -50329,7 +50331,7 @@ function akArrBuild() {
       h("button", { class: "sm akarr-play", "aria-pressed": "false", "aria-label": "Play", title: "Play (records if a track is armed)", onClick: play }, "▶"),
       h("button", { class: "sm akarr-stop", "aria-label": "Stop", title: "Stop", disabled: true, onClick: stopAll }, "■"),
       h("button", { class: "sm akarr-rec", "aria-pressed": "false", "aria-label": "Arm a track for recording", title: "Arm a track to record, then press play", onClick: recBtn }, "●"),
-      h("button", { class: "sm akarr-setb" + (host._set ? " on" : ""), "aria-expanded": host._set ? "true" : "false", "aria-label": "Arranger settings: click, tempo, loop, count-in, snap", title: "Click, tempo, loop, count-in, snap", onClick: function () { host._set = !host._set; draw(); } }, "⚙ ▾"),
+      h("button", { class: "sm akarr-setb" + (setOpen() ? " on" : ""), "aria-expanded": setOpen() ? "true" : "false", "aria-label": "Arranger settings: click, tempo, loop, count-in, snap", title: "Click, tempo, loop, count-in, snap", onClick: function () { host._set = !setOpen(); draw(); } }, "⚙ ▾"),
       h("span", { class: "grow" }),
       ib("↶", "Undo", undo),
       h("button", { class: "sm akarr-add", "aria-label": "Add a track", onClick: function () {
@@ -50337,7 +50339,7 @@ function akArrBuild() {
       } }, "+ Track"),
       ib(full ? "✕" : "⛶", full ? "Leave full screen" : "Full screen", function () { setFull(!full); })));
     /* the settings drop-down: click, tempo, loop, count-in, loop-a-part, snap */
-    if (host._set) {
+    if (setOpen()) {
       var bpmIn = h("input", { type: "number", min: "30", max: "300", value: String(st.bpm || 80), "aria-label": "Tempo, beats a minute", class: "akarr-bpm", onChange: function () {
         st.bpm = Math.max(30, Math.min(300, Number(this.value) || 80)); save(); try { var sg = akW9Song(); if (sg && sg.wheel === st) aklSetTempo(sg, st.bpm); } catch (e) {}
       } });
@@ -51005,6 +51007,7 @@ var AKTRY = { raw: "", use: null };
 function akW185() {
   var c = akW18b(); if (c.win !== "black" && c.win !== "theme") c.win = "black"; return c;
 }
+function akTryAfter() { if ((akW18b().popAfter || "stay") === "close" && typeof akPickSet === "function") akPickSet(""); }
 function akTryPaint() {
   Array.prototype.forEach.call(document.querySelectorAll(".aktry"), function (t) {
     var v = t.querySelector(".aktry-v"), u = t.querySelector(".aktry-use");
@@ -51050,7 +51053,106 @@ function akTryPaint() {
         bars.removeChild(tb);
       }
     } catch (e) { if (window.console) console.warn("ak185 top", e); }
+    try { var ol = el.querySelector(".akw18-panel .ak18-lays"); if (ol) { ol.hidden = true; ol.classList.add("akw-gone"); } } catch (e) {}
     try { akHalvesTidy(el); } catch (e) { if (window.console) console.warn("ak185 halves", e); }
+  };
+})();
+
+/* ---------------------------------------------------------------- one Layout list (no full top, no presets)
+   The ▦ bar opens a short list with headed groups: Screen (view tabs / two halves / cards), Words and chords (classic / split / chord strip)
+   and, for two halves, Split (top and bottom / side by side / automatic). */
+(function () {
+  var b0 = akW18b;
+  akW18b = function () { var c = b0.apply(this, arguments); c.top = "slim"; return c; };
+})();
+akW18bChips = function () {
+  var c = akW18b(), c18 = akW18(), box = h("div", { class: "akw18-layl" });
+  function group(title, list, cur, set) {
+    box.appendChild(h("div", { class: "akw18-lh" }, title));
+    list.forEach(function (x) {
+      box.appendChild(h("button", { type: "button", class: "akw18-lo" + (cur === x[0] ? " on" : ""), "aria-pressed": cur === x[0] ? "true" : "false", onClick: function () { set(x[0]); save(); rerenderKeepScroll(); } },
+        h("span", { class: "akw18-lk" }, cur === x[0] ? "✓" : ""), x[1]));
+    });
+  }
+  group("Screen", [["tabs", "View tabs"], ["halves", "Two halves (split)"], ["stack", "Cards, one under the other"]], c.scr, function (v) { c.scr = v; });
+  group("Words and chords", [["classic", "Classic"], ["split", "Split"], ["strip", "Chord strip"]], c18.lay, function (v) { c18.lay = v; if (akW18Land()) c18.layLand = "same"; });
+  if (c.scr === "halves") group("Split", [["stack", "Top and bottom"], ["side", "Side by side"], ["auto", "Automatic"]], c.dir || "auto", function (v) { c.dir = v; });
+  return box;
+};
+
+/* ---------------------------------------------------------------- the chord pop-up: size, where it sits, what happens after Add */
+function akPopPlace() {
+  var w = document.querySelector("[data-wsview=sections]"); if (!w) return;
+  var cell = document.querySelector(".akws-cell.on"), pos = "bottom";
+  if (cell) { var r = cell.getBoundingClientRect(); if (r.top + r.height / 2 > window.innerHeight * 0.5) pos = "top"; }
+  w.setAttribute("data-pickpos", pos);
+}
+(function () {
+  var ps = akPickSet;
+  akPickSet = function (what) { var r = ps.apply(this, arguments); akPopPlace(); document.body.setAttribute("data-popsize", akW18b().popSize || "small"); return r; };
+  var pa = akPickAuto;
+  akPickAuto = function (on) { akPopPlace(); var r = pa.apply(this, arguments); akPopPlace(); return r; };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    var w = akW18b();
+    c.select("Chord pop-up: size", function () { return w.popSize || "small"; }, function (v) { w.popSize = v; }, [["small", "Small (a strip at the edge)"], ["large", "Large"]]);
+    c.select("Chord pop-up: after Add", function () { return w.popAfter || "stay"; }, function (v) { w.popAfter = v; }, [["stay", "Stays open for the next chord"], ["close", "Closes (tap the next square to bring it back)"]]);
+    c.select("Chord pop-up: opens when you tap a square", function () { return w.autoPop === false ? "no" : "yes"; }, function (v) { w.autoPop = v !== "no"; }, [["yes", "Yes"], ["no", "No (use the Wheel / Suggestions buttons)"]]);
+    return sx.apply(this, arguments);
+  };
+})();
+
+/* a strip right under the bars for the heard chord, wherever the chord picker lives (the pop-ups carry their own) */
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    try {
+      var base = root && root.querySelectorAll ? root : document;
+      Array.prototype.forEach.call(base.querySelectorAll(".akws"), function (ws) {
+        if (ws.querySelector(":scope > .aktry-inline")) return;
+        var row = ws.querySelector(":scope > .akpickrow"), strip = h("div", { class: "aktry aktry-inline" }, h("span", { class: "aktry-v" }, ""),
+          h("button", { type: "button", class: "aktry-use", onClick: function () { if (AKTRY.use) AKTRY.use(); } }, "✓ Add"));
+        if (row) row.parentNode.insertBefore(strip, row.nextSibling); else ws.insertBefore(strip, ws.firstChild);
+      });
+      akTryPaint();
+    } catch (e) { if (window.console) console.warn("ak185 try", e); }
+  };
+  var tp = akTryPaint;
+  akTryPaint = function () {
+    tp.apply(this, arguments);
+    Array.prototype.forEach.call(document.querySelectorAll(".aktry-inline"), function (t) { t.classList.toggle("has", !!AKTRY.raw); });
+  };
+})();
+
+/* ---------------------------------------------------------------- parts you can move: ▲ ▼ on each part header of the Sections tab */
+var AKW_PARTS = ["bars", "play", "secs", "send"];
+function akPartsOrder() { var c = akW18b(), o = c.partOrd; if (!Array.isArray(o) || AKW_PARTS.some(function (x) { return o.indexOf(x) < 0; })) o = AKW_PARTS.slice(); return o; }
+function akPartsApply(ws) {
+  var o = akPartsOrder(), sel = { bars: ".akws-gridwrap", play: ".akws-tp", secs: ".akws-strip", send: ".akws-send" };
+  o.forEach(function (k, i) {
+    var el = ws.querySelector(":scope > " + sel[k]); if (!el) return;
+    var bar = el.previousElementSibling && el.previousElementSibling.classList.contains("akfold-bar") ? el.previousElementSibling : null;
+    el.style.order = String(i * 10 + 1); if (bar) bar.style.order = String(i * 10);
+    if (k === "bars") { var a = ws.querySelector(":scope > .akws-sel"), p = ws.querySelector(":scope > .akpickrow"), t = ws.querySelector(":scope > .aktry-inline"); if (a) a.style.order = String(i * 10 + 2); if (t) t.style.order = String(i * 10 + 3); if (p) p.style.order = String(i * 10 + 4); }
+    if (bar && !bar.querySelector(".akpart-mv")) {
+      var mv = h("span", { class: "akpart-mv" },
+        h("span", { role: "button", tabindex: "0", "aria-label": "Move this part up", title: "Move up", onClick: function (e) { e.stopPropagation(); e.preventDefault(); akPartMove(k, -1); } }, "▲"),
+        h("span", { role: "button", tabindex: "0", "aria-label": "Move this part down", title: "Move down", onClick: function (e) { e.stopPropagation(); e.preventDefault(); akPartMove(k, 1); } }, "▼"));
+      bar.appendChild(mv);
+    }
+  });
+}
+function akPartMove(k, d) {
+  var o = akPartsOrder().slice(), i = o.indexOf(k), j = i + d; if (j < 0 || j >= o.length) return;
+  o.splice(i, 1); o.splice(j, 0, k); akW18b().partOrd = o; save();
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wsview=sections] .akws"), akPartsApply);
+}
+(function () {
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    try { Array.prototype.forEach.call((root && root.querySelectorAll ? root : document).querySelectorAll(".akws"), akPartsApply); } catch (e) { if (window.console) console.warn("ak185 parts", e); }
   };
 })();
 
@@ -51129,7 +51231,20 @@ akCss("akv185b", [
 ].join("\n"));
 
 akCss("akv185", [
+  /* bars: every bar the same size on every row (a grid, nothing else in it) */
+  ".akws-grid{display:grid !important;grid-template-columns:repeat(auto-fill,minmax(var(--akws-bw,120px),1fr));gap:10px 0 !important}.akws-grid > .akws-bar{flex:none !important;min-width:0}",
+  "html body .akws-gh button.akws-addbar:not(#ak){border-style:dashed;margin:0 !important}",
   /* pop-up try strip */
+  ".aktry-inline{display:none}.aktry-inline.has{display:flex}[data-pick] .aktry-inline{display:none !important}.aktry-inline{padding:2px 6px;border-left:3px solid var(--accent,#c60);background:color-mix(in srgb,var(--accent,#c60) 14%,transparent)}",
+  "[data-wsview=sections][data-pickpos=top][data-pick=pal] .akws > .akws-pal,[data-wsview=sections][data-pickpos=top][data-pick=wheel] .akws > .akws-main{top:56px !important;bottom:auto !important;box-shadow:0 4px 18px rgba(0,0,0,.55) !important}",
+  "body[data-popsize=large] [data-wsview=sections][data-pick=pal] .akws > .akws-pal,body[data-popsize=large] [data-wsview=sections][data-pick=wheel] .akws > .akws-main{max-height:72vh !important}",
+  /* the Layout list */
+  ".akw18-layl{display:flex;flex-direction:column;gap:2px}",
+  ".akw18-lh{font-weight:800;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;background:color-mix(in srgb,var(--accent,#c60) 26%,transparent);border-left:4px solid var(--accent,#c60);padding:3px 8px;margin:6px 0 2px}.akw18-lh:first-child{margin-top:0}",
+  "html body .akw18-lo:not(#ak){display:flex;align-items:center;gap:6px;width:100%;text-align:left;min-height:0 !important;height:28px !important;padding:0 8px !important;margin:0 !important;font-size:.82rem !important;border:0 !important;border-radius:0 !important;background:transparent !important;color:inherit}",
+  "html body .akw18-lo.on:not(#ak){background:color-mix(in srgb,var(--accent,#c60) 18%,transparent) !important;font-weight:700}.akw18-lk{width:1.1em;color:var(--accent,#c60)}",
+  /* move arrows on the part headers */
+  ".akpart-mv{float:right;display:inline-flex;gap:2px;margin-left:auto}.akpart-mv span{padding:0 7px;opacity:.8;font-size:.7rem;cursor:pointer}",
   ".aktry{display:flex;gap:6px;align-items:center;flex:1 1 100%;order:9}.aktry-v{flex:1;font-size:.8rem;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
   "html body .aktry button.aktry-use:not(#ak){background:var(--accent,#c60) !important;color:#fff !important;font-weight:700;padding:0 12px !important;height:28px !important;min-height:28px !important}",
   "html body .aktry button.aktry-use:disabled:not(#ak){opacity:.45}",
