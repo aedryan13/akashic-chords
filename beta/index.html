@@ -36166,7 +36166,7 @@ function akGfxLayers(D) {
     var b = D.bg, src = "";
     if (b.src === "art" && b.id && AK_ART_FILES[b.id]) src = AK_ART_BASE + b.id + "_" + AK_ART_FILES[b.id][0] + ".webp";
     else if ((b.src === "photo" || b.src === "venue") && b.id && IMG[b.id]) src = IMG[b.id].data;
-    lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: b.color || "#140c26", color2: b.color2 || "", src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: area || null });
+    lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: b.color || "#140c26", color2: b.color2 || "", grad: b.src === "grad" ? b.grad : null, src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: area || null });
     if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: "rgba(0,0,0," + (D.overlay / 100) + ")" });
   }
   function wordmark(cx, y, w) {
@@ -36360,11 +36360,12 @@ function akGfxInvoiceLayers(D, W, H, lay, text, bg, logo, wordmark) {
 /* ---------------------------------------------------------------- loading pictures and fonts, auto colors */
 function akGfxImg(src) { if (!src) return Promise.resolve(null); if (!AKGFX.imc[src]) AKGFX.imc[src] = akImgLoad(src).then(function (im) { if (!im) delete AKGFX.imc[src]; return im; }); return AKGFX.imc[src]; }
 function akGfxBgCanvas(l, W, H) {
-  var key = [l.src ? l.src.length + l.src.slice(-40) : "", l.color, l.color2, l.zoom, l.fx, l.fy, l.blur, W, H, JSON.stringify(l.area || 0), !!l._im].join("|");
+  var key = [l.src ? l.src.length + l.src.slice(-40) : "", l.color, l.color2, JSON.stringify(l.grad || 0), l.zoom, l.fx, l.fy, l.blur, W, H, JSON.stringify(l.area || 0), !!l._im].join("|");
   if (AKGFX.bgc && AKGFX.bgc.key === key) return AKGFX.bgc.cv;
   var cv = document.createElement("canvas"); cv.width = W; cv.height = H; var ctx = cv.getContext("2d"), A = l.area || { x: 0, y: 0, w: W, h: H };
-  if (l.color2) { var gr = ctx.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, l.color); gr.addColorStop(1, l.color2); ctx.fillStyle = gr; } else ctx.fillStyle = l.color;
-  ctx.fillRect(A.x, A.y, A.w, A.h);
+  if (l.grad && typeof akGfxGradPaint === "function") { akGfxGradPaint(ctx, l.grad, A.x, A.y, A.w, A.h); ctx.fillStyle = "rgba(0,0,0,0)"; }
+  else if (l.color2) { var gr = ctx.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, l.color); gr.addColorStop(1, l.color2); ctx.fillStyle = gr; } else ctx.fillStyle = l.color;
+  if (!l.grad) ctx.fillRect(A.x, A.y, A.w, A.h);
   if (l._im) {
     var im = l._im, iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height, k = Math.max(A.w / iw, A.h / ih) * (l.zoom || 1), w = iw * k, hh = ih * k, bl = (l.blur || 0) * W / 1080;
     ctx.save(); ctx.beginPath(); ctx.rect(A.x, A.y, A.w, A.h); ctx.clip();
@@ -36975,8 +36976,8 @@ function viewGfx() {
   }
   function fillBg(d) {
     var b = D.bg, g = akGfxGig(D), v = g && typeof akVenueFor === "function" ? akVenueFor(g) : null, vph = ((v && v.photos) || (g && g.photos) || []).filter(function (id) { return IMG[id]; });
-    var srcs = [["art", "Theme pictures"], ["photo", "My photos"]]; if (vph.length && kind !== "week") srcs.push(["venue", "Venue photos"]); srcs.push(["color", "Plain color"]);
-    d.appendChild(chips(srcs, b.src, function (x) { b.src = x; if (x === "art" && !AK_ART_FILES[b.id]) b.id = akGfxArtIds()[0] || ""; if (x === "photo") b.id = akGfxCfg().photos.filter(function (id) { return IMG[id]; })[0] || ""; if (x === "venue") b.id = vph[0] || ""; ch(true); }, "Background"));
+    var srcs = [["art", "Theme pictures"], ["photo", "My photos"]]; if (vph.length && kind !== "week") srcs.push(["venue", "Venue photos"]); srcs.push(["grad", "Gradient"]); srcs.push(["color", "Plain color"]);
+    d.appendChild(chips(srcs, b.src, function (x) { b.src = x; if (x === "art" && !AK_ART_FILES[b.id]) b.id = akGfxArtIds()[0] || ""; if (x === "photo") b.id = akGfxCfg().photos.filter(function (id) { return IMG[id]; })[0] || ""; if (x === "venue") b.id = vph[0] || ""; if (x === "grad" && !b.grad && typeof akGfxGradDefault === "function") b.grad = akGfxGradDefault(); ch(true); }, "Background"));
     var grid = h("div", { class: "akg-thumbs" });
     function thumb(id, src, label) { return h("button", { class: "akg-th" + (b.id === id ? " on" : ""), "aria-label": label, "aria-pressed": b.id === id ? "true" : "false", style: "background-image:url(" + JSON.stringify(src) + ")", onClick: function () { b.id = id; b.fx = 0.5; b.fy = 0.5; b.zoom = 1; ch(true); } }); }
     if (b.src === "art") akGfxArtIds().forEach(function (id) { grid.appendChild(thumb(id, AK_ART_BASE + id + "_" + AK_ART_FILES[id][0] + ".thumb.webp", "Theme picture " + id.replace(/^[ap]_/, ""))); });
@@ -36992,6 +36993,8 @@ function viewGfx() {
     if (b.src === "color") {
       d.appendChild(h("div", { class: "fld" }, "Color", colorPicker(b.color, function (c) { b.color = c || "#140c26"; ch(); })));
       d.appendChild(h("div", { class: "fld" }, "Fade to (empty = one color)", colorPicker(b.color2, function (c) { b.color2 = c; ch(); })));
+    } else if (b.src === "grad") {
+      if (typeof akGfxGradControls === "function") akGfxGradControls(d, b, X);
     } else {
       d.appendChild(slider("Zoom", Math.round((b.zoom || 1) * 100), 100, 300, 5, function (v) { b.zoom = v / 100; }, function (v) { return v + "%"; }));
       d.appendChild(slider("Left ↔ right", Math.round((b.fx == null ? 0.5 : b.fx) * 100), 0, 100, 1, function (v) { b.fx = v / 100; }));
@@ -39922,7 +39925,7 @@ function akGfxFlyBuild(D, spec) {
     DECO: function (kind, amt) { lay.push({ id: "l_" + kind, name: (AKG_DECOS.filter(function (d) { return d[0] === kind; })[0] || ["", kind])[1], type: "gdeco", nohit: true, kind: kind, amt: amt, x: 0, y: 0, w: W, h: H }); },
     BG: function () {
       var b = D.bg, src = p.full ? akGfxBgSrc(b) : "";
-      lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: p.full ? (b.color || "#140c26") : C.paper, color2: p.full ? "" : C.paper2, src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: null, filt: p.full ? filt : null });
+      lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: p.full ? (b.color || "#140c26") : C.paper, color2: p.full ? "" : C.paper2, grad: b.src === "grad" ? b.grad : null, src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: null, filt: p.full ? filt : null });
       if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: "rgba(0,0,0," + (D.overlay / 100) + ")" });
     },
     PH: function (x, y, w, h, o) { var b = D.bg; lay.push(Object.assign({ id: "photo", name: "Photo", type: "gphoto", x: x, y: y, w: w, h: h, src: akGfxBgSrc(b), zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, filt: filt, ph1: C.a2, ph2: C.a1 }, o || {})); },
@@ -52194,8 +52197,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.7b";
+AK_VERSION = "18.7c";
 AK_WHATS_NEW = [
+  "Graphics: overlays, borders and backgrounds have modifiers instead of lots of near-copies. Dots can now be circles, squares, diamonds, triangles, stars, hearts, hexagons, pluses or rings (and the many dot presets are trimmed). New overlays: gradient wash / glow / sweep, aurora ribbons, light leaks, glitch bars, film dust and scratches, art-deco fans, quatrefoil tiles, mandala. New borders with their own options (pattern size, spacing, corners, lines, filled or outline, second color): curly scrolls, squiggle, vine, regal flourishes, Greek key, Mayan step-fret, chain, arches, star and diamond chains. New Gradient background (straight, from a point or around a point; 2-3 colors, angle, grain). 🎲 Random flyer uses all of these, with random modifiers.",
   "Graphics: the border and overlays can now be tapped and picked like any other part (tap empty picture again to go on to the next one, then the background). The part pop-up has 🔁 Replace and ✨ Effects right on its first row for every part. 🎲 Random flyer starts clean (nothing left from the last flyer), and its overlay and border are sometimes absent and never repeat.",
   "Flyers: picking a show now fills in that show's own place, town, date and time (words left over from the last show are cleared; the venue comes from the saved venue when there is one). New 🎲 Random flyer: a random layout, colors and look for the show, always with one of your headshots (My pictures › Headshots).",
   "Write › Cards: Chords and Lyrics are now separate cards, and every card (Chords, Lyrics, Arranger, Chord workshop, Looper) has a ⠿ handle: hold it and slide the card up or down (▲▼ still work). The layout button now reads “Layout: Cards / Tabs / Halves”. Every Tip (ⓘ Tip everywhere, and 💡 Tip beside Chords / Bars / Rhythm / Jazz) now pops up as a small bubble with an ✕ instead of expanding the page. The lyrics window no longer grows or jumps as you scroll.",
@@ -52309,12 +52313,19 @@ function akGfxRandomFlyer(g) {
   D.layout = spec.id; akGfxFlyApply(D, spec.id);
   /* overlays and borders are only sometimes there, and never the same ones twice in a row */
   var n = Math.random(), ovs = [], presets = AKG_OVL_PRESETS.map(function (x) { return x[0]; });
-  if (n > 0.4) ovs.push(fresh(presets, last.ov)); if (n > 0.8) ovs.push(fresh(presets.filter(function (x) { return ovs.indexOf(x) < 0; }), last.ov));
-  var bds = ["line", "double", "rounded", "corners", "deco", "neon", "scallop", "brackets", "triple", "cornerdots", "dotsdash", "ornate", "roundd", "torn", "sketch", "notch", "bulbs", "piano"];
+  function pat(id) { var x = AKG_OVL_PRESETS.filter(function (y) { return y[0] === id; })[0]; return x ? x[2].p : id; }
+  if (n > 0.4) ovs.push(fresh(presets, last.ov));
+  if (n > 0.8) ovs.push(fresh(presets.filter(function (x) { return ovs.indexOf(x) < 0 && pat(x) !== pat(ovs[0]); }), last.ov));
+  var bds = ["line", "double", "rounded", "corners", "deco", "neon", "scallop", "brackets", "triple", "cornerdots", "dotsdash", "ornate", "roundd", "torn", "sketch", "notch", "bulbs", "piano"].concat((typeof AKG_BORDER_FAM !== "undefined" ? AKG_BORDER_FAM : []).map(function (x) { return x[0]; }));
   var bd = Math.random() < 0.45 ? "" : fresh(bds, [last.bd]), th = fresh(AKG_THEMES.map(function (x) { return x[0]; }), [last.th]);
   akGfxRecipeApply(D, { id: "", th: th, ov: ovs, bd: bd, tfx: Math.random() < 0.4 ? pick(["glow", "outline", "lift", "shadow", "retro", "block", "neon", "gold"]) : "", filt: Math.random() < 0.2 ? pick(["warm", "cool", "fade", "vivid", "bw"]) : "" });
+  /* the modifiers are random too, so the same border or overlay looks different each time */
+  var bc = akGfxDecoCfg(D).border;
+  if (bd && typeof AKG_BORDER_FAM !== "undefined" && AKG_BORDER_FAM.some(function (x) { return x[0] === bd; })) { bc.ps = pick([70, 85, 100, 120, 150]); bc.pg = pick([90, 100, 120, 150]); bc.cn = pick(["auto", "auto", "none", "square", "diamond", "dot", "star", "flourish"]); bc.rl = pick([0, 1, 1, 2]); if (Math.random() < 0.3) bc.fl = pick([0, 1]); }
+  (D.ovl || []).forEach(function (o) { if (o.p === "dots" && typeof AKG_OVL_SHAPES !== "undefined" && Math.random() < 0.6) o.shape = pick(AKG_OVL_SHAPES.slice(1).map(function (x) { return x[0]; })); if (Math.random() < 0.5) o.angle = pick([-45, -30, -15, 15, 30, 45]); });
   D.layout = spec.id; D.lastRand = { ov: ovs, bd: bd, th: th, lay: spec.id };
   if (heads.length) { var hd = pick(heads); D.bg = { src: "photo", id: hd.id, color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.3, blur: 0 }; }
+  else if (Math.random() < 0.35 && typeof akGfxGradDefault === "function") { var gg = akGfxGradDefault(), hue = Math.floor(Math.random() * 360); gg.t = pick(["linear", "linear", "radial"]); gg.a = Math.floor(Math.random() * 72) * 5; gg.c = ["hsl(" + hue + ",55%,16%)", "hsl(" + (hue + 50) + ",70%,42%)", "hsl(" + (hue + 120) + ",75%,60%)"]; D.bg = { src: "grad", id: "", color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0, grad: gg }; }
   else { var art = akGfxArtIds(); if (art.length) D.bg = { src: "art", id: pick(art), color: "#140c26", color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0 }; }
   D.logo = true;
   save(); go("gfx", { gfxKind: "flyer", gfxGig: g ? g.id : "" });
@@ -52322,6 +52333,9 @@ function akGfxRandomFlyer(g) {
 }
 (function () {
   if (typeof AK_HELP_WHERE === "undefined") return;
+  AK_HELP_WHERE.push({ t: "Change the shape of dots, or add a gradient / aurora / light-leak overlay", a: "Graphics studio › Overlays: pick one to add it; its options (Shape for dots, Kind for gradients, size, spacing, angle, fade, colors, blend) are under it.", k: "overlay dots shape diamond heart square gradient aurora light leak glitch film fans mandala quatrefoil", go: function () { go("gfx"); } });
+  AK_HELP_WHERE.push({ t: "Curly, regal, Greek key or Mayan borders (and change them)", a: "Graphics studio › the border choice (Decorations / Border). Pick a style, then Change this border: pattern size, spacing, corners, lines, filled or outline, second color.", k: "border frame scroll squiggle vine regal greek key meander mayan chain arches star diamond corners", go: function () { go("gfx"); } });
+  AK_HELP_WHERE.push({ t: "Gradient background", a: "Graphics studio › Background › Gradient: straight, from a point or around a point; two or three colors, angle, grain, 🎲 random colors.", k: "background gradient color fade sweep radial", go: function () { go("gfx"); } });
   AK_HELP_WHERE.push({ t: "Make a random flyer for a show", a: "Show page › Graphics › 🎲 next to 🎨 Flyer, or Graphics studio › Flyer › 🎲 Random flyer. It picks a layout, colors and look at random and always puts one of your headshots (My pictures › Headshots) on it; every tap is a new one. ↶ Undo goes back.", k: "random flyer surprise headshot poster shuffle", go: function () { go("shows"); } });
   AK_HELP_WHERE.push({ t: "A flyer takes its place, town and time from the show", a: "Pick the show at the top of the Flyer options: the place comes from the show's venue (or the venue saved under Venues), and the date, time and town follow. Words you typed for another show are cleared when you pick a different one.", k: "flyer venue place show information automatic fill town time date wrong", go: function () { go("shows"); } });
 })();
@@ -52365,6 +52379,313 @@ akCss("akv187-tipbub", [
     return c[(i + 1) % c.length];
   };
 })();
+
+/* ================================================================ ak_v18h: version 18.7c, Graphics studio: unique overlays with modifiers, border families with modifiers, gradient backgrounds
+   - Overlays: the dots pattern gets a Shape (circle, square, diamond, triangle, star, heart, hexagon, plus, ring); the many dot presets are cut to a few;
+     new patterns: gradient wash (linear / radial / angular), aurora ribbons, light leaks, glitch bars, film dust and scratches, art-deco fans, quatrefoil
+     tiles, mandala. They all keep the usual modifiers (size, spacing, angle, fade, colors, blend).
+   - Borders: new families (curly scrolls, squiggle, vine, regal flourishes, Greek key, Mayan step-fret, chain, arches, star chain, diamond chain) with
+     modifiers on the border: pattern size, spacing, corners, lines, filled or outline, second color.
+   - Backgrounds: a Gradient source (linear / radial / angular, two or three colors, angle, center, grain).
+   Border modifiers live on D.deco.border: ps (size %), pg (spacing %), cn (corner), rl (0-2 lines), fl (0 outline, 1 filled), color2. */
+
+/* ---------------------------------------------------------------- overlays */
+var AKG_OVL_SHAPES = [["circle", "Circle"], ["square", "Square"], ["diamond", "Diamond"], ["triangle", "Triangle"], ["star", "Star"], ["heart", "Heart"], ["hex", "Hexagon"], ["plus", "Plus"], ["ring", "Ring"]];
+AKG_OVL_PATS.push(["grad", "Gradient wash", "gr"], ["aurora", "Aurora ribbons", "gr"], ["lightleak", "Light leaks", "gr"], ["glitch", "Glitch bars", "gr"], ["film", "Film dust and scratches", "gr"],
+  ["fans", "Art deco fans", "el"], ["quatrefoil", "Quatrefoil tiles", "el"], ["mandala", "Mandala", "gr"]);
+(function () {
+  /* the dot presets that were all the same thing wearing different fades: kept working for old designs, but off the picker */
+  var HIDE = { halftone: 1, middots: 1, bigdotsright: 1, halfbottom: 1, diaghalf: 1, checkfade: 1, wavyside: 1, sideripples: 1, cornerrings: 1, gridfade: 1, hatch: 1 };
+  window.AKG_OVL_LEGACY = AKG_OVL_PRESETS.filter(function (x) { return HIDE[x[0]]; });
+  var keep = AKG_OVL_PRESETS.filter(function (x) { return !HIDE[x[0]]; });
+  AKG_OVL_PRESETS.length = 0; keep.forEach(function (x) { AKG_OVL_PRESETS.push(x); });
+  AKG_OVL_PRESETS.push(
+    ["fadediamonds", "Fading diamonds", { p: "dots", shape: "diamond", size: 70, gap: 32, fade: "corner", reach: 85 }],
+    ["fadesquares", "Fading squares", { p: "dots", shape: "square", size: 70, gap: 28, fade: "top", reach: 60, angle: 20 }],
+    ["hearts", "Scattered hearts", { p: "dots", shape: "heart", size: 60, gap: 55, vary: 70, jitter: 60, op: 60 }],
+    ["gradwash", "Gradient wash", { p: "grad", angle: 20, op: 55 }],
+    ["glow", "Spotlight glow", { p: "grad", gtype: "radial", size: 60, op: 70, blend: "screen" }],
+    ["sweep", "Color sweep", { p: "grad", gtype: "conic", op: 40 }],
+    ["aurora", "Aurora ribbons", { p: "aurora", size: 55, gap: 45, op: 75, blend: "screen" }],
+    ["lightleak", "Light leaks", { p: "lightleak", size: 55, gap: 45, op: 80, blend: "screen" }],
+    ["glitch", "Glitch bars", { p: "glitch", size: 45, gap: 45, op: 70 }],
+    ["film", "Film dust and scratches", { p: "film", size: 40, gap: 45, op: 75 }],
+    ["fans", "Art deco fans", { p: "fans", size: 55, gap: 45, thick: 18, op: 45, fade: "bottom", reach: 75 }],
+    ["quatrefoil", "Quatrefoil tiles", { p: "quatrefoil", size: 55, gap: 45, thick: 14, op: 40, fill: 0 }],
+    ["mandala", "Mandala", { p: "mandala", size: 60, gap: 40, thick: 12, op: 50 }]);
+  /* old designs and the idea recipes still find the hidden ones by name */
+  var n0 = akGfxOvlNew;
+  akGfxOvlNew = function (pid, extra) {
+    if (pid && !AKG_OVL_PRESETS.some(function (x) { return x[0] === pid; })) {
+      var lg = AKG_OVL_LEGACY.filter(function (x) { return x[0] === pid; })[0];
+      if (lg) return Object.assign({ id: uid(), name: lg[1], seed: Math.floor(Math.random() * 9999) }, clone(lg[2]), extra || {});
+    }
+    return n0.apply(this, arguments);
+  };
+})();
+
+/* a shape as a path around (0, 0) */
+function akShapePath(c, sh, r) {
+  c.beginPath();
+  var i, a;
+  if (sh === "square") c.rect(-r * 0.85, -r * 0.85, r * 1.7, r * 1.7);
+  else if (sh === "diamond") { c.moveTo(0, -r * 1.1); c.lineTo(r * 0.8, 0); c.lineTo(0, r * 1.1); c.lineTo(-r * 0.8, 0); c.closePath(); }
+  else if (sh === "triangle") { for (i = 0; i < 3; i++) { a = -Math.PI / 2 + i * Math.PI * 2 / 3; c.lineTo(Math.cos(a) * r * 1.1, Math.sin(a) * r * 1.1 + r * 0.15); } c.closePath(); }
+  else if (sh === "star") { for (i = 0; i < 10; i++) { a = -Math.PI / 2 + i * Math.PI / 5; var rr = i % 2 ? r * 0.45 : r * 1.1; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); } c.closePath(); }
+  else if (sh === "hex") { for (i = 0; i < 6; i++) { a = i * Math.PI / 3; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); }
+  else if (sh === "plus") { var t = r * 0.38; c.moveTo(-t, -r); c.lineTo(t, -r); c.lineTo(t, -t); c.lineTo(r, -t); c.lineTo(r, t); c.lineTo(t, t); c.lineTo(t, r); c.lineTo(-t, r); c.lineTo(-t, t); c.lineTo(-r, t); c.lineTo(-r, -t); c.lineTo(-t, -t); c.closePath(); }
+  else if (sh === "heart") { c.moveTo(0, r * 0.95); c.bezierCurveTo(-r * 1.5, -r * 0.1, -r * 0.7, -r * 1.1, 0, -r * 0.35); c.bezierCurveTo(r * 0.7, -r * 1.1, r * 1.5, -r * 0.1, 0, r * 0.95); c.closePath(); }
+  else c.arc(0, 0, r, 0, Math.PI * 2);
+}
+
+/* the common set-up the new patterns share */
+function akOvlEnv(o, W, H, sc, col, P) {
+  var cv = akGfxCv(W * sc, H * sc), c = cv.getContext("2d"); c.scale(sc, sc);
+  var k = Math.min(W, H) / 1080, S = o.size == null ? 50 : o.size, G = o.gap == null ? 50 : o.gap, Th = o.thick == null ? 30 : o.thick, V = (o.vary || 0) / 100, J = (o.jitter || 0) / 100;
+  var A = (o.angle || 0) * Math.PI / 180, ca = Math.cos(A), sa = Math.sin(A), rng = akRng((o.seed || 1) * 7919 + 13), fill = o.fill !== 0 && o.fill !== false;
+  var cell = (12 + G * 2.2) * k, R = (1 + S * 0.55) * k * (cell / (12 + 50 * 2.2) / k) * 2.2, lw = Math.max(0.6, (0.4 + Th * 0.16) * k);
+  var fade = akGfxOvlFade(o, W, H), bySize = o.fs !== 0 && o.fs !== false && !!o.fade, D2 = Math.hypot(W, H) / 2 + cell * 2;
+  var E = { cv: cv, c: c, W: W, H: H, k: k, S: S, G: G, Th: Th, V: V, J: J, A: A, ca: ca, sa: sa, rng: rng, fill: fill, cell: cell, R: R, lw: lw, fade: fade, bySize: bySize, D2: D2, col: col, P: P || {},
+    ox: (o.ox == null ? 50 : o.ox) / 100 * W, oy: (o.oy == null ? 50 : o.oy) / 100 * H };
+  c.fillStyle = col; c.strokeStyle = col; c.lineWidth = lw; c.lineCap = "round"; c.lineJoin = "round";
+  E.size = function (base, px, py) { var s = base * (1 - V * rng()); if (bySize) s *= fade(px, py); return s; };
+  E.grid = function (step, stagger, fn) {
+    var u, v, j;
+    for (v = -D2, j = 0; v <= D2; v += step, j++) for (u = -D2 + (stagger && j % 2 ? step / 2 : 0); u <= D2; u += step) {
+      var x = W / 2 + u * ca - v * sa + (rng() - 0.5) * step * J, y = H / 2 + u * sa + v * ca + (rng() - 0.5) * step * J;
+      if (x < -step || y < -step || x > W + step || y > H + step) continue;
+      fn(x, y);
+    }
+  };
+  return E;
+}
+function akOvlDone(E, o, skipColor2) {
+  var c = E.c, W = E.W, H = E.H, j, i;
+  if (o.color2 && !skipColor2) { c.save(); c.globalCompositeOperation = "source-atop"; var g2 = c.createLinearGradient(W / 2 + E.sa * W / 2, H / 2 - E.ca * H / 2, W / 2 - E.sa * W / 2, H / 2 + E.ca * H / 2); g2.addColorStop(0, E.col); g2.addColorStop(1, o.color2); c.fillStyle = g2; c.fillRect(0, 0, W, H); c.restore(); }
+  if (o.fade && !(E.bySize && /^(dots|fans|quatrefoil)$/.test(o.p))) {
+    var mw = 72, mh = Math.max(8, Math.round(72 * H / W)), m = akGfxCv(mw, mh), mc = m.getContext("2d"), id = mc.createImageData(mw, mh);
+    for (j = 0; j < mh; j++) for (i = 0; i < mw; i++) id.data[(j * mw + i) * 4 + 3] = Math.round(E.fade((i + 0.5) / mw * W, (j + 0.5) / mh * H) * 255);
+    mc.putImageData(id, 0, 0); c.save(); c.globalCompositeOperation = "destination-in"; c.imageSmoothingQuality = "high"; c.drawImage(m, 0, 0, W, H); c.restore();
+  }
+  return E.cv;
+}
+var AKG_OVL_NEW = {
+  dots: function (E, o) {
+    var c = E.c, sh = o.shape;
+    E.grid(E.cell, o.stagger !== 0, function (px, py) {
+      var r = E.size(E.R * 0.5, px, py); if (r < 0.3) return;
+      c.save(); c.translate(px, py); c.rotate(E.A); akShapePath(c, sh, r);
+      if (sh === "ring") { c.lineWidth = Math.max(E.lw, r * 0.28); c.stroke(); } else if (E.fill) c.fill(); else c.stroke();
+      c.restore();
+    });
+  },
+  grad: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, t = o.gtype || "linear", col = E.col, c2 = o.color2 || "", g, mid = Math.max(0.05, Math.min(0.95, (o.gap == null ? 50 : o.gap) / 100));
+    var P = E.P, end = c2 || P.accent2 || akGfxMix(col, "#000000", 0.55), L = Math.hypot(W, H) / 2;
+    if (t === "radial") { var rr = Math.hypot(W, H) * (0.15 + (o.size == null ? 50 : o.size) / 100 * 0.7); g = c.createRadialGradient(E.ox, E.oy, 0, E.ox, E.oy, rr); g.addColorStop(0, col); g.addColorStop(mid, c2 ? akGfxMix(col, c2, 0.5) : akGfxAlpha(col, 0.45)); g.addColorStop(1, c2 ? end : akGfxAlpha(col, 0)); }
+    else if (t === "conic" && c.createConicGradient) { g = c.createConicGradient(E.A - Math.PI / 2, E.ox, E.oy); g.addColorStop(0, col); g.addColorStop(mid, end); g.addColorStop(1, col); }
+    else { g = c.createLinearGradient(W / 2 - E.sa * L - 0 * E.ca, H / 2 + E.ca * L * -1, W / 2 + E.sa * L, H / 2 + E.ca * L); g.addColorStop(0, col); g.addColorStop(mid, c2 ? akGfxMix(col, c2, 0.5) : akGfxAlpha(col, 0.5)); g.addColorStop(1, c2 ? end : akGfxAlpha(col, 0)); }
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+  },
+  aurora: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, n = Math.round(2 + E.G / 22), i, q, c2 = o.color2 || E.P.accent2 || akGfxMix(E.col, "#ffffff", 0.45);
+    for (i = 0; i < n; i++) {
+      var base = H * (0.12 + 0.76 * (i + E.rng() * 0.6) / n), th = H * (0.05 + E.S / 100 * 0.2) * (0.7 + E.rng() * 0.6), ph = E.rng() * 6, am = H * (0.03 + E.rng() * 0.07), fq = 1 + E.rng() * 2.2, top = [], bot = [], co = i % 2 ? c2 : E.col;
+      for (q = 0; q <= 40; q++) { var x = W * q / 40, yy = base + Math.sin(x / W * Math.PI * fq + ph) * am + Math.sin(x / W * Math.PI * 4.3 + ph * 2) * am * 0.3; top.push([x, yy]); bot.push([x, yy + th * (0.8 + 0.4 * Math.sin(x / W * 5 + ph))]); }
+      var g = c.createLinearGradient(0, base - am, 0, base + am + th * 1.2); g.addColorStop(0, akGfxAlpha(co, 0)); g.addColorStop(0.45, akGfxAlpha(co, 0.8)); g.addColorStop(1, akGfxAlpha(co, 0));
+      c.beginPath(); top.forEach(function (p) { c.lineTo(p[0], p[1]); }); bot.reverse().forEach(function (p) { c.lineTo(p[0], p[1]); }); c.closePath(); c.fillStyle = g; c.fill();
+    }
+  },
+  lightleak: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, n = Math.round(2 + E.G / 30), i, c2 = o.color2 || akGfxMix(E.col, "#ffb347", 0.55);
+    for (i = 0; i < n; i++) {
+      var side = E.rng(), x = side < 0.5 ? (E.rng() < 0.5 ? -W * 0.05 : W * 1.05) : E.rng() * W, y = side < 0.5 ? E.rng() * H : (E.rng() < 0.5 ? -H * 0.05 : H * 1.05), r = Math.max(W, H) * (0.22 + E.S / 100 * 0.5) * (0.7 + E.rng() * 0.6), co = i % 2 ? c2 : E.col;
+      var g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, akGfxAlpha("#ffffff", 0.55)); g.addColorStop(0.25, akGfxAlpha(co, 0.7)); g.addColorStop(1, akGfxAlpha(co, 0));
+      c.fillStyle = g; c.fillRect(0, 0, W, H);
+    }
+  },
+  glitch: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, n = Math.round(6 + E.G / 3), i, c2 = o.color2 || "#ffffff";
+    for (i = 0; i < n; i++) {
+      var y = E.rng() * H, hh = Math.max(1.5 * E.k, H * 0.004 + E.rng() * H * (0.006 + E.S / 100 * 0.03)), x = E.rng() * W * 0.8, w = W * (0.1 + E.rng() * 0.7);
+      c.globalAlpha = 0.25 + E.rng() * 0.6; c.fillStyle = E.rng() < 0.6 ? E.col : c2; c.fillRect(x, y, w, hh);
+      if (E.rng() < 0.5) { c.globalAlpha *= 0.6; c.fillRect(x + (E.rng() - 0.5) * W * 0.12, y + hh * 1.4, w * (0.3 + E.rng() * 0.5), Math.max(1, hh * 0.35)); }
+    }
+    c.globalAlpha = 1;
+  },
+  film: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, n = Math.round(W * H / (E.cell * E.cell) * 3), i, q;
+    for (i = 0; i < n; i++) { var x = E.rng() * W, y = E.rng() * H, r = (0.4 + Math.pow(E.rng(), 3) * 2.6 * (0.4 + E.S / 60)) * E.k; c.globalAlpha = 0.15 + E.rng() * 0.6; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); }
+    c.lineWidth = Math.max(0.5, E.lw * 0.3);
+    for (i = 0; i < Math.round(3 + E.G / 8); i++) { var sx = E.rng() * W, sy = E.rng() * H * 0.6, sl = H * (0.15 + E.rng() * 0.6); c.globalAlpha = 0.15 + E.rng() * 0.4; c.beginPath(); c.moveTo(sx, sy); c.lineTo(sx + (E.rng() - 0.5) * 6 * E.k, sy + sl); c.stroke(); }
+    for (i = 0; i < Math.round(3 + E.G / 12); i++) { var hx = E.rng() * W, hy = E.rng() * H, hr = (6 + E.rng() * 22) * E.k; c.globalAlpha = 0.2 + E.rng() * 0.35; c.beginPath(); c.arc(hx, hy, hr, E.rng() * 6, E.rng() * 6 + 1.2 + E.rng() * 2); c.stroke(); }
+    c.globalAlpha = 1;
+  },
+  fans: function (E, o) {
+    var c = E.c, rays = 7;
+    E.grid(E.cell * 1.4, true, function (px, py) {
+      var r = E.size(E.R * 0.95, px, py); if (r < 1) return;
+      c.save(); c.translate(px, py); c.rotate(E.A); c.lineWidth = Math.max(E.lw * 0.7, r * 0.05);
+      c.beginPath(); c.arc(0, 0, r, Math.PI, 0); c.stroke(); c.beginPath(); c.arc(0, 0, r * 0.62, Math.PI, 0); c.stroke(); c.beginPath(); c.arc(0, 0, r * 0.3, Math.PI, 0); c.stroke();
+      for (var q = 0; q <= rays; q++) { var a = Math.PI + q * Math.PI / rays; c.beginPath(); c.moveTo(Math.cos(a) * r * 0.3, Math.sin(a) * r * 0.3); c.lineTo(Math.cos(a) * r, Math.sin(a) * r); c.stroke(); }
+      c.restore();
+    });
+  },
+  quatrefoil: function (E, o) {
+    var c = E.c;
+    E.grid(E.cell * 1.3, false, function (px, py) {
+      var r = E.size(E.R * 0.5, px, py); if (r < 1) return;
+      c.save(); c.translate(px, py); c.rotate(E.A); c.lineWidth = Math.max(E.lw, r * 0.08);
+      [[1, 0], [0, 1], [-1, 0], [0, -1]].forEach(function (d) { c.beginPath(); c.arc(d[0] * r * 0.52, d[1] * r * 0.52, r * 0.52, 0, Math.PI * 2); if (E.fill) { c.globalAlpha = 0.5; c.fill(); c.globalAlpha = 1; } c.stroke(); });
+      c.restore();
+    });
+  },
+  mandala: function (E, o) {
+    var c = E.c, W = E.W, H = E.H, maxR = Math.hypot(W, H) * 0.75, ring = 0, r0 = E.R * 0.4 + E.cell * 0.3, step = E.cell * 0.9;
+    c.save(); c.translate(E.ox, E.oy); c.rotate(E.A);
+    for (var rr = r0; rr < maxR; rr += step, ring++) {
+      var n = 8 + ring * 4, pw = Math.min(step * 0.8, rr * Math.PI * 1.6 / n), ph = step * (0.75 + 0.25 * Math.sin(ring));
+      c.lineWidth = Math.max(E.lw * 0.8, 1);
+      for (var q = 0; q < n; q++) {
+        c.save(); c.rotate(q * Math.PI * 2 / n + (ring % 2) * Math.PI / n); c.translate(0, -rr);
+        c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(pw * 0.7, -ph * 0.5, 0, -ph); c.quadraticCurveTo(-pw * 0.7, -ph * 0.5, 0, 0);
+        if (E.fill && ring % 3 === 0) { c.globalAlpha = 0.5; c.fill(); c.globalAlpha = 1; } c.stroke(); c.restore();
+      }
+      c.beginPath(); c.arc(0, 0, rr, 0, Math.PI * 2); c.globalAlpha = 0.5; c.stroke(); c.globalAlpha = 1;
+    }
+    c.restore();
+  }
+};
+(function () {
+  var r0 = akGfxOvlRender;
+  akGfxOvlRender = function (o, W, H, sc, col, P) {
+    var fn = AKG_OVL_NEW[o.p];
+    if (!fn || (o.p === "dots" && (!o.shape || o.shape === "circle"))) return r0.apply(this, arguments);
+    var E = akOvlEnv(o, W, H, sc, col, P);
+    try { fn(E, o); } catch (e) { if (window.console) console.warn("ak18h overlay", e); }
+    return akOvlDone(E, o, o.p === "grad" || o.p === "confetti");
+  };
+  /* the Shape choice goes in right under the pattern */
+  var oc = akGfxOvlControls;
+  akGfxOvlControls = function (d, o, X) {
+    oc.apply(this, arguments);
+    try {
+      var sel = d.querySelector("select"), pat = sel && sel.closest("label");
+      if (o.p === "dots" && pat) pat.parentNode.insertBefore(akGfxSelect("Shape", AKG_OVL_SHAPES, o.shape || "circle", function (v) { if (v === "circle") delete o.shape; else o.shape = v; delete o.name; X.ch(true); }), pat.nextSibling);
+      if (o.p === "grad" && pat) pat.parentNode.insertBefore(akGfxSelect("Kind of gradient", [["linear", "Straight"], ["radial", "From a point (glow)"], ["conic", "Around a point (sweep)"]], o.gtype || "linear", function (v) { if (v === "linear") delete o.gtype; else o.gtype = v; delete o.name; X.ch(true); }), pat.nextSibling);
+    } catch (e) {}
+  };
+})();
+
+/* ---------------------------------------------------------------- borders: families with modifiers */
+var AKG_BORDER_FAM = [["scroll", "Curly scrolls"], ["squig", "Squiggle"], ["vine", "Vine and leaves"], ["regal", "Regal flourishes"], ["meander", "Greek key"], ["mayan", "Mayan step-fret"],
+  ["chain", "Chain links"], ["arches", "Arches"], ["starchain", "Star chain"], ["diachain", "Diamond chain"]];
+var AKG_BORDER_CORNERS = [["auto", "Matches the pattern"], ["none", "No corner pieces"], ["square", "Squares"], ["diamond", "Diamonds"], ["dot", "Dots"], ["star", "Stars"], ["flourish", "Curls"]];
+AKG_BORDER_FAM.forEach(function (b) { AKG_BORDERS.push(b); });
+var AKG_BORDER_CN = { scroll: "flourish", squig: "dot", vine: "flourish", regal: "star", meander: "square", mayan: "square", chain: "dot", arches: "square", starchain: "star", diachain: "diamond" };
+
+/* one motif along +x (0..u), depth toward +y (the inside of the page) */
+function akBdMotif(c, st, u, filled, c2, odd) {
+  var i, t, a;
+  function spiral(cx, cy, r, dir) { c.beginPath(); for (t = 0; t <= 1; t += 0.04) { a = t * Math.PI * 3.2; var rr = r * (1 - t * 0.85); c.lineTo(cx + dir * Math.cos(a) * rr, cy + Math.sin(a) * rr); } c.stroke(); }
+  if (st === "scroll") { spiral(u * 0.27, u * 0.34, u * 0.26, 1); spiral(u * 0.73, u * 0.34, u * 0.26, -1); c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(u * 0.25, u * 0.08, u * 0.5, 0); c.quadraticCurveTo(u * 0.75, u * 0.08, u, 0); c.stroke(); if (filled) { c.beginPath(); c.arc(u * 0.5, u * 0.2, u * 0.07, 0, 7); c.fill(); } }
+  else if (st === "squig") { c.beginPath(); for (t = 0; t <= 1.001; t += 0.03) c.lineTo(t * u, u * 0.4 + Math.sin(t * Math.PI * 2) * u * 0.28); c.stroke(); }
+  else if (st === "vine") {
+    c.beginPath(); for (t = 0; t <= 1.001; t += 0.03) c.lineTo(t * u, u * 0.14 + Math.sin(t * Math.PI * 2) * u * 0.08); c.stroke();
+    [[0.25, 1, 0.62], [0.75, -1, 0.5]].forEach(function (lf) { var x = lf[0] * u, y = u * 0.14 + Math.sin(lf[0] * Math.PI * 2) * u * 0.08, lean = lf[1], len = u * lf[2]; c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + lean * u * 0.3 + u * 0.12, y + len * 0.5, x + lean * u * 0.1, y + len); c.quadraticCurveTo(x + lean * u * 0.28 - u * 0.12, y + len * 0.45, x, y); if (filled) c.fill(); else c.stroke(); });
+  }
+  else if (st === "regal") {
+    c.beginPath(); c.moveTo(u * 0.5, u * 0.92); c.quadraticCurveTo(u * 0.66, u * 0.55, u * 0.5, u * 0.2); c.quadraticCurveTo(u * 0.34, u * 0.55, u * 0.5, u * 0.92); if (filled) c.fill(); else c.stroke();
+    [-1, 1].forEach(function (s) { c.beginPath(); c.moveTo(u * 0.5, u * 0.22); c.bezierCurveTo(u * (0.5 + s * 0.12), u * 0.0, u * (0.5 + s * 0.42), u * 0.05, u * (0.5 + s * 0.4), u * 0.4); c.bezierCurveTo(u * (0.5 + s * 0.38), u * 0.62, u * (0.5 + s * 0.2), u * 0.62, u * (0.5 + s * 0.2), u * 0.45); c.stroke(); });
+    c.beginPath(); c.moveTo(u * 0.3, u * 0.16); c.lineTo(u * 0.7, u * 0.16); c.stroke(); c.beginPath(); c.arc(u * 0.5, u * 0.05, u * 0.04, 0, 7); c.fill();
+  }
+  else if (st === "meander") { var p = [[0, 0], [0, 1], [1, 1], [1, 0.25], [0.25, 0.25], [0.25, 0.75], [0.75, 0.75], [0.75, 0.5], [0.5, 0.5]]; c.lineJoin = "miter"; c.lineCap = "butt"; c.beginPath(); p.forEach(function (q, j) { c[j ? "lineTo" : "moveTo"](q[0] * u, q[1] * u * 0.9); }); c.stroke(); }
+  else if (st === "mayan") {
+    var s = [[0, 0], [0, 0.22], [0.14, 0.22], [0.14, 0.45], [0.28, 0.45], [0.28, 0.7], [0.72, 0.7], [0.72, 0.45], [0.86, 0.45], [0.86, 0.22], [1, 0.22], [1, 0]];
+    c.lineJoin = "miter"; c.lineCap = "butt"; c.beginPath(); s.forEach(function (q, j) { c[j ? "lineTo" : "moveTo"](q[0] * u, q[1] * u); }); c.closePath(); if (filled) { c.globalAlpha *= 0.45; c.fill(); c.globalAlpha /= 0.45; } c.stroke();
+    var e = [[0.38, 0.55], [0.38, 0.3], [0.62, 0.3], [0.62, 0.55]]; c.beginPath(); e.forEach(function (q, j) { c[j ? "lineTo" : "moveTo"](q[0] * u, q[1] * u); }); c.stroke(); c.fillRect(u * 0.46, u * 0.4, u * 0.08, u * 0.08);
+  }
+  else if (st === "chain") { var rx = odd ? u * 0.5 : u * 0.22; if (odd && c2) { c.save(); c.strokeStyle = c2; } c.beginPath(); c.ellipse(u * 0.5, u * 0.34, rx, u * 0.28, 0, 0, Math.PI * 2); if (filled && !odd) { c.globalAlpha *= 0.4; c.fill(); c.globalAlpha /= 0.4; } c.stroke(); if (odd && c2) c.restore(); }
+  else if (st === "arches") { c.beginPath(); c.moveTo(u * 0.04, 0); c.lineTo(u * 0.04, u * 0.38); c.quadraticCurveTo(u * 0.1, u * 0.78, u * 0.5, u * 0.98); c.quadraticCurveTo(u * 0.9, u * 0.78, u * 0.96, u * 0.38); c.lineTo(u * 0.96, 0); if (filled) { c.globalAlpha *= 0.3; c.fill(); c.globalAlpha /= 0.3; } c.stroke(); c.beginPath(); c.moveTo(u * 0.2, 0); c.lineTo(u * 0.2, u * 0.36); c.quadraticCurveTo(u * 0.24, u * 0.62, u * 0.5, u * 0.76); c.quadraticCurveTo(u * 0.76, u * 0.62, u * 0.8, u * 0.36); c.lineTo(u * 0.8, 0); c.stroke(); }
+  else if (st === "starchain") { c.save(); c.translate(u * 0.5, u * 0.38); c.beginPath(); for (i = 0; i < 10; i++) { a = -Math.PI / 2 + i * Math.PI / 5; var r = i % 2 ? u * 0.17 : u * 0.38; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); if (filled) c.fill(); else c.stroke(); c.restore(); c.beginPath(); c.arc(0, u * 0.38, u * 0.05, 0, 7); c.fill(); }
+  else if (st === "diachain") { c.beginPath(); c.moveTo(u * 0.5, u * 0.02); c.lineTo(u * 0.82, u * 0.4); c.lineTo(u * 0.5, u * 0.78); c.lineTo(u * 0.18, u * 0.4); c.closePath(); if (filled) { c.globalAlpha *= 0.5; c.fill(); c.globalAlpha /= 0.5; } c.stroke(); c.beginPath(); c.moveTo(u * 0.5, u * 0.2); c.lineTo(u * 0.66, u * 0.4); c.lineTo(u * 0.5, u * 0.6); c.lineTo(u * 0.34, u * 0.4); c.closePath(); c.stroke(); c.beginPath(); c.arc(0, u * 0.4, u * 0.045, 0, 7); c.fill(); }
+}
+/* a corner piece at (0, 0), turned to sit in the corner (+x and +y point into the page) */
+function akBdCorner(c, kind, u, filled, c2) {
+  var i, a, t;
+  c.save(); c.translate(u * 0.5, u * 0.5);
+  if (kind === "square") { c.beginPath(); c.rect(-u * 0.4, -u * 0.4, u * 0.8, u * 0.8); if (filled) { c.globalAlpha *= 0.5; c.fill(); c.globalAlpha /= 0.5; } c.stroke(); c.beginPath(); c.rect(-u * 0.2, -u * 0.2, u * 0.4, u * 0.4); c.fill(); }
+  else if (kind === "diamond") { c.beginPath(); c.moveTo(0, -u * 0.5); c.lineTo(u * 0.5, 0); c.lineTo(0, u * 0.5); c.lineTo(-u * 0.5, 0); c.closePath(); if (filled) { c.globalAlpha *= 0.5; c.fill(); c.globalAlpha /= 0.5; } c.stroke(); c.beginPath(); c.arc(0, 0, u * 0.12, 0, 7); c.fill(); }
+  else if (kind === "dot") { c.beginPath(); c.arc(0, 0, u * 0.3, 0, 7); c.fill(); c.beginPath(); c.arc(0, 0, u * 0.46, 0, 7); c.stroke(); }
+  else if (kind === "star") { c.beginPath(); for (i = 0; i < 16; i++) { a = -Math.PI / 2 + i * Math.PI / 8; var r = i % 2 ? u * 0.17 : u * 0.5; c.lineTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); if (filled) c.fill(); else c.stroke(); c.beginPath(); c.arc(0, 0, u * 0.07, 0, 7); c.fill(); }
+  else if (kind === "flourish") { [1, -1].forEach(function (d) { c.beginPath(); for (t = 0; t <= 1; t += 0.05) { a = t * Math.PI * 3.3; var rr = u * 0.34 * (1 - t * 0.85); c.lineTo(d * u * 0.18 + d * Math.cos(a) * rr * (d > 0 ? 1 : -1), -d * u * 0.18 + Math.sin(a) * rr); } c.stroke(); }); c.beginPath(); c.arc(0, 0, u * 0.09, 0, 7); c.fill(); }
+  c.restore();
+}
+(function () {
+  var NEWB = {}; AKG_BORDER_FAM.forEach(function (b) { NEWB[b[0]] = 1; });
+  var bo = akGfxBorder;
+  akGfxBorder = function (ctx, l, P) {
+    if (!NEWB[l.style]) return bo.apply(this, arguments);
+    var W = P.W, H = P.H, k = Math.min(W, H) / 1080, lw = Math.max(1, (l.lw || 6) * k * 0.5), ins = (l.inset == null ? 36 : l.inset) * k, col = l.color || P.accent || "#C8962E", c2 = l.color2 || "";
+    var st = l.style, ps = (l.ps == null ? 100 : l.ps) / 100, pg = (l.pg == null ? 100 : l.pg) / 100, cn = l.cn && l.cn !== "auto" ? l.cn : AKG_BORDER_CN[st], rl = l.rl == null ? 1 : l.rl;
+    var u0 = (46 + (l.lw || 6) * 2.4) * k * ps, filled = l.fl == null ? /regal|vine|starchain|mayan|scroll/.test(st) : !!l.fl;
+    var x = ins, y = ins, w = W - ins * 2, hh = H - ins * 2, cs = cn === "none" ? 0 : u0 * 1.25;
+    ctx.save(); ctx.globalAlpha = l.alpha == null ? 1 : l.alpha; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    function rect(d) { ctx.beginPath(); ctx.rect(x - d, y - d, w + d * 2, hh + d * 2); ctx.stroke(); }
+    if (rl >= 1) rect(0);
+    if (rl >= 2) { ctx.lineWidth = Math.max(1, lw * 0.6); rect(-u0 * 1.12); ctx.lineWidth = lw; }
+    /* the pieces along each edge: x, y of the start, the turn, the length */
+    [[x, y, 0, w], [x + w, y, Math.PI / 2, hh], [x + w, y + hh, Math.PI, w], [x, y + hh, -Math.PI / 2, hh]].forEach(function (e) {
+      var len = e[3] - cs * 2, step = u0 * pg, n = Math.max(1, Math.round(len / step)), su = len / n;
+      if (len < su * 0.5) return;
+      for (var q = 0; q < n; q++) { ctx.save(); ctx.translate(e[0], e[1]); ctx.rotate(e[2]); ctx.translate(cs + q * su, 0); var mu = Math.min(su / pg, su * 1.6); ctx.translate((su - mu) / 2, 0); akBdMotif(ctx, st, mu, filled, c2, q % 2); ctx.restore(); }
+    });
+    if (cs) [[x, y, 0], [x + w, y, Math.PI / 2], [x + w, y + hh, Math.PI], [x, y + hh, -Math.PI / 2]].forEach(function (e) { ctx.save(); ctx.translate(e[0], e[1]); ctx.rotate(e[2]); akBdCorner(ctx, cn, cs, filled, c2); ctx.restore(); });
+    ctx.restore();
+  };
+  /* the modifiers, right under the border choice */
+  var df = akGfxDecoFill;
+  akGfxDecoFill = function (d, X) {
+    df.apply(this, arguments);
+    try {
+      var b = akGfxDecoCfg(X.D).border; if (!NEWB[b.style]) return;
+      var sub = Array.prototype.filter.call(d.querySelectorAll(".akg-sub"), function (s) { return /^Shapes/.test(s.textContent); })[0], hold = h("div", { class: "akg-bdmods" });
+      hold.appendChild(h("div", { class: "akg-sub" }, "Change this border"));
+      hold.appendChild(X.slider("Pattern size", b.ps == null ? 100 : b.ps, 40, 300, 5, function (v) { if (v === 100) delete b.ps; else b.ps = v; }, function (v) { return v + "%"; }));
+      hold.appendChild(X.slider("Spacing", b.pg == null ? 100 : b.pg, 60, 250, 5, function (v) { if (v === 100) delete b.pg; else b.pg = v; }, function (v) { return v + "%"; }));
+      hold.appendChild(akGfxSelect("Corners", AKG_BORDER_CORNERS, b.cn || "auto", function (v) { if (v === "auto") delete b.cn; else b.cn = v; X.ch(true); }));
+      hold.appendChild(akGfxSelect("Lines", [["0", "Pattern only"], ["1", "A line along the pattern"], ["2", "Two lines"]], String(b.rl == null ? 1 : b.rl), function (v) { b.rl = Number(v); X.ch(true); }));
+      hold.appendChild(akGfxSelect("Look", [["auto", "The pattern's own"], ["1", "Filled in"], ["0", "Outline only"]], b.fl == null ? "auto" : String(b.fl), function (v) { if (v === "auto") delete b.fl; else b.fl = Number(v); X.ch(true); }));
+      hold.appendChild(h("div", { class: "fld" }, "Second color (some patterns)", colorPicker(b.color2 || "", function (c) { b.color2 = c || ""; X.ch(); })));
+      if (sub) sub.parentNode.insertBefore(hold, sub); else d.appendChild(hold);
+    } catch (e) { if (window.console) console.warn("ak18h border mods", e); }
+  };
+})();
+
+/* ---------------------------------------------------------------- backgrounds: gradients */
+function akGfxGradDefault() { return { t: "linear", a: 160, c: ["#2a1650", "#e6561f", "#ffb347"], n: 3, cx: 50, cy: 40, g: 0 }; }
+function akGfxGradPaint(ctx, g, x, y, w, h) {
+  var cs = (g.c || []).slice(0, g.n === 2 ? 2 : 3), i, gr, a = (g.a || 0) * Math.PI / 180, L = Math.hypot(w, h) / 2, cx = x + w * (g.cx == null ? 50 : g.cx) / 100, cy = y + h * (g.cy == null ? 50 : g.cy) / 100;
+  if (g.t === "radial") gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.hypot(w, h) * 0.75);
+  else if (g.t === "conic" && ctx.createConicGradient) gr = ctx.createConicGradient(a - Math.PI / 2, cx, cy);
+  else { var mx = x + w / 2, my = y + h / 2; gr = ctx.createLinearGradient(mx - Math.sin(a) * L, my + Math.cos(a) * L * -1, mx + Math.sin(a) * L, my + Math.cos(a) * L); }
+  cs.forEach(function (c, j) { gr.addColorStop(cs.length === 1 ? 0 : j / (cs.length - 1), c || "#000000"); });
+  if (g.t === "conic") gr.addColorStop(1, cs[0] || "#000000");
+  ctx.fillStyle = gr; ctx.fillRect(x, y, w, h);
+  if (g.g) { var n = akGfxCv(160, 160), nc = n.getContext("2d"), id = nc.createImageData(160, 160), r = akRng(5), q; for (q = 0; q < 160 * 160; q++) { var v = r() < 0.5 ? 0 : 255; id.data[q * 4] = id.data[q * 4 + 1] = id.data[q * 4 + 2] = v; id.data[q * 4 + 3] = Math.round(r() * 255 * g.g / 100 * 0.35); } nc.putImageData(id, 0, 0); ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.fillStyle = ctx.createPattern(n, "repeat"); ctx.fillRect(x, y, w, h); ctx.restore(); }
+}
+function akGfxGradControls(d, b, X) {
+  var g = b.grad = b.grad || akGfxGradDefault();
+  d.appendChild(akGfxSelect("Kind", [["linear", "Straight"], ["radial", "From a point"], ["conic", "Around a point"]], g.t, function (v) { g.t = v; X.ch(true); }));
+  if (g.t !== "radial") d.appendChild(X.slider("Angle", g.a || 0, 0, 360, 5, function (v) { g.a = v; }, function (v) { return v + "°"; }));
+  if (g.t !== "linear") { d.appendChild(X.slider("Point: left ↔ right", g.cx == null ? 50 : g.cx, 0, 100, 1, function (v) { g.cx = v; }, function (v) { return v + "%"; })); d.appendChild(X.slider("Point: up ↕ down", g.cy == null ? 50 : g.cy, 0, 100, 1, function (v) { g.cy = v; }, function (v) { return v + "%"; })); }
+  [0, 1, 2].forEach(function (i) { if (i === 2 && g.n === 2) return; d.appendChild(h("div", { class: "fld" }, ["First color", "Second color", "Third color"][i], colorPicker(g.c[i] || "#000000", function (c) { g.c[i] = c || "#000000"; X.ch(); }))); });
+  d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: g.n !== 2, onChange: function () { g.n = this.checked ? 3 : 2; X.ch(true); } }), "Three colors"));
+  d.appendChild(X.slider("Grain", g.g || 0, 0, 100, 5, function (v) { g.g = v; }, function (v) { return v ? v + "%" : "off"; }));
+  d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { var hue = Math.floor(Math.random() * 360), p = function (hh, s, l) { return "hsl(" + (hh % 360) + "," + s + "%," + l + "%)"; }; g.c = [p(hue, 60, 18), p(hue + 40 + Math.random() * 80, 75, 48), p(hue + 160 + Math.random() * 80, 80, 62)]; g.a = Math.floor(Math.random() * 72) * 5; X.ch(true); } }, "🎲 Random colors")));
+}
+
+akCss("akv187-h", ".akg-bdmods{margin:6px 0}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
