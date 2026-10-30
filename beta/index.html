@@ -30896,6 +30896,10 @@ akProgWheel = function (o) {
   /* a chord was chosen anywhere: into the picked cell (then on to the next beat), or just heard and remembered */
   function choose(c, how) {
     var k = key(), raw = typeof c === "string" ? c : akPwRaw(c, k), cc = typeof c === "string" ? akPwParse(c) : c;
+    /* 18.5: while a chord pop-up is open, a tap only auditions the chord; "Use in bar" (AKTRY.use) puts it in */
+    if (ws.sel && how !== "hear" && how !== "commit" && typeof AKPICK !== "undefined" && AKPICK.what && typeof AKTRY !== "undefined") {
+      AKTRY.raw = raw; akWsHear(raw, ws.shape); if (cc) ws.from = cc; if (typeof akTryPaint === "function") akTryPaint(); return;
+    }
     if (ws.sel && how !== "hear") {
       keep(); var bar = ws.secs[ws.sel.s].bars[ws.sel.b]; akWsPut(bar, ws.sel.t, raw, ws.shape || "");
       akWsHear(raw, ws.shape); ws.from = cc; pend = null;
@@ -30905,6 +30909,11 @@ akProgWheel = function (o) {
     }
     pend = raw; armed = ws.chordFirst !== false && how !== "midi"; spun = null; if (cc) ws.from = cc; akWsHear(raw, ws.shape); save(); draw();
   }
+  if (typeof AKTRY !== "undefined") AKTRY.use = function () {
+    var r = AKTRY.raw; if (!r) return false;
+    if (!ws.sel) { toast("Tap a square in the bars first."); return false; }
+    AKTRY.raw = ""; choose(r, "commit"); if (typeof akTryPaint === "function") akTryPaint(); return true;
+  };
   function cellTap(si, bi, t) {
     var bar = ws.secs[si].bars[bi], i = akWsFind(bar, t);
     if (armed && pend && !ws.paint) { keep(); akWsPut(bar, t, pend, ws.shape || ""); akWsHear(pend, ws.shape); var pc0 = akPwParse(pend); if (pc0) ws.from = pc0; armed = false; ws.sel = null; changed(); return; }
@@ -50648,7 +50657,7 @@ function akPickPaint(row) {
 }
 (function () {
   var put = akWsPut;
-  akWsPut = function () { var r = put.apply(this, arguments); if (AKPICK.what && !AKPICK.pin) setTimeout(function () { akPickSet(""); }, 120); return r; };
+  akWsPut = function () { return put.apply(this, arguments); }; /* 18.5: the pop-up stays open; see ak_v18e.js */
   var run = akColRun;
   akColRun = function (root) {
     run(root);
@@ -50964,6 +50973,111 @@ function akPayBadge() {
 akCss("akv184-pay", [
   ".akpay-banner{display:flex;gap:6px;align-items:center;margin:0 0 6px;padding:4px 8px;border:1px solid var(--accent,#c60);border-radius:6px;font-size:.8rem}.akpay-banner span{flex:1}",
   "html body .akpay-banner button:not(#ak){min-height:24px !important;height:24px !important;padding:0 8px !important;font-size:.74rem !important}"
+].join("\n"));
+
+/* ================================================================ ak_v18e: Write screen rework, part 1 (version 18.5)
+   - Chord pop-ups (Wheel / Suggestions) stay open: a tap on a chord only plays it and shows it in the pop-up; "✓ Use in bar" puts it in the
+     picked square, ✕ Close closes. (choose() in ak14_a.js asks AKTRY; the old 📌 is gone.)
+   - Sections tab: the bars (the chord grid) come first, then the Wheel / Suggestions row, then Play and tempo, then the Sections list.
+   - Condensed: no workshop heading, no side borders on the parts, smaller title, no Record button by the title (Recording has its own
+     window), no tempo button in the thin top bars (tempo sits in the Song drawer), the top icon buttons spread across the row.
+   - Windows (bars grid, lyrics, chords) are black by default with the theme around them; Settings › Write screen › Window background.
+   - Each part header is a coloured band so the parts read as parts. */
+
+AK_VERSION = "18.5";
+AK_WHATS_NEW = [
+  "Write: the chord pop-ups stay open. Tap a chord to hear it, ✓ Use in bar to put it in, ✕ to close. In Sections the bars come first, with Wheel / Suggestions under them and the Sections list below. Black windows by default (Settings › Write screen), no Record button by the title, tighter spacing, spread-out top buttons."
+].concat(AK_WHATS_NEW);
+
+var AKTRY = { raw: "", use: null };
+function akW185() {
+  var c = akW18b(); if (c.win !== "black" && c.win !== "theme") c.win = "black"; return c;
+}
+function akTryPaint() {
+  Array.prototype.forEach.call(document.querySelectorAll(".aktry"), function (t) {
+    var v = t.querySelector(".aktry-v"), u = t.querySelector(".aktry-use");
+    if (v) v.textContent = AKTRY.raw ? "Hearing " + AKTRY.raw : "Tap a chord to hear it";
+    if (u) { u.disabled = !AKTRY.raw; u.textContent = AKTRY.raw ? "✓ Use " + AKTRY.raw + " in bar" : "✓ Use in bar"; }
+  });
+}
+(function () {
+  var ps = akPickSet;
+  akPickSet = function (what) { AKTRY.raw = ""; ps.apply(this, arguments); akTryPaint(); };
+  var run = akColRun;
+  akColRun = function (root) {
+    run(root);
+    try {
+      var base = root && root.querySelectorAll ? root : document;
+      Array.prototype.forEach.call(base.querySelectorAll(".akws > .akws-pal > .akpick-x, .akws > .akws-main > .akpick-x"), function (x) {
+        if (x.querySelector(".aktry")) return;
+        x.appendChild(h("div", { class: "aktry" }, h("span", { class: "aktry-v" }, ""),
+          h("button", { type: "button", class: "aktry-use", onClick: function () { if (AKTRY.use) AKTRY.use(); } }, "✓ Use in bar")));
+      });
+      akTryPaint();
+      document.body.classList.toggle("akw-on", !!document.querySelector(".akw9"));
+      document.body.setAttribute("data-akwin", akW185().win);
+    } catch (e) { if (window.console) console.warn("ak185", e); }
+  };
+  var sx = akSettingsExtra5;
+  akSettingsExtra5 = function (c) {
+    var w = akW185();
+    c.select("Window background (Write)", function () { return w.win; }, function (v) { w.win = v; document.body.setAttribute("data-akwin", v); }, [["black", "Black windows, theme around them"], ["theme", "Theme colors everywhere"]]);
+    return sx.apply(this, arguments);
+  };
+  /* the thin top bars: no tempo button (the Play and tempo row has it, and the Song drawer holds the old one) */
+  var ap = akW18bApply;
+  akW18bApply = function (el) {
+    ap.apply(this, arguments);
+    try {
+      var bars = el.querySelector(".akw18-bars"), tb = bars && bars.children[2];
+      if (tb && /♩/.test(tb.textContent)) {
+        var panels = el.querySelectorAll(".akw18-panel"), tp = panels[2], sp = panels[0];
+        if (tp && sp) { while (tp.firstChild) sp.appendChild(tp.firstChild); tp.parentNode.removeChild(tp); }
+        bars.removeChild(tb);
+      }
+    } catch (e) { if (window.console) console.warn("ak185 top", e); }
+  };
+})();
+
+akCss("akv185", [
+  /* pop-up try strip */
+  ".aktry{display:flex;gap:6px;align-items:center;flex:1 1 100%;order:9}.aktry-v{flex:1;font-size:.8rem;opacity:.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+  "html body .aktry button.aktry-use:not(#ak){background:var(--accent,#c60) !important;color:#fff !important;font-weight:700;padding:0 12px !important;height:28px !important;min-height:28px !important}",
+  "html body .aktry button.aktry-use:disabled:not(#ak){opacity:.45}",
+  ".akpick-x{flex-wrap:wrap}.akpick-pin{display:none !important}",
+  /* Sections tab: bars first */
+  "[data-wsview=sections] .akws > *{order:9}",
+  "[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-gridwrap),[data-wsview=sections] .akws > .akws-gridwrap{order:1}",
+  "[data-wsview=sections] .akws > .akws-sel{order:2}",
+  "[data-wsview=sections] .akws > .akpickrow{order:3}",
+  "[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-tp),[data-wsview=sections] .akws > .akws-tp{order:4}",
+  "[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-strip),[data-wsview=sections] .akws > .akws-strip{order:5}",
+  "[data-wsview=sections] .akws > .akfold-bar:has(+ .akws-send),[data-wsview=sections] .akws > .akws-send{order:8}",
+  "[data-wsview=sections] .akws > .akpw-legend{order:8}",
+  "[data-wsview=sections] .akws{gap:3px}",
+  /* condensed: no heading, no side borders */
+  "details.card[data-wsview=sections]{border:0 !important;background:none !important;padding:0 !important;margin:0 !important;box-shadow:none !important}",
+  "details.card[data-wsview=sections] > summary,details.card[data-wsview=sections] > .akfold-parts{display:none !important}",
+  "body.akw-on .akw9-recbox{display:none !important}",
+  "body.akw-on .akw9-title{font-size:.95rem !important;padding:4px 8px !important;min-height:0 !important}",
+  "body.akw-on .akw9-head{gap:4px}",
+  "body.akw-on .akw9-card,body.akw-on details.card,body.akw-on .akw18-drawer,body.akw-on .akws-gridwrap,body.akw-on .akws-sel,body.akw-on .akws-pal{border-left:0 !important;border-right:0 !important;border-radius:0 !important}",
+  "body.akw-on .akw9-card,body.akw-on details.card{padding-left:2px !important;padding-right:2px !important}",
+  "body.akw-on .akws-gridwrap{padding:4px 2px !important}",
+  "body.akw-on .akws-clip,body.akw-on .akws-add{min-height:0 !important;height:auto !important;padding:3px 10px !important;font-size:.8rem !important}",
+  "body.akw-on .akws-strip{padding:0 0 3px !important}",
+  /* each part reads as a part: a coloured band for its header */
+  "body.akw-on .akws > .akfold-bar,body.akw-on .akw9-card > .akfold-bar{background:color-mix(in srgb,var(--accent,#c60) 24%,transparent) !important;border-left:4px solid var(--accent,#c60) !important;border-radius:0 !important;font-weight:700;padding:2px 8px !important;min-height:20px !important;margin:2px 0 0 !important}",
+  "body.akw-on .akws-gh{gap:3px 4px !important;margin:0 0 2px !important}",
+  "html body.akw-on .akws-gh select:not(#ak),html body.akw-on .akws-gh button:not(#ak){height:24px !important;min-height:0 !important;padding:0 6px !important;font-size:.72rem !important;margin:0 !important;line-height:1 !important}",
+  "html body.akw-on .akws-tp button:not(#ak),html body.akw-on .akws-tp select:not(#ak),html body.akw-on .akws-tp input:not(#ak){height:24px !important;min-height:0 !important;padding:0 8px !important;font-size:.76rem !important;margin:0 !important}",
+  "body.akw-on .akws-tp{gap:3px 4px !important}html body.akw-on .akws-tp input:not(#ak){width:52px !important;padding:0 4px !important;text-align:center}",
+  "body.akw-on .akws-sel{padding:2px 4px !important}body.akw-on .akws-selh{font-size:.8rem !important;line-height:1.25}body.akw-on .akws-selh b{font-size:.9rem !important}",
+  /* top row: icons spread out */
+  "body.akw-on .topbar{justify-content:space-between;gap:4px}body.akw-on .topbar .ttl{flex:0 1 auto}body.akw-on .topbar > button.icon{flex:1 1 38px;max-width:96px}",
+  /* black windows */
+  "body[data-akwin=black].akw-on .akws-gridwrap,body[data-akwin=black].akw-on .akw9-pad,body[data-akwin=black].akw-on .ak18-pane,body[data-akwin=black].akw-on .ak18-body{background:#000 !important;color:#eee !important;--fg:#eee;--line:#555}",
+  "body[data-akwin=black].akw-on .akw9-pad{border-color:#444 !important}"
 ].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
