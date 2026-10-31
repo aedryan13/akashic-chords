@@ -47587,7 +47587,7 @@ function akGfxRoll(D) {
     panel: D.panel, deco: akGfxDecoCfg(D), tfx: D.tfx || {}, tbeh: D.tbeh || null, tpos: D.tpos || "" }));
   /* layout */
   if (!lk.layout && (D.kind === "flyer" || D.kind === "week" || D.kind === "tip" || D.kind === "card" || D.kind === "web")) {
-    var mine = (D.kind === "flyer" ? AKGJ_FLY : D.kind === "week" ? AKGJ_WEEK : D.kind === "tip" ? AKG_SIGNS : D.kind === "web" ? AKG_WEBS : AKG_CARDS).map(function (f) { return f.id; }), all = AKG_LAYOUTS[D.kind].map(function (l) { return l[0]; }).filter(function (id) { return id !== "cal" && id !== D.layout && !((D.kind === "tip" || D.kind === "card" || D.kind === "web") && !akGfxFlySpec(id)); });
+    var mine = (D.kind === "flyer" ? AKGJ_FLY : D.kind === "week" ? AKGJ_WEEK : D.kind === "tip" ? AKG_SIGNS : D.kind === "web" ? akWbPool(D) : AKG_CARDS).map(function (f) { return f.id; }), all = AKG_LAYOUTS[D.kind].map(function (l) { return l[0]; }).filter(function (id) { return id !== "cal" && id !== D.layout && !((D.kind === "tip" || D.kind === "card" || D.kind === "web") && !akGfxFlySpec(id)) && !(D.kind === "web" && !akWbLayOk(D, id)); });
     var pool = R() < 0.6 ? mine.filter(function (id) { return id !== D.layout; }) : all, id = pick(pool.length ? pool : all), old = D.layout;
     if (id) { D.layout = id; akGfxLayoutSwitch(D, old, id); }
   }
@@ -52242,10 +52242,13 @@ document.addEventListener("pointermove", function () { try { akPopBelowDivider()
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
 AK_VERSION = "18.7t";
 AK_WHATS_NEW = [
+  "🔗 Links page: “No bio” now really hides the bio, you can choose which photo shows (or none), and you can design the page picture in the studio (Web graphics › Links page) with all the usual tools.",
+  "🗓 The public calendar can be designed in the studio too (Web graphics › Calendar), and Web graphics now has an obvious “What are you making?” row at the top.",
   "🌐 Web graphics: a new kind in the Graphics studio for website banners, page headers, share pictures and buttons, with 7 layouts. Syncopate is the default font.",
   "🗓 Public calendar for your website (Graphics tab › 🗓 Public calendar): a month calendar of your public shows to paste into your own site, tap a day for venue, address, time and a description. Fiery red/orange/yellow placeholder look; the final look comes later.",
   "🏷 Venue kinds (bar, restaurant, wine bar, winery…) with a default description each, plus one overall default (say “Dinner music”), used as the show description on the public calendar and request page. Set per venue or per kind.",
   "🔗 Links page: pick its look (colors, font, button shape, one or two columns) with a live preview.",
+  "🎨 Design your links page and website calendar in the Graphics studio: 🌐 Web graphics › What are you making? › 🔗 Links page or 🗓 Calendar. Photo, name and tagline on top (fiery colors and Syncopate to start), all the usual tools, then ✅ Use this as my links page / calendar picture. Also from 🎨 Design it in the studio on the Graphics tab.",
   "🌐 New in the Graphics studio: Web graphics. Banners, page headers, share pictures, a square, buttons and a tall banner for your website, in 7 layouts. Your name, tagline, website and next show fill in by themselves; 🌐 On it turns each line on or off. Effects, themes, 🎲, layers and export work as on the other designs.",
   "🔳 The QR codes library now sits right under My links page at the top of the Graphics tab (open by default), so it is easy to find.",
   "🔗 My links page is now at the top of the Graphics tab. Choose what people see after scanning your card QR code: heading, bio, which links show (website, social, booking, shows, tips) and your own extra links. Also reachable from 💼 On the card › All my links.",
@@ -55492,6 +55495,229 @@ function akGfxWebPanel(d, D, ch) {
 /* ---------------------------------------------------------------- help, what's new */
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Website banner, page header, share picture, web button", a: "Graphics studio › 🌐 Web graphics: banners (1600×500), page headers, share pictures (1200×630), a square, buttons and a tall banner, in 7 layouts. Your name, tagline, website and next show fill in by themselves; 🌐 On it turns each line on or off.", k: "web website banner header share picture og image button site page social cover", go: function () { akGfxOpen("web", null); } });
 
+/* ================================================================ 18.7x (2): what are you making? links page and calendar backdrops
+   - a chip row at the top of the studio (web kind): Banner, Page header, Share picture, Button, Tall banner, 🔗 Links page, 🗓 Calendar.
+   - two backdrop sizes with their own layouts (AKG_WEBS with back: "links" | "cal"): photo, name and tagline at the top, an empty zone below
+     where the real page puts its buttons or month grid (marked in the studio with a dashed line, not in the picture).
+   - "On my website": ✅ Use this as my links page / calendar picture -> settings().linkPage.bg / settings().webCal.bg (a JPEG data URL under 220 KB).
+   - akWebStudioOpen("links" | "cal") opens the studio on it (for the Graphics-tab cards). */
+[["weblinks", "Links page backdrop 1080×1920", 1080, 1920], ["webcal", "Calendar backdrop 1200×1000", 1200, 1000]].forEach(function (s) { AKG_SIZES.push(s); });
+AKG_KSIZES.web = AKG_KSIZES.web.concat(["weblinks", "webcal"]);
+if (typeof AKG_KIND_SHORT === "object") AKG_KIND_SHORT.web = "Web graphics";
+/* [id, chip label, size, layout to start from] */
+var AKWB_TARGETS = [["banner", "Banner", "webbanner", "w_center"], ["header", "Page header", "webheader", "w_photo"], ["share", "Share picture", "webshare", "w_full"],
+  ["button", "Button", "webbutton", "w_bar"], ["tall", "Tall banner", "webtall", "w_center"], ["links", "🔗 Links page", "weblinks", "l_photo"], ["cal", "🗓 Calendar", "webcal", "k_band"]];
+var AKWB_BACK = { weblinks: "links", webcal: "cal" };
+function akWbBack(D) { return AKWB_BACK[D && D.size] || ""; }
+function akWbLayOk(D, id) { var s = akGfxFlySpec(id); return !!s && !!s.web && (s.back || "") === akWbBack(D); }
+function akWbPool(D) { return AKG_WEBS.filter(function (f) { return akWbLayOk(D, f.id); }); }
+/* the empty zone where the live page draws its buttons or calendar */
+function akWbZone(back, W, H) { return back === "links" ? { x: W * 0.06, y: H * 0.4, w: W * 0.88, h: H * 0.57 } : back === "cal" ? { x: W * 0.035, y: H * 0.25, w: W * 0.93, h: H * 0.72 } : null; }
+function akWbTarget(D, t) {
+  var T = AKWB_TARGETS.filter(function (x) { return x[0] === t; })[0]; if (!T) return;
+  D.size = T[2];
+  if (!akWbLayOk(D, D.layout)) { var old = D.layout; D.layout = T[3]; akGfxLayoutSwitch(D, old, T[3]); }
+  if (akWbBack(D) && (!D.bg || D.bg.src !== "photo")) { try { var hd = akGfxHeads()[0]; if (hd) D.bg = { src: "photo", id: hd.id, color: (D.bg && D.bg.color) || "#1a0604", color2: "", zoom: 1, fx: 0.5, fy: 0.3, blur: 0 }; } catch (e) {} }
+}
+function akWbTargetOf(D) { return (AKWB_TARGETS.filter(function (x) { return x[2] === D.size; })[0] || [""])[0]; }
+
+/* ---------------------------------------------------------------- the backdrop layouts (fiery colors, Syncopate) */
+var AKWB_FIRE = { paper: "#1a0604", paper2: "#3b0d05", ink: "#fff3e0", a1: "#ff6a1a", a2: "#ffc83d", a3: "#d1221a" };
+function akWbP(o) { return Object.assign({}, AKWB_FIRE, { fonts: { title: WBF("Syncopate"), main: WBF("Syncopate"), small: WBF("Outfit") }, tw: 700, mw: 400, sw: 500 }, o || {}); }
+function akWbHead(B, x, y, w, h, o) {
+  o = o || {}; var I = B.I, C = B.C;
+  akWbStack(B, x, y, w, h, [
+    I.kick ? { id: "kicker", name: "Small heading", text: I.kick, k: 0.3, role: "small", o: { color: C.a2, weight: 700, spacing: B.W * 0.004 } } : null,
+    { id: "artist", name: "Name", text: B.U(I.artist), k: o.nk || 1.3, role: "title", lines: o.nl || 1, o: { color: o.nc || C.ink } },
+    { id: "rule", rule: true, k: 0.2, color: C.a1, w: 0.22 },
+    { id: "title", name: "Tagline", text: I.tag, k: 0.45, o: { color: o.tc || C.a2 } }], { align: o.align || "center" });
+}
+function akWbZoneShade(B, back, name) { var z = akWbZone(back, B.W, B.H); B.SH("zone", name, "rect", z.x, z.y, z.w, z.h, { color: "#000000", alpha: 0.22 }); }
+[
+  { id: "l_photo", back: "links", name: "Photo on top", tags: "photo", p: akWbP({ photo: true }),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.38;
+      B.BG(); B.PH(0, 0, W, T * 0.66); B.SH("edge", "Line", "rect", 0, T * 0.66, W, H * 0.006, { color: C.a1 });
+      akWbHead(B, W * 0.07, T * 0.71, W * 0.86, T * 0.27); akWbZoneShade(B, "links", "Button area");
+    } },
+  { id: "l_round", back: "links", name: "Round photo", tags: "photo elegant", p: akWbP({ photo: true }),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.38, d = T * 0.52, px = (W - d) / 2, py = T * 0.06;
+      B.BG(); B.SH("glow", "Glow", "circle", px - d * 0.25, py - d * 0.25, d * 1.5, d * 1.5, { color: C.a3, alpha: 0.35 });
+      B.SH("ring", "Ring around the photo", "ring", px - d * 0.05, py - d * 0.05, d * 1.1, d * 1.1, { color: C.a2, lw: d * 0.02 });
+      B.PH(px, py, d, d, { clip: "circle" });
+      akWbHead(B, W * 0.07, T * 0.64, W * 0.86, T * 0.34); akWbZoneShade(B, "links", "Button area");
+    } },
+  { id: "l_fire", back: "links", name: "Fire glow", tags: "bold dark", p: akWbP(),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.38;
+      B.BG(); B.SH("rays", "Sun rays", "rays", -W * 0.2, -T * 0.55, W * 1.4, T * 1.3, { color: C.a1, alpha: 0.28 });
+      B.SH("sun", "Sun", "circle", W / 2 - T * 0.2, T * 0.06, T * 0.4, T * 0.4, { color: C.a2, alpha: 0.9 });
+      B.SH("hills", "Hills", "hills", 0, T * 0.32, W, T * 0.2, { color: C.a3 });
+      akWbHead(B, W * 0.07, T * 0.56, W * 0.86, T * 0.42); akWbZoneShade(B, "links", "Button area");
+    } },
+  { id: "l_full", back: "links", name: "Full photo", tags: "photo dark", p: akWbP({ full: true, overlay: 20, ink: "#ffffff" }),
+    b: function (B) {
+      var W = B.W, H = B.H, T = H * 0.38;
+      B.BG(); B.SH("shade", "Shade", "rect", 0, T * 0.5, W, T * 0.5, { color: "#000000", alpha: 0.35 });
+      akWbHead(B, W * 0.07, T * 0.53, W * 0.86, T * 0.44); akWbZoneShade(B, "links", "Button area");
+    } },
+  { id: "k_band", back: "cal", name: "Name band", tags: "bold photo", p: akWbP({ photo: true }),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.23, d = T * 0.82;
+      B.BG(); B.SH("band", "Color band", "rect", 0, 0, W, T, { color: C.a3 }); B.SH("strip", "Strip", "rect", 0, T, W, H * 0.008, { color: C.a2 });
+      B.SH("ring", "Ring around the photo", "ring", W - d - W * 0.045, T * 0.06, d + W * 0.01, d + W * 0.01, { color: C.a2, lw: d * 0.03 });
+      B.PH(W - d - W * 0.04, T * 0.09, d, d, { clip: "circle" });
+      akWbHead(B, W * 0.05, T * 0.1, W - d - W * 0.14, T * 0.8, { align: "left", tc: C.a2 }); akWbZoneShade(B, "cal", "Calendar area");
+    } },
+  { id: "k_photo", back: "cal", name: "Photo strip", tags: "photo", p: akWbP({ photo: true }),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.23;
+      B.BG(); B.PH(0, 0, W, T); B.SH("shade", "Shade", "rect", 0, 0, W * 0.62, T, { color: "#000000", alpha: 0.45 }); B.SH("strip", "Line", "rect", 0, T, W, H * 0.008, { color: C.a1 });
+      akWbHead(B, W * 0.05, T * 0.1, W * 0.52, T * 0.8, { align: "left" }); akWbZoneShade(B, "cal", "Calendar area");
+    } },
+  { id: "k_fire", back: "cal", name: "Fire glow", tags: "bold dark", p: akWbP(),
+    b: function (B) {
+      var W = B.W, H = B.H, C = B.C, T = H * 0.23;
+      B.BG(); B.SH("rays", "Sun rays", "rays", -W * 0.1, -T * 0.6, W * 1.2, T * 1.6, { color: C.a1, alpha: 0.3 });
+      B.SH("line", "Line", "rect", W * 0.3, T * 0.97, W * 0.4, H * 0.006, { color: C.a2 });
+      akWbHead(B, W * 0.08, T * 0.08, W * 0.84, T * 0.84); akWbZoneShade(B, "cal", "Calendar area");
+    } },
+  { id: "k_full", back: "cal", name: "Full photo", tags: "photo dark", p: akWbP({ full: true, overlay: 25, ink: "#ffffff" }),
+    b: function (B) {
+      var W = B.W, H = B.H, T = H * 0.23;
+      B.BG(); B.SH("shade", "Shade", "rect", 0, 0, W, T, { color: "#000000", alpha: 0.35 });
+      akWbHead(B, W * 0.06, T * 0.1, W * 0.88, T * 0.8); akWbZoneShade(B, "cal", "Calendar area");
+    } }
+].forEach(function (f) { f.web = true; f.words = [["artist", "Name"], ["title", "Tagline"], ["kicker", "Small heading"]]; AKG_WEBS.push(f); AKG_LAYOUTS.web.push([f.id, f.name]); });
+AKGJ_LAY_OVL.l_photo = []; AKGJ_LAY_OVL.l_round = ["starfield"]; AKGJ_LAY_OVL.l_fire = ["bokeh"]; AKGJ_LAY_OVL.l_full = []; AKGJ_LAY_OVL.k_band = []; AKGJ_LAY_OVL.k_photo = []; AKGJ_LAY_OVL.k_fire = ["bokeh"]; AKGJ_LAY_OVL.k_full = [];
+
+(function () {
+  /* a layout that doesn't fit the size (say a banner layout on the links page) changes to one that does */
+  var L0 = akGfxLayers;
+  akGfxLayers = function (D) {
+    if (D && D.kind === "web" && !akWbLayOk(D, D.layout)) { var T = AKWB_TARGETS.filter(function (x) { return x[2] === D.size; })[0], id = T ? T[3] : (akWbPool(D)[0] || {}).id || "w_center", old = D.layout; D.layout = id; try { akGfxLayoutSwitch(D, old, id); } catch (e) {} }
+    return L0.apply(this, arguments);
+  };
+  /* the gallery shows the layouts for this size */
+  var g1 = akGfxGallery;
+  akGfxGallery = function (D, kind) {
+    if (kind !== "web") return g1.apply(this, arguments);
+    var keep = AKG_LAYOUTS.web; AKG_LAYOUTS.web = keep.filter(function (l) { return akWbLayOk(D, l[0]); });
+    try { return g1.apply(this, arguments); } finally { AKG_LAYOUTS.web = keep; }
+  };
+  /* the studio marks the empty zone (not part of the picture) */
+  var ps0 = akGfxPaintSel;
+  akGfxPaintSel = function (ctx, P, st, k) {
+    var r = ps0.apply(this, arguments);
+    try {
+      var D = st.X && st.X.D, back = D && D.kind === "web" ? akWbBack(D) : "", z = back && akWbZone(back, P.W, P.H);
+      if (z) {
+        ctx.save(); ctx.setLineDash([12 / k, 8 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.strokeRect(z.x, z.y, z.w, z.h);
+        ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.font = "600 " + Math.round(13 / k) + "px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(back === "links" ? "Your link buttons go here" : "Your month calendar goes here", z.x + z.w / 2, z.y + z.h / 2);
+        ctx.fillText("(this line is not in the picture)", z.x + z.w / 2, z.y + z.h / 2 + 18 / k); ctx.restore();
+      }
+    } catch (e) {}
+    return r;
+  };
+  /* What are you making? at the top of the studio, and the website button for the backdrops */
+  var v0 = AK_VIEWS.gfx;
+  AK_VIEWS.gfx = function () {
+    var wrap = v0.apply(this, arguments);
+    try { if (S.gfxKind === "web") { var top = wrap.querySelector(".akg-top"), X = akGfxState().X; if (top && X && !top.querySelector(".akwb-what")) top.insertBefore(akWbTopBox(X), top.firstChild); } } catch (e) {}
+    return wrap;
+  };
+})();
+function akWbTopBox(X) {
+  var box = h("div", { class: "akwb-what", "data-bk": "web-what" });
+  function draw() {
+    box.textContent = ""; var D = X.D, cur = akWbTargetOf(D), back = akWbBack(D);
+    box.appendChild(h("div", { class: "akwb-q" }, "What are you making?"));
+    box.appendChild(h("div", { class: "akwb-chips", role: "group", "aria-label": "What are you making?" }, AKWB_TARGETS.map(function (t) {
+      var on = cur === t[0];
+      return h("button", { type: "button", class: "sm akwb-chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "data-target": t[0], onClick: function () {
+        if (on) return; akWbTarget(D, t[0]); akGfxState().sel = ""; X.ch(true); draw();
+      } }, t[1]);
+    })));
+    if (back) box.appendChild(akWbUseRow(D, back, draw));
+  }
+  draw();
+  return box;
+}
+/* ---------------------------------------------------------------- On my website: use the design as the page's picture */
+function akWbSlot(back) { var s = settings(); if (back === "links") { if (!s.linkPage || typeof s.linkPage !== "object") s.linkPage = {}; return s.linkPage; } if (!s.webCal || typeof s.webCal !== "object") s.webCal = {}; return s.webCal; }
+function akWbInUse(back) { var c = akWbSlot(back); return typeof c.bg === "string" && /^data:image\//.test(c.bg); }
+/* the design now in the studio -> a JPEG data URL under 220 KB */
+function akWbJpeg(X, back) {
+  var D = X.D, maxW = back === "links" ? 900 : 1000;
+  var pP = X.base && X.base() ? Promise.resolve(akGfxBake(X.base(), D.edit)) : akGfxPrepare(akGfxLayers(D), D).then(function (P) { return akGfxBake(P, D.edit); });
+  return pP.then(function (P) {
+    var cv = akPosterCanvas(P, null, Math.min(1, maxW / P.W)), q = 0.7, url = cv.toDataURL("image/jpeg", q), n = 0;
+    while (url.length * 0.75 > 220 * 1024 && n++ < 20) {
+      if (q > 0.45) q -= 0.08;
+      else { var c2 = document.createElement("canvas"); c2.width = Math.round(cv.width * 0.85); c2.height = Math.round(cv.height * 0.85); c2.getContext("2d").drawImage(cv, 0, 0, c2.width, c2.height); cv = c2; q = 0.62; }
+      url = cv.toDataURL("image/jpeg", q);
+    }
+    return url;
+  });
+}
+function akWbUse(X, back) {
+  return akWbJpeg(X, back).then(function (url) {
+    akWbSlot(back).bg = url; save(); try { akLinkPublishSoon(); } catch (e) {}
+    toast(back === "links" ? "Your links page now uses this picture." : "Your calendar now uses this picture.");
+    return url;
+  });
+}
+function akWbUnuse(back) { delete akWbSlot(back).bg; save(); try { akLinkPublishSoon(); } catch (e) {} toast("Picture taken off."); }
+function akWbUseRow(D, back, redraw) {
+  var X = akGfxState().X, inUse = akWbInUse(back), what = back === "links" ? "links page" : "calendar";
+  var btn = h("button", { type: "button", class: "primary sm akwb-use", onClick: function () {
+    var b = this; b.disabled = true; b.textContent = "Making the picture…";
+    akWbUse(akGfxState().X || X, back).then(function () { redraw(); refreshPanel(); }, function (e) { b.disabled = false; b.textContent = "✅ Use this as my " + what + " picture"; toast("Couldn't make the picture: " + (e && e.message || e)); });
+  } }, "✅ Use this as my " + what + " picture");
+  return h("div", { class: "akwb-userow" }, btn,
+    h("span", { class: "akwb-state" + (inUse ? " on" : "") }, inUse ? "✓ A picture is in use" : "Not in use yet"),
+    inUse ? h("button", { type: "button", class: "sm", onClick: function () { akWbUnuse(back); redraw(); refreshPanel(); } }, "Take the picture off") : null);
+}
+function refreshPanel() { try { var X = akGfxState().X; if (X && X.drawPanel) X.drawPanel(); } catch (e) {} }
+/* the 🌐 On it panel gets an On my website section on top for the backdrops */
+(function () {
+  var p0 = akGfxWebPanel;
+  akGfxWebPanel = function (d, D, ch) {
+    var back = akWbBack(D);
+    if (back) {
+      var sec = h("div", { class: "akwb-site", "data-bk": "web-site" }, h("div", { class: "akg-sub" }, "On my website"),
+        h("p", { class: "hint" }, back === "links" ? "Your link buttons sit in the lower part of the picture (the dashed box in the studio). Keep your photo, name and tagline in the top part." : "Your month calendar sits in the lower three quarters (the dashed box in the studio). Keep your photo, name and tagline in the top band."));
+      sec.appendChild(akWbUseRow(D, back, function () { var n = d.querySelector(".akwb-site"); if (n) { var fresh = h("div"); akGfxWebPanel(fresh, D, ch); var s2 = fresh.querySelector(".akwb-site"); if (s2) n.replaceWith(s2); } }));
+      d.appendChild(sec);
+      d.appendChild(h("p", { class: "hint" }, "Words on the picture:"));
+      var w = akWbGet(D), I = akGfxFlyInfo(D);
+      [["tag", "Tagline", true, I.tx("title", (akArtist() || {}).tagline || "Live music")], ["kick", "Small heading", false, I.tx("kicker", "") || "Type it in ✎ Words"]].forEach(function (r) {
+        var on = w[r[0]] != null ? !!w[r[0]] : r[2];
+        d.appendChild(h("label", { class: "akg-row chk" + (on ? "" : " off") }, h("input", { type: "checkbox", checked: on, onChange: function () { w[r[0]] = this.checked; save(); ch(true); } }), h("div", { class: "grow" }, h("div", { class: "t" }, r[1]), h("div", { class: "s" }, r[3]))));
+      });
+      return;
+    }
+    return p0.apply(this, arguments);
+  };
+})();
+/* open the studio on a links page or calendar picture (called from the Graphics-tab cards) */
+function akWebStudioOpen(which) {
+  var t = which === "cal" ? "cal" : "links", D = akGfxDesign("web");
+  akWbTarget(D, t); var st = akGfxState(); st.sel = ""; st.cat = "what"; var c = akGfxCfg(); c.kind = "web"; c.open = c.open || {}; c.open.what = true; save();
+  go("gfx", { gfxKind: "web", gfxGig: "" });
+}
+akCss("akv187-r2", ".akwb-what{padding:2px 0 6px}.akwb-q{font-weight:700;font-size:13px;margin:0 0 4px}" +
+  ".akwb-chips{display:flex;flex-wrap:wrap;gap:4px}.akg-top .akwb-chips button.akwb-chip{min-height:28px;min-width:0;padding:2px 7px;font-size:12px;border-radius:6px;line-height:1.1;margin:0}" +
+  ".akwb-chip.on,.akwb-chip[aria-pressed=true]{outline:2px solid var(--accent,#00B7FF);outline-offset:0;font-weight:700}" +
+  ".akwb-userow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:5px}.akwb-userow button.akwb-use{min-height:32px;padding:3px 10px;font-size:13px;margin:0}.akwb-state{font-size:12px;opacity:.8}.akwb-state.on{color:#3ecf6e;opacity:1;font-weight:700}" +
+  ".akwb-site{margin-bottom:8px}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Design my links page picture (what people see after scanning)", a: "Graphics tab › 🔗 My links page › 🎨 Design it in the studio, or Graphics studio › 🌐 Web graphics › What are you making? › 🔗 Links page. Pick a layout, photo, overlays, border and effects, then ✅ Use this as my links page picture. The link buttons sit in the lower part.", k: "links page picture background backdrop design photo linktree studio web", go: function () { akWebStudioOpen("links"); } });
+  AK_HELP_WHERE.push({ t: "Design my website calendar picture", a: "Graphics studio › 🌐 Web graphics › What are you making? › 🗓 Calendar (or 🎨 Design it in the studio on the calendar card). Your photo and name sit in the top band; the month grid sits below. Then ✅ Use this as my calendar picture.", k: "calendar website picture background backdrop design public calendar studio web", go: function () { akWebStudioOpen("cal"); } });
+}
+
 /* ================= 18.7x: website pieces from the app =================
    1. Venue categories (bar, restaurant...) with a default description each; a default description for all shows.
       settings().webCal = { def, cats: { <cat>: text }, c1,c2,c3,bg,fg, font, title }
@@ -55523,7 +55749,9 @@ function akWcDesc(venueName, own) {
   akLivePublicProfile = function () {
     var p = prof.apply(this, arguments), c = akWcCfg();
     p.cal = { c1: c.c1, c2: c.c2, c3: c.c3, bg: c.bg, fg: c.fg, font: c.font, title: c.title || "" };
-    p.lp = p.lp || {}; p.lp.st = Object.assign({}, akLinkCfg().st || {});
+    var lc = akLinkCfg(); p.lp = p.lp || {}; p.lp.st = Object.assign({}, lc.st || {});
+    if (lc.bg) p.lp.bg = lc.bg; if (c.bg) p.cal.bg = c.bg;
+    if (lc.photo === "none") p.lp.photo = "none"; else if (lc.photo) { var ph = akLpPhotoData(lc.photo); if (ph) p.lp.photo = ph; }
     return p;
   };
 })();
@@ -55620,6 +55848,46 @@ if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Venue kinds (bar, restaurant, wine bar…) and show descriptions", a: "Graphics tab › 🗓 Public calendar › 🏷 What each kind of place usually is, and 📍 My venues to pick each venue's kind. Used for the description on the public calendar.", k: "venue category description bar restaurant wine bar", go: function () { var c = settings().gfxHub = settings().gfxHub || { open: {} }; c.open.pcal = true; go("graphics"); } });
   AK_HELP_WHERE.push({ t: "Change the look of my links page and see a preview", a: "Graphics tab › 🔗 My links page › 🎨 Look of the page: preview, colors, font, button shape, one or two columns, photo on or off.", k: "links page preview look design colors font buttons", go: function () { akOpenLinksPage(); } });
 }
+
+/* ---------------------------------------------------------------- which photo the links page uses */
+var AKLP_PH = {};
+function akLpPhotoData(id) {
+  if (AKLP_PH[id]) return AKLP_PH[id] === "x" ? "" : AKLP_PH[id];
+  AKLP_PH[id] = "x";
+  akGfxImgLoad(id).then(function (im) {
+    var k = Math.min(1, 240 / Math.max(im.naturalWidth || 1, im.naturalHeight || 1)), cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k));
+    cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); AKLP_PH[id] = cv.toDataURL("image/jpeg", 0.8); akWcPublishSoon();
+  }, function () {});
+  return "";
+}
+function akLpPhotoBlock() {
+  var lc = akLinkCfg(), d = h("div", { class: "fld" }, "Photo at the top of the page");
+  var pics = (typeof akGfxLib === "function" ? akGfxLib() : []).filter(function (x) { return x.al === "head" && IMG[x.id]; });
+  var opts = [["", "My main photo (Artist info)"], ["none", "No photo"]].concat(pics.map(function (x) { return [x.id, x.name || "Headshot"]; }));
+  d.appendChild(h("select", { "aria-label": "Photo for the links page", onChange: function () { if (this.value) lc.photo = this.value; else delete lc.photo; save(); if (lc.photo && lc.photo !== "none") akLpPhotoData(lc.photo); akWcPublishSoon(); render(); } }, opts.map(function (o) { return h("option", { value: o[0], selected: (lc.photo || "") === o[0] }, o[1]); })));
+  if (!pics.length) d.appendChild(h("p", { class: "hint" }, "Add headshots in My pictures › Headshots and they show up here."));
+  return d;
+}
+(function () {
+  var f1 = akLpDesignBlock;
+  akLpDesignBlock = function () { var d = f1.apply(this, arguments); d.insertBefore(akLpPhotoBlock(), d.children[2] || null); return d; };
+  var f2 = akLinksPageCard;
+  akLinksPageCard = function () {
+    var d = f2.apply(this, arguments), lc = akLinkCfg();
+    var row = h("div", { class: "row" }, h("button", { class: "sm primary", onClick: function () { if (typeof akWebStudioOpen === "function") akWebStudioOpen("links"); else toast("The studio isn't ready yet."); } }, "🎨 Design it in the studio"),
+      lc.bg ? h("span", { class: "hint" }, "A studio picture is in use.") : null);
+    var sm = d.querySelector("p.hint"); d.insertBefore(row, sm ? sm.nextSibling : d.children[1]);
+    return d;
+  };
+  var f3 = akPublicCalCard;
+  akPublicCalCard = function () {
+    var d = f3.apply(this, arguments), c = akWcCfg();
+    var row = h("div", { class: "row" }, h("button", { class: "sm primary", onClick: function () { if (typeof akWebStudioOpen === "function") akWebStudioOpen("cal"); else toast("The studio isn't ready yet."); } }, "🎨 Design it in the studio"),
+      c.bg ? h("span", { class: "hint" }, "A studio picture is in use.") : null);
+    var sm = d.querySelector("p.hint"); d.insertBefore(row, sm ? sm.nextSibling : d.children[1]);
+    return d;
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
