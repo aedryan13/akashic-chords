@@ -52242,8 +52242,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.8g";
+AK_VERSION = "18.8h";
 AK_WHATS_NEW = [
+  "🔍 Zoom slider in the Graphics studio: drag to zoom anywhere from 40% to 800%. It sits under the picture; the ⋯ on it moves it down the left side or hides it. − + and pinching still work.",
   "✨ Overlays get the Effects button back in the pop-up, and it opens the effects window under them.",
   "✨ Effects window from the pop-up now opens right under the part you tapped (or above it if there is no room). Overlays can't take effects, so they no longer offer the button.",
   "✨ Effects button in the part pop-up: it says “Opening effects…”, checks the window really shows on screen, and if not, opens the effects in the panel and scrolls to them, telling you why.",
@@ -56144,6 +56145,59 @@ function akGfxPopEffects(X) {
   try { akFxWinClose(); var ui2 = akFxUi(); ui2.fxPop = false; save(); X.cat("fx"); X.refill("fx"); setTimeout(function () { try { var h2 = document.querySelector(".akfx-host") || document.querySelector('[data-cat="fx"]'); if (h2) h2.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e3) {} }, 150); } catch (e2) {}
   toast("Effects are in the panel below. (The window couldn't show: " + why + ")");
 }
+
+/* ---- 18.8h: a zoom slider for the Graphics studio. Under the picture (default), down the left side of it, or off (then the − + buttons are the only zoom).
+   The slider lives outside the tool row, which is redrawn on every zoom step, so dragging it is never interrupted. */
+function akZsMode() { var s = akFxUi(); return s.zoomBar || "under"; }
+function akZsSet(m) { akFxUi().zoomBar = m; save(); var st = akGfxState(); try { akGfxTools(document.querySelector(".akg-tools"), st.X); } catch (e) {} }
+function akZsPos(z) { return Math.round(Math.log(Math.max(AKG_ZMIN, Math.min(8, z)) / AKG_ZMIN) / Math.log(8 / AKG_ZMIN) * 1000); }
+function akZsZoom(v) { return AKG_ZMIN * Math.pow(8 / AKG_ZMIN, v / 1000); }
+(function () {
+  var t0 = akGfxTools;
+  akGfxTools = function (bar, X) {
+    t0.apply(this, arguments);
+    try {
+      var st = akGfxState(), mode = akZsMode(), z = st.zoom || 1, zg = bar.querySelector(".akg-zoom");
+      var zs = bar._zs;
+      if (mode === "off") { if (zs) { zs.remove(); bar._zs = null; } if (zg && !zg.querySelector(".akzs-back")) zg.appendChild(h("button", { type: "button", class: "sm akzs-back", title: "Show the zoom slider", "aria-label": "Show the zoom slider", onClick: function () { akZsSet("under"); } }, "⇕")); return; }
+      if (zg) [].slice.call(zg.querySelectorAll("button")).forEach(function (b) { if (b.getAttribute("aria-label") === "Zoom out" || b.getAttribute("aria-label") === "Zoom in") b.style.display = "none"; });
+      if (!zs) {
+        var rng = h("input", { type: "range", min: 0, max: 1000, step: 1, class: "akzs-r", "aria-label": "Zoom" });
+        var lab = h("span", { class: "akzs-v" });
+        rng.addEventListener("input", function () { var z2 = akZsZoom(+rng.value); lab.textContent = Math.round(z2 * 100) + "%"; zs._drag = Date.now(); akGfxState().X.zoomAt(z2); });
+        zs = h("div", { class: "akzs" },
+          h("button", { type: "button", class: "sm", title: "Zoom out a little", "aria-label": "Zoom out a little", onClick: function () { akGfxState().X.zoomAt((akGfxState().zoom || 1) / 1.15); } }, "−"),
+          rng,
+          h("button", { type: "button", class: "sm", title: "Zoom in a little", "aria-label": "Zoom in a little", onClick: function () { akGfxState().X.zoomAt((akGfxState().zoom || 1) * 1.15); } }, "+"),
+          lab,
+          h("button", { type: "button", class: "sm", title: "Whole picture", "aria-label": "See the whole picture", onClick: function () { var s2 = akGfxState(); s2.zoom = 1; s2.zc = null; s2.X.paint(); } }, "⤢"),
+          h("button", { type: "button", class: "sm", title: "Where the slider goes", "aria-label": "Where the zoom slider goes", onClick: function () { var m = akZsMode(); menu(this, [
+            { label: (m === "under" ? "✓ " : "") + "Under the picture", onClick: function () { akZsSet("under"); } },
+            { label: (m === "side" ? "✓ " : "") + "Down the left side", onClick: function () { akZsSet("side"); } },
+            { label: "Hide it (use − + or pinch)", onClick: function () { akZsSet("off"); } }]); } }, "⋯"));
+        zs._r = rng; zs._v = lab; bar._zs = zs;
+      }
+      var want = mode === "side" ? bar.parentNode : bar.parentNode;
+      zs.className = "akzs " + (mode === "side" ? "akzs-side" : "akzs-under");
+      var cvw = document.querySelector(".akg-cv"), host = mode === "side" && cvw ? cvw.parentNode : bar.parentNode;
+      if (mode === "side" && cvw) { if (getComputedStyle(host).position === "static") host.style.position = "relative"; if (zs.parentNode !== host) host.appendChild(zs); }
+      else if (zs.nextSibling !== bar || zs.parentNode !== bar.parentNode) bar.parentNode.insertBefore(zs, bar);
+      zs.classList.toggle("akzs-side", mode === "side" && cvw && zs.parentNode === host);
+      if (!zs._drag || Date.now() - zs._drag > 400) { zs._r.value = akZsPos(z); }
+      zs._v.textContent = Math.round(z * 100) + "%";
+    } catch (er) { try { console.warn("zoom slider", er); } catch (e) {} }
+  };
+})();
+akCss("akzs", [
+  ".akzs{display:flex;align-items:center;gap:6px;margin:6px 0 2px}",
+  ".akzs .akzs-r{flex:1 1 auto;min-width:80px;margin:0;height:30px;touch-action:pan-y}",
+  ".akzs .akzs-v{min-width:3.2em;text-align:center;font-size:13px}",
+  ".akzs button{min-height:30px;height:30px;padding:0 9px;font-size:13px}",
+  ".akzs.akzs-side{position:absolute;left:2px;top:8%;bottom:8%;margin:0;flex-direction:column;z-index:6;padding:4px 2px;border-radius:12px;background:rgba(0,0,0,.35)}",
+  ".akzs.akzs-side .akzs-r{writing-mode:vertical-lr;direction:rtl;width:28px;height:auto;flex:1 1 auto;min-width:0;min-height:60px}",
+  ".akzs.akzs-side .akzs-v{min-width:0;font-size:11px}",
+  ".akzs.akzs-side button{width:30px;padding:0}"
+].join("\n"));
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
