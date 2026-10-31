@@ -52242,6 +52242,8 @@ document.addEventListener("pointermove", function () { try { akPopBelowDivider()
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
 AK_VERSION = "18.7t";
 AK_WHATS_NEW = [
+  "🔗 Edit your links page as it looks now: Graphics › 🔗 My links page › 🎨 Design it in the studio opens it with your buttons as parts you can move, put side by side (Half width), reorder and give their own text size. “Use this as my links page picture” puts it live.",
+  "🔗 Links page buttons in the studio: 🎨 Design it in the studio opens your links page as it looks now, with every button as a part you can move and size. In 🌐 On it › My link buttons: order, Full or Half (put Instagram and Facebook side by side), Two per row, a text size for each button, Arrange them again. ✅ Use this as my links page picture puts the picture and the button layout on your page.",
   "🔗 Links page: “No bio” now really hides the bio, you can choose which photo shows (or none), and you can design the page picture in the studio (Web graphics › Links page) with all the usual tools.",
   "🗓 The public calendar can be designed in the studio too (Web graphics › Calendar), and Web graphics now has an obvious “What are you making?” row at the top.",
   "🌐 Web graphics: a new kind in the Graphics studio for website banners, page headers, share pictures and buttons, with 7 layouts. Syncopate is the default font.",
@@ -55506,7 +55508,7 @@ AKG_KSIZES.web = AKG_KSIZES.web.concat(["weblinks", "webcal"]);
 if (typeof AKG_KIND_SHORT === "object") AKG_KIND_SHORT.web = "Web graphics";
 /* [id, chip label, size, layout to start from] */
 var AKWB_TARGETS = [["banner", "Banner", "webbanner", "w_center"], ["header", "Page header", "webheader", "w_photo"], ["share", "Share picture", "webshare", "w_full"],
-  ["button", "Button", "webbutton", "w_bar"], ["tall", "Tall banner", "webtall", "w_center"], ["links", "🔗 Links page", "weblinks", "l_photo"], ["cal", "🗓 Calendar", "webcal", "k_band"]];
+  ["button", "Button", "webbutton", "w_bar"], ["tall", "Tall banner", "webtall", "w_center"], ["links", "🔗 Links page", "weblinks", "w_lpbtn"], ["cal", "🗓 Calendar", "webcal", "k_band"]];
 var AKWB_BACK = { weblinks: "links", webcal: "cal" };
 function akWbBack(D) { return AKWB_BACK[D && D.size] || ""; }
 function akWbLayOk(D, id) { var s = akGfxFlySpec(id); return !!s && !!s.web && (s.back || "") === akWbBack(D); }
@@ -55615,8 +55617,10 @@ AKGJ_LAY_OVL.l_photo = []; AKGJ_LAY_OVL.l_round = ["starfield"]; AKGJ_LAY_OVL.l_
       if (z) {
         ctx.save(); ctx.setLineDash([12 / k, 8 / k]); ctx.lineWidth = 2 / k; ctx.strokeStyle = "rgba(255,255,255,.85)"; ctx.strokeRect(z.x, z.y, z.w, z.h);
         ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.font = "600 " + Math.round(13 / k) + "px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(back === "links" ? "Your link buttons go here" : "Your month calendar goes here", z.x + z.w / 2, z.y + z.h / 2);
-        ctx.fillText("(this line is not in the picture)", z.x + z.w / 2, z.y + z.h / 2 + 18 / k); ctx.restore();
+        var hasB = P.layers.some(function (l) { return l.type === "gbtn"; });
+        if (hasB) { ctx.textBaseline = "bottom"; ctx.font = "600 " + Math.round(11 / k) + "px system-ui, sans-serif"; ctx.fillText("Live link buttons (tap to move)", z.x + z.w / 2, z.y - 3 / k); }
+        else { ctx.fillText(back === "links" ? "Your link buttons go here" : "Your month calendar goes here", z.x + z.w / 2, z.y + z.h / 2); ctx.fillText("(this line is not in the picture)", z.x + z.w / 2, z.y + z.h / 2 + 18 / k); }
+        ctx.restore();
       }
     } catch (e) {}
     return r;
@@ -55652,7 +55656,9 @@ function akWbInUse(back) { var c = akWbSlot(back); return typeof c.bg === "strin
 function akWbJpeg(X, back) {
   var D = X.D, maxW = back === "links" ? 900 : 1000;
   var pP = X.base && X.base() ? Promise.resolve(akGfxBake(X.base(), D.edit)) : akGfxPrepare(akGfxLayers(D), D).then(function (P) { return akGfxBake(P, D.edit); });
-  return pP.then(function (P) {
+  return pP.then(function (P0) {
+    var P = Object.assign({}, P0, { layers: P0.layers.filter(function (l) { return l.type !== "gbtn"; }) });
+    AKWB_LASTP = P0;
     var cv = akPosterCanvas(P, null, Math.min(1, maxW / P.W)), q = 0.7, url = cv.toDataURL("image/jpeg", q), n = 0;
     while (url.length * 0.75 > 220 * 1024 && n++ < 20) {
       if (q > 0.45) q -= 0.08;
@@ -55664,12 +55670,14 @@ function akWbJpeg(X, back) {
 }
 function akWbUse(X, back) {
   return akWbJpeg(X, back).then(function (url) {
-    akWbSlot(back).bg = url; save(); try { akLinkPublishSoon(); } catch (e) {}
+    var slot = akWbSlot(back); slot.bg = url;
+    if (back === "links") { var lay = AKWB_LASTP ? akWbBtnLayOf(AKWB_LASTP) : null; if (lay && lay.items.length) slot.btnLay = lay; else delete slot.btnLay; }
+    save(); try { akLinkPublishSoon(); } catch (e) {}
     toast(back === "links" ? "Your links page now uses this picture." : "Your calendar now uses this picture.");
     return url;
   });
 }
-function akWbUnuse(back) { delete akWbSlot(back).bg; save(); try { akLinkPublishSoon(); } catch (e) {} toast("Picture taken off."); }
+function akWbUnuse(back) { var slot = akWbSlot(back); delete slot.bg; delete slot.btnLay; save(); try { akLinkPublishSoon(); } catch (e) {} toast("Picture taken off."); }
 function akWbUseRow(D, back, redraw) {
   var X = akGfxState().X, inUse = akWbInUse(back), what = back === "links" ? "links page" : "calendar";
   var btn = h("button", { type: "button", class: "primary sm akwb-use", onClick: function () {
@@ -55691,6 +55699,7 @@ function refreshPanel() { try { var X = akGfxState().X; if (X && X.drawPanel) X.
         h("p", { class: "hint" }, back === "links" ? "Your link buttons sit in the lower part of the picture (the dashed box in the studio). Keep your photo, name and tagline in the top part." : "Your month calendar sits in the lower three quarters (the dashed box in the studio). Keep your photo, name and tagline in the top band."));
       sec.appendChild(akWbUseRow(D, back, function () { var n = d.querySelector(".akwb-site"); if (n) { var fresh = h("div"); akGfxWebPanel(fresh, D, ch); var s2 = fresh.querySelector(".akwb-site"); if (s2) n.replaceWith(s2); } }));
       d.appendChild(sec);
+      if (back === "links") akWbBtnPanel(d, D, ch);
       d.appendChild(h("p", { class: "hint" }, "Words on the picture:"));
       var w = akWbGet(D), I = akGfxFlyInfo(D);
       [["tag", "Tagline", true, I.tx("title", (akArtist() || {}).tagline || "Live music")], ["kick", "Small heading", false, I.tx("kicker", "") || "Type it in ✎ Words"]].forEach(function (r) {
@@ -55704,8 +55713,9 @@ function refreshPanel() { try { var X = akGfxState().X; if (X && X.drawPanel) X.
 })();
 /* open the studio on a links page or calendar picture (called from the Graphics-tab cards) */
 function akWebStudioOpen(which) {
-  var t = which === "cal" ? "cal" : "links", D = akGfxDesign("web");
-  akWbTarget(D, t); var st = akGfxState(); st.sel = ""; st.cat = "what"; var c = akGfxCfg(); c.kind = "web"; c.open = c.open || {}; c.open.what = true; save();
+  var t = which === "cal" ? "cal" : "links", D = akGfxDesign("web"), fresh = D.size !== (t === "cal" ? "webcal" : "weblinks");
+  akWbTarget(D, t);
+  if (t === "links" && (fresh || D.layout !== "w_lpbtn" && !akWbLayOk(D, D.layout))) akWbFromPreview(D); var st = akGfxState(); st.sel = ""; st.cat = "what"; var c = akGfxCfg(); c.kind = "web"; c.open = c.open || {}; c.open.what = true; save();
   go("gfx", { gfxKind: "web", gfxGig: "" });
 }
 akCss("akv187-r2", ".akwb-what{padding:2px 0 6px}.akwb-q{font-weight:700;font-size:13px;margin:0 0 4px}" +
@@ -55717,6 +55727,154 @@ if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Design my links page picture (what people see after scanning)", a: "Graphics tab › 🔗 My links page › 🎨 Design it in the studio, or Graphics studio › 🌐 Web graphics › What are you making? › 🔗 Links page. Pick a layout, photo, overlays, border and effects, then ✅ Use this as my links page picture. The link buttons sit in the lower part.", k: "links page picture background backdrop design photo linktree studio web", go: function () { akWebStudioOpen("links"); } });
   AK_HELP_WHERE.push({ t: "Design my website calendar picture", a: "Graphics studio › 🌐 Web graphics › What are you making? › 🗓 Calendar (or 🎨 Design it in the studio on the calendar card). Your photo and name sit in the top band; the month grid sits below. Then ✅ Use this as my calendar picture.", k: "calendar website picture background backdrop design public calendar studio web", go: function () { akWebStudioOpen("cal"); } });
 }
+
+/* ================================================================ 18.7y: the links page buttons as studio layers
+   "gbtn" layer { id, name, type:"gbtn", key, label, x, y, w, h, fs, fill, color, radius, font, outline } (fs = font px in design units).
+   D.web.btns = { order: [key…], it: { <key>: { half, fs, fill } } }. The arranger flows them into rows from the empty zone down;
+   a hand move or resize is a D.edit offset as for every part ("Arrange them again" clears those).
+   ✅ Use this as my links page picture also stores settings().linkPage.btnLay = { W, H, items: [{ key, label, x, y, w, h, fs }], fill, color, radius, font, outline }. */
+var AKWB_LASTP = null;
+AKG_TYPES.gbtn = 1; AKG_TYPES2.gbtn = 1;
+function akWbLpSt() { var s = typeof akLpStyle === "function" ? akLpStyle() : ((akLinkCfg().st) || {}); return { bg: s.bg || "#1a0d0a", fg: s.fg || "#fff4e6", btn: s.btn || "#E8412C", btnfg: s.btnfg || "#ffffff", font: s.font || "syncopate", shape: s.shape || "soft", layout: s.layout || "list", logo: s.logo !== false }; }
+function akWbLpFont(f) { return f === "serif" ? WBF("Playfair Display") : f === "system" ? WBF("Outfit") : WBF("Syncopate"); }
+function akWbLpRadius(shape) { return shape === "round" ? 999 : shape === "square" ? 0 : 22; }
+/* the same entries, labels and order as the preview (akLpPreview); keys as in settings().linkPage.off, extras "x<i>" */
+function akWbLpItems() {
+  var lc = akLinkCfg(), off = lc.off || {}, p = {}, out = []; try { p = akLivePublicProfile() || {}; } catch (e) {}
+  if (p.website && !off.web) out.push({ key: "web", label: "🌐 Website" });
+  (p.links || []).forEach(function (l, i) { if (l && l.url && !off["s" + i]) out.push({ key: "s" + i, label: l.label || "Link" }); });
+  (lc.extra || []).forEach(function (l, i) { if (l && l.url) out.push({ key: "x" + i, label: l.label || "Link" }); });
+  if (p.booking && p.booking.on && !off.book) out.push({ key: "book", label: "📅 Book me" });
+  if ((p.shows || []).length && !off.shows) out.push({ key: "shows", label: "🎤 Upcoming shows" });
+  (p.pay || []).forEach(function (x, i) { if (x && x.url && !off["p" + i]) out.push({ key: "p" + i, label: "💵 Tip with " + (x.label || x.kind || "a link") }); });
+  return out;
+}
+function akWbBtnCfg(D) { var w = akWbGet(D), b = w.btns; if (!b || typeof b !== "object") b = w.btns = {}; if (!Array.isArray(b.order)) b.order = []; if (!b.it || typeof b.it !== "object") b.it = {}; return b; }
+/* the buttons in their order: the saved order first, new ones after */
+function akWbBtnList(D) {
+  var b = akWbBtnCfg(D), all = akWbLpItems(), by = {}, out = [];
+  all.forEach(function (it) { by[it.key] = it; });
+  b.order.forEach(function (k) { if (by[k]) { out.push(by[k]); delete by[k]; } });
+  all.forEach(function (it) { if (by[it.key]) out.push(it); });
+  var def = akWbLpSt().layout === "grid";
+  out.forEach(function (it) { var c = b.it[it.key] || {}; it.half = c.half != null ? !!c.half : def; it.fs = c.fs || 38; it.fill = c.fill || ""; });
+  return out;
+}
+/* rows: two Half buttons in a row share it, a Full button takes a row */
+function akWbFlow(list, W, H) {
+  var z = akWbZone("links", W, H), gap = 16, rows = [], i = 0;
+  while (i < list.length) { if (list[i].half && list[i + 1] && list[i + 1].half) { rows.push([list[i], list[i + 1]]); i += 2; } else { rows.push([list[i]]); i++; } }
+  var bh = 110; if (rows.length) bh = Math.max(56, Math.min(110, (z.h - gap * (rows.length - 1)) / rows.length));
+  var y = z.y, out = [];
+  rows.forEach(function (r) {
+    if (r.length === 2) { var hw = (z.w - gap) / 2; out.push({ it: r[0], x: z.x, y: y, w: hw, h: bh }); out.push({ it: r[1], x: z.x + hw + gap, y: y, w: hw, h: bh }); }
+    else out.push({ it: r[0], x: r[0].half ? z.x + z.w / 4 : z.x, y: y, w: r[0].half ? (z.w - gap) / 2 : z.w, h: bh });
+    y += bh + gap;
+  });
+  return out;
+}
+function akWbBtnLayers(B) {
+  var D = AKGJ.D; if (!D || akWbBack(D) !== "links") return;
+  var st = akWbLpSt(), fl = akWbFlow(akWbBtnList(D), B.W, B.H), out = st.shape === "outline";
+  fl.forEach(function (f) {
+    B.lay.push({ id: "btn_" + f.it.key, name: "Button: " + f.it.label.replace(/^\S+\s(?=\S)/, function (m) { return /[a-z]/i.test(m) ? m : ""; }), type: "gbtn", key: f.it.key, label: f.it.label,
+      x: f.x, y: f.y, w: f.w, h: f.h, fs: Math.min(f.it.fs, f.h * 0.55), fill: f.it.fill || st.btn, color: st.btnfg, radius: akWbLpRadius(st.shape), font: akWbLpFont(st.font), outline: out });
+  });
+}
+function akWbBtnDraw(ctx, l) {
+  var r = Math.max(0, Math.min(l.radius || 0, l.h / 2, l.w / 2)), x = l.x, y = l.y, w = l.w, hh = l.h;
+  ctx.save(); if (l.op != null && l.op < 1) ctx.globalAlpha *= l.op;
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  if (l.outline) { ctx.lineWidth = Math.max(2, hh * 0.04); ctx.strokeStyle = l.fill || "#E8412C"; ctx.stroke(); } else { ctx.fillStyle = l.fill || "#E8412C"; ctx.fill(); }
+  var fs = akGfxFit(ctx, String(l.label || ""), w * 0.9, l.fs || 38, 700, l.font || "system-ui");
+  ctx.fillStyle = l.color || "#ffffff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "700 " + fs + "px " + (l.font || "system-ui");
+  ctx.fillText(String(l.label || ""), x + w / 2, y + hh / 2 + fs * 0.04); ctx.restore();
+}
+/* the layout like the preview: color page, round photo, name, bio, buttons */
+AKG_WEBS.push({ id: "w_lpbtn", back: "links", name: "My links page, as it is now", tags: "minimal photo", web: true, words: [["artist", "Name"], ["bio", "Bio", 1]],
+  p: akWbP({ paper: "#1a0d0a", ink: "#fff4e6", a1: "#E8412C", a2: "#ffc83d" }),
+  b: function (B) {
+    var W = B.W, H = B.H, C = B.C, I = B.I, D = AKGJ.D, st = akWbLpSt(), T = H * 0.38, lc = akLinkCfg(), d = T * 0.42, photo = st.logo && D && D.bg && D.bg.src !== "color", bio = "";
+    try { bio = String(akLinkBioText() || "").slice(0, 200); } catch (e) {}
+    B.BG();
+    if (photo) B.PH((W - d) / 2, T * 0.07, d, d, { clip: "circle" });
+    var y0 = photo ? T * 0.07 + d + T * 0.04 : T * 0.12;
+    akWbStack(B, W * 0.08, y0, W * 0.84, T * 0.98 - y0, [
+      { id: "artist", name: "Name", text: B.U(I.tx("artist", lc.title || I.artist)), k: 1, role: "title", o: { color: C.ink, spacing: W * 0.004 } },
+      { id: "bio", name: "Bio", text: I.tx("bio", bio), k: 1.5, lines: 3, f: 0.9, o: { color: C.ink, lh: 1.25 } }]);
+  } });
+AKG_LAYOUTS.web.push(["w_lpbtn", "My links page, as it is now"]); AKGJ_LAY_OVL.w_lpbtn = [];
+/* every links page layout gets the buttons on top */
+AKG_WEBS.forEach(function (f) { if (f.back !== "links") return; var b0 = f.b; f.b = function (B) { b0(B); akWbBtnLayers(B); }; });
+/* a links page design that looks like the preview now */
+function akWbFromPreview(D) {
+  var st = akWbLpSt(), lc = akLinkCfg(), old = D.layout;
+  D.size = "weblinks"; D.layout = "w_lpbtn"; akGfxLayoutSwitch(D, old, "w_lpbtn");
+  D.paper = st.bg; D.fg = st.fg; D.accent = st.btn; var f = akWbLpFont(st.font); D.fonts = { title: f, main: f, small: WBF("Outfit") };
+  var hd = null; try { var heads = akGfxHeads(); hd = heads.filter(function (x) { return x.id === lc.photo; })[0] || heads[0]; } catch (e) {}
+  D.bg = hd && st.logo && lc.photo !== "none" ? { src: "photo", id: hd.id, color: st.bg, color2: "", zoom: 1, fx: 0.5, fy: 0.3, blur: 0 } : { src: "color", id: "", color: st.bg, color2: "", zoom: 1, fx: 0.5, fy: 0.5, blur: 0 };
+  D.ovl = []; akWbBtnCfg(D); akWbBtnClear(D);
+}
+function akWbBtnClear(D) { Object.keys(D.edit || {}).forEach(function (k) { if (/^btn_/.test(k)) { var e = D.edit[k]; delete e.dx; delete e.dy; delete e.k; if (!Object.keys(e).length) delete D.edit[k]; } }); }
+/* final boxes (after moves and resizes) -> what the real page needs */
+function akWbBtnLayOf(P) {
+  var L = P.layers.filter(function (l) { return l.type === "gbtn"; }), f = L[0] || {}, rn = function (v) { return Math.round(v * 10) / 10; };
+  return { W: P.W, H: P.H, items: L.map(function (l) { return { key: l.key, label: l.label, x: rn(l.x), y: rn(l.y), w: rn(l.w), h: rn(l.h), fs: rn(Math.min(l.fs, l.h * 0.55)) }; }),
+    fill: f.fill || "", color: f.color || "", radius: f.radius != null ? f.radius : 22, font: f.font || "", outline: !!f.outline };
+}
+(function () {
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) { if (l && l.type === "gbtn") return akWbBtnDraw(ctx, l); return dl.apply(this, arguments); };
+  /* a resize makes the words and corners bigger too */
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) { var e = l.type === "gbtn" && E[l.id]; if (!e || !e.k || e.k === 1) return l; var c = Object.assign({}, l); c.fs = (c.fs || 38) * e.k; if (c.radius && c.radius < 999) c.radius *= e.k; return c; });
+    return out;
+  };
+  /* Text size and button color when a button is picked */
+  var pe = akGfxPartExtra;
+  akGfxPartExtra = function (box, l, X) {
+    var r = pe.apply(this, arguments);
+    try {
+      if (l && l.type === "gbtn" && X && X.D) {
+        var D = X.D, b = akWbBtnCfg(D), c = b.it[l.key] = b.it[l.key] || {};
+        box.appendChild(X.slider("Text size", Math.round(c.fs || 38), 14, 90, 1, function (v) { (b.it[l.key] = b.it[l.key] || {}).fs = v; }, function (v) { return v + " px"; }, false, 38));
+        box.appendChild(h("div", { class: "fld" }, "Button color", colorPicker(c.fill || "", function (v) { var cc = b.it[l.key] = b.it[l.key] || {}; if (v) cc.fill = v; else delete cc.fill; save(); X.ch(); })));
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+/* 🌐 On it › My link buttons */
+function akWbBtnPanel(d, D, ch) {
+  var b = akWbBtnCfg(D), list = akWbBtnList(D), X = akGfxState().X;
+  var sec = h("details", { class: "akwb-btns", open: true, "data-bk": "web-btns" }, h("summary", null, h("b", null, "My link buttons"), h("span", { class: "muted" }, "  " + list.length)));
+  if (!list.length) { sec.appendChild(h("p", { class: "hint" }, "No buttons yet. Add your website, social and tip links in Artist info, or turn them on in 🔗 My links page.")); d.appendChild(sec); return; }
+  function keepOrder() { b.order = list.map(function (it) { return it.key; }); }
+  function arrange() { keepOrder(); akWbBtnClear(D); save(); ch(true); }
+  var allHalf = list.every(function (it) { return it.half; });
+  sec.appendChild(h("div", { class: "row akwb-brow" },
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: allHalf, onChange: function () { var v = this.checked; list.forEach(function (it) { (b.it[it.key] = b.it[it.key] || {}).half = v; }); arrange(); } }), "Two per row"),
+    h("button", { type: "button", class: "sm", onClick: function () { var fs = list[0].fs; list.forEach(function (it) { (b.it[it.key] = b.it[it.key] || {}).fs = fs; }); save(); ch(true); } }, "All the same size"),
+    h("button", { type: "button", class: "sm", onClick: function () { arrange(); toast("Buttons arranged again."); } }, "↺ Arrange them again")));
+  list.forEach(function (it, i) {
+    var c = function () { return b.it[it.key] = b.it[it.key] || {}; };
+    var fsIn = h("input", { type: "range", min: 14, max: 90, step: 1, value: it.fs, "aria-label": "Text size for " + it.label, onInput: function () { c().fs = Number(this.value); val.textContent = this.value; save(); if (X) X.ch(); } }), val = h("span", { class: "akg-val" }, String(it.fs));
+    sec.appendChild(h("div", { class: "akwb-bit", "data-key": it.key },
+      h("div", { class: "row akwb-brow" }, h("span", { class: "grow t" }, it.label),
+        h("button", { type: "button", class: "icon sm", "aria-label": "Move " + it.label + " up", disabled: i === 0, onClick: function () { list.splice(i - 1, 0, list.splice(i, 1)[0]); arrange(); } }, "▲"),
+        h("button", { type: "button", class: "icon sm", "aria-label": "Move " + it.label + " down", disabled: i === list.length - 1, onClick: function () { list.splice(i + 1, 0, list.splice(i, 1)[0]); arrange(); } }, "▼"),
+        h("button", { type: "button", class: "sm akwb-w" + (!it.half ? " on" : ""), "aria-pressed": !it.half ? "true" : "false", onClick: function () { c().half = false; arrange(); } }, "Full"),
+        h("button", { type: "button", class: "sm akwb-w" + (it.half ? " on" : ""), "aria-pressed": it.half ? "true" : "false", onClick: function () { c().half = true; arrange(); } }, "Half")),
+      h("label", { class: "akwb-fs" }, "Text size", fsIn, val)));
+  });
+  sec.appendChild(h("p", { class: "hint" }, "Two Half buttons next to each other share a row. Drag a button on the picture to move it, or use the size handle; Arrange them again lines them up. Colors, font and shape come from 🔗 My links page › 🎨 Look of the page (or change one button when you tap it)."));
+  d.appendChild(sec);
+}
+akCss("akv187-r3", ".akwb-btns{margin:6px 0 10px}.akwb-btns summary{cursor:pointer}.akwb-brow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0}.akwb-bit{border-top:1px solid rgba(127,127,127,.2);padding:3px 0}" +
+  ".akwb-bit .t{font-size:13px;font-weight:600;min-width:7em}.akwb-w[aria-pressed=true]{outline:2px solid var(--accent,#00B7FF)}.akwb-fs{display:flex;align-items:center;gap:6px;font-size:12px}.akwb-fs input{flex:1}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Links page buttons side by side, button text size", a: "Graphics tab › 🔗 My links page › 🎨 Design it in the studio. In 🌐 On it › My link buttons: ▲▼ order, Full or Half (two Half buttons share a row), Two per row, a text size for each button, All the same size, Arrange them again. Tap a button on the picture to move or size it. ✅ Use this as my links page picture puts the layout on your page.", k: "links page buttons side by side two columns instagram facebook font size button size order", go: function () { akWebStudioOpen("links"); } });
 
 /* ================= 18.7x: website pieces from the app =================
    1. Venue categories (bar, restaurant...) with a default description each; a default description for all shows.
@@ -55750,7 +55908,7 @@ function akWcDesc(venueName, own) {
     var p = prof.apply(this, arguments), c = akWcCfg();
     p.cal = { c1: c.c1, c2: c.c2, c3: c.c3, bg: c.bg, fg: c.fg, font: c.font, title: c.title || "" };
     var lc = akLinkCfg(); p.lp = p.lp || {}; p.lp.st = Object.assign({}, lc.st || {});
-    if (lc.bg) p.lp.bg = lc.bg; if (c.bg) p.cal.bg = c.bg;
+    if (lc.bg) p.lp.bg = lc.bg; if (c.bg) p.cal.bg = c.bg; if (lc.bg && lc.btnLay && Array.isArray(lc.btnLay.items)) p.lp.btnLay = lc.btnLay;
     if (lc.photo === "none") p.lp.photo = "none"; else if (lc.photo) { var ph = akLpPhotoData(lc.photo); if (ph) p.lp.photo = ph; }
     return p;
   };
