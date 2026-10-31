@@ -83,7 +83,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
 <script>
 (function () {
   "use strict";
-  var P = new URLSearchParams(location.search), LOCAL = P.get("m") === "local", LM = P.get("go") === "links", app = document.getElementById("app");
+  var P = new URLSearchParams(location.search), LOCAL = P.get("m") === "local", LM = P.get("go") === "links", CE = P.get("go") === "cal", app = document.getElementById("app");
   var me = { uid: "", db: null, pid: P.get("p") || "" }, prof = null, mine = {}, view = "songs", draft = null, unsub = null, firstGo = true, flt = { by: "both", sort: "", g: "", q: "" };
   var PAY = { venmo: "Venmo", cashapp: "Cash App", square: "Card", paypal: "PayPal", other: "Tip" };
   function h(tag, attrs) {
@@ -232,11 +232,54 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   /* ---------- page ---------- */
   function usedCount() { return Object.keys(mine).map(function (k) { return mine[k]; }).filter(function (r) { return r.kind === "play"; }).length; }
   function needTip() { var R = prof.rules || {}; if (R.mode !== "required") return false; return !(R.firstFree && usedCount() === 0); }
+
+  /* ---------- the calendar for the performer's own website (go=cal): month grid, tap a day for the show details ---------- */
+  function drawCalEmbed() {
+    var C = prof.cal || {}, ok = function (c) { return /^#[0-9a-f]{3,8}$/i.test(c || ""); }, c1 = ok(C.c1) ? C.c1 : "#E8412C", c2 = ok(C.c2) ? C.c2 : "#F28C28", c3 = ok(C.c3) ? C.c3 : "#F7C23B", bg = ok(C.bg) ? C.bg : "#1a0d0a", fg = ok(C.fg) ? C.fg : "#fff4e6";
+    var font = C.font === "syncopate" ? "'Syncopate',system-ui,sans-serif" : "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+    if (C.font === "syncopate" && !document.getElementById("cefont")) { var lk = document.createElement("link"); lk.id = "cefont"; lk.rel = "stylesheet"; lk.href = "https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&display=swap"; document.head.appendChild(lk); }
+    var all = (prof.shows || []).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x.d || ""); }), byDay = {};
+    all.forEach(function (x) { (byDay[x.d] = byDay[x.d] || []).push(x); });
+    if (!cal.ym) cal.ym = (all[0] ? all[0].d : new Date().toISOString().slice(0, 10)).slice(0, 7);
+    var y = +cal.ym.slice(0, 4), mo = +cal.ym.slice(5, 7) - 1, first = new Date(y, mo, 1), days = new Date(y, mo + 1, 0).getDate();
+    document.body.style.cssText = "background:" + bg + ";color:" + fg + ";font-family:" + font + ";margin:0";
+    document.title = (prof.name || "Shows") + " calendar";
+    var st = document.createElement("style");
+    st.textContent = ".ce{max-width:760px;margin:0 auto;padding:12px}.ce-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.ce-h strong{font-size:15px;letter-spacing:.12em;text-transform:uppercase;background:linear-gradient(90deg," + c1 + "," + c2 + "," + c3 + ");-webkit-background-clip:text;background-clip:text;color:transparent}.ce-h button{background:transparent;border:1px solid " + c2 + ";color:" + c3 + ";border-radius:6px;min-width:38px;min-height:38px;font-size:18px;cursor:pointer}.ce-t{text-align:center;margin:0 0 8px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:" + c3 + "}.ce-g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}.ce-g .dow{text-align:center;font-size:10px;opacity:.7;padding:2px 0}.ce-g .blank{min-height:44px}.ce-g button{min-height:48px;border-radius:6px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:" + fg + ";font:inherit;font-size:13px;cursor:default;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}.ce-g button.has{cursor:pointer;border-color:" + c2 + ";background:linear-gradient(160deg," + c1 + "55," + c2 + "44);font-weight:700}.ce-g button.has i{width:6px;height:6px;border-radius:50%;background:" + c3 + ";display:block}.ce-g button.today{outline:2px solid " + c3 + "}.ce-pop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:14px;z-index:9}.ce-card{background:" + bg + ";border:2px solid " + c2 + ";border-radius:12px;max-width:440px;width:100%;max-height:90vh;overflow:auto;padding:16px;box-shadow:0 0 30px " + c1 + "66}.ce-card h3{margin:0 0 6px;font-size:15px;letter-spacing:.08em;color:" + c3 + "}.ce-card .w{font-size:13px;font-weight:700;margin-bottom:6px}.ce-card p{margin:6px 0;font-size:13px;line-height:1.4}.ce-card .sub{opacity:.75;font-size:12px}.ce-card a,.ce-card button{display:inline-block;margin:8px 8px 0 0;padding:8px 12px;border-radius:8px;border:1px solid " + c2 + ";background:transparent;color:" + c3 + ";font:inherit;font-size:12px;text-decoration:none;cursor:pointer}.ce-card hr{border:0;border-top:1px solid rgba(255,255,255,.15);margin:12px 0}.ce-none{text-align:center;opacity:.7;font-size:13px;margin-top:10px}";
+    app.textContent = ""; app.appendChild(st);
+    var wrap = h("div", { class: "ce" }); app.appendChild(wrap);
+    function shift(n) { var d = new Date(y, mo + n, 1); cal.ym = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2); draw(); }
+    add(wrap, h("div", { class: "ce-h" }, h("button", { "aria-label": "Previous month", onClick: function () { shift(-1); } }, "‹"), h("strong", null, first.toLocaleDateString([], { month: "long", year: "numeric" })), h("button", { "aria-label": "Next month", onClick: function () { shift(1); } }, "›")));
+    if (C.title || prof.name) add(wrap, h("p", { class: "ce-t" }, C.title || (prof.name + " · live music")));
+    var grid = h("div", { class: "ce-g" }), todayKey = new Date().toISOString().slice(0, 10);
+    ["S", "M", "T", "W", "T", "F", "S"].forEach(function (d) { add(grid, h("div", { class: "dow", "aria-hidden": "true" }, d)); });
+    for (var b = 0; b < first.getDay(); b++) add(grid, h("div", { class: "blank" }));
+    for (var d = 1; d <= days; d++) (function (d) {
+      var key = cal.ym + "-" + ("0" + d).slice(-2), has = byDay[key];
+      add(grid, h("button", { class: (has ? "has" : "") + (key === todayKey ? " today" : ""), disabled: !has, "aria-label": new Date(y, mo, d).toLocaleDateString([], { month: "long", day: "numeric" }) + (has ? ", " + has.length + (has.length === 1 ? " show" : " shows") : ""), onClick: function () { cal.sel = key; draw(); } }, h("span", null, String(d)), has ? h("i") : null));
+    })(d);
+    add(wrap, grid);
+    if (!all.length) add(wrap, h("p", { class: "ce-none" }, "No upcoming shows listed right now."));
+    if (cal.sel && byDay[cal.sel]) {
+      var pop = h("div", { class: "ce-pop", onClick: function (e) { if (e.target === pop) { cal.sel = ""; draw(); } } }), card = h("div", { class: "ce-card", role: "dialog", "aria-label": "Show details" });
+      byDay[cal.sel].forEach(function (x, i) {
+        if (i) add(card, h("hr"));
+        add(card, [h("h3", null, x.n || x.v || "Live music"), h("div", { class: "w" }, whenText(x)),
+          x.v && x.n && x.v !== x.n ? h("p", null, x.v) : null, x.a ? h("p", { class: "sub" }, x.a) : null, x.x ? h("p", null, x.x) : null,
+          x.u ? h("a", { href: x.u, target: "_blank", rel: "noopener" }, "📍 Map") : null, h("button", { onClick: function () { saveIcs([x], "show-" + x.d); } }, "📅 Add to my calendar")]);
+      });
+      add(card, h("button", { onClick: function () { cal.sel = ""; draw(); } }, "Close"));
+      add(pop, card); document.body.appendChild(pop);
+      var old = document.querySelectorAll(".ce-pop"); for (var q = 0; q < old.length - 1; q++) old[q].remove();
+    } else { var op = document.querySelector(".ce-pop"); if (op) op.remove(); }
+    setTimeout(function () { try { parent.postMessage({ akCalHeight: document.documentElement.scrollHeight }, "*"); } catch (e) {} }, 50);
+  }
   function draw() {
     app.textContent = "";
     if (!prof) { fail(LOCAL ? "Open this from the app's QR screen (This device only mode) in the same browser." : "This performer's page isn't set up yet."); return; }
     var name = store("akreq:name") || "";
     applyTheme();
+    if (CE) { drawCalEmbed(); return; }
     if (firstGo) { firstGo = false; if (LM) view = "links"; var g0 = ""; if (!LM) g0 = P.get("go") || (P.get("via") === "short" ? prof.go || "" : ""); if (g0 === "more" && !((prof.rules || {}).learn || (prof.rules || {}).msg)) g0 = ""; if (g0 === "shows" && !(prof.shows || []).length) g0 = ""; if (g0 === "book" && !(prof.booking && prof.booking.on)) g0 = ""; if ({ songs: 1, more: 1, tip: 1, shows: 1, book: 1 }[g0]) view = g0; }
     if (LM) document.title = (prof.name || "Links");
     if (LM && ({ links: 1, tip: 1, shows: 1, book: 1 })[view] !== 1) view = "links";
@@ -351,15 +394,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     add(app, card);
   }
   function drawLinks() {
-    var lp = prof.lp || {}, any = false;
+    var lp = prof.lp || {}, any = false, off = lp.off || {};
+    var ST = lp.st && lp.st.bg ? lp.st : null, okc = function (c) { return /^#[0-9a-f]{3,8}$/i.test(c || ""); };
+    if (ST && okc(ST.bg) && okc(ST.fg) && okc(ST.btn) && okc(ST.btnfg)) {
+      var fam = ST.font === "syncopate" ? "'Syncopate',system-ui,sans-serif" : ST.font === "serif" ? "Georgia,serif" : "system-ui,sans-serif", rad = ST.shape === "square" ? "0" : ST.shape === "round" ? "999px" : "10px";
+      if (ST.font === "syncopate" && !document.getElementById("lpfont")) { var lk = document.createElement("link"); lk.id = "lpfont"; lk.rel = "stylesheet"; lk.href = "https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&display=swap"; document.head.appendChild(lk); }
+      document.body.classList.remove("themed"); document.body.style.cssText = "background:" + ST.bg + ";color:" + ST.fg + ";font-family:" + fam;
+      var sty = document.getElementById("lpstyle") || document.head.appendChild(Object.assign(document.createElement("style"), { id: "lpstyle" }));
+      sty.textContent = "header h1,.lbio,.muted{color:" + ST.fg + "}.linkbtn{background:" + (ST.shape === "outline" ? "transparent" : ST.btn) + "!important;color:" + ST.btnfg + "!important;border:2px solid " + ST.btn + "!important;border-radius:" + rad + "!important;font-weight:700}.linklist{display:grid;gap:8px;grid-template-columns:" + (ST.layout === "grid" ? "1fr 1fr" : "1fr") + "}.lbio{background:transparent!important}";
+    }
+    if (lp.title) add(app, h("h2", { class: "center", style: "margin:6px 0" }, String(lp.title)));
     if (lp.bio) add(app, h("div", { class: "card lbio" }, h("p", { style: "margin:0;white-space:pre-line" }, String(lp.bio))));
     var ls = h("div", { class: "linklist" });
     function lb(label, url, primary) { any = true; add(ls, h("a", { class: "pill linkbtn" + (primary ? " primary" : ""), href: url, target: "_blank", rel: "noopener" }, label)); }
-    if (prof.website) lb("🌐 Website", prof.website, true);
-    (prof.links || []).filter(function (l) { return l.url; }).forEach(function (l) { lb(l.label || "Link", l.url); });
-    if (prof.booking && prof.booking.on) { any = true; add(ls, h("button", { class: "linkbtn", onClick: function () { view = "book"; draw(); } }, "📅 Book " + (prof.name || "me"))); }
-    if ((prof.shows || []).length) { any = true; add(ls, h("button", { class: "linkbtn", onClick: function () { view = "shows"; draw(); } }, "🎤 Upcoming shows")); }
-    (prof.pay || []).filter(function (p) { return p.url; }).forEach(function (p) { any = true; add(ls, h("a", { class: "pill linkbtn", href: payUrl(p, 0), target: "_blank", rel: "noopener" }, "💵 Tip with " + (p.label || PAY[p.kind] || "a link"))); });
+    if (prof.website && !off.web) lb("🌐 Website", prof.website, true);
+    (prof.links || []).forEach(function (l, i) { if (l.url && !off["s" + i]) lb(l.label || "Link", l.url); });
+    (lp.extra || []).forEach(function (l) { if (l && l.url) lb(l.label || "Link", l.url); });
+    if (prof.booking && prof.booking.on && !off.book) { any = true; add(ls, h("button", { class: "linkbtn", onClick: function () { view = "book"; draw(); } }, "📅 Book " + (prof.name || "me"))); }
+    if ((prof.shows || []).length && !off.shows) { any = true; add(ls, h("button", { class: "linkbtn", onClick: function () { view = "shows"; draw(); } }, "🎤 Upcoming shows")); }
+    (prof.pay || []).forEach(function (p, i) { if (p.url && !off["p" + i]) { any = true; add(ls, h("a", { class: "pill linkbtn", href: payUrl(p, 0), target: "_blank", rel: "noopener" }, "💵 Tip with " + (p.label || PAY[p.kind] || "a link"))); } });
     if (any) add(app, ls); else add(app, h("p", { class: "muted center" }, "No links yet."));
   }
   function aboutCard() {
