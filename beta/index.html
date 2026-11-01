@@ -36720,8 +36720,8 @@ function viewGfx() {
     }
     if (st.hand) {
       /* hand tool: dragging only moves the view (zooms in a little first when the whole picture is showing) */
-      if (!canPan()) { st.zoom = 2; paint(); }
-      drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false };
+      /* 18.8i: a plain tap no longer zooms; it picks the part under the finger. The view zooms in only once you actually drag. */
+      drag = { kind: "pan", hand: true, cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc || { x: st.P.W / 2, y: st.P.H / 2 }), moved: false, up: pt(e) };
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault(); return;
     }
@@ -36777,6 +36777,7 @@ function viewGfx() {
     if (drag.kind === "pan") {
       var s2 = cv._k || 1, ddx = e.clientX - drag.cx, ddy = e.clientY - drag.cy;
       if (Math.abs(ddx) + Math.abs(ddy) > 3) drag.moved = true;
+      if (drag.hand && drag.moved && !drag.zoomed && !canPan()) { drag.zoomed = true; st.zoom = 2; paint(); s2 = cv._k || 1; drag.cx = e.clientX; drag.cy = e.clientY; drag.zc = Object.assign({}, st.zc); ddx = 0; ddy = 0; }
       st.zc = { x: drag.zc.x - ddx / s2, y: drag.zc.y - ddy / s2 }; paintSoon();
       return;
     }
@@ -36810,7 +36811,10 @@ function viewGfx() {
     if (e && e.pointerId != null) delete ptrs[e.pointerId];
     if (pinch) { if (npt().length < 2) { pinch = null; drag = null; } return; }
     if (!drag) return;
-    if (drag.kind === "pan") { var un = !drag.moved && drag.unsel; drag = null; if (un && st.sel) { st.sel = ""; paint(); } return; }
+    if (drag.kind === "pan") {
+      var un = !drag.moved && drag.unsel, tapP = !drag.moved && drag.hand ? drag.up : null; drag = null;
+      if (tapP && st.P) { var th = typeof akGfxHit === "function" ? akGfxHit(st.P, tapP) : null; st.sel = th ? th.id : ""; paint(); refill("parts"); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); return; }
+      if (un && st.sel) { st.sel = ""; paint(); } return; }
     if (drag.kind === "corner" || drag.kind === "side") { drag = null; save(); paint(); return; }
     var moved = drag.moved, twice = drag.twice && !moved, id = drag.id, unBg = !moved && drag.wasSel && drag.bg, drag0 = drag; drag = null; st.guides = [];
     if (!moved && drag0.multi) { var mi = st.multi.indexOf(drag0.id); if (mi >= 0) st.multi.splice(mi, 1); paint(); refill("parts", true); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); return; }
@@ -48836,6 +48840,7 @@ akGfxPopSync = function (wrap, cv, X, busy) {
       else akGfxTextGo(X);
     }, { aria: isPic ? "Replace this picture" : isOvl ? "Pick another overlay" : isBd ? "Pick another border or shape" : "Change the words" }));
     row.appendChild(b("✨", "Effects", function () { if (typeof akGfxPopEffects === "function") akGfxPopEffects(X); else X.cat("fx"); }, { aria: "Effects for this part, in a window" }));
+    row.appendChild(b("☑", "Several", function () { st.multiMode = true; st.multi = [id]; st.sel = ""; X.paint(); try { X.refill("parts", true); } catch (er) {} if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); try { akGfxTools(document.querySelector(".akg-tools"), X); } catch (e2) {} toast("Tap more parts to add them. To stop, use ☑ Several in the row under the picture."); }, { aria: "Select several parts" }));
     row.appendChild(b("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
     if (AKGFX.clip) row.appendChild(b("📥", "Paste", function () { akGfxPaste(D, X); }));
     row.appendChild(b("🗑", "Delete", function () { akGfxDelPart(D, X, id); }, { cls: "danger" }));
@@ -52242,8 +52247,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.8h";
+AK_VERSION = "18.8i";
 AK_WHATS_NEW = [
+  "Fixes: with the ✋ Pan tool on, a tap no longer jumps the picture to 200% (it picks the part; only dragging zooms). New ☑ Several button in the part pop-up to select several parts. Effects now live only in the effects window; the Edit tab just has a button for it.",
   "🔍 Zoom slider in the Graphics studio: drag to zoom anywhere from 40% to 800%. It sits under the picture; the ⋯ on it moves it down the left side or hides it. − + and pinching still work.",
   "✨ Overlays get the Effects button back in the pop-up, and it opens the effects window under them.",
   "✨ Effects window from the pop-up now opens right under the part you tapped (or above it if there is no room). Overlays can't take effects, so they no longer offer the button.",
@@ -56198,6 +56204,20 @@ akCss("akzs", [
   ".akzs.akzs-side .akzs-v{min-width:0;font-size:11px}",
   ".akzs.akzs-side button{width:30px;padding:0}"
 ].join("\n"));
+
+/* ---- 18.8i: effects live only in the effects window. The Edit tab's Selected box no longer carries its own copy of the effects controls, just a button that opens the window;
+   the Effects fold always uses the window too. */
+akGfxFxModule = function (X, L, l) {
+  AKFX.X = X;
+  var n = akFxCount(X.D, L.id);
+  return h("div", { class: "akg-fxmod akfx-line" }, h("button", { type: "button", class: "sm", "aria-label": "Open the effects window", onClick: function () { akFxUi().fxPop = true; save(); AKFX.dismissed = false; akFxWinOpen(X); } }, "✨ Effects" + (n ? " (" + n + ")" : "") + " ▸ open window"),
+    h("span", { class: "hint" }, " for " + L.name));
+};
+(function () {
+  var f0 = akGfxEffectsFill;
+  akGfxEffectsFill = function (d, X) { var ui = akFxUi(); if (!ui.fxPop) { ui.fxPop = true; save(); } return f0.apply(this, arguments); };
+})();
+akCss("akfx-line", ".akfx-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
