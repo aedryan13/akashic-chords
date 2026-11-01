@@ -36167,7 +36167,7 @@ function akGfxLayers(D) {
     if (b.src === "art" && b.id && AK_ART_FILES[b.id]) src = AK_ART_BASE + b.id + "_" + AK_ART_FILES[b.id][0] + ".webp";
     else if ((b.src === "photo" || b.src === "venue") && b.id && IMG[b.id]) src = IMG[b.id].data;
     lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: b.color || "#140c26", color2: b.color2 || "", grad: b.src === "grad" ? b.grad : null, src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: area || null });
-    if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: "rgba(0,0,0," + (D.overlay / 100) + ")" });
+    if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: akOvFill(D), ovg: D.ovGrad || null, ovop: D.overlay / 100, ovc: D.overlayCol || "#000000" });
   }
   function wordmark(cx, y, w) {
     var name = akGfxName();
@@ -36720,8 +36720,8 @@ function viewGfx() {
     }
     if (st.hand) {
       /* hand tool: dragging only moves the view (zooms in a little first when the whole picture is showing) */
-      if (!canPan()) { st.zoom = 2; paint(); }
-      drag = { kind: "pan", cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc), moved: false };
+      /* 18.8i: a plain tap no longer zooms; it picks the part under the finger. The view zooms in only once you actually drag. */
+      drag = { kind: "pan", hand: true, cx: e.clientX, cy: e.clientY, zc: Object.assign({}, st.zc || { x: st.P.W / 2, y: st.P.H / 2 }), moved: false, up: pt(e) };
       try { cv.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault(); return;
     }
@@ -36777,6 +36777,7 @@ function viewGfx() {
     if (drag.kind === "pan") {
       var s2 = cv._k || 1, ddx = e.clientX - drag.cx, ddy = e.clientY - drag.cy;
       if (Math.abs(ddx) + Math.abs(ddy) > 3) drag.moved = true;
+      if (drag.hand && drag.moved && !drag.zoomed && !canPan()) { drag.zoomed = true; st.zoom = 2; paint(); s2 = cv._k || 1; drag.cx = e.clientX; drag.cy = e.clientY; drag.zc = Object.assign({}, st.zc); ddx = 0; ddy = 0; }
       st.zc = { x: drag.zc.x - ddx / s2, y: drag.zc.y - ddy / s2 }; paintSoon();
       return;
     }
@@ -36810,7 +36811,10 @@ function viewGfx() {
     if (e && e.pointerId != null) delete ptrs[e.pointerId];
     if (pinch) { if (npt().length < 2) { pinch = null; drag = null; } return; }
     if (!drag) return;
-    if (drag.kind === "pan") { var un = !drag.moved && drag.unsel; drag = null; if (un && st.sel) { st.sel = ""; paint(); } return; }
+    if (drag.kind === "pan") {
+      var un = !drag.moved && drag.unsel, tapP = !drag.moved && drag.hand ? drag.up : null; drag = null;
+      if (tapP && st.P) { var th = typeof akGfxHit === "function" ? akGfxHit(st.P, tapP) : null; st.sel = th ? th.id : ""; paint(); refill("parts"); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); return; }
+      if (un && st.sel) { st.sel = ""; paint(); } return; }
     if (drag.kind === "corner" || drag.kind === "side") { drag = null; save(); paint(); return; }
     var moved = drag.moved, twice = drag.twice && !moved, id = drag.id, unBg = !moved && drag.wasSel && drag.bg, drag0 = drag; drag = null; st.guides = [];
     if (!moved && drag0.multi) { var mi = st.multi.indexOf(drag0.id); if (mi >= 0) st.multi.splice(mi, 1); paint(); refill("parts", true); if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); return; }
@@ -37031,6 +37035,7 @@ function viewGfx() {
   function fillLook(d) {
     if (typeof akGfxThemesFill === "function") akGfxThemesFill(d, X);
     d.appendChild(slider("Dark overlay", D.overlay || 0, 0, 90, 5, function (v) { D.overlay = v; }, function (v) { return v ? v + "%" : "off"; }));
+    if (typeof akOvExtra === "function") akOvExtra(d, D, X);
     d.appendChild(check(kind === "week" ? "Panel behind the rows" : "Panel behind the words", D.panel.on, function (v) { D.panel.on = v; }));
     if (D.panel.on) {
       d.appendChild(slider("Panel see-through", 100 - (D.panel.alpha == null ? 45 : D.panel.alpha), 0, 95, 5, function (v) { D.panel.alpha = 100 - v; }, function (v) { return v + "%"; }));
@@ -39952,7 +39957,7 @@ function akGfxFlyBuild(D, spec) {
     BG: function () {
       var b = D.bg, src = p.full ? akGfxBgSrc(b) : "";
       lay.push({ id: "background", name: "Background", type: "gbg", fixed: true, x: 0, y: 0, w: W, h: H, color: p.full ? (b.color || "#140c26") : C.paper, color2: p.full ? "" : C.paper2, grad: b.src === "grad" ? b.grad : null, src: src, zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, area: null, filt: p.full ? filt : null });
-      if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: "rgba(0,0,0," + (D.overlay / 100) + ")" });
+      if (D.overlay > 0) lay.push({ id: "overlay", name: "Dark overlay", type: "grect", fixed: true, x: 0, y: 0, w: W, h: H, fill: akOvFill(D), ovg: D.ovGrad || null, ovop: D.overlay / 100, ovc: D.overlayCol || "#000000" });
     },
     PH: function (x, y, w, h, o) { var b = D.bg; lay.push(Object.assign({ id: "photo", name: "Photo", type: "gphoto", x: x, y: y, w: w, h: h, src: akGfxBgSrc(b), zoom: b.zoom || 1, fx: b.fx, fy: b.fy, blur: b.blur || 0, filt: filt, ph1: C.a2, ph2: C.a1 }, o || {})); },
     WM: function (cx, y, w) {
@@ -40071,7 +40076,7 @@ function akGfxGallery(D, kind, pick) {
   var key0 = JSON.stringify([D.gigId, D.bg, D.size, D.text, D.deco, D.tfx, D.tbeh, D.qr, D.rowEdit]);
   function one(i) {
     if (i >= jobs.length || !wrap.isConnected && i > 0) return;
-    var j = jobs[i], key = j.id + "|" + key0 + (j.id === D.layout ? JSON.stringify([D.fonts, D.fg, D.accent, D.accent2, D.accent3, D.paper, D.filt, D.overlay, D.edit, D.panel]) : "");
+    var j = jobs[i], key = j.id + "|" + key0 + (j.id === D.layout ? JSON.stringify([D.fonts, D.fg, D.accent, D.accent2, D.accent3, D.paper, D.filt, D.overlay, D.overlayCol, D.ovGrad, D.edit, D.panel]) : "");
     function put(src) { var im = h("img", { src: src, alt: "" }); j.el.replaceWith(im); j.el = im; }
     if (AKGFX.thc[key]) { put(AKGFX.thc[key]); one(i + 1); return; }
     var Dc = akGfxThumbDesign(D, j.id), P;
@@ -46592,7 +46597,7 @@ AK_WHATS_NEW = [
 var AKG_GROUPS = [["design", "🧩", "Design", "ideas, layout, drafts", ["ideas", "what", "styles", "drafts"]],
   ["text", "🔤", "Text", "words, fonts, effects", ["words", "shows", "fonts", "tfx"]],
   ["add", "➕", "Add", "logos, pictures, shapes", ["logos", "pics", "deco", "ovl"]],
-  ["edit", "✋", "Edit", "the part you tapped", ["sel", "fx", "warp"]],
+  ["edit", "✨", "Effects", "effects, and the part you tapped", ["fx", "sel", "warp"]],
   ["layers", "🗂", "Layers", "order, hide, lock", ["layers"]],
   ["page", "🌄", "Page", "background, colors", ["bg", "look"]]];
 var AKG_NAVS = [["tabs", "Folder tabs"], ["tiles", "Tiles"], ["rail", "Side rail"]];
@@ -46969,7 +46974,7 @@ function akGfxViewMenu(anchor, X) {
 }
 function akGfxSplitEl(X) {
   var cfg = akGfxCfg(), st = akGfxState(), d = null, lastTap = 0;
-  function set(v) { cfg.split = Math.max(0.15, Math.min(0.92, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
+  function set(v) { cfg.split = Math.max(0.05, Math.min(0.92, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
   function reset() { delete cfg.split; st.zoom = 1; st.zc = null; save(); X.paint(); toast("Picture size back to normal."); }
   var el = h("div", { class: "akg-split", role: "separator", tabindex: "0", "aria-orientation": "horizontal", "aria-label": "Picture size: drag up for more tools, down for a bigger, zoomed-in picture", title: "Drag up for more tools, down for a bigger picture. Double tap: normal size.",
     onKeydown: function (e) {
@@ -46979,7 +46984,7 @@ function akGfxSplitEl(X) {
   el.addEventListener("pointerdown", function (e) {
     var now = Date.now(); if (now - lastTap < 350) { lastTap = 0; reset(); return; } lastTap = now;
     var cvn = document.querySelector(".akg-cv"), vh = typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight;
-    d = { y: e.clientY, s: cvn ? Math.max(0.1, Math.min(0.92, cvn.clientHeight / Math.max(300, vh))) : akGfxSplitFrac(st, false) }; el.classList.add("on");
+    d = { y: e.clientY, s: cvn ? Math.max(0.05, Math.min(0.92, cvn.clientHeight / Math.max(300, vh))) : akGfxSplitFrac(st, false) }; el.classList.add("on");
     try { el.setPointerCapture(e.pointerId); } catch (x) {}
     e.preventDefault();
   });
@@ -48836,6 +48841,7 @@ akGfxPopSync = function (wrap, cv, X, busy) {
       else akGfxTextGo(X);
     }, { aria: isPic ? "Replace this picture" : isOvl ? "Pick another overlay" : isBd ? "Pick another border or shape" : "Change the words" }));
     row.appendChild(b("✨", "Effects", function () { if (typeof akGfxPopEffects === "function") akGfxPopEffects(X); else X.cat("fx"); }, { aria: "Effects for this part, in a window" }));
+    row.appendChild(b("☑", "Several", function () { st.multiMode = true; st.multi = [id]; st.sel = ""; X.paint(); try { X.refill("parts", true); } catch (er) {} if (typeof akGfxEdRefresh === "function") akGfxEdRefresh(); try { akGfxTools(document.querySelector(".akg-tools"), X); } catch (e2) {} toast("Tap more parts to add them. To stop, use ☑ Several in the row under the picture."); }, { aria: "Select several parts" }));
     row.appendChild(b("📋", "Copy", function () { akGfxCopy(D, st.P || P, id); X.paint(); }));
     if (AKGFX.clip) row.appendChild(b("📥", "Paste", function () { akGfxPaste(D, X); }));
     row.appendChild(b("🗑", "Delete", function () { akGfxDelPart(D, X, id); }, { cls: "danger" }));
@@ -48874,6 +48880,8 @@ document.addEventListener("pointerdown", function (e) {
   if (S.view !== "gfx") return;
   var st = akGfxState(), t = e.target; if (!st.sel || !st.X || !t || !t.closest) return;
   if (t.closest(".modal, .menu, .akg-pop")) return;
+  /* 18.8j: only taps above the divider can let go of a part; anything below it (tabs, panels, tools) never does */
+  try { var sp = document.querySelector(".akg-split"); if (sp && e.clientY >= sp.getBoundingClientRect().top - 2) return; } catch (e0) {}
   var cv = t.closest("canvas.akg-cv");
   if (cv) {
     /* on the picture: the photo or a page-size part behind the picked part only lets go (it doesn't pick the photo) */
@@ -52242,8 +52250,11 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.8h";
+AK_VERSION = "18.8j";
 AK_WHATS_NEW = [
+  "✨ Effects: new Fade out (see-through gradient) effect for any part: one direction, both sides, all four edges or oval, with angle, reach, smoothness, position and flip. Vignette gets quick Black/White/other colors. “Whole picture: every effect in use” now sits at the top of the effects window. The Edit tab is now called ✨ Effects and opens on the effects, so no part needs picking.",
+  "🌑 Page › Dark overlay can now be any color and have the same see-through fade. Tapping tabs or tools below the divider no longer lets go of the picked part. The divider goes much higher, and ▾ Tools on it folds the tool row away.",
+  "Fixes: with the ✋ Pan tool on, a tap no longer jumps the picture to 200% (it picks the part; only dragging zooms). New ☑ Several button in the part pop-up to select several parts. Effects now live only in the effects window; the Edit tab just has a button for it.",
   "🔍 Zoom slider in the Graphics studio: drag to zoom anywhere from 40% to 800%. It sits under the picture; the ⋯ on it moves it down the left side or hides it. − + and pinching still work.",
   "✨ Overlays get the Effects button back in the pop-up, and it opens the effects window under them.",
   "✨ Effects window from the pop-up now opens right under the part you tapped (or above it if there is no room). Overlays can't take effects, so they no longer offer the button.",
@@ -54691,7 +54702,8 @@ var AKFXT = {
   gray: ["Black and white", 0, 100, 100, "all", 0, 70, 50, false, "Color", "Amount"],
   sepia: ["Sepia", 0, 100, 60, "all", 0, 70, 50, false, "Color", "Amount"],
   tint: ["Color wash (tint)", 0, 100, 40, "all", 0, 70, 50, true, "Color", "Strength"],
-  invert: ["Negative (invert colors)", 0, 100, 100, "all", 0, 70, 50, false, "Color", "Amount"]
+  invert: ["Negative (invert colors)", 0, 100, 100, "all", 0, 70, 50, false, "Color", "Amount"],
+  fade: ["Fade out (see-through gradient)", 0, 100, 100, "all", 0, 60, 60, false, "Light and edges", "How see-through"]
 };
 var AKFX_GROUPS = ["Light and edges", "Blur and texture", "Color"];
 var AKFX_AREAS = [["all", "Everywhere"], ["oval", "Oval (follows the shape of the part)"], ["round", "Circle"], ["rect", "Rectangle"], ["rrect", "Rounded rectangle"], ["diamond", "Diamond"], ["band", "Band across"], ["vband", "Band down"], ["top", "Top edge"], ["bottom", "Bottom edge"], ["left", "Left edge"], ["right", "Right edge"]];
@@ -54701,7 +54713,7 @@ var AKFX_LEGACY = { vig: function (v) { return { t: "vig", amt: v, area: "oval",
 
 function akFxNew(t) {
   var d = AKFXT[t] || AKFXT.vig;
-  return { k: uid(), t: t, on: 1, amt: d[3], area: d[4], inv: d[5], rad: d[6], soft: d[7], cx: 0, cy: 0, ang: 0, col: t === "vig" ? "#000000" : "" };
+  return { k: uid(), t: t, on: 1, amt: d[3], area: d[4], inv: d[5], rad: d[6], soft: d[7], cx: 0, cy: 0, ang: t === "fade" ? 90 : 0, style: t === "fade" ? "lin" : undefined, col: t === "vig" ? "#000000" : "" };
 }
 function akFxList(D, id, make) { var e = D.edit[id]; if (!e) { if (!make) return []; e = D.edit[id] = {}; } if (!Array.isArray(e.fxs)) { if (!make) return []; e.fxs = []; } return e.fxs; }
 function akFxActive(list) { return (list || []).filter(function (x) { return x && x.on !== 0 && x.on !== false && AKFXT[x.t] && x.amt; }); }
@@ -54765,6 +54777,7 @@ function akFxGrain(cv, amt, seed) {
 function akFxOne(cv, e, P, sc, g, under) {
   var t = e.t, amt = e.amt || 0, M = Math.min(P.W, P.H) * sc, w = cv.width, hh = cv.height, filt, c, op = 1;
   var b = { x: (g.b.x - g.R.x) * sc, y: (g.b.y - g.R.y) * sc, w: g.b.w * sc, h: g.b.h * sc };
+  if (t === "fade") return akFxFade(cv, e, w, hh, b);
   if (t === "bright" || t === "contrast" || t === "sat" || t === "hue" || t === "gray" || t === "sepia") { var f = {}; f[t] = amt; filt = akGfxColorAdj(akFxCopy(cv), f); }
   else if (t === "invert") { filt = akGfxColorAdj(akFxCopy(cv), { invert: 1 }); op = amt / 100; }
   else if (t === "tint" || t === "vig") {
@@ -54885,6 +54898,9 @@ function akFxEntryEl(X, id, e, i, list) {
   dd.appendChild(sl(def[10], e.amt, def[1], def[2], e.t === "hue" ? 5 : 1, function (v) { e.amt = v; }, fmt, def[3]));
   if (def[8]) dd.appendChild(h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk(e.t === "vig" ? "Edge color (dark or light)" : "Color", e.col || "", function (v) { e.col = v || ""; save(); akFxAfter(X); akFxRefresh(X); }); } },
     h("span", { class: "akg-fxdot", style: "background:" + (e.col || "transparent") }), (e.t === "vig" ? "Edge color" : "Color") + " ▾"));
+  if (def[8]) dd.appendChild(h("div", { class: "row akfx-sw" }, [["Black", "#000000"], ["White", "#ffffff"], ["Warm", "#ffb84d"], ["Red", "#c0392b"], ["Blue", "#1d2f6f"]].map(function (c) { return h("button", { type: "button", class: "sm", "aria-label": (e.t === "vig" ? "Edge color " : "Color ") + c[0], onClick: function () { e.col = c[1]; save(); akFxAfter(X); akFxRefresh(X); } }, h("span", { class: "akg-fxdot", style: "background:" + c[1] }), c[0]); })));
+  if (e.t === "fade") akFxFadeUi(dd, X, e, sl);
+  else {
   dd.appendChild(akGfxSelect("Where it works", AKFX_AREAS, e.area || "all", function (v) { e.area = v; if (v !== "all" && e.rad == null) e.rad = def[6]; save(); akFxAfter(X); akFxRefresh(X); }));
   if ((e.area || "all") !== "all") {
     dd.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!e.inv, onChange: function () { e.inv = this.checked ? 1 : 0; save(); akFxAfter(X); } }), "Works outside the shape (not inside)"));
@@ -54897,6 +54913,7 @@ function akFxEntryEl(X, id, e, i, list) {
       if (e.area !== "round") dd.appendChild(sl("Turn the shape", e.ang || 0, -90, 90, 1, function (v) { e.ang = v; }, function (v) { return v ? v + "°" : "0°"; }, 0));
     }
     dd.appendChild(h("p", { class: "hint" }, e.inv ? "The effect is outside the shape: a bigger shape keeps it farther toward the edges." : "The effect is inside the shape."));
+  }
   }
   dd.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm", onClick: function () { Object.assign(e, akFxNew(e.t), { k: e.k, on: e.on }); save(); akFxAfter(X); akFxRefresh(X); } }, "↺ Put this effect back to normal")));
   return dd;
@@ -54931,7 +54948,7 @@ function akFxBody(X, compact) {
   list.forEach(function (e, i) { if (AKFXT[e.t]) kids.push(akFxEntryEl(X, id, e, i, list)); });
   var addBtn = h("button", { type: "button", class: "sm primary", disabled: list.length >= AKFX_MAX, onClick: function () {
     var me = this, items = [];
-    AKFX_GROUPS.forEach(function (g) { items.push({ head: g }); Object.keys(AKFXT).filter(function (k) { return AKFXT[k][9] === g; }).forEach(function (k) { items.push({ label: AKFXT[k][0], onClick: function () { var l2 = akFxList(D, id, true); if (l2.length >= AKFX_MAX) return; var n = akFxNew(k); l2.push(n); AKFX.open["e" + n.k] = true; again(); } }); }); });
+    AKFX_GROUPS.forEach(function (g) { items.push({ head: g }); Object.keys(AKFXT).filter(function (k) { return AKFXT[k][9] === g; }).forEach(function (k) { items.push({ label: AKFXT[k][0], onClick: function () { var l2 = akFxList(D, id, true); if (l2.length >= AKFX_MAX) return; var n = akFxNew(k); l2.push(n); if (k === "fade") E().fxscope = "part"; AKFX.open["e" + n.k] = true; again(); } }); }); });
     menu(me, items);
   } }, "＋ Add an effect ▾");
   root.appendChild(akFxSec("stack", "✨ Effects on this layer (" + list.length + " of " + AKFX_MAX + ")", [!kids.length ? h("p", { class: "hint" }, "No effects yet. Add up to " + AKFX_MAX + ". They run in order, top to bottom, each on the result of the one above.") : null].concat(kids).concat([h("div", { class: "row" }, addBtn, list.length ? h("button", { type: "button", class: "sm", onClick: function () { delete E().fxs; again(); } }, "Take them all off") : null)]), true));
@@ -54959,11 +54976,12 @@ function akFxBody(X, compact) {
   var rows = [];
   akFxLayers(X).forEach(function (l) {
     var n = akFxCount(D, l.id); if (!n) return;
-    rows.push(h("div", { class: "akfx-row" }, h("button", { type: "button", class: "akg-fxname", onClick: function () { st.sel = l.type === "gbg" ? "" : l.id; akFxAfter(X); try { X.refill("parts", true); } catch (er) {} akFxRefresh(X); } }, (AKFX_ICON[l.type] || "▫") + " ", h("b", null, l.type === "gbg" ? "Background" : l.name), " · " + n + (n === 1 ? " effect" : " effects")),
+    rows.push(h("div", { class: "akfx-row" }, h("button", { type: "button", class: "akg-fxname", onClick: function () { st.sel = l.type === "gbg" ? "" : l.id; akFxAfter(X); try { X.refill("parts", true); } catch (er) {} akFxRefresh(X); } }, (AKFX_ICON[l.type] || "▫") + " ", h("b", null, l.type === "gbg" ? "Background" : l.name), " · " + akFxNames(D, l.id)),
       h("button", { type: "button", class: "sm", "aria-label": "Take every effect off " + l.name, onClick: function () { var e = D.edit[l.id]; if (e) { delete e.fxs; delete e.fxo; } again(); } }, "✕")));
   });
   var oldBox = null; if (!compact) { try { oldBox = akGfxFxInUseBox(D, X); } catch (er) {} }
-  root.appendChild(akFxSec("all", "On this design (" + rows.length + " layers with effects)", (rows.length ? rows : [h("p", { class: "hint" }, "No stacked effects anywhere yet.")]).concat([oldBox]), false));
+  var allSec = akFxSec("all", "🖼 Whole picture: every effect in use (" + rows.length + " layers)", (rows.length ? rows : [h("p", { class: "hint" }, "No effects anywhere yet.")]).concat([oldBox]), true);
+  root.insertBefore(allSec, root.children[1] || null);
   if (!akGfxCanFilter()) root.appendChild(h("p", { class: "hint" }, "This browser blurs a little roughly; the saved picture looks the same as here."));
   return root;
 }
@@ -56126,6 +56144,9 @@ function akGfxPopEffects(X) {
   try {
     var ui = akFxUi(); ui.fxPop = true; save(); AKFX.dismissed = false; AKFX.X = X; akFxWinClose(); akFxWinOpen(X); akFxMountAll(X);
     var w = AKFX.win;
+    try { var cvE = document.querySelector(".akg-cv"), stP = akGfxState(), Lp = stP.P && stP.sel ? stP.P.layers.filter(function (l) { return l.id === stP.sel; })[0] : null;
+      if (cvE && Lp && pr) { var rc = cvE.getBoundingClientRect(), kk = cvE._k || 1, bxp = akLayerBox(Lp, stP.P), pb = rc.top + (cvE._oy || 0) + (bxp.y + bxp.h) * kk; pb = Math.min(pb, rc.bottom);
+        if (innerHeight - pb - 10 >= 220) pr = { top: pr.top, bottom: Math.max(pr.bottom, pb) }; } } catch (e5) {}
     if (w && pr) { /* put the window right under the tapped part's pop-up, or above it when there is no room below */
       w.style.right = "6px"; w.style.left = "6px"; w.style.bottom = "auto";
       var hh = Math.min(w.getBoundingClientRect().height || 260, innerHeight * 0.4), below = innerHeight - pr.bottom - 10;
@@ -56198,6 +56219,135 @@ akCss("akzs", [
   ".akzs.akzs-side .akzs-v{min-width:0;font-size:11px}",
   ".akzs.akzs-side button{width:30px;padding:0}"
 ].join("\n"));
+
+/* ---- 18.8i: the Effects fold always uses the window. */
+(function () {
+  var f0 = akGfxEffectsFill;
+  akGfxEffectsFill = function (d, X) { var ui = akFxUi(); if (!ui.fxPop) { ui.fxPop = true; save(); } return f0.apply(this, arguments); };
+})();
+akCss("akfx-line", ".akfx-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}");
+
+/* ================= 18.8j: Fade (see-through gradient) effect, dark/colour screen with a fade, whole-picture list first, Effects tab, tools fold ================= */
+/* a mask whose alpha is how see-through each spot becomes (1 = fully gone). style: lin (one direction), refl (both sides, middle stays), edges (all four edges), oval (middle stays) */
+function akFxFadeMask(e, w, hh, b) {
+  var st = e.style || "lin", r = Math.max(0.03, (e.rad == null ? 60 : e.rad) / 100), soft = (e.soft == null ? 60 : e.soft) / 100, ang = (e.ang || 0) * Math.PI / 180, w2 = 0.04 + 0.96 * soft;
+  var cx = b.x + b.w * (0.5 + (e.cx || 0) / 100), cy = b.y + b.h * (0.5 + (e.cy || 0) / 100);
+  var mc = akGfxCv(w, hh), c = mc.getContext("2d");
+  function sm(a, z, v) { var t = Math.max(0, Math.min(1, (v - a) / (z - a))); return t * t * (3 - 2 * t); }
+  function ease(u) { return sm(0.5 - w2 / 2, 0.5 + w2 / 2, u); }
+  /* stops for a fade that starts at p0 and ends at p1 (positions 0..1 along the gradient line, p0 < p1 or reversed) */
+  function addStops(g, p0, p1) { for (var i = 0; i <= 14; i++) { var u = i / 14, pos = Math.max(0, Math.min(1, p0 + (p1 - p0) * u)); g.addColorStop(pos, "rgba(255,255,255," + ease(u).toFixed(3) + ")"); } }
+  function lin(x0, y0, x1, y1, from, to) { var g = c.createLinearGradient(x0, y0, x1, y1); var a = Math.min(from, to), z = Math.max(from, to), ps = []; var gg = c.createLinearGradient(x0, y0, x1, y1);
+    if (from < to) addStops(g, from, to); else { for (var i = 0; i <= 14; i++) { var u = i / 14, pos = Math.max(0, Math.min(1, to + (from - to) * u)); g.addColorStop(pos, "rgba(255,255,255," + ease(1 - u).toFixed(3) + ")"); } }
+    c.fillStyle = g; c.fillRect(0, 0, w, hh); }
+  if (st === "lin") {
+    var L = (Math.abs(b.w * Math.cos(ang)) + Math.abs(b.h * Math.sin(ang))) / 2, dx = Math.cos(ang) * L, dy = Math.sin(ang) * L;
+    lin(cx - dx, cy - dy, cx + dx, cy + dy, Math.max(0, 1 - r), 1);
+  } else if (st === "refl") {
+    var L2 = (Math.abs(b.w * Math.cos(ang)) + Math.abs(b.h * Math.sin(ang))) / 2, ex = Math.cos(ang) * L2, ey = Math.sin(ang) * L2, g2 = c.createLinearGradient(cx - ex, cy - ey, cx + ex, cy + ey);
+    var s0 = Math.max(0, 1 - r);
+    for (var i = 0; i <= 14; i++) { var u = i / 14, d = s0 + (1 - s0) * u, al = ease(u).toFixed(3); g2.addColorStop(Math.max(0, Math.min(1, 0.5 + d / 2)), "rgba(255,255,255," + al + ")"); g2.addColorStop(Math.max(0, Math.min(1, 0.5 - d / 2)), "rgba(255,255,255," + al + ")"); }
+    c.fillStyle = g2; c.fillRect(0, 0, w, hh);
+  } else if (st === "edges") {
+    [0, 90, 180, 270].forEach(function (q) {
+      var a2 = ang + q * Math.PI / 180, half = (Math.abs(Math.cos(a2 - ang)) < 0.5 ? b.h : b.w) / 2, ux = Math.cos(a2), uy = Math.sin(a2), s1 = Math.max(0, 1 - r);
+      lin(cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half, 0.5 + s1 / 2 - (s1 === 0 ? 0 : 0), 1);
+    });
+  } else {
+    c.save(); c.translate(cx, cy); c.rotate(ang); c.scale(Math.max(1, b.w / 2), Math.max(1, b.h / 2));
+    var rg = c.createRadialGradient(0, 0, 0, 0, 0, 1), s2 = Math.max(0, 1 - r);
+    for (var j = 0; j <= 14; j++) { var u2 = j / 14, pp = s2 + (1 - s2) * u2; rg.addColorStop(Math.max(0, Math.min(1, pp)), "rgba(255,255,255," + ease(u2).toFixed(3) + ")"); }
+    c.fillStyle = rg; c.fillRect(-60, -60, 120, 120); c.restore();
+  }
+  if (e.inv) { var o2 = akGfxCv(w, hh), c2 = o2.getContext("2d"); c2.fillStyle = "#fff"; c2.fillRect(0, 0, w, hh); c2.globalCompositeOperation = "destination-out"; c2.drawImage(mc, 0, 0); return o2; }
+  return mc;
+}
+function akFxFade(cv, e, w, hh, b) {
+  var out = akFxCopy(cv), c = out.getContext("2d"); c.globalCompositeOperation = "destination-out"; c.globalAlpha = Math.max(0, Math.min(1, (e.amt == null ? 100 : e.amt) / 100));
+  c.drawImage(akFxFadeMask(e, w, hh, b), 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = "source-over"; return out;
+}
+var AKFX_FSTYLES = [["lin", "One direction (fades toward an angle)"], ["refl", "Both sides (the middle stays)"], ["edges", "All four edges"], ["oval", "Oval (the middle stays)"]];
+function akFxFadeUi(dd, X, e, sl) {
+  var st = e.style || "lin", mv = function () { save(); akFxAfter(X); };
+  dd.appendChild(akGfxSelect("Style", AKFX_FSTYLES, st, function (v) { e.style = v; save(); akFxAfter(X); akFxRefresh(X); }));
+  dd.appendChild(sl("Direction", e.ang == null ? 90 : e.ang, 0, 359, 5, function (v) { e.ang = v; }, function (v) { return v + "°" + (v === 0 ? " → right" : v === 90 ? " ↓ down" : v === 180 ? " ← left" : v === 270 ? " ↑ up" : ""); }, 90));
+  dd.appendChild(sl("How far it reaches", e.rad == null ? 60 : e.rad, 5, 150, 1, function (v) { e.rad = v; }, function (v) { return v + "%"; }, 60));
+  dd.appendChild(sl("Smoothness", e.soft == null ? 60 : e.soft, 0, 100, 1, function (v) { e.soft = v; }, function (v) { return v >= 95 ? "very smooth" : v <= 5 ? "sharp edge" : v + "%"; }, 60));
+  dd.appendChild(sl("Move left / right", e.cx || 0, -60, 60, 1, function (v) { e.cx = v; }, function (v) { return v ? (v > 0 ? "→ " : "← ") + Math.abs(v) : "center"; }, 0));
+  dd.appendChild(sl("Move up / down", e.cy || 0, -60, 60, 1, function (v) { e.cy = v; }, function (v) { return v ? (v > 0 ? "↓ " : "↑ ") + Math.abs(v) : "center"; }, 0));
+  dd.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!e.inv, onChange: function () { e.inv = this.checked ? 1 : 0; mv(); } }), "Flip it (see-through the other way: the middle instead of the edges)"));
+  dd.appendChild(h("p", { class: "hint" }, "Works on this part only, so what is behind it shows through. “How see-through” above is the strongest the fade gets."));
+}
+function akFxNames(D, id) {
+  var e = D.edit[id] || {}, out = [];
+  akFxActive(e.fxs).forEach(function (x) { out.push(AKFXT[x.t][0].replace(/ \(.*$/, "")); });
+  var f = e.fxo || {}; if (typeof AKG_FXO !== "undefined") AKG_FXO.forEach(function (x) { if (f[x[0]] && typeof f[x[0]] === "number" && !/^shadow[DBA]$/.test(x[0])) out.push(x[1].replace(/ \(.*$/, "")); });
+  return out.join(", ") || "no effects";
+}
+/* a dark (or any colour) screen over the whole picture, with an optional see-through gradient */
+function akOvFill(D) {
+  var hex = String(D.overlayCol || "#000000").replace("#", ""); if (hex.length === 3) hex = hex.replace(/./g, "$&$&");
+  var n = parseInt(hex, 16); if (isNaN(n)) n = 0;
+  return "rgba(" + (n >> 16 & 255) + "," + (n >> 8 & 255) + "," + (n & 255) + "," + ((D.overlay || 0) / 100) + ")";
+}
+(function () {
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    if (l && l.id === "overlay" && l.ovg) {
+      try {
+        var T = ctx.getTransform(), sc = Math.max(0.2, Math.min(1.5, Math.hypot(T.a, T.b) || 1)), w = Math.max(2, Math.round(P.W * sc)), hh = Math.max(2, Math.round(P.H * sc));
+        var cv = akGfxCv(w, hh), c = cv.getContext("2d"); c.fillStyle = l.ovc || "#000000"; c.globalAlpha = Math.max(0, Math.min(1, l.ovop || 0)); c.fillRect(0, 0, w, hh); c.globalAlpha = 1;
+        var m = akFxFadeMask(Object.assign({ amt: 100 }, l.ovg), w, hh, { x: 0, y: 0, w: w, h: hh }); c.globalCompositeOperation = "destination-out"; c.drawImage(m, 0, 0);
+        ctx.drawImage(cv, 0, 0, P.W, P.H); return;
+      } catch (er) { try { console.warn("overlay fade", er); } catch (e2) {} }
+    }
+    return dl.apply(this, arguments);
+  };
+  var on0 = akGfxFxOn; akGfxFxOn = function (l) { if (l && l.id === "overlay" && l.ovg) return true; return on0.apply(this, arguments); };
+})();
+function akOvExtra(d, D, X) {
+  var box = h("div", { class: "akov" });
+  var col = D.overlayCol || "#000000";
+  box.appendChild(h("div", { class: "row" }, h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk("Screen color", D.overlayCol || "", function (v) { D.overlayCol = v || ""; X.ch(true); X.refill(X.cat && "look"); }); } }, h("span", { class: "akg-fxdot", style: "background:" + col }), "Screen color ▾"),
+    [["Black", "#000000"], ["White", "#ffffff"], ["Navy", "#0e1330"], ["Warm", "#7a2a10"]].map(function (c) { return h("button", { type: "button", class: "sm", onClick: function () { D.overlayCol = c[1]; X.ch(true); X.refill("look"); } }, c[0]); })));
+  var g = D.ovGrad;
+  box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!g, onChange: function () { if (this.checked) D.ovGrad = { style: "lin", ang: 90, rad: 70, soft: 70, cx: 0, cy: 0, inv: 0 }; else delete D.ovGrad; X.ch(true); X.refill("look"); } }), "Fade the screen (see-through gradient)"));
+  if (g) {
+    box.appendChild(akGfxSelect("Fade style", AKFX_FSTYLES, g.style || "lin", function (v) { g.style = v; X.ch(true); }));
+    box.appendChild(X.slider("Direction", g.ang == null ? 90 : g.ang, 0, 359, 5, function (v) { g.ang = v; }, function (v) { return v + "°"; }, true, 90));
+    box.appendChild(X.slider("How far it reaches", g.rad == null ? 70 : g.rad, 5, 150, 1, function (v) { g.rad = v; }, function (v) { return v + "%"; }, true, 70));
+    box.appendChild(X.slider("Smoothness", g.soft == null ? 70 : g.soft, 0, 100, 1, function (v) { g.soft = v; }, function (v) { return v + "%"; }, true, 70));
+    box.appendChild(X.slider("Move left / right", g.cx || 0, -60, 60, 1, function (v) { g.cx = v; }, function (v) { return v || "center"; }, true, 0));
+    box.appendChild(X.slider("Move up / down", g.cy || 0, -60, 60, 1, function (v) { g.cy = v; }, function (v) { return v || "center"; }, true, 0));
+    box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!g.inv, onChange: function () { g.inv = this.checked ? 1 : 0; X.ch(true); } }), "Flip it"));
+  }
+  box.appendChild(h("p", { class: "hint" }, "The screen only shows when “Dark overlay” above is more than off. The same fade is also an effect (✨ Effects › Add an effect › Fade out) for any single part."));
+  d.appendChild(box);
+}
+akCss("akfx-18j", ".akov{margin:2px 0 8px;padding-left:6px;border-left:3px solid rgba(200,150,46,.6)}.akfx-sw{gap:4px;flex-wrap:wrap}");
+
+/* the tools right under the divider fold away (▾ Tools on the divider) */
+(function () {
+  var s0 = akGfxSplitEl;
+  akGfxSplitEl = function (X) {
+    var el = s0.apply(this, arguments);
+    try {
+      var cfg = akGfxCfg(), btn = h("button", { type: "button", class: "akg-vmenu akg-tfold", "aria-label": "Fold or unfold the tools under the picture", title: "Fold the tools under the picture", onClick: function (ev) { ev.stopPropagation(); cfg.toolsHide = !cfg.toolsHide; save(); akToolsFoldApply(); } }, cfg.toolsHide ? "▸ Tools" : "▾ Tools");
+      btn.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+      el.insertBefore(btn, el.firstChild);
+    } catch (er) {}
+    setTimeout(akToolsFoldApply, 0);
+    return el;
+  };
+})();
+function akToolsFoldApply() {
+  try {
+    var hide = !!akGfxCfg().toolsHide, root = document.querySelector(".akg") || document.body;
+    root.classList.toggle("akg-toolsfold", hide);
+    [].forEach.call(document.querySelectorAll(".akg-tfold"), function (b) { b.textContent = hide ? "▸ Tools" : "▾ Tools"; });
+  } catch (e) {}
+}
+akCss("akfx-fold", ".akg-toolsfold .akg-tools,.akg-toolsfold .akzs.akzs-under,.akg-toolsfold .akg-multibar{display:none!important}.akg-split .akg-vmenu.akg-tfold{right:auto;left:2px;font-size:12px;width:auto}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
