@@ -52253,8 +52253,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9c";
+AK_VERSION = "18.9d";
 AK_WHATS_NEW = [
+  "🔎 Find venues (✉️ Messages › 🔎 Find venues): search the map for bars and pubs, wineries, breweries, music venues and places marked for live music within the miles you choose. See phone, email and website, tick places, and add them to My venues, make a message for each one, or copy all their emails.",
   "📄 Contracts (✉️ Messages › 📄 Contracts): solo and band performance agreements that fill in the client, event, date, times, place, fee, deposit, balance, travel and lodging. Switch clauses on or off (weather, meals, insurance, overtime…), then 🖨 Print or save as PDF with signature lines. Edit the wording or make your own like any template.",
   "✉️ Messages: “My standard reply” (your own message) is now the default, with your hourly rate ($150, 2-hour minimum), $100 deposit and payment ways filled in automatically. Prices now have hourly rate, minimum hours and deposit.",
   "💼 Business cards and signs: Phone and Address lines are always on the list (type them on the card or save them in Artist info), with a map-pin icon for the address.",
@@ -57307,6 +57308,132 @@ function akmPrint(title, text) {
 }
 akCss("akm-c", ".akm-modes{gap:6px;margin:0 0 8px}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Make a performance contract (solo or band)", a: "More › ✉️ Messages › 📄 Contracts. Pick Solo or Band agreement, the job, venue or show; fill in the client, date, times and address; tick the clauses you want (weather, meals, insurance…); 🖨 Print or save as PDF. Cancellation days, when the balance is due and the state are under 💲 My prices." });
+
+/* ================= 18.9d: 🔎 Find venues. Searches OpenStreetMap (Overpass, free, no key) around home for bars and pubs, wineries, breweries,
+   music venues and theaters, cafés and restaurants (those two only when marked as having live music, or there would be thousands).
+   Shows name, kind, town, miles, phone, email, website; tick places to add them to My venues and/or make messages for all of them.
+   Results are kept in settings().msgs.found (last search). Emails are often missing from the map: 🔎 opens a web search to find one. ================= */
+var AKVF_KINDS = [["bar", "🍺 Bars and pubs"], ["winery", "🍇 Wineries"], ["brew", "🏭 Breweries"], ["venue", "🎭 Music venues, theaters, clubs"], ["cafe", "☕ Cafés (live music only)"], ["restaurant", "🍽 Restaurants (live music only)"]];
+var AKVF = { busy: false, sel: {}, q: "", kinds: null, only: "", sort: "miles" };
+function akvfQuery(r, lat, lon, kinds) {
+  var A = "(around:" + Math.round(r) + "," + lat + "," + lon + ")", q = [];
+  if (kinds.bar) q.push('nwr' + A + '["amenity"~"^(bar|pub|biergarten)$"]["name"];');
+  if (kinds.winery) { q.push('nwr' + A + '["craft"="winery"]["name"];'); q.push('nwr' + A + '["tourism"="wine_cellar"]["name"];'); }
+  if (kinds.brew) { q.push('nwr' + A + '["craft"="brewery"]["name"];'); q.push('nwr' + A + '["microbrewery"="yes"]["name"];'); }
+  if (kinds.venue) q.push('nwr' + A + '["amenity"~"^(music_venue|nightclub|theatre|arts_centre|events_venue)$"]["name"];');
+  if (kinds.cafe) q.push('nwr' + A + '["amenity"="cafe"]["live_music"="yes"]["name"];');
+  if (kinds.restaurant) q.push('nwr' + A + '["amenity"="restaurant"]["live_music"="yes"]["name"];');
+  q.push('nwr' + A + '["live_music"="yes"]["name"];');
+  return "[out:json][timeout:90];(" + q.join("") + ");out center tags;";
+}
+function akvfKindOf(t) {
+  if (t.craft === "winery" || t.tourism === "wine_cellar") return "winery";
+  if (t.craft === "brewery" || t.microbrewery === "yes") return "brew";
+  if (/^(music_venue|nightclub|theatre|arts_centre|events_venue)$/.test(t.amenity || "")) return "venue";
+  if (/^(bar|pub|biergarten)$/.test(t.amenity || "")) return "bar";
+  if (t.amenity === "cafe") return "cafe";
+  if (t.amenity === "restaurant") return "restaurant";
+  return "venue";
+}
+function akvfParse(js) {
+  var r = akMsg().rates, seen = {}, out = [];
+  (js.elements || []).forEach(function (e) {
+    var t = e.tags || {}, lat = e.lat || (e.center && e.center.lat), lon = e.lon || (e.center && e.center.lon); if (!t.name || lat == null) return;
+    var key = (t.name + "|" + (t["addr:city"] || "")).toLowerCase(); if (seen[key]) return; seen[key] = 1;
+    var addr = [[t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" "), t["addr:city"], t["addr:state"], t["addr:postcode"]].filter(Boolean).join(", ");
+    out.push({ id: e.type + e.id, name: t.name, kind: akvfKindOf(t), town: t["addr:city"] || "", address: addr, lat: lat, lon: lon,
+      miles: Math.round(akmDist(r.homeLat, r.homeLon, lat, lon) * 1.25), phone: t.phone || t["contact:phone"] || "", email: t.email || t["contact:email"] || "",
+      website: t.website || t["contact:website"] || t.url || "", fb: t["contact:facebook"] || t.facebook || "", ig: t["contact:instagram"] || "", live: t.live_music === "yes" });
+  });
+  return out;
+}
+function akvfSearch(miles, kinds, done) {
+  var r = akMsg().rates, q = akvfQuery(miles * 1609.34 / 1.25, r.homeLat, r.homeLon, kinds);
+  fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" } })
+    .then(function (x) { if (!x.ok) throw new Error("The map service is busy (" + x.status + "). Try again in a minute."); return x.json(); })
+    .then(function (js) { done(null, akvfParse(js)); }, function (er) { done(er); });
+}
+function akvfMine(p) { var n = normTitle(p.name); return akVenues().filter(function (v) { return normTitle(v.name) === n; })[0] || null; }
+function akvfAdd(p) {
+  var v = akvfMine(p); if (v) { ["phone", "email", "website", "address"].forEach(function (k) { if (!v[k] && p[k]) v[k] = p[k]; }); if (!v.lat) { v.lat = p.lat; v.lon = p.lon; } return v; }
+  v = { id: uid(), name: p.name, address: p.address, phone: p.phone, email: p.email, website: p.website || p.fb || p.ig || "", lat: p.lat, lon: p.lon, town: p.town, cat: ({ bar: "bar", winery: "winery", brew: "brew", venue: "venue", cafe: "cafe", restaurant: "restaurant" })[p.kind] || "", notes: "Found with 🔎 Find venues" };
+  akVenues().push(v); return v;
+}
+function viewVfind() {
+  var m = akMsg(), body = h("div", { class: "akm akvf" }), found = m.found || [];
+  if (!AKVF.kinds) AKVF.kinds = { bar: 1, winery: 1, brew: 1, venue: 1, cafe: 1, restaurant: 1 };
+  var miles = h("input", { type: "number", min: 5, max: 150, value: m.foundMiles || 100, style: "width:5em", "aria-label": "How far (miles)" });
+  var status = h("p", { class: "hint", role: "status" }, found.length ? found.length + " places from the last search" + (m.foundAt ? " (" + m.foundAt + ")" : "") + "." : "Nothing searched yet.");
+  body.appendChild(h("div", { class: "card" }, h("h3", null, "🔎 Find venues to contact"),
+    h("p", { class: "hint" }, "Searches the free OpenStreetMap map around " + (m.rates.home || "home") + ". It finds places with phones and websites; emails are often missing (🔎 next to a place looks one up)."),
+    h("div", { class: "row akvf-k" }, AKVF_KINDS.map(function (k) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!AKVF.kinds[k[0]], onChange: function () { AKVF.kinds[k[0]] = this.checked ? 1 : 0; } }), k[1]); })),
+    h("div", { class: "row akm-tr" }, h("span", null, "Within"), miles, h("span", null, "miles of home"),
+      h("button", { class: "primary", disabled: AKVF.busy, onClick: function () {
+        var mi = Math.max(5, Math.min(150, Number(miles.value) || 100)); AKVF.busy = true; status.textContent = "Searching the map… (a big area can take up to a minute)";
+        akvfSearch(mi, AKVF.kinds, function (er, list) { AKVF.busy = false; if (er) { status.textContent = "Couldn't search: " + (er.message || er); return; } m.found = list.slice(0, 1500); m.foundMiles = mi; m.foundAt = akTodayKey(); AKVF.sel = {}; save(); render(); toast(list.length + " places found."); });
+      } }, AKVF.busy ? "Searching…" : "🔎 Search")), status));
+  if (!found.length) return shell("🔎 Find venues", body);
+  /* filters */
+  var shown = found.filter(function (p) {
+    if (AKVF.q && (p.name + " " + p.town).toLowerCase().indexOf(AKVF.q.toLowerCase()) < 0) return false;
+    if (AKVF.only === "live" && !p.live) return false; if (AKVF.only === "email" && !p.email) return false; if (AKVF.only === "phone" && !p.phone) return false; if (AKVF.only === "new" && akvfMine(p)) return false;
+    return !!AKVF.kinds[p.kind] || p.live;
+  }).sort(function (a, b) { return AKVF.sort === "name" ? a.name.localeCompare(b.name) : AKVF.sort === "town" ? (a.town || "~").localeCompare(b.town || "~") || a.miles - b.miles : a.miles - b.miles; });
+  var nSel = Object.keys(AKVF.sel).filter(function (k) { return AKVF.sel[k]; }).length;
+  var list = h("div", { class: "akvf-list" });
+  var KI = { bar: "🍺", winery: "🍇", brew: "🏭", venue: "🎭", cafe: "☕", restaurant: "🍽" };
+  shown.slice(0, 400).forEach(function (p) {
+    var mine = akvfMine(p);
+    list.appendChild(h("div", { class: "akvf-row" + (mine ? " mine" : "") },
+      h("input", { type: "checkbox", checked: !!AKVF.sel[p.id], "aria-label": "Pick " + p.name, onChange: function () { AKVF.sel[p.id] = this.checked; cnt.textContent = Object.keys(AKVF.sel).filter(function (k) { return AKVF.sel[k]; }).length + " picked"; } }),
+      h("div", { class: "akvf-main" }, h("b", null, (KI[p.kind] || "") + " " + p.name), h("div", { class: "hint" }, [p.town, p.miles + " mi", p.live ? "🎵 live music" : "", mine ? "✓ in my venues" : ""].filter(Boolean).join(" · ")),
+        h("div", { class: "akvf-c" }, p.phone ? h("a", { href: "tel:" + p.phone.replace(/[^\d+]/g, "") }, "📞 " + p.phone) : null, p.email ? h("a", { href: "mailto:" + p.email }, "✉️ " + p.email) : null,
+          p.website || p.fb ? h("a", { href: p.website || p.fb, target: "_blank", rel: "noopener" }, "🌐 site") : null, p.ig ? h("a", { href: /^http/.test(p.ig) ? p.ig : "https://instagram.com/" + p.ig.replace(/^@/, ""), target: "_blank", rel: "noopener" }, "📷") : null)),
+      h("button", { class: "sm", title: "Look up a booking email or contact", onClick: function () { window.open("https://www.google.com/search?q=" + encodeURIComponent(p.name + " " + (p.town || "") + " live music booking email"), "_blank"); } }, "🔎")));
+  });
+  var cnt = h("span", { class: "hint" }, nSel + " picked");
+  var tplSel = h("select", { "aria-label": "Message to send" }, akMsg().tpls.filter(function (t) { return !t.doc; }).map(function (t) { return h("option", { value: t.id, selected: /^Pitch/.test(t.name) }, t.name); }));
+  function picked() { return found.filter(function (p) { return AKVF.sel[p.id]; }); }
+  body.appendChild(h("div", { class: "card" },
+    h("div", { class: "row akvf-f" }, h("input", { type: "search", value: AKVF.q, placeholder: "Filter by name or town", onInput: function () { AKVF.q = this.value; clearTimeout(AKVF.t); AKVF.t = setTimeout(render, 350); } }),
+      akGfxSelect("Show", [["", "All"], ["live", "Marked live music"], ["phone", "Has a phone"], ["email", "Has an email"], ["new", "Not in my venues yet"]], AKVF.only, function (v) { AKVF.only = v; render(); }),
+      akGfxSelect("Sort", [["miles", "Nearest first"], ["town", "By town"], ["name", "By name"]], AKVF.sort, function (v) { AKVF.sort = v; render(); })),
+    h("div", { class: "row akvf-act" }, h("button", { class: "sm", onClick: function () { shown.forEach(function (p) { AKVF.sel[p.id] = true; }); render(); } }, "☑ Pick all shown (" + Math.min(shown.length, 400) + ")"), h("button", { class: "sm", onClick: function () { AKVF.sel = {}; render(); } }, "Clear"), cnt),
+    h("div", { class: "row akvf-act" },
+      h("button", { class: "sm", onClick: function () { var ps = picked(); if (!ps.length) { toast("Pick places first."); return; } ps.forEach(akvfAdd); save(); toast(ps.length + " added to My venues."); render(); } }, "＋ Add to My venues"),
+      tplSel,
+      h("button", { class: "sm primary", onClick: function () { var ps = picked(); if (!ps.length) { toast("Pick places first."); return; } var ids = ps.map(function (p) { return akvfAdd(p).id; }); save(); var t = akMsg().tpls.filter(function (x) { return x.id === tplSel.value; })[0]; if (t) akmBulkShow(t, ids); } }, "✉️ Make messages"),
+      h("button", { class: "sm", onClick: function () { var em = picked().map(function (p) { return p.email; }).filter(Boolean); if (!em.length) { toast("None of the picked places has an email on the map."); return; } akmCopy(em.join(", ")); } }, "📋 Copy emails")),
+    h("p", { class: "hint" }, "Showing " + Math.min(shown.length, 400) + " of " + shown.length + (shown.length > 400 ? " (filter to see the rest)" : "") + ". Places you add get their phone, email, website and location, so messages fill in their name and distance."), list));
+  return shell("🔎 Find venues", body);
+}
+AK_VIEWS.vfind = viewVfind; AK_VIEW_TAB.vfind = "shows";
+/* links to it: Messages screen and the several-venues picker */
+(function () {
+  var v0 = viewMsgs;
+  viewMsgs = function () {
+    var el = v0.apply(this, arguments);
+    try { var hd = el.querySelector(".akm-modes"); if (hd) hd.appendChild(h("button", { class: "chip", onClick: function () { go("vfind"); } }, "🔎 Find venues")); } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.msgs = viewMsgs;
+})();
+/* the several-venues window also offers to copy every address (for one email with BCC) */
+(function () {
+  var b0 = akmBulkShow;
+  akmBulkShow = function (tpl, ids) {
+    b0.apply(this, arguments);
+    try {
+      var box = document.querySelector(".akm-bulk"); if (!box) return;
+      var em = ids.map(function (id) { var v = akVenues().filter(function (x) { return x.id === id; })[0]; return v && v.email; }).filter(Boolean);
+      box.insertBefore(h("div", { class: "row" }, h("span", { class: "hint" }, em.length + " of " + ids.length + " have an email."), em.length ? h("button", { class: "sm", onClick: function () { akmCopy(em.join(", ")); } }, "📋 Copy all emails (for BCC)") : null), box.firstChild);
+    } catch (e) {}
+  };
+})();
+akCss("akvf", ".akvf-k{gap:6px 12px;flex-wrap:wrap}.akvf-f{gap:6px;flex-wrap:wrap;align-items:flex-end}.akvf-f input[type=search]{flex:1 1 12em}.akvf-act{gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}" +
+  ".akvf-row{display:flex;gap:8px;align-items:flex-start;padding:8px 2px;border-top:1px solid rgba(127,127,127,.25)}.akvf-row.mine{opacity:.75}.akvf-row input[type=checkbox]{margin-top:4px}.akvf-main{flex:1 1 auto;min-width:0}" +
+  ".akvf-c{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;margin-top:2px}.akvf-c a{word-break:break-all}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Find venues to contact near me (bars, wineries, breweries, music venues)", a: "✉️ Messages › 🔎 Find venues: choose kinds and how many miles, 🔎 Search. Tick places, then ＋ Add to My venues, ✉️ Make messages (one per venue, from a template), or 📋 Copy emails. Emails are often missing on the map: 🔎 next to a place looks one up." });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
