@@ -52253,8 +52253,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9d";
+AK_VERSION = "18.9e";
 AK_WHATS_NEW = [
+  "✉️ Messages: your hourly rate, minimum, travel per mile and free range sit at the top of Fill in; the price (rate × hours), travel fee and total go into the message by themselves. Type the event address and the driving miles work themselves out. Dates and times use a calendar and clock picker.",
   "🔎 Find venues (✉️ Messages › 🔎 Find venues): search the map for bars and pubs, wineries, breweries, music venues and places marked for live music within the miles you choose. See phone, email and website, tick places, and add them to My venues, make a message for each one, or copy all their emails.",
   "📄 Contracts (✉️ Messages › 📄 Contracts): solo and band performance agreements that fill in the client, event, date, times, place, fee, deposit, balance, travel and lodging. Switch clauses on or off (weather, meals, insurance, overtime…), then 🖨 Print or save as PDF with signature lines. Edit the wording or make your own like any template.",
   "✉️ Messages: “My standard reply” (your own message) is now the default, with your hourly rate ($150, 2-hour minimum), $100 deposit and payment ways filled in automatically. Prices now have hourly rate, minimum hours and deposit.",
@@ -56812,10 +56813,10 @@ function akmStd() {
   return { id: uid(), name: "My standard reply", kind: "private", subject: "Live music on {date}", secs: [
     akmSec("Greeting", "Hi {client},"),
     akmSec("Thanks and date", "Thank you so much for reaching out! I'm available {date}, and I'd be happy to provide live music that day.", "", ["Thanks so much for reaching out! I'm available {date} and would love to play for you."]),
-    akmSec("Rate", "My rate is {hourly rate} per hour of performance with a {minimum hours}-hour minimum, which includes all the sound equipment and setup.", "", ["My rate is {hourly rate} per hour of performance ({minimum hours}-hour minimum), so {hours} hours would be {price}. That includes all the sound equipment and setup."]),
-    akmSec("Travel fee", "Since {where} is about {miles} miles from me, there's a travel fee of {travel fee}.", "travel"),
+    akmSec("Rate", "My rate is {hourly rate} per hour of performance with a {minimum hours}-hour minimum, so {hours} hours would be {price}. That includes all the sound equipment and setup.", "", ["My rate is {hourly rate} per hour of performance with a {minimum hours}-hour minimum, which includes all the sound equipment and setup."]),
+    akmSec("Travel fee", "Since the event is about {miles} miles from me, there's a travel fee of {travel fee}.", "travel"),
     akmSec("Lodging", "Because of the distance, there's also a lodging fee of {lodging fee} for an overnight stay.", "lodging"),
-    akmSec("Total", "With travel, the total for {hours} hours would be {total}.", "extras"),
+    akmSec("Total", "With travel, the total comes to {total}.", "extras"),
     akmSec("Questions", "So I can plan the music, could you tell me the start time, the location, and roughly how many guests you're expecting?", ""),
     akmSec("Booking and deposit", "Let me know if you'd like to book me, and we can work out all the details. A {deposit} deposit reserves the date, and it can be paid by {payment}."),
     akmSec("Video", "If you haven't heard me play yet, here's a short compilation to check out: https://youtu.be/ZTPZsjpH6U0"),
@@ -56839,6 +56840,7 @@ function akMsg() {
     save();
   }
   if (!Array.isArray(m.log)) m.log = [];
+  if (!m.std2) { m.std2 = 1; m.tpls.forEach(function (t) { if (t.name !== "My standard reply") return; t.secs.forEach(function (x) { if (x.title === "Rate" && /which includes all the sound equipment and setup\.$/.test(x.text) && !/\{price\}/.test(x.text)) { x.alts = [x.text]; x.text = "My rate is {hourly rate} per hour of performance with a {minimum hours}-hour minimum, so {hours} hours would be {price}. That includes all the sound equipment and setup."; } if (x.title === "Total" && x.auto === "extras") x.text = "With travel, the total comes to {total}."; if (x.title === "Travel fee" && /^Since \{where\} is about/.test(x.text)) x.text = "Since the event is about {miles} miles from me, there's a travel fee of {travel fee}."; }); }); save(); }
   if (!m.ctr) { m.ctr = 1; akmContracts().forEach(function (t) { m.tpls.push(t); }); save(); }
   return m;
 }
@@ -56863,7 +56865,14 @@ function akmDist(lat1, lon1, lat2, lon2) { var R = 3958.8, t = Math.PI / 180, dL
 /* road miles ≈ straight line × 1.25 */
 function akmMilesTo(q, cb) {
   var r = akMsg().rates;
-  function from(lat, lon) { cb(null, Math.round(akmDist(r.homeLat, r.homeLon, lat, lon) * 1.25)); }
+  function from(lat, lon) {
+    var est = Math.round(akmDist(r.homeLat, r.homeLon, lat, lon) * 1.25), done = false;
+    /* driving miles from the free OSRM route service; the straight-line estimate if it doesn't answer in 6 seconds */
+    var t = setTimeout(function () { if (!done) { done = true; cb(null, est, "est"); } }, 6000);
+    fetch("https://router.project-osrm.org/route/v1/driving/" + r.homeLon + "," + r.homeLat + ";" + lon + "," + lat + "?overview=false")
+      .then(function (x) { return x.json(); }).then(function (j) { if (done) return; done = true; clearTimeout(t); var mt = j && j.routes && j.routes[0] && j.routes[0].distance; cb(null, mt ? Math.round(mt / 1609.34) : est, mt ? "road" : "est"); },
+        function () { if (done) return; done = true; clearTimeout(t); cb(null, est, "est"); });
+  }
   if (q && typeof q === "object" && q.lat) return from(Number(q.lat), Number(q.lon));
   if (!q) return cb(new Error("no place"));
   fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" + encodeURIComponent(q), { headers: { Accept: "application/json" } })
@@ -56875,7 +56884,7 @@ function akmLinksPage() { try { return typeof akLinksUrl === "function" ? akLink
 function akmUpcoming() {
   try { var t = akTodayKey(); return akGigs().filter(function (g) { return g.pub && g.date && g.date >= t; }).sort(function (a, b) { return a.date.localeCompare(b.date); }).slice(0, 4).map(function (g) { var v = akVenueFor(g); return "• " + akmDate(g.date) + " · " + (g.venue || (v && v.name) || g.name || ""); }).join("\n"); } catch (e) { return ""; }
 }
-function akmDate(k) { if (!k) return ""; try { var p = k.split("-"), d = new Date(+p[0], +p[1] - 1, +p[2]); return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }); } catch (e) { return k; } }
+function akmDate(k) { if (!k) return ""; try { var p = k.split("-"), d = new Date(+p[0], +p[1] - 1, +p[2]); var o = { weekday: "long", month: "long", day: "numeric" }; if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric"; return d.toLocaleDateString(undefined, o); } catch (e) { return k; } }
 function akmTime(t) { if (!t) return ""; var p = t.split(":"), hh = +p[0], m = p[1] || "00"; return (hh % 12 || 12) + (m !== "00" ? ":" + m : "") + (hh >= 12 ? " pm" : " am"); }
 function akmTokens(text) { var out = [], re = /\{([^{}\n]{1,40})\}/g, m; while ((m = re.exec(text || ""))) { var k = m[1].trim().toLowerCase(); if (out.indexOf(k) < 0) out.push(k); } return out; }
 /* values that fill themselves; st = the screen's state */
@@ -57011,21 +57020,37 @@ function viewMsgs() {
   function drawTrip() {
     tripBox.textContent = "";
     var miles = h("input", { type: "number", inputmode: "decimal", min: 0, value: st.f.miles || "", placeholder: "miles", "aria-label": "Miles from home (one way)", style: "width:6em", onInput: function () { st.f.miles = this.value; redo(true); } });
-    var place = h("input", { type: "text", placeholder: "Town or address", value: st.place || "", "aria-label": "Where the job is", onInput: function () { st.place = this.value; } });
+    var place = h("input", { type: "text", placeholder: "Event address or town (miles work out by themselves)", value: st.place || "", "aria-label": "Where the job is", onInput: function () { st.place = this.value; }, onChange: function () { st.place = this.value; akmLookup(st, redo); }, onKeydown: function (e) { if (e.key === "Enter") { e.preventDefault(); this.blur(); } } });
     tripBox.appendChild(h("div", { class: "row akm-tr" }, h("span", null, "Miles from home"), miles,
       h("label", { class: "chk" }, h("input", { type: "checkbox", checked: st.local, onChange: function () { st.local = this.checked; redo(true); } }), "Local (no travel fee)"),
       h("label", { class: "chk" }, h("input", { type: "checkbox", checked: st.overnight, onChange: function () { st.overnight = this.checked; redo(true); } }), "Overnight stay")));
-    tripBox.appendChild(h("div", { class: "row akm-tr" }, place, h("button", { class: "sm", onClick: function () { var q = st.place || ""; if (!q) { toast("Type a town or address first."); return; } toast("Working out the distance…"); akmMilesTo(q, function (er, mi) { if (er) toast("Couldn't find that place. Type the miles instead."); else { st.f.miles = String(mi); if (!st.f.where) st.f.where = q.split(",")[0]; redo(); } }); } }, "📍 Work out miles")));
+    tripBox.appendChild(h("div", { class: "row akm-tr" }, place, h("button", { class: "sm", onClick: function () { akmLookup(st, redo); } }, "📍 Miles")));
     var rate = akMsg().rates.kinds[st.kind] || {};
-    tripBox.appendChild(h("p", { class: "hint" }, (st._note ? st._note + " " : "") + "Travel " + akmMoney(st._travel || 0) + (st._lodging ? " · lodging " + akmMoney(st._lodging) : "") + " · free within " + (rate.local || 0) + " miles for this kind of job. Miles are estimated (straight line × 1.25); change them if you know better."));
+    tripBox.appendChild(h("p", { class: "hint" }, (st._note ? st._note + " " : "") + "Travel " + akmMoney(st._travel || 0) + (st._lodging ? " · lodging " + akmMoney(st._lodging) : "") + " · free within " + (rate.local || 0) + " miles for this kind of job." + (st.milesHow === "road" ? " Miles are driving miles (first match for the address)." : st.milesHow === "est" ? " Miles are estimated (straight line × 1.25)." : "") + " You can change them."));
   }
   function drawAsks() {
     asksBox.textContent = "";
+    var rq = akMsg().rates.kinds[st.kind] || {};
+    function qn(lab, key, w, pre, post) { return h("label", { class: "akm-q" }, h("span", null, lab), pre || null, h("input", { type: "text", inputmode: "decimal", value: rq[key] == null ? "" : rq[key], style: "width:" + w, onInput: function () { rq[key] = this.value; save(); redo(true); } }), post || null); }
+    asksBox.appendChild(h("div", { class: "row akm-quick" }, qn("My rate", "hourly", "4.5em", "$", "/hr"), qn("min", "minHours", "2.5em", null, "hr"), qn("Travel", "perMile", "3em", "$", "/mi"), qn("past", "local", "3.5em", null, "mi")));
     var ask = akmAsks(st, tpl), rate = akMsg().rates.kinds[st.kind] || {}; asksBox._k = ask.join("|");
     if (!ask.length) asksBox.appendChild(h("p", { class: "hint" }, "Nothing to fill in for this one."));
     ask.forEach(function (k) {
       var ph = k === "price" ? (rate.hourly && !rate.price ? "worked out from " + akmMoney(akmNum(rate.hourly)) + "/hr" : rate.price ? akmMoney(akmNum(rate.price)) + " (your " + (AKM_KINDS.filter(function (x) { return x[0] === st.kind; })[0] || ["", ""])[1].toLowerCase() + " price)" : "e.g. 450") : k === "hours" ? (rate.hours || rate.minHours || "2") : k === "date" ? "Saturday, June 14" : "";
-      asksBox.appendChild(h("label", { class: "fld" }, h("span", null, k.charAt(0).toUpperCase() + k.slice(1)), h("input", { type: "text", value: st.f[k] || "", placeholder: ph, onInput: function () { st.f[k] = this.value; redo(true); } })));
+      var lab = k.charAt(0).toUpperCase() + k.slice(1), inp;
+      st.iso = st.iso || {};
+      if (k === "date") {
+        var shown = h("span", { class: "hint akm-dshow" }, st.f.date || "");
+        inp = h("input", { type: "date", value: st.iso.date || "", onInput: function () { st.iso.date = this.value; st.f.date = akmDate(this.value); shown.textContent = st.f.date; redo(true); } });
+        asksBox.appendChild(h("label", { class: "fld" }, h("span", null, lab), h("div", { class: "row akm-dt" }, inp, shown))); return;
+      }
+      if (/^(start time|end time|time)$/.test(k)) {
+        inp = h("input", { type: "time", step: 900, value: st.iso[k] || "", onInput: function () { st.iso[k] = this.value; st.f[k] = akmTime(this.value); redo(true); } });
+        asksBox.appendChild(h("label", { class: "fld" }, h("span", null, lab), inp)); return;
+      }
+      inp = h("input", { type: k === "hours" ? "number" : "text", inputmode: k === "hours" || k === "price" ? "decimal" : null, step: k === "hours" ? "0.5" : null, value: st.f[k] || "", placeholder: ph, onInput: function () { st.f[k] = this.value; redo(true); } });
+      if (k === "event address") inp.addEventListener("change", function () { st.place = this.value; akmLookup(st, redo); });
+      asksBox.appendChild(h("label", { class: "fld" }, h("span", null, lab), inp));
     });
     var tf = h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!st.f.travelOver, onChange: function () { st.f.travelOver = this.checked; drawAsks(); redo(true); } }), "Type the travel fee myself");
     asksBox.appendChild(tf);
@@ -57434,6 +57459,19 @@ akCss("akvf", ".akvf-k{gap:6px 12px;flex-wrap:wrap}.akvf-f{gap:6px;flex-wrap:wra
   ".akvf-row{display:flex;gap:8px;align-items:flex-start;padding:8px 2px;border-top:1px solid rgba(127,127,127,.25)}.akvf-row.mine{opacity:.75}.akvf-row input[type=checkbox]{margin-top:4px}.akvf-main{flex:1 1 auto;min-width:0}" +
   ".akvf-c{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;margin-top:2px}.akvf-c a{word-break:break-all}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Find venues to contact near me (bars, wineries, breweries, music venues)", a: "✉️ Messages › 🔎 Find venues: choose kinds and how many miles, 🔎 Search. Tick places, then ＋ Add to My venues, ✉️ Make messages (one per venue, from a template), or 📋 Copy emails. Emails are often missing on the map: 🔎 next to a place looks one up." });
+
+/* ---- 18.9e: miles from the event address (first match on the free OpenStreetMap search, driving miles from OSRM) ---- */
+function akmLookup(st, redo) {
+  var q = String(st.place || st.f["event address"] || "").trim(); if (!q) { toast("Type the event address or town first."); return; }
+  toast("Working out the miles…");
+  akmMilesTo(q, function (er, mi, how) {
+    if (er) { toast("Couldn't find that address. Type the miles instead."); return; }
+    st.f.miles = String(mi); st.milesHow = how; if (!st.f["event address"]) st.f["event address"] = q;
+    toast(mi + (how === "road" ? " driving miles." : " miles (estimated)."));
+    redo();
+  });
+}
+akCss("akm-q", ".akm-quick{gap:4px 10px;flex-wrap:wrap;align-items:center;margin:0 0 8px;padding:6px 8px;border-radius:10px;background:rgba(200,150,46,.1)}.akm-q{display:inline-flex;align-items:center;gap:3px;font-size:13px}.akm-q input{min-height:30px;padding:2px 6px}.akm-dt{gap:8px;align-items:center;flex-wrap:wrap}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
