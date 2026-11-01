@@ -36662,7 +36662,10 @@ function viewGfx() {
     if (cv.width !== Math.max(1, Math.round(cw * dpr)) || cv.height !== Math.max(1, Math.round(chh * dpr))) { cv.width = Math.max(1, Math.round(cw * dpr)); cv.height = Math.max(1, Math.round(chh * dpr)); }
     cv.style.width = cw + "px"; cv.style.height = chh + "px";
     var ctx = cv.getContext("2d"); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.setTransform(s * dpr, 0, 0, s * dpr, ox * dpr, oy * dpr);
+    /* 18.8m: anything past the edge of the page is cut off, as it will be when saved or printed */
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, P.W, P.H); ctx.clip();
     P.layers.forEach(function (l) { try { akDrawLayer(ctx, l, P); } catch (e) {} });
+    ctx.restore();
     if (typeof akGfxPaintSel === "function") akGfxPaintSel(ctx, P, st, s);
     else { var L = st.sel && P.layers.filter(function (x) { return x.id === st.sel; })[0]; if (L) { var b = akLayerBox(L, P); ctx.setLineDash([8 / s, 6 / s]); ctx.lineWidth = 2 / s; ctx.strokeStyle = "#00B7FF"; ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); } }
     if (st.multi && st.multi.length) st.multi.forEach(function (id) { var ML = P.layers.filter(function (x) { return x.id === id; })[0]; if (ML) { var mb = akLayerBox(ML, P); ctx.save(); ctx.setLineDash([8 / s, 6 / s]); ctx.lineWidth = 2.5 / s; ctx.strokeStyle = "#FF3DA5"; ctx.strokeRect(mb.x, mb.y, mb.w, mb.h); ctx.restore(); } });
@@ -52250,8 +52253,11 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.8l";
+AK_VERSION = "18.8m";
 AK_WHATS_NEW = [
+  "Parts that hang past the edge of the card, sign or poster are now cut off on screen too, the way they will print and save. The ⇲ Dock button in the effects window works again.",
+  "↶ Undo and ↷ Redo now also step back and forward through picking and letting go of parts (and select-several picks), in the order they happened.",
+  "🎨 Edit together: after ☑ Select several, tap 🎨 Edit together. The first part opens with all its usual tools (color, font, spacing, the ✨ Effects window…) and every change goes to all the picked parts. Each keeps its own place, size and words.",
   "☑ Select several, fewer taps: the button under the picture turns it on and off directly; while on, every tap adds or removes a part, and a bar on the picture shows how many with All, Clear and ✓ Done. The part pop-up has ✕ Hide (tap the part again to bring it back).",
   "The divider under the picture now goes right up to the top bar, and its ▾ Tools and ⚙ buttons sit inside it instead of over the zoom slider.",
   "🎲 Effects can be randomized: 🎲 ▾ › Randomize just… Effects, or set whether 🎲 everything changes or keeps them. The effects window has 🎲 This part, 🎲 Every part and ✕ Take all off. Locked parts keep theirs.",
@@ -56224,10 +56230,7 @@ akCss("akzs", [
 ].join("\n"));
 
 /* ---- 18.8i: the Effects fold always uses the window. */
-(function () {
-  var f0 = akGfxEffectsFill;
-  akGfxEffectsFill = function (d, X) { var ui = akFxUi(); if (!ui.fxPop) { ui.fxPop = true; save(); } return f0.apply(this, arguments); };
-})();
+/* (18.8m: the Effects tab follows the ⇲ Dock / ⧉ Pop out choice again; the pop-up button always opens the window) */
 akCss("akfx-line", ".akfx-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}");
 
 /* ================= 18.8j: Fade (see-through gradient) effect, dark/colour screen with a fade, whole-picture list first, Effects tab, tools fold ================= */
@@ -56514,6 +56517,116 @@ akCss("akms", ".akms{margin:4px 0;display:flex;flex-wrap:wrap;align-items:center
   "html body .akg-toolsfold .akg-multibar{display:block!important}.akg-pop.akg-pophid{display:none!important}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Select several parts quickly", a: "Graphics studio › ☑ Select several (under the picture) or ☑ Several in a part's pop-up. While it is on, tap parts to add or remove them; the bar on the picture has All, Clear and ✓ Done. The pop-up's ✕ Hide puts it away; tap the part again to bring it back." });
 document.addEventListener("pointerup", function (e) { try { var st = akGfxState(); if (st.popHide && e.target && e.target.closest && e.target.closest("canvas.akg-cv")) { st.popHide = ""; setTimeout(function () { st.X.paint(); }, 30); } } catch (er) {} }, true);
+
+/* ================= 18.8m: 🎨 Edit together. From "select several", the first picked part opens with all its usual tools (colors, fonts, effects window…);
+   every style change made to it is copied to the other picked parts. Position, size, turn, words and lock stay each part's own. ================= */
+var AKTG_SKIP = { dx: 1, dy: 1, k: 1, rot: 1, text: 1, lock: 1, hide: 1, warp: 1, crop: 1, side: 1, src: 1, w: 1, h: 1, x: 1, y: 1 };
+function akTgStyle(e) { var o = {}; Object.keys(e || {}).forEach(function (k) { if (!AKTG_SKIP[k]) o[k] = e[k]; }); return JSON.stringify(o); }
+function akTgStart() {
+  var st = akGfxState(), X = st.X, ids = (st.multi || []).slice(); if (!X || ids.length < 2) { toast("Pick at least two parts first."); return; }
+  st.together = ids; st.multiMode = false; st.multi = ids.slice(); st.sel = ids[0]; st.popHide = "";
+  var D = X.D; D.edit = D.edit || {}; st._tgLast = akTgStyle(D.edit[ids[0]]);
+  X.paint(); try { X.refill("parts", true); } catch (e) {} akGfxEdRefresh(); try { akGfxTools(document.querySelector(".akg-tools"), X); } catch (e2) {}
+  try { if (X.cat) X.cat("sel"); } catch (e3) {}
+  akMsSync(); toast("Changes to this part go to all " + ids.length + ". The ✨ Effects window works too.");
+}
+function akTgStop() { var st = akGfxState(); st.together = null; st.multi = []; st.multiMode = false; try { st.X.paint(); akGfxEdRefresh(); } catch (e) {} akMsSync(); }
+function akTgSync() {
+  var st = akGfxState(), X = st.X; if (!st.together || !X) return;
+  var lead = st.together[0];
+  if (st.sel !== lead) { if (st.sel && st.together.indexOf(st.sel) >= 0) { st.together.splice(st.together.indexOf(st.sel), 1); st.together.unshift(st.sel); lead = st.sel; st._tgLast = akTgStyle(X.D.edit[lead]); } else { akTgStop(); return; } }
+  var D = X.D, e0 = D.edit[lead] || {}, cur = akTgStyle(e0);
+  if (cur === st._tgLast) return;
+  var prev = JSON.parse(st._tgLast || "{}"), now = JSON.parse(cur);
+  st.together.slice(1).forEach(function (id) {
+    var e = D.edit[id] = D.edit[id] || {};
+    Object.keys(prev).forEach(function (k) { if (!(k in now)) delete e[k]; });
+    Object.keys(now).forEach(function (k) { if (JSON.stringify(prev[k]) !== JSON.stringify(now[k])) e[k] = JSON.parse(JSON.stringify(now[k])); });
+  });
+  st._tgLast = cur; save(); X.paint();
+}
+setInterval(function () { try { if (S.view === "gfx") akTgSync(); } catch (e) {} }, 250);
+/* the bar: while editing together it says so; while picking it offers 🎨 Edit together */
+(function () {
+  var s0 = akMsSync;
+  akMsSync = function () {
+    var st = akGfxState();
+    if (st.together) {
+      try {
+        var pw = document.querySelector(".akg-prev"); if (!pw) return; var bar = document.querySelector(".akms"), key = "tg" + st.together.length;
+        if (bar && bar._k === key) return; if (bar) bar.remove();
+        bar = h("div", { class: "akms akms-tg", role: "toolbar" }, h("span", { class: "akms-n" }, "🎨 Editing " + st.together.length + " parts together: changes to the picked one go to all"),
+          h("button", { type: "button", class: "sm", onClick: function (e) { e.stopPropagation(); var ids = st.together.slice(); st.together = null; st.multiMode = true; st.multi = ids; st.sel = ""; st.X.paint(); akGfxEdRefresh(); akMsSync(); } }, "☑ Pick more"),
+          h("button", { type: "button", class: "sm primary", onClick: function (e) { e.stopPropagation(); akTgStop(); } }, "✓ Done"));
+        bar._k = key; pw.parentNode.insertBefore(bar, pw.nextSibling);
+      } catch (e) {}
+      return;
+    }
+    s0.apply(this, arguments);
+    try {
+      var b2 = document.querySelector(".akms:not(.akms-tg)");
+      if (b2 && !b2.querySelector(".akms-tgb")) { var n = (st.multi || []).length; var tb = h("button", { type: "button", class: "sm primary akms-tgb", disabled: n < 2, onClick: function (e) { e.stopPropagation(); akTgStart(); } }, "🎨 Edit together"); b2.insertBefore(tb, b2.lastChild); }
+    } catch (e2) {}
+  };
+})();
+/* the other picked parts keep their outline while editing together */
+(function () {
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) { var st = akGfxState(); if (st.together && !st.multi.length) st.multi = st.together.slice(); return p0.apply(this, arguments); };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Change the color, font or effects of several parts at once", a: "Graphics studio › ☑ Select several › tap the parts › 🎨 Edit together. The first one opens with all its tools (colors, fonts, ✨ Effects window); every style change goes to all of them. ✓ Done when finished." });
+
+/* ================= 18.8m: ↶ Undo and ↷ Redo include picking and letting go of parts (and select-several picks).
+   Each selection change is remembered with the design step it happened on; Undo goes back through selections and design changes in the order they happened. ================= */
+var AKSU = { back: [], fwd: [], last: null, lastI: -1, busy: false };
+function akSuSig() { var st = akGfxState(); return { sel: st.sel || "", multi: (st.multi || []).slice(), mm: !!st.multiMode, tg: st.together ? st.together.slice() : null }; }
+function akSuKey(o) { return JSON.stringify(o); }
+function akSuApply(o) {
+  var st = akGfxState(), X = st.X; if (!X) return;
+  AKSU.busy = true;
+  try {
+    st.sel = o.sel; st.multi = o.multi.slice(); st.multiMode = o.mm; st.together = o.tg ? o.tg.slice() : null; st.popHide = "";
+    if (st.together) st._tgLast = akTgStyle((X.D.edit || {})[st.together[0]]);
+    X.paint(); try { X.refill("parts", true); } catch (e) {} akGfxEdRefresh(); akMsSync();
+    try { akGfxTools(document.querySelector(".akg-tools"), X); } catch (e2) {}
+    try { akGfxUBtns(); } catch (e3) {}
+  } finally { AKSU.last = akSuSig(); AKSU.lastI = AKGU.i; AKSU.busy = false; }
+}
+function akSuPoll() {
+  if (S.view !== "gfx" || AKSU.busy || !akGfxState().X) return;
+  if (AKGU.i !== AKSU.lastI) { /* a new design step: selections after it on the old path no longer apply */
+    if (AKGU.i > AKSU.lastI) { AKSU.back = AKSU.back.filter(function (x) { return x.i < AKGU.i; }); AKSU.fwd = []; }
+    AKSU.lastI = AKGU.i;
+  }
+  var cur = akSuSig();
+  if (!AKSU.last) { AKSU.last = cur; return; }
+  if (akSuKey(cur) === akSuKey(AKSU.last)) return;
+  AKSU.back.push({ i: AKGU.i, s: AKSU.last }); if (AKSU.back.length > 120) AKSU.back.shift();
+  AKSU.fwd = []; AKSU.last = cur;
+  try { akGfxUBtns(); } catch (e) {}
+  try { var tb = document.querySelector(".akg-tools"); if (tb) akGfxTools(tb, akGfxState().X); } catch (e2) {}
+}
+setInterval(akSuPoll, 150);
+(function () {
+  var u0 = akGfxUndoGo, cu0 = akGfxCanUndo, cr0 = akGfxCanRedo;
+  akGfxUndoGo = function (step, X) {
+    akSuPoll();
+    if (step < 0) {
+      var top = AKSU.back[AKSU.back.length - 1];
+      if (top && top.i === AKGU.i && !AKGU.t) { AKSU.back.pop(); AKSU.fwd.push({ i: AKGU.i, s: akSuSig() }); akSuApply(top.s); return; }
+    } else {
+      var nx = AKSU.fwd[AKSU.fwd.length - 1];
+      if (nx && nx.i === AKGU.i) { AKSU.fwd.pop(); AKSU.back.push({ i: AKGU.i, s: akSuSig() }); akSuApply(nx.s); return; }
+    }
+    var before = akSuSig(); AKSU.busy = true;
+    try { u0.apply(this, arguments); } finally { AKSU.busy = false; }
+    /* a design step undone keeps the selection that went with it; anything the undo itself changed isn't a new step */
+    var st = akGfxState(); if (st.together && !st.sel) st.together = null;
+    AKSU.last = akSuSig(); AKSU.lastI = AKGU.i;
+  };
+  akGfxCanUndo = function () { var top = AKSU.back[AKSU.back.length - 1]; return !!(top && top.i === AKGU.i) || cu0.apply(this, arguments); };
+  akGfxCanRedo = function () { var nx = AKSU.fwd[AKSU.fwd.length - 1]; return !!(nx && nx.i === AKGU.i) || cr0.apply(this, arguments); };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
