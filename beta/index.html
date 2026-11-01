@@ -46600,8 +46600,8 @@ AK_WHATS_NEW = [
 var AKG_GROUPS = [["design", "🧩", "Design", "ideas, layout, drafts", ["ideas", "what", "styles", "drafts"]],
   ["text", "🔤", "Text", "words, fonts, effects", ["words", "shows", "fonts", "tfx"]],
   ["add", "➕", "Add", "logos, pictures, shapes", ["logos", "pics", "deco", "ovl"]],
-  ["edit", "✨", "Effects", "effects, and the part you tapped", ["fx", "sel", "warp"]],
-  ["layers", "🗂", "Layers", "order, hide, lock", ["layers"]],
+  ["edit", "✏️", "Part", "the part you tapped: text, color, size, layers", ["sel", "warp", "layers"]],
+  ["fxt", "✨", "Effects", "effects on any part or the whole picture", ["fx"]],
   ["page", "🌄", "Page", "background, colors", ["bg", "look"]]];
 var AKG_NAVS = [["tabs", "Folder tabs"], ["tiles", "Tiles"], ["rail", "Side rail"]];
 function akGfxNavMode() { var m = akGfxCfg().nav; return AKG_NAVS.some(function (n) { return n[0] === m; }) ? m : "tabs"; }
@@ -52253,8 +52253,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.8m";
+AK_VERSION = "18.8n";
 AK_WHATS_NEW = [
+  "Tidier part pop-up in categories: Aa Text, 🎨 Color, ✨ Effects, ✥ Move, ⋯ More. Each opens a small window under the part with just those tools (color now has the design's colors as quick picks; Move has nudge arrows and centering). Tabs: ✏️ Part (the part you tapped, Reshape, Layers) and ✨ Effects are separate.",
   "Parts that hang past the edge of the card, sign or poster are now cut off on screen too, the way they will print and save. The ⇲ Dock button in the effects window works again.",
   "↶ Undo and ↷ Redo now also step back and forward through picking and letting go of parts (and select-several picks), in the order they happened.",
   "🎨 Edit together: after ☑ Select several, tap 🎨 Edit together. The first part opens with all its usual tools (color, font, spacing, the ✨ Effects window…) and every change goes to all the picked parts. Each keeps its own place, size and words.",
@@ -56627,6 +56628,122 @@ setInterval(akSuPoll, 150);
   akGfxCanUndo = function () { var top = AKSU.back[AKSU.back.length - 1]; return !!(top && top.i === AKGU.i) || cu0.apply(this, arguments); };
   akGfxCanRedo = function () { var nx = AKSU.fwd[AKSU.fwd.length - 1]; return !!(nx && nx.i === AKGU.i) || cr0.apply(this, arguments); };
 })();
+
+/* ================= 18.8n: the part pop-up in categories. Main row: Aa Text · 🎨 Color · ✨ Effects · ✥ Move (pictures: 🔁 Replace instead of Color) · ⋯ More · ✕.
+   Each category opens a small window under the part with just those tools (taken from the Part tab's Selected box, so they behave the same).
+   Tabs: ✏️ Part (Selected, Reshape, Layers) and ✨ Effects are separate again. ================= */
+var AKCW = { win: null, cat: "", sel: "", t: 0 };
+function akWinPlace(w) {
+  try {
+    var pe = document.querySelector(".akg-pop"), pr = null; if (pe && pe.offsetParent) { var q = pe.getBoundingClientRect(); if (q.width) pr = { top: q.top, bottom: q.bottom }; }
+    var cvE = document.querySelector(".akg-cv"), st = akGfxState(), L = st.P && st.sel ? st.P.layers.filter(function (l) { return l.id === st.sel; })[0] : null, below = pr ? pr.bottom : 0;
+    if (cvE && L) { var rc = cvE.getBoundingClientRect(), k = cvE._k || 1, b = akLayerBox(L, st.P), pb = Math.min(rc.bottom, rc.top + (cvE._oy || 0) + (b.y + b.h) * k); if (innerHeight - pb - 10 >= 220) below = Math.max(below, pb); }
+    w.style.left = "6px"; w.style.right = "6px"; w.style.bottom = "auto";
+    var hh = Math.min(w.getBoundingClientRect().height || 260, innerHeight * 0.45), top = below && innerHeight - below - 10 >= Math.min(hh, 200) ? below + 6 : Math.max(6, innerHeight - hh - 70);
+    w.style.top = Math.max(6, top) + "px"; w.style.maxHeight = Math.max(160, Math.min(innerHeight * 0.45, innerHeight - Math.max(6, top) - 8)) + "px";
+    if (innerWidth >= 700) { w.style.left = "auto"; w.style.width = "380px"; }
+  } catch (e) {}
+}
+var AKCW_NAMES = { text: "Aa Text", color: "🎨 Color", move: "✥ Move and size" };
+function akCwClose() { if (AKCW.win) { AKCW.win.remove(); AKCW.win = null; } AKCW.cat = ""; }
+function akCwOpen(cat, X) {
+  try { akFxWinClose(); } catch (e) {}
+  akCwClose();
+  var st = akGfxState(), body = h("div", { class: "akfx-win-body akcw-body" }), title = h("span", { class: "akfx-wt" }, AKCW_NAMES[cat] || cat);
+  var win = h("div", { class: "akfx-win akcw", role: "dialog", "aria-label": AKCW_NAMES[cat] || cat },
+    h("div", { class: "akfx-wh" }, title,
+      h("button", { type: "button", class: "sm", "aria-label": "All settings for this part in the Part tab", onClick: function () { akCwClose(); try { X.cat("sel"); } catch (e) {} } }, "⚙ All"),
+      h("button", { type: "button", class: "sm", "aria-label": "Close", onClick: akCwClose }, "✕")), body);
+  document.body.appendChild(win); AKCW.win = win; AKCW.cat = cat; AKCW.sel = st.sel; AKCW.X = X;
+  akCwFill(); akWinPlace(win);
+}
+function akCwFill() {
+  var w = AKCW.win, X = AKCW.X; if (!w || !X) return;
+  var body = w.querySelector(".akcw-body"), y = body.scrollTop; body.textContent = "";
+  try { body.appendChild(akCwBuild(AKCW.cat, X)); } catch (er) { body.appendChild(h("p", { class: "hint" }, "Couldn't show these tools: " + (er && er.message || er))); }
+  var st = akGfxState(), L = st.P && st.P.layers.filter(function (l) { return l.id === st.sel; })[0];
+  var t = w.querySelector(".akfx-wt"); if (t) t.textContent = (AKCW_NAMES[AKCW.cat] || "") + (L ? " · " + L.name : "");
+  body.scrollTop = y; AKCW.sel = st.sel;
+}
+function akCwBuild(cat, X) {
+  var st = akGfxState(), D = X.D, out = h("div", { class: "akcw-in" });
+  var L = st.P && st.sel && st.P.layers.filter(function (l) { return l.id === st.sel; })[0];
+  if (!L) { out.appendChild(h("p", { class: "hint" }, "Tap a part on the picture first.")); return out; }
+  var id = L.id, d = h("div"); akGfxSelFill(d, X);
+  var kids = [].slice.call(d.children), free = akGfxFreeOf(D, id), ft = free && free.t === "text";
+  function E() { return D.edit[id] = D.edit[id] || {}; }
+  function isSub(n, txt) { return n.classList && n.classList.contains("akg-sub") && (!txt || n.textContent.trim() === txt); }
+  function lab(n, re) { return n.tagName === "LABEL" && re.test(n.textContent); }
+  if (cat === "text") {
+    if (L.type !== "text") { out.appendChild(h("p", { class: "hint" }, "This part has no words.")); return out; }
+    var on = false;
+    kids.forEach(function (n) {
+      if (isSub(n, "Text") || isSub(n, "Style")) { on = true; return; }
+      if (isSub(n)) { on = false; return; }
+      if (!on || (n.classList && n.classList.contains("akg-fxmod")) || lab(n, /^(Turn|See-through)/)) return;
+      out.appendChild(n);
+    });
+    return out;
+  }
+  if (cat === "color") {
+    var cb = d.querySelector(".akg-colb"), e0 = D.edit[id] || {}, now = ft ? (free.color || "") : (e0.color || "");
+    function setCol(c) { if (ft) { free.color = c || ""; delete E().color; } else if (c) E().color = c; else delete E().color; X.ch(); X.refill("parts", true); setTimeout(akCwFill, 200); }
+    if (!cb) cb = h("button", { type: "button", class: "akg-colb", onClick: function () { akGfxColorAsk("Color", now, setCol); } }, h("i", { style: "background:" + (now || L.color || L.fill || "transparent") }), "Color ▾");
+    out.appendChild(h("div", { class: "row" }, cb));
+    var sw = [D.fg, D.accent, D.accent2, D.accent3, "#ffffff", "#000000"].filter(function (c, i, a) { return c && typeof c === "string" && /^#|^rgb|^hsl/.test(c) && a.indexOf(c) === i; });
+    out.appendChild(h("div", { class: "row akcw-sw" }, sw.map(function (c) { return h("button", { type: "button", class: "sm akcw-swb", "aria-label": "Use the color " + c, title: c, onClick: function () { setCol(c); } }, h("i", { style: "background:" + c })); }).concat([h("button", { type: "button", class: "sm", onClick: function () { setCol(""); } }, "↺ Layout's color")])));
+    kids.forEach(function (n) { if (lab(n, /^See-through/)) out.appendChild(n); });
+    var shadowCols = [].slice.call(d.querySelectorAll(".akg-fxcol")); if (shadowCols.length) { out.appendChild(h("div", { class: "akg-grp" }, "Effect colors")); out.appendChild(h("div", { class: "row" }, shadowCols)); }
+    return out;
+  }
+  if (cat === "move") {
+    var stp = d.querySelector(".akg-step"); if (stp) out.appendChild(h("div", { class: "row akcw-row" }, h("span", { class: "akcw-l" }, "Size"), stp));
+    function nudge(dx, dy) { var e = E(), u = Math.min(st.P.W, st.P.H) * 0.01; e.dx = (Number(e.dx) || 0) + dx * u; e.dy = (Number(e.dy) || 0) + dy * u; X.ch(); X.refill("parts", true); }
+    function center(ax) { var b = akLayerBox(L, st.P), e = E(); if (ax !== "y") e.dx = (Number(e.dx) || 0) + (st.P.W / 2 - (b.x + b.w / 2)); if (ax !== "x") e.dy = (Number(e.dy) || 0) + (st.P.H / 2 - (b.y + b.h / 2)); X.ch(); X.refill("parts", true); setTimeout(akCwFill, 200); }
+    out.appendChild(h("div", { class: "row akcw-row" }, h("span", { class: "akcw-l" }, "Move"),
+      h("button", { type: "button", class: "sm", "aria-label": "Move left", onClick: function () { nudge(-1, 0); } }, "◀"), h("button", { type: "button", class: "sm", "aria-label": "Move right", onClick: function () { nudge(1, 0); } }, "▶"),
+      h("button", { type: "button", class: "sm", "aria-label": "Move up", onClick: function () { nudge(0, -1); } }, "▲"), h("button", { type: "button", class: "sm", "aria-label": "Move down", onClick: function () { nudge(0, 1); } }, "▼")));
+    out.appendChild(h("div", { class: "row akcw-row" }, h("span", { class: "akcw-l" }, "Center"),
+      h("button", { type: "button", class: "sm", onClick: function () { center("x"); } }, "↔ Across"), h("button", { type: "button", class: "sm", onClick: function () { center("y"); } }, "↕ Up/down"), h("button", { type: "button", class: "sm", onClick: function () { center(""); } }, "✛ Both")));
+    kids.forEach(function (n) { if (lab(n, /^Turn/)) out.appendChild(n); });
+    var ig = d.querySelector(".akg-igrid"); if (ig) { out.appendChild(h("div", { class: "akg-grp" }, "Order, lock, flip")); out.appendChild(ig); }
+    return out;
+  }
+  return out;
+}
+/* rebuild the window after a change (not while a slider is held), follow the picked part, close when nothing is picked */
+(function () { var s0 = save; save = function () { var r = s0.apply(this, arguments); if (AKCW.win) { clearTimeout(AKCW.t); AKCW.t = setTimeout(function () { if (AKCW.win && !(typeof AKGL_SLOW === "function" && AKGL_SLOW())) akCwFill(); }, 300); } return r; }; })();
+setInterval(function () { if (!AKCW.win) return; var st = akGfxState(); if (S.view !== "gfx" || !st.sel) { akCwClose(); return; } if (st.sel !== AKCW.sel) akCwFill(); }, 300);
+(function () { var e0 = akGfxPopEffects; akGfxPopEffects = function () { akCwClose(); return e0.apply(this, arguments); }; })();
+/* the slimmer pop-up */
+(function () {
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) {
+    var r = p0.apply(this, arguments);
+    try {
+      var st = akGfxState(), pop = wrap._pop; if (!pop || !st.sel) return r;
+      var row = pop.querySelector(".akg-poprow:not(.akg-popmore)"); if (!row || row._cat) return r; row._cat = 1;
+      var L = st.P && st.P.layers.filter(function (l) { return l.id === st.sel; })[0]; if (!L) return r;
+      var by = {}; [].slice.call(row.children).forEach(function (b) { var t = (b.querySelector("span") || b).textContent.trim(); by[t] = b; });
+      function mk(ic, t, fn, aria) { return h("button", { class: "akg-popb", "aria-label": aria || t, title: aria || t, onClick: fn }, h("i", null, ic), h("span", null, t)); }
+      var pic = /^(gfree|gpic|gphoto)$/.test(L.type), main = [];
+      if (L.type === "text") main.push(by.Text || mk("Aa", "Text", function () { akCwOpen("text", X); }));
+      if (by.Text) { var tb = by.Text; tb.onclick = null; var nt = mk("Aa", "Text", function () { akCwOpen("text", X); }, "Words, font, size and style"); main[0] = nt; }
+      if (pic && by.Replace) main.push(by.Replace); else if (!pic && L.type !== "govl") main.push(mk("🎨", "Color", function () { akCwOpen("color", X); }, "Color and see-through"));
+      if (by.Effects) main.push(by.Effects);
+      if (L.type !== "gbg" && L.type !== "govl" && L.type !== "gborder") main.push(mk("✥", "Move", function () { akCwOpen("move", X); }, "Move, size, turn, order, lock, flip"));
+      var more = by.More || by.Less, hide = by.Hide;
+      var rest = ["Replace", "Several", "Copy", "Paste", "Delete"].map(function (k) { return by[k]; }).filter(function (b) { return b && main.indexOf(b) < 0; });
+      row.textContent = ""; main.forEach(function (b) { row.appendChild(b); }); if (more) row.appendChild(more); if (hide) row.appendChild(hide);
+      var mr = pop.querySelector(".akg-popmore");
+      if (mr) rest.slice().reverse().forEach(function (b) { b.classList.add("akg-popt"); mr.insertBefore(b, mr.firstChild); });
+    } catch (e) { try { console.warn("pop cats", e); } catch (e2) {} }
+    return r;
+  };
+})();
+akCss("akcw", ".akcw-row{align-items:center;gap:4px;flex-wrap:wrap;margin:4px 0}.akcw-l{min-width:3.6em;font-size:12px;opacity:.8}.akcw-sw{gap:4px;flex-wrap:wrap;margin:6px 0}" +
+  ".akcw-swb{min-width:34px;padding:0 6px}.akcw-swb i{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid rgba(127,127,127,.6)}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Change a part's text, color, position (the pop-up categories)", a: "Graphics studio › tap a part › the pop-up: Aa Text (words, font, size, style), 🎨 Color (color, the design's colors, see-through), ✨ Effects, ✥ Move (nudge, center, size, turn, order, lock, flip), ⋯ More (Replace, Select several, Copy, Delete, Duplicate…). Everything is also in the ✏️ Part tab." });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
