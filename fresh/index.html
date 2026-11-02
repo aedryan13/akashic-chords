@@ -52282,8 +52282,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9s";
+AK_VERSION = "18.9t";
 AK_WHATS_NEW = [
+  "🧾 Receipt photos on expenses (📷 when adding, or later), 🧳 one-tap Tax pack (sheets plus a .zip with CSV files, a summary and all receipts), and 🎸 Gear: serial numbers, prices, photos, insurance list and CSV; new gear can go into expenses too.",
   "👀 Fresh preview: Settings › See the app fresh opens a separate copy with none of your info or media, to see what new users see. It has its own storage, so your real app is never touched.",
   "📄 Documents is now 💼 Business, with a new 📈 Analytics tab: income by month (pay and tips), profit, earnings and tips by venue, expenses by category, shows per month, hours played, which days you play, most played and most requested songs, tips by requested song. Pick a period; every chart has its own style (bars, line, area, stacked, sideways bars, dots, donut). The 🧾 Invoices tab also opens the designed invoice.",
   "With the phone sideways, the bottom tab bar is half as tall (icon and name side by side), on every screen.",
@@ -58570,6 +58571,122 @@ function akFreshReset() {
 })();
 akCss("akfresh", ".akfresh-bar{position:fixed;left:50%;transform:translateX(-50%);top:0;z-index:450;display:flex;gap:6px;align-items:center;font-size:11px;padding:2px 4px 2px 10px;border-radius:0 0 10px 10px;background:#FFD28A;color:#07060F;font-weight:700}.akfresh-bar button{min-height:22px;height:22px;padding:0 8px;font-size:11px;background:#07060F;color:#FFD28A;border:0}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "See the app as a new user (fresh preview)", a: "Settings › 👀 See the app fresh: opens a separate copy with none of your info or media and its own storage. ↺ Start fresh again clears only that copy." });
+
+/* ================= 18.9t: 🧾 receipts on expenses, 🧳 the tax pack, 🎸 gear list.
+   Receipt and gear photos are shrunk and kept in the pictures database (IMG, keys "rcpt:<id>" / "gear:<id>"), never deleted while in use.
+   Tax pack: income, mileage and expenses sheets for the year, plus a .zip with the CSV files, a summary and every receipt photo.
+   Gear: settings().gear = [{ id, name, brand, model, serial, bought, paid, value, notes, photo }]. ================= */
+function akShrinkImg(file, max, cb) {
+  var rd = new FileReader();
+  rd.onload = function () { var im = new Image(); im.onload = function () { var k = Math.min(1, (max || 1400) / Math.max(im.width, im.height)), cv = document.createElement("canvas"); cv.width = Math.round(im.width * k); cv.height = Math.round(im.height * k); cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height); cb(cv.toDataURL("image/jpeg", 0.82)); }; im.onerror = function () { cb(null); }; im.src = rd.result; };
+  rd.onerror = function () { cb(null); }; rd.readAsDataURL(file);
+}
+function akPickPhoto(cb) { var inp = h("input", { type: "file", accept: "image/*", capture: "environment", style: "display:none" }); inp.addEventListener("change", function () { var f = inp.files && inp.files[0]; inp.remove(); if (!f) return; toast("Adding the photo…"); akShrinkImg(f, 1400, function (d) { if (!d) { toast("Couldn't read that picture."); return; } cb(d, f.name); }); }); document.body.appendChild(inp); inp.click(); }
+function akShowPhoto(id, title) { var d = IMG[id]; if (!d) { toast("The photo isn't on this device."); return; } modal(title || "Photo", h("img", { src: d.data, alt: title || "Photo", style: "width:100%;height:auto;border-radius:8px" }), [{ label: "Close" }]); }
+(function () {
+  var u0 = imgIdsInUse;
+  imgIdsInUse = function () {
+    var ids = u0.apply(this, arguments);
+    try { var s = settings(); ((s.money || {}).exp || []).forEach(function (e) { if (e.rc) ids[e.rc] = 1; }); (s.gear || []).forEach(function (g) { if (g.photo) ids[g.photo] = 1; }); } catch (e) {}
+    return ids;
+  };
+})();
+
+/* ---------------------------------------------------------------- receipts in 💰 Money and taxes */
+var AKRC = { pending: null };
+(function () {
+  var v0 = AK_VIEWS.money;
+  AK_VIEWS.money = function () {
+    var el = v0.apply(this, arguments);
+    try {
+      var M = akMoneyCfg(), add = el.querySelector(".akmy-add");
+      if (add) {
+        var b = h("button", { class: "sm", title: "Photo of the receipt", onClick: function () { akPickPhoto(function (d) { AKRC.pending = d; b.textContent = "🧾 ✓"; toast("Receipt ready: it's saved with the next expense you add."); }); } }, AKRC.pending ? "🧾 ✓" : "📷 Receipt");
+        add.insertBefore(b, add.lastChild);
+        var addBtn = add.lastChild; addBtn.addEventListener("click", function () { var n0 = M.exp.length; setTimeout(function () { if (!AKRC.pending || M.exp.length <= n0) return; var last = M.exp[M.exp.length - 1]; var id = "rcpt:" + last.id; imgPut(id, { name: "Receipt " + (last.note || last.d), data: AKRC.pending }); last.rc = id; AKRC.pending = null; save(); render(); }, 30); }, true);
+      }
+      /* each expense: 🧾 to see its receipt, 📷 to add one */
+      var y = AKMY.year, list = M.exp.filter(function (e) { return String(e.d).slice(0, 4) === String(y); }).sort(function (a, b) { return b.d.localeCompare(a.d); });
+      [].slice.call(el.querySelectorAll(".akmy-e")).forEach(function (row) {
+        var x = row.querySelector('button[aria-label="Remove"]'); if (!x) return;
+        var idx = [].slice.call(row.parentNode.querySelectorAll(".akmy-e")).filter(function (r) { return r.querySelector('button[aria-label="Remove"]'); }).indexOf(row), e = list[idx]; if (!e) return;
+        row.insertBefore(e.rc ? h("button", { class: "icon sm", "aria-label": "See the receipt", title: "Receipt", onClick: function () { akShowPhoto(e.rc, "Receipt: " + (e.note || e.d)); } }, "🧾")
+          : h("button", { class: "icon sm", "aria-label": "Add a receipt photo", title: "Add a receipt", onClick: function () { akPickPhoto(function (d) { var id = "rcpt:" + e.id; imgPut(id, { name: "Receipt " + (e.note || e.d), data: d }); e.rc = id; save(); render(); }); } }, "📷"), x);
+      });
+      /* the tax pack */
+      var top = el.querySelector(".akmy .card");
+      if (top) top.appendChild(h("div", { class: "row" }, h("button", { class: "sm primary", onClick: function () { akTaxPack(AKMY.year); } }, "🧳 Tax pack for " + AKMY.year), h("span", { class: "hint" }, "Sheets plus a .zip with CSV files, a summary and every receipt photo, for you or your accountant.")));
+    } catch (er) { try { console.warn("receipts", er); } catch (e2) {} }
+    return el;
+  };
+})();
+function akCsvText(rows) { return rows.map(function (r) { return r.map(function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(","); }).join("\n"); }
+function akTaxPack(y) {
+  var S0 = akShData(), sheets = ["income", "miles", "expenses"].map(function (k) { var n = akShFromApp(k, y); var old = S0.list.filter(function (x) { return x.src === n.src; })[0]; if (old) { old.rows = n.rows; old.money = n.money; return old; } S0.list.push(n); return n; });
+  save();
+  var R = akMoneyYear(y), M = akMoneyCfg(), $ = akmMoney, files = [];
+  sheets.forEach(function (sh) { files.push({ name: sh.name + ".csv", data: akCsvText(sh.rows.map(function (r, ri) { return r.map(function (v, ci) { return akShShow(sh, ri, ci); }); })) }); });
+  var lines;
+  lines = ["Music business summary " + y, "Name: " + akLegalName() + " (performing as " + akArtistName() + ")", "", "Shows: " + R.gigs, "Income (pay + tips): " + $(R.inc) + " (pay " + $(R.pay) + ", tips " + $(R.tips) + ")", "Show costs: " + $(R.gigCosts), "Other expenses: " + $(R.exp), "Mileage: " + Math.round(R.miles) + " miles, " + $(R.mileDed), "Profit before tax: " + $(R.net), "", "Expenses by category:"];
+  Object.keys(R.byCat).forEach(function (k) { lines.push("  " + ((AKMY_CATS.filter(function (c) { return c[0] === k; })[0] || ["", k])[1]) + ": " + $(R.byCat[k])); });
+  lines.push("", "Estimates made by Akashic Chords to help with records; not tax advice.");
+  files.push({ name: "Summary " + y + ".txt", data: lines.join("\n") });
+  var n = 0;
+  M.exp.forEach(function (e) { if (String(e.d).slice(0, 4) !== String(y) || !e.rc || !IMG[e.rc]) return; var d = IMG[e.rc].data, bin = atob(d.split(",")[1]), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); n++; files.push({ name: "receipts/" + e.d + " " + String(e.note || "receipt").replace(/[\\\/:*?"<>|]+/g, "-").slice(0, 40) + " " + n + ".jpg", data: new Blob([u], { type: "image/jpeg" }) }); });
+  akZip(files).then(function (blob) {
+    var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "Music tax pack " + y + ".zip"; document.body.appendChild(a); a.click(); setTimeout(function () { a.remove(); URL.revokeObjectURL(a.href); }, 3000);
+    toast("Tax pack saved: 3 sheets (also in 📊 Sheets), a summary" + (n ? " and " + n + " receipt" + (n === 1 ? "" : "s") : "") + ".");
+  }, function () { toast("Couldn't make the .zip file."); });
+}
+
+/* ---------------------------------------------------------------- 🎸 gear */
+function akGear() { var s = settings(); if (!Array.isArray(s.gear)) s.gear = []; return s.gear; }
+function akGearEdit(g) {
+  var isNew = !g; g = g || { id: uid(), name: "", brand: "", model: "", serial: "", bought: "", paid: "", value: "", notes: "", photo: "" };
+  var f = {}, ph = g.photo, img = h("img", { alt: "", style: "max-width:100%;max-height:160px;border-radius:8px;display:" + (ph && IMG[ph] ? "block" : "none"), src: ph && IMG[ph] ? IMG[ph].data : "" }), newPhoto = null;
+  function fld(k, lab, type, phd) { f[k] = h("input", { type: type || "text", value: g[k] || "", placeholder: phd || "", inputmode: type === "money" ? "decimal" : null }); if (type === "money") f[k].type = "text"; return h("label", { class: "fld" }, h("span", null, lab), f[k]); }
+  var exp = h("input", { type: "checkbox" });
+  var body = h("div", null, fld("name", "What it is", "text", "Taylor 814ce guitar"), h("div", { class: "akm-grid" }, fld("brand", "Brand"), fld("model", "Model"), fld("serial", "Serial number"), fld("bought", "Bought on", "date"), fld("paid", "Price paid ($)", "money"), fld("value", "Worth now / insurance value ($)", "money")), fld("notes", "Notes (where, case, extras)"),
+    h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akPickPhoto(function (d) { newPhoto = d; img.src = d; img.style.display = "block"; }); } }, "📷 Photo"), img),
+    isNew ? h("label", { class: "chk" }, exp, "Also add it to this year's expenses (gear)") : null);
+  modal(isNew ? "Add gear" : "Gear", body, [{ label: "Cancel" }, !isNew ? { label: "Delete", danger: true, onClick: function () { var L = akGear(); L.splice(L.indexOf(g), 1); if (g.photo) imgDel(g.photo); save(); render(); } } : null, { label: "Save", primary: true, onClick: function () {
+    Object.keys(f).forEach(function (k) { g[k] = f[k].value.trim(); });
+    if (!g.name) { toast("Give it a name."); return false; }
+    if (newPhoto) { g.photo = "gear:" + g.id; imgPut(g.photo, { name: g.name, data: newPhoto }); }
+    if (isNew) { akGear().push(g); if (exp.checked && akShNum(g.paid)) akMoneyCfg().exp.push({ id: uid(), d: g.bought || akTodayKey(), amt: akShNum(g.paid), cat: "gear", note: g.name, t: Date.now() }); }
+    save(); render();
+  } }].filter(Boolean));
+}
+function viewGear() {
+  var L = akGear(), body = h("div", { class: "akm akgear" }), $ = akmMoney, paid = 0, val = 0;
+  L.forEach(function (g) { paid += akShNum(g.paid); val += akShNum(g.value || g.paid); });
+  body.appendChild(akDocTabs("gear"));
+  body.appendChild(h("div", { class: "card" }, h("div", { class: "row akm-head" }, h("h3", null, "🎸 Gear"), h("span", { class: "grow" }), h("button", { class: "sm primary", onClick: function () { akGearEdit(null); } }, "＋ Add gear")),
+    h("p", { class: "hint" }, L.length ? L.length + (L.length === 1 ? " item" : " items") + " · paid " + $(paid) + " · worth about " + $(val) : "Keep serial numbers, prices and photos here: handy for insurance, a theft report, or write-offs at tax time."),
+    L.length ? h("div", { class: "row" },
+      h("button", { class: "sm", onClick: function () { akShCsv("Gear list", [["What", "Brand", "Model", "Serial", "Bought", "Paid", "Worth", "Notes"]].concat(L.map(function (g) { return [g.name, g.brand, g.model, g.serial, g.bought, g.paid, g.value, g.notes]; }))); } }, "⬇ CSV"),
+      h("button", { class: "sm", onClick: function () { akmPrint("Gear list", "GEAR LIST\n" + akLegalName() + " (" + akArtistName() + ") · " + akmDate(akTodayKey()) + "\n\n" + L.map(function (g) { return [g.name, [g.brand, g.model].filter(Boolean).join(" "), g.serial ? "Serial: " + g.serial : "", g.bought ? "Bought: " + g.bought : "", g.paid ? "Paid: " + $(akShNum(g.paid)) : "", g.value ? "Worth: " + $(akShNum(g.value)) : "", g.notes].filter(Boolean).join("\n"); }).join("\n\n") + "\n\nTOTAL\nPaid " + $(paid) + " · worth about " + $(val)); } }, "🖨 Insurance list")) : null));
+  L.slice().sort(function (a, b) { return akShNum(b.value || b.paid) - akShNum(a.value || a.paid); }).forEach(function (g) {
+    var th = g.photo && IMG[g.photo] ? h("img", { src: IMG[g.photo].data, alt: "", class: "akgear-th" }) : h("div", { class: "akgear-th ph" }, "🎸");
+    body.appendChild(h("button", { class: "card akgear-row", onClick: function () { akGearEdit(g); } }, th, h("div", { class: "grow" }, h("b", null, g.name), h("div", { class: "hint" }, [[g.brand, g.model].filter(Boolean).join(" "), g.serial ? "SN " + g.serial : ""].filter(Boolean).join(" · ")), h("div", { class: "hint" }, [g.paid ? "Paid " + $(akShNum(g.paid)) : "", g.value ? "Worth " + $(akShNum(g.value)) : ""].filter(Boolean).join(" · ")))));
+  });
+  return shell("💼 Business", body);
+}
+AK_VIEWS.gear = viewGear; AK_VIEW_TAB.gear = "shows";
+(function () {
+  var t0 = akDocTabs;
+  akDocTabs = function (active) {
+    var row = t0.apply(this, arguments);
+    try { var ana = [].slice.call(row.children).filter(function (b) { return /Analytics/.test(b.textContent); })[0]; var b = h("button", { class: "chip" + (active === "gear" ? " on" : ""), role: "tab", onClick: function () { if (active !== "gear") go("gear"); } }, "🎸 Gear"); row.insertBefore(b, ana ? ana.nextSibling : null); } catch (e) {}
+    return row;
+  };
+})();
+akCss("akgear", ".akgear-row{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px}.akgear-th{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:0 0 56px}.akgear-th.ph{display:flex;align-items:center;justify-content:center;font-size:26px;background:rgba(127,127,127,.15)}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Receipt photos for expenses", a: "💼 Business › 💰 Money and taxes › Expenses: 📷 Receipt before ＋ Add, or 📷 next to any expense later; 🧾 shows it. Receipts go into the tax pack." });
+  AK_HELP_WHERE.push({ t: "Tax pack for the year (for your accountant)", a: "💼 Business › 💰 Money and taxes › 🧳 Tax pack: makes the income, mileage and expenses sheets and saves a .zip with CSV files, a summary and every receipt photo." });
+  AK_HELP_WHERE.push({ t: "Gear list (serial numbers, prices, photos, insurance)", a: "💼 Business › 🎸 Gear: ＋ Add gear with photo, serial, price paid and value; ⬇ CSV or 🖨 Insurance list. New gear can also go into this year's expenses." });
+}
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
