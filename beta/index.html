@@ -36646,7 +36646,7 @@ function viewGfx() {
   function paint() {
     if (!base) return;
     var P = akGfxBake(base, D.edit); st.P = P;
-    var wide = window.innerWidth >= 900, bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? (typeof akGfxCfg === "function" && typeof akGfxCfg().split === "number" ? 24 : 120) : 220, (typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight) * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
+    var wide = window.innerWidth >= 900 || (typeof akGfxLand === "function" && akGfxLand()), bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? (typeof akGfxCfg === "function" && typeof akGfxCfg().split === "number" ? 24 : 120) : 220, (typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight) * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(P.W * k), chh = Math.round(P.H * k);
     /* 18.7s: once the picture-size slider has been used, its height is the picture window. A window taller than the picture needs makes the picture zoom in to fill it
        (or, with "keep my zoom", only changes the window and leaves the picture's size alone) */
@@ -49343,7 +49343,9 @@ akGfxEffectsFill = function (d, X) {
     if (!bar) make();
     var r = m.getBoundingClientRect(), room = m.scrollHeight - m.clientHeight;
     bar.style.top = r.top + "px"; bar.style.height = r.height + "px";
-    if (room < 12) { bar.style.display = "none"; document.body.classList.remove("akg-sb"); return; }
+    /* 18.9m: the space for the handle stays reserved, or showing/hiding it changes the width, which changes the height, which shows/hides it again (the screen flickered after turning the phone) */
+    document.body.classList.add("akg-sb");
+    if (room < 12) { bar.style.display = "none"; return; }
     bar.style.display = ""; document.body.classList.add("akg-sb");
     var tr = r.height, hgt = Math.max(54, Math.round(tr * m.clientHeight / m.scrollHeight));
     th.style.height = hgt + "px"; th.style.top = Math.round((tr - hgt) * m.scrollTop / room) + "px";
@@ -52253,8 +52255,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9l";
+AK_VERSION = "18.9m";
 AK_WHATS_NEW = [
+  "Graphics studio sideways: picture and Quick tools on one side, ☰ Sections on the other, a divider you drag left or right, and the top bars in one row. Pick the tools side in ⚙ on the divider. Fix: the studio no longer flickers after turning the phone.",
   "📄 Documents (was ✉️ Messages): Messages, Contracts, 🧾 Invoices, 📊 Sheets (little spreadsheets with formulas, some filled from your shows) and 💰 Money and taxes (show income, expenses by category, IRS mileage, profit, a rough self-employment tax and what to set aside each quarter, CSV for your accountant).",
   "Legal name vs stage name: Artist info › Legal name. Contracts say “Legal Name, performing as Stage Name”, invoices say Payable to your legal name, and everything people see keeps your stage name.",
   "Tidier Graphics studio: the picture and Quick tools sit in their own outlined box; ＋ Add and 📁 File are up top next to ↶ ↷ (saving and sharing are in 📁); zoom buttons (Fit, 200%, 400%, change them in ⚙); section headings stand out with the arrow on the left; the tools below are “☰ Sections”; the Part tab is now 🗂 Layers and opens on the layer list.",
@@ -57880,6 +57883,85 @@ if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Zoom buttons (Fit, 200%, 400%) and where the zoom slider sits", a: "Graphics studio › Quick tools under the picture. Change the zoom buttons (2 to 4 sizes) or the slider's place in the ⚙ on the divider." });
   AK_HELP_WHERE.push({ t: "Save picture, Share, PDF, Print", a: "Graphics studio › 📁 at the top (next to ↶ ↷)." });
 }
+
+/* ================= 18.9m: landscape. When the phone is sideways the picture and Quick tools sit in one column and the ☰ Sections in the other
+   (tools on the right or the left: ⚙ on the divider), with a divider between them you drag left or right (double-tap: back to normal).
+   The top bars run along one row. ================= */
+function akGfxLand() { var c = akGfxCfg(); if (c.land === "off") return false; return window.innerWidth > window.innerHeight && window.innerWidth >= 560; }
+function akGfxLandApply() {
+  try {
+    var on = S.view === "gfx" && akGfxLand(), c = akGfxCfg(), a = document.querySelector(".akg"), grid = a && a.querySelector(".akg-grid");
+    document.body.classList.toggle("akg-landbody", on);
+    if (!a) return;
+    a.classList.toggle("akg-land", on); a.classList.toggle("akg-land-left", on && c.landSide === "left");
+    var w = Math.max(0.25, Math.min(0.85, c.landW || 0.55)); a.style.setProperty("--akw", Math.round(w * 1000) / 10 + "%");
+    if (on && grid && !grid.querySelector(".akg-vsplit")) {
+      var vs = h("div", { class: "akg-vsplit", role: "separator", "aria-orientation": "vertical", "aria-label": "Drag left or right to change the picture's width", title: "Drag to resize (double-tap: back to normal)" }, h("span", { class: "akg-vgrip" }));
+      var right = grid.querySelector(".akg-right"); grid.insertBefore(vs, right);
+      var d = null, last = 0;
+      vs.addEventListener("pointerdown", function (e) {
+        var now = Date.now(); if (now - last < 350) { delete c.landW; save(); akGfxLandApply(); try { akGfxState().X.paint(); } catch (er) {} last = 0; return; } last = now;
+        d = { r: grid.getBoundingClientRect() }; vs.classList.add("on"); try { vs.setPointerCapture(e.pointerId); } catch (er) {} e.preventDefault();
+      });
+      vs.addEventListener("pointermove", function (e) {
+        if (!d) return; var f = (e.clientX - d.r.left) / d.r.width; if (c.landSide === "left") f = 1 - f;
+        c.landW = Math.max(0.25, Math.min(0.85, f)); a.style.setProperty("--akw", Math.round(c.landW * 1000) / 10 + "%");
+        try { var X = akGfxState().X; X.paintSoon ? X.paintSoon() : X.paint(); } catch (er) {}
+      });
+      function end() { if (!d) return; d = null; vs.classList.remove("on"); save(); try { akGfxState().X.paint(); } catch (er) {} }
+      vs.addEventListener("pointerup", end); vs.addEventListener("pointercancel", end);
+    }
+    /* sideways the picture column scrolls by itself when the phone is short, so the Quick tools under the picture are never cut off */
+    var topEl = a.querySelector(".akg-top"), m = document.getElementById("mainScroll"), tb = document.querySelector(".tabbar"), vsx = grid && grid.querySelector(".akg-vsplit");
+    var avail = window.innerHeight - (m ? Math.max(0, m.getBoundingClientRect().top) : 60) - (tb ? tb.offsetHeight : 0) - 6;
+    if (topEl) { topEl.style.maxHeight = on ? avail + "px" : ""; topEl.style.overflowY = on ? "auto" : ""; }
+    if (vsx) vsx.style.height = avail + "px";
+    if (!on && grid) { var v2 = grid.querySelector(".akg-vsplit"); if (v2) v2.remove(); }
+  } catch (e) {}
+}
+(function () {
+  var f0 = akGfxSplitFrac;
+  /* sideways: the picture may use the column's height left over after the Quick tools and tabs */
+  akGfxSplitFrac = function (st, wide) {
+    if (!akGfxLand()) return f0.apply(this, arguments);
+    try {
+      var top = document.querySelector(".akg-top"), prev = document.querySelector(".akg-prev"), m = document.getElementById("mainScroll");
+      var rest = top && prev ? top.offsetHeight - prev.offsetHeight : 150, y0 = m ? m.getBoundingClientRect().top : 60, tb = document.querySelector(".tabbar"), bot = tb ? tb.offsetHeight : 0;
+      return Math.max(0.3, Math.min(0.95, (window.innerHeight - y0 - bot - rest - 14) / window.innerHeight));
+    } catch (e) { return 0.6; }
+  };
+  var v0 = AK_VIEWS.gfx;
+  AK_VIEWS.gfx = function () { var el = v0.apply(this, arguments); setTimeout(function () { akGfxLandApply(); try { akGfxState().X.paint(); } catch (e) {} }, 0); return el; };
+  var lastL = null;
+  function onTurn() { var l = akGfxLand(); akGfxLandApply(); if (l !== lastL) { lastL = l; setTimeout(function () { try { akGfxState().X.paint(); } catch (e) {} }, 120); } }
+  window.addEventListener("resize", onTurn); window.addEventListener("orientationchange", function () { setTimeout(onTurn, 250); });
+  /* ⚙ on the divider: where the tools go when sideways */
+  var vm = akGfxViewMenu;
+  akGfxViewMenu = function (anchor, X) {
+    var m1 = menu, mine = function (a, items) {
+      menu = m1; items = (items || []).slice(); var c = akGfxCfg(), side = c.land === "off" ? "off" : c.landSide === "left" ? "left" : "right";
+      items.push({ sep: true }, { head: "When the phone is sideways" },
+        { label: (side === "right" ? "✓ " : "") + "Picture left, tools on the right", onClick: function () { delete c.land; c.landSide = "right"; save(); akGfxLandApply(); X.paint(); } },
+        { label: (side === "left" ? "✓ " : "") + "Tools on the left, picture right", onClick: function () { delete c.land; c.landSide = "left"; save(); akGfxLandApply(); X.paint(); } },
+        { label: (side === "off" ? "✓ " : "") + "Same as upright (no side-by-side)", onClick: function () { c.land = "off"; save(); akGfxLandApply(); X.paint(); } });
+      return m1(a, items);
+    };
+    menu = mine; try { vm.apply(this, arguments); } finally { if (menu === mine) menu = m1; }
+  };
+})();
+akCss("akland", [
+  "html body .akg.akg-land .akg-grid{display:flex!important;gap:0;align-items:flex-start}",
+  "html body .akg.akg-land-left .akg-grid{flex-direction:row-reverse}",
+  ".akg.akg-land .akg-top{flex:0 0 var(--akw,55%);max-width:var(--akw,55%);min-width:0;position:sticky;top:0;align-self:flex-start;margin-bottom:0}",
+  ".akg.akg-land .akg-right{flex:1 1 auto;min-width:0;margin-top:0!important}",
+  ".akg.akg-land .akg-split .akg-grip{visibility:hidden}",
+  ".akg-vsplit{flex:0 0 18px;align-self:stretch;min-height:200px;position:sticky;top:0;height:calc(100vh - 140px);display:flex;align-items:center;justify-content:center;cursor:col-resize;touch-action:none}",
+  ".akg-vgrip{width:5px;height:56px;border-radius:3px;background:#C8962E;opacity:.75}.akg-vsplit.on .akg-vgrip{opacity:1;height:90px}",
+  "body.akg-landbody .topbar.ak17-tbwrap{display:flex;flex-wrap:nowrap;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none;padding-top:2px;padding-bottom:2px}",
+  "body.akg-landbody .topbar.ak17-tbwrap>*{flex:0 0 auto}body.akg-landbody .topbar .akg-ttl{display:flex;align-items:center;gap:6px}body.akg-landbody .topbar .akg-ttl h1{display:none}",
+  "body.akg-landbody .topbar .row{flex-wrap:nowrap;margin:0}"
+].join("\n"));
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Graphics studio sideways (landscape)", a: "Turn the phone: the picture and Quick tools sit on one side, the ☰ Sections on the other, with a divider to drag left or right (double-tap resets). Choose which side the tools go, or turn it off: ⚙ on the divider › When the phone is sideways." });
 
 /* ================= 18.9l: 📄 Documents (was ✉️ Messages): Messages, Contracts, 🧾 Invoices, 📊 Sheets, 💰 Money and taxes.
    Stage name vs legal name: Artist info › Legal name (akArtist().legal). {my name} is always the stage name (messages, posters, cards,
