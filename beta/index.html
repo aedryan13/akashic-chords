@@ -1413,7 +1413,7 @@ function storeJSON() { return JSON.stringify(store); }
 function saveNow() {
   clearTimeout(saveTimer); if (saveIdle && window.cancelIdleCallback) { cancelIdleCallback(saveIdle); saveIdle = 0; }
   try { trackUpdated(); } catch (e) {}
-  try { localStorage.setItem(KEY2, storeJSON()); persistOK = true; } catch (e) { if (persistOK) { try { S.persistHidden = false; } catch (e2) {} } persistOK = false; }
+  try { localStorage.setItem(KEY2, storeJSON()); persistOK = true; } catch (e) { if (persistOK) { try { S.persistHidden = false; toast("This browser isn't saving your changes (storage is full). Save a backup file now: Settings › Backups."); } catch (e2) {} } persistOK = false; }
 }
 window.addEventListener("pagehide", function () { if (saveTimer) { try { saveNow(); } catch (e) {} } });
 /* saving writes the whole library (about a megabyte): on the playing screen it waits for a quiet moment so it never
@@ -1922,7 +1922,7 @@ function shell(title, content, o) {
       o.titleEl || h("h1", null, title), o.actions || null, (settings().rollBackup || {}).header && typeof akBackupBtn === "function" ? akBackupBtn("icon akbhead") : null, (settings().rollBackup || {}).header && settings().syncBtn !== false && typeof akSyncBtn === "function" ? akSyncBtn("icon akshead") : null, layButtonEl()),
     layBannerEl(),
     (withTabs && !o.noBanner) ? tipBannerEl() : null,
-    (persistOK || S.persistHidden) ? null : h("div", { class: "warn banner", style: "margin:0 14px" }, h("div", { class: "grow" }, "This browser isn't saving your songs here. Save a backup file from the Import tab before you close the page."),
+    (persistOK || S.persistHidden) ? null : h("div", { class: "warn banner", style: "margin:0 14px" }, h("div", { class: "grow" }, "This browser isn't saving your songs here. Save a backup file (Settings › Backups) before you close the page."),
       h("button", { class: "icon sm", "aria-label": "Close this notice", onClick: function () { S.persistHidden = true; render(); } }, "✕")),
     (!withTabs || o.noBanner) ? null : backupBanner(),
     (!withTabs || o.noBanner) ? null : akSampleBanner(),
@@ -19617,21 +19617,21 @@ function akTapPlays() { return settings().tapPlay !== false; }
 /* ---------------------------------------------------------------- practice mode */
 function akPracOn() { return !!settings().practice; }
 /* plays kept aside while practice mode is on: { seq, showId, at, timer, plays: [{songId, showId, info, at}], no, yes } */
-var AKP = { pend: null };
+var AKPLIVE = { pend: null };
 function akPracLoggable(list) {
   return (list || []).some(function (it) { return it && it.showId; }) || !!trkOpt().fromSongs;
 }
 function akPracSet(on, quiet) {
   var was = akPracOn();
-  if (!on && was && AKP.pend && !AKP.pend.no && !AKP.pend.yes && (AKP.pend.plays.length || AKP.pend.timer)) {
-    var n = AKP.pend.plays.length;
+  if (!on && was && AKPLIVE.pend && !AKPLIVE.pend.no && !AKPLIVE.pend.yes && (AKPLIVE.pend.plays.length || AKPLIVE.pend.timer)) {
+    var n = AKPLIVE.pend.plays.length;
     modal("Count what you played?", h("p", null, "Practice mode is going off. " + (n ? n + (n === 1 ? " song was" : " songs were") + " played" : "The set was opened") + " since you started. Was that a show? If yes, it's counted as of when it happened."),
       [{ label: "No, it was practice", onClick: function () { akPracNo(); settings().practice = false; save(); akPracPaint(); } },
        { label: "Yes, count it", primary: true, onClick: function () { akPracYes(); } }]);
     return;
   }
   settings().practice = !!on; save();
-  if (on) { AKP.pend = null; if (S.view === "play" && S.play && akPracLoggable(S.play.list)) akPracStart(); }
+  if (on) { AKPLIVE.pend = null; if (S.view === "play" && S.play && akPracLoggable(S.play.list)) akPracStart(); }
   else akPracCardClose();
   if (!quiet) toast(on ? "Practice mode on: no show timer and no play counts." : "Practice mode off: plays and show times are logged again.");
   akPracPaint();
@@ -19639,15 +19639,15 @@ function akPracSet(on, quiet) {
 function akPracStart() {
   var p = S.play; if (!p) return;
   var sid = ""; (p.list || []).some(function (it) { if (it.showId) { sid = it.showId; return true; } return false; });
-  AKP.pend = { seq: S.playSeq, showId: sid, gigId: S.akGigNext || "", at: Date.now(), timer: 0, plays: [], no: false, yes: false };
+  AKPLIVE.pend = { seq: S.playSeq, showId: sid, gigId: S.akGigNext || "", at: Date.now(), timer: 0, plays: [], no: false, yes: false };
   setTimeout(akPracCard, 60);
 }
 function akPracNo() {
-  if (AKP.pend) { AKP.pend.no = true; AKP.pend.plays = []; AKP.pend.timer = 0; }
+  if (AKPLIVE.pend) { AKPLIVE.pend.no = true; AKPLIVE.pend.plays = []; AKPLIVE.pend.timer = 0; }
   akPracCardClose();
 }
 function akPracYes() {
-  var p = AKP.pend; settings().practice = false; save(); akPracCardClose(); akPracPaint();
+  var p = AKPLIVE.pend; settings().practice = false; save(); akPracCardClose(); akPracPaint();
   if (!p) return;
   p.yes = true;
   var sh = p.showId ? findShow(p.showId) : null;
@@ -19673,16 +19673,16 @@ function akPracYes() {
 }
 /* the "Is this a show?" card: floats over the playing screen and doesn't stop the song */
 function akPracCard() {
-  if (!akPracOn() || !AKP.pend || AKP.pend.no || AKP.pend.yes || S.view !== "play") return;
+  if (!akPracOn() || !AKPLIVE.pend || AKPLIVE.pend.no || AKPLIVE.pend.yes || S.view !== "play") return;
   if (document.querySelector(".akprac-ask")) return;
-  var sh = AKP.pend.showId ? findShow(AKP.pend.showId) : null;
+  var sh = AKPLIVE.pend.showId ? findShow(AKPLIVE.pend.showId) : null;
   var card = h("div", { class: "akprac-ask", role: "dialog", "aria-label": "Is this a show?" },
     h("div", { class: "akprac-q" }, h("b", null, "Practice mode is on. Is this a show?"),
       h("span", { class: "muted" }, " Nothing is logged yet" + (sh ? " for “" + sh.name + "”" : "") + ". Plays and the timer are kept aside until you answer.")),
     h("div", { class: "row", style: "margin:6px 0 0;flex-wrap:nowrap" },
       h("button", { class: "primary", onClick: function () { akPracYes(); } }, "Yes, it's a show"),
       h("button", { onClick: function () { akPracNo(); toast("Practice: nothing from this set will be logged."); } }, "No, practice"),
-      h("button", { class: "icon sm", "aria-label": "Ask me later", title: "Ask me later", onClick: function () { akPracCardClose(); AKP.later = Date.now(); } }, "✕")));
+      h("button", { class: "icon sm", "aria-label": "Ask me later", title: "Ask me later", onClick: function () { akPracCardClose(); AKPLIVE.later = Date.now(); } }, "✕")));
   document.body.appendChild(card);
 }
 function akPracCardClose() { Array.prototype.forEach.call(document.querySelectorAll(".akprac-ask"), function (x) { x.remove(); }); }
@@ -19710,7 +19710,7 @@ countPlay = function (songId, showId, info, at) {
   var manual = !!(info && info.manual);
   if (!showId && !trkOpt().fromSongs && !manual) return false;
   if (akPracOn() && !manual) {
-    var p = AKP.pend;
+    var p = AKPLIVE.pend;
     if (p && !p.no && !p.yes && !p.plays.some(function (x) { return x.songId === songId && x.showId === (showId || ""); }))
       p.plays.push({ songId: songId, showId: showId || "", info: info ? { setName: info.setName, setNo: info.setNo } : null, at: at || Date.now() });
     return false;
@@ -19723,7 +19723,7 @@ countPlay = function (songId, showId, info, at) {
   var told = 0;
   tmStartPlay = function () {
     if (akPracOn()) {
-      if (AKP.pend && !AKP.pend.timer) AKP.pend.timer = Date.now();
+      if (AKPLIVE.pend && !AKPLIVE.pend.timer) AKPLIVE.pend.timer = Date.now();
       else if (S.view !== "play" && Date.now() - told > 4000) { told = Date.now(); toast("Practice mode is on, so the show timer doesn't run. Turn practice off to time a show."); }
       return;
     }
@@ -19831,7 +19831,7 @@ function akExtraFab6(song, root) {
   akAfterRender2 = function () {
     ar();
     akPracPaint();
-    if (S.view === "play") { akReqPaint(); if (AKP.pend && AKP.pend.seq === S.playSeq && !(AKP.later && Date.now() - AKP.later < 5 * 60000)) akPracCard(); }
+    if (S.view === "play") { akReqPaint(); if (AKPLIVE.pend && AKPLIVE.pend.seq === S.playSeq && !(AKPLIVE.later && Date.now() - AKPLIVE.later < 5 * 60000)) akPracCard(); }
     else akPracCardClose();
     if (S.view === "songs" || S.view === "song") { try { akOrigSync(); } catch (e) {} }
   };
@@ -23892,28 +23892,28 @@ function akGtrStrum(parts, short) {
 }
 /* get the playing song's chords ready in quiet moments, so the first tap on one is quick (a string with its body and room takes
    a moment to work out on a tablet; after that it is kept) */
-var AKW = { q: [], on: false, sid: "", wait: null };
+var AKWQ = { q: [], on: false, sid: "", wait: null };
 function akGtrPrep(song) {
   var c = akHearCfg(); if (!c.tap || akPiano()) return;
   var names = [], ms = {}, capo = Number(song.capo) || 0;
   try { names = akSongChords(song).filter(function (x, i, a) { return a.indexOf(x) === i; }).slice(0, 24); } catch (e) { return; }
   names.forEach(function (n) { try { akHearNotes(n, { capo: capo }).forEach(function (x) { ms[Math.round(x.m)] = 1; }); } catch (e) {} });
-  AKW.q = Object.keys(ms).map(Number);
+  AKWQ.q = Object.keys(ms).map(Number);
   akGtrPrepRun();
 }
 function akGtrPrepRun() {
-  if (AKW.on || !AKW.q.length) return;
+  if (AKWQ.on || !AKWQ.q.length) return;
   if (!akAC) { /* sound can only start after a tap: get ready on the next one */
-    if (!AKW.wait) {
-      AKW.wait = function () { document.removeEventListener("pointerdown", AKW.wait, true); document.removeEventListener("keydown", AKW.wait, true); AKW.wait = null; akAudio(); setTimeout(akGtrPrepRun, 400); };
-      document.addEventListener("pointerdown", AKW.wait, true); document.addEventListener("keydown", AKW.wait, true);
+    if (!AKWQ.wait) {
+      AKWQ.wait = function () { document.removeEventListener("pointerdown", AKWQ.wait, true); document.removeEventListener("keydown", AKWQ.wait, true); AKWQ.wait = null; akAudio(); setTimeout(akGtrPrepRun, 400); };
+      document.addEventListener("pointerdown", AKWQ.wait, true); document.addEventListener("keydown", AKWQ.wait, true);
     }
     return;
   }
-  AKW.on = true;
+  AKWQ.on = true;
   var later = window.requestIdleCallback ? function (f) { requestIdleCallback(f, { timeout: 1500 }); } : function (f) { setTimeout(f, 60); };
   var step = function () {
-    var m = AKW.q.shift(); if (m == null) { AKW.on = false; return; }
+    var m = AKWQ.q.shift(); if (m == null) { AKWQ.on = false; return; }
     try { var type = akGtrType(); if (akGtrBus(type)) akGtrBuf(type, m, AK_RING[akHearCfg().ring] || 1); } catch (e) {}
     later(step);
   };
@@ -23921,7 +23921,7 @@ function akGtrPrepRun() {
 }
 (function () {
   var ph0 = akPlayHooks;
-  akPlayHooks = function (song, item) { ph0(song, item); try { if (song && AKW.sid !== song.id) { AKW.sid = song.id; akGtrPrep(song); } } catch (e) {} };
+  akPlayHooks = function (song, item) { ph0(song, item); try { if (song && AKWQ.sid !== song.id) { AKWQ.sid = song.id; akGtrPrep(song); } } catch (e) {} };
 })();
 /* the song whose capo counts: the one playing, or the one passed in */
 function akHearCapo(o) { var song = o && o.song || (S.play && typeof curSong === "function" ? curSong() : null); return song ? Number(song.capo) || 0 : 0; }
@@ -26810,7 +26810,7 @@ akCss("ak10-b", [
 var AK_SHORT_BASE = akPersonal() ? "https://aedryan13.github.io/akashic-chords/r/" : "";
 var AK_SHORT_SLUG = akPersonal() ? "aedryan" : "";
 var AK_SHORT_GO = [["songs", "Song requests"], ["shows", "My upcoming shows"], ["tip", "Tips"], ["more", "Learn a song or send a message"]];
-var AKSH = { busy: false, last: 0 };
+var AKSHL = { busy: false, last: 0 };
 
 function akShortCfg() {
   var L = akLive();
@@ -26847,11 +26847,11 @@ function akShortActive() { var L = akLive(), c = akShortCfg(); return L.mode ===
 /* does r/slugs.json send this name to this account? cb(ok, why); ok is undefined when it couldn't be checked */
 function akShortCheck(cb, force) {
   var L = akLive(), c = akShortCfg();
-  function done(ok, why) { AKSH.busy = false; if (ok !== undefined) { c.ok = ok; c.why = why || ""; c.at = Date.now(); save(); } if (cb) cb(ok, why); }
+  function done(ok, why) { AKSHL.busy = false; if (ok !== undefined) { c.ok = ok; c.why = why || ""; c.at = Date.now(); save(); } if (cb) cb(ok, why); }
   if (!c.slug || !c.base) return done(undefined, "No short address yet.");
   if (L.mode !== "cloud" || !AKL.uid || !L.fb || !L.fb.projectId) { if (cb) cb(undefined, "Sign in first, then I can check it."); return; }
-  if (AKSH.busy || (!force && Date.now() - AKSH.last < 60000 && c.at)) { if (cb) cb(c.ok, c.why); return; }
-  AKSH.busy = true; AKSH.last = Date.now();
+  if (AKSHL.busy || (!force && Date.now() - AKSHL.last < 60000 && c.at)) { if (cb) cb(c.ok, c.why); return; }
+  AKSHL.busy = true; AKSHL.last = Date.now();
   fetch(c.base.replace(/\/?$/, "/") + "slugs.json?t=" + Date.now(), { cache: "no-cache" }).then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); }).then(function (m) {
     var e = m && m[c.slug];
     if (!e) return done(false, "The name “" + c.slug + "” isn't set up there yet.");
@@ -26900,8 +26900,8 @@ function akShortCheck(cb, force) {
       h("label", { class: "fld" }, "Name in the address (letters, numbers and dashes)", slugIn),
       h("label", { class: "fld" }, "Where the short page lives", baseIn),
       h("div", { class: "row" }, h("button", { onClick: function () {
-        ctx.mark(); c.slug = akShortSlug(slugIn.value); c.base = baseIn.value.trim(); c.ok = undefined; c.at = 0; AKSH.last = 0; save(); ctx.refresh();
-      } }, "Save"), h("button", { onClick: function () { ctx.mark(); c.slug = AK_SHORT_SLUG; c.base = AK_SHORT_BASE; c.ok = undefined; c.at = 0; AKSH.last = 0; save(); ctx.refresh(); } }, "Back to the default")),
+        ctx.mark(); c.slug = akShortSlug(slugIn.value); c.base = baseIn.value.trim(); c.ok = undefined; c.at = 0; AKSHL.last = 0; save(); ctx.refresh();
+      } }, "Save"), h("button", { onClick: function () { ctx.mark(); c.slug = AK_SHORT_SLUG; c.base = AK_SHORT_BASE; c.ok = undefined; c.at = 0; AKSHL.last = 0; save(); ctx.refresh(); } }, "Back to the default")),
       h("p", { class: "hint" }, "Changing it means new QR codes, so pick it once.")));
   };
 })();
@@ -33973,8 +33973,8 @@ function akShareReady(btn, file) {
 }
 
 /* ---------------------------------------------------------------- a plain .zip (stored) */
-var AK_CRC = null;
-function akCrcTable() { if (AK_CRC) return AK_CRC; AK_CRC = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; AK_CRC[n] = c; } return AK_CRC; }
+var AK_CRC2 = null;
+function akCrcTable() { if (AK_CRC2) return AK_CRC2; AK_CRC2 = new Int32Array(256); for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; AK_CRC2[n] = c; } return AK_CRC2; }
 function akCrc(blob, prog) {
   var T = akCrcTable(), crc = -1, off = 0, STEP = 4 * 1048576;
   function next() {
@@ -43260,9 +43260,11 @@ function akwrBubble() {
   b.classList.toggle("open", typeof akFloatOpen === "function" && akFloatOpen("notepad"));
   akwrBubblePlace(b);
 }
+/* 18.9y: by default the bubble sits low in the right corner, just above the tab bar, where no screen has buttons */
+function akwrBubbleLow(H) { var t = document.querySelector(".tabbar, nav.tabs, #tabs, nav"), top = H; try { if (t) { var r = t.getBoundingClientRect(); if (r.height && r.top > H * 0.5) top = r.top; } } catch (e) {} return Math.round(top - 56); }
 function akwrBubblePlace(b) {
   var P = akwrPad(), W = window.innerWidth, H = window.innerHeight;
-  var x = P.x != null ? P.x : W - 58, y = P.y != null ? P.y : Math.round(H * 0.55);
+  var x = P.x != null ? P.x : W - 58, y = P.y != null ? P.y : akwrBubbleLow(H);
   b.style.left = Math.max(0, Math.min(W - 48, x)) + "px"; b.style.top = Math.max(0, Math.min(H - 48, y)) + "px";
 }
 function akwrBubbleMenu(b) {
@@ -43307,6 +43309,7 @@ akCss("akwr-a", [
   ".ak18-sec{white-space:nowrap;font-weight:700;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}.ak18-sec i{font-style:normal;opacity:.55}",
   ".ak18-sec.akwr-lift{opacity:.5}.ak18-sec.akwr-tgt{outline:2px dashed var(--accent);outline-offset:2px}",
   ".akwr-padb{position:fixed;z-index:85;width:46px;height:46px;min-height:0;padding:0;border-radius:50%;font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;background:var(--panel,var(--bg));border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.35);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}",
+  ".akwr-padb:not(.open):not(:active):not(:focus-visible){opacity:.6}",
   ".akwr-padb.onplay{opacity:.55;width:40px;height:40px;font-size:19px}.akwr-padb.open{outline:2px solid var(--accent)}",
   ".akwr-padsong{margin-top:6px}"
 ].join("\n"));
@@ -47913,7 +47916,10 @@ function akMergeLib(src, L, how, names) {
   (src.songs || []).forEach(function (s) { map[s.id] = akPutSong(L, s, how, r); });
   (src.tags || []).forEach(function (t) { if (!L.tags.some(function (x) { return x.name === t.name; })) L.tags.push(clone(t)); });
   (src.shows || []).forEach(function (sh) {
-    var c = clone(sh), smap = {}, have = L.shows.filter(function (x) { return normTitle(x.name) === normTitle(sh.name); })[0];
+    /* 18.9y: the very same setlist (same id, e.g. restoring your own backup) is never added twice */
+    var same = L.shows.filter(function (x) { return x.id === sh.id; })[0];
+    if (same && names !== "replace") { lmap[sh.id] = same.id; r.same = (r.same || 0) + 1; return; }
+    var c = clone(sh), smap = {}, have = same || L.shows.filter(function (x) { return normTitle(x.name) === normTitle(sh.name); })[0];
     c.id = have && names === "replace" ? have.id : uid(); c.group = "";
     c.sets = (c.sets || []).map(function (st) { var n = uid(); smap[st.id] = n; st.id = n; st.songIds = (st.songIds || []).map(function (i) { return map[i]; }).filter(Boolean); return st; });
     var pl = {}; Object.keys(c.played || {}).forEach(function (k) { if (map[k]) pl[map[k]] = c.played[k]; }); c.played = pl;
@@ -47924,7 +47930,10 @@ function akMergeLib(src, L, how, names) {
   });
   (src.gigs || []).forEach(function (g) {
     var c = clone(g), key = function (z) { return normTitle(z.name || z.venue || "") + "|" + (z.date || ""); };
-    var have = L.gigs.filter(function (z) { return key(z) === key(g); })[0];
+    /* 18.9y: the very same show (same id) is never added twice, so merging a backup can't double your pay in Money */
+    var same = L.gigs.filter(function (z) { return z.id === g.id; })[0];
+    if (same && names !== "replace") { r.same = (r.same || 0) + 1; return; }
+    var have = same || L.gigs.filter(function (z) { return key(z) === key(g); })[0];
     c.setlists = (c.setlists || []).map(function (i) { return lmap[i]; }).filter(Boolean);
     if (have && names === "replace") { c.id = have.id; L.gigs[L.gigs.indexOf(have)] = c; }
     else { c.id = uid(); if (have) c.name = akUniqIn(L.gigs, g.name || g.venue || "Show", function (z) { return z.name || z.venue || ""; }); L.gigs.push(c); }
@@ -47938,6 +47947,7 @@ function akMergeMsg(r) {
   if (r.kept) a.push(r.kept + " kept as yours");
   if (r.replaced) a.push(r.replaced + " replaced with theirs");
   if (r.lists) a.push(r.lists + (r.lists === 1 ? " setlist" : " setlists"));
+  if (r.same) a.push(r.same + " already here, skipped");
   if (r.shows) a.push(r.shows + (r.shows === 1 ? " show" : " shows"));
   return a.length ? a.join(", ") + "." : "Nothing to add.";
 }
@@ -52263,8 +52273,12 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9x";
+AK_VERSION = "18.9y";
 AK_WHATS_NEW = [
+  "🛠 Beta pass fixes: the phone recorder page, the My recordings list and song-by-song Undo work again (a newer part of the app was clearing them when it started).",
+  "📦 Restoring a backup with Merge no longer adds a second copy of shows and setlists you already have, so Money and Analytics don't double your pay.",
+  "💾 If your phone's storage is full and the app can't save, it tells you right away.",
+  "📄 Contracts and invoices use your legal name (Adrian Gantt) and never say a name twice like “Aedryan Gantt, performing as Aedryan Gantt”.",
   "🎬 Clips (More › 🎬 Clips): cut a short clip or a highlight reel from a show video or recording, shaped 9:16 for Reels, TikTok and Shorts (or 4:5, 1:1, 16:9), Fill or Fit with blurred sides, your name and the venue on it, fades in and out, then save or share. Audio recordings get a photo behind them. It’s all made on your phone.",
   "📆 Free dates (new Business tab): your open days, worked out from your shows and bookings; tap a day to block it, pick the days you play and how far ahead. Show them on your public page (Book tab, or a ?go=free link) without revealing what’s booked; people tap an open day to ask about it. Copy them as text, or use {free dates} in Messages. ☁️ Cloud backup (Settings › Backups): send a backup to iCloud Drive, Google Drive or Dropbox from the share sheet, or connect Google Drive or Dropbox once so every backup goes there, with Restore from a list.",
   "🔔 Follow-ups: eight new ready messages (no reply to a quote, agreement and deposit, confirm the details the week before, balance due, thank you and review, rebook a yearly event, check in with a past venue, holding the date). 📋 Bookings shows 🔔 Follow up with the right one for each request, marks quiet requests and shows to confirm, and has tips on why and when. 🎼 Set lists (new Business tab): each past show with your own songs, venue and address, ready to copy or download for BMI Live, ASCAP OnStage or SESAC; tick Reported when sent.",
@@ -56129,8 +56143,8 @@ function akLpPhotoBlock() {
 /* ================= 18.8a: 🔁 Replace opens a picture picker pop-up =================
    The Replace button in the part pop-up used to jump to My pictures. Now it opens a sheet right over the picture with your pictures
    (albums, a way to add more); tapping one swaps it in at once (akGfxLibUse, same as the My pictures panel). */
-var AKRP = { el: null };
-function akGfxReplaceClose() { if (AKRP.el && AKRP.el.parentNode) AKRP.el.parentNode.removeChild(AKRP.el); AKRP.el = null; }
+var AKRPEL = { el: null };
+function akGfxReplaceClose() { if (AKRPEL.el && AKRPEL.el.parentNode) AKRPEL.el.parentNode.removeChild(AKRPEL.el); AKRPEL.el = null; }
 function akGfxReplacePop(X) {
   akGfxReplaceClose();
   var st = akGfxState(), P = st.P, D = X.D, L = P && st.sel ? P.layers.filter(function (l) { return l.id === st.sel; })[0] : null;
@@ -56152,9 +56166,9 @@ function akGfxReplacePop(X) {
   var inp = h("input", { type: "file", accept: "image/*", multiple: true, onChange: function () { var fs = [].slice.call(this.files || []); this.value = ""; if (fs.length) { akGfxLibImport(fs, X, "lib"); setTimeout(fill, 900); } } });
   wrap.appendChild(h("div", { class: "akrp-h" }, h("b", null, "Replace “" + L.name + "”"), fileBtn("＋ Add pictures", inp), h("button", { class: "sm", "aria-label": "Close", onClick: akGfxReplaceClose }, "✕")));
   wrap.appendChild(chips); wrap.appendChild(grid); fill();
-  document.body.appendChild(wrap); AKRP.el = wrap;
+  document.body.appendChild(wrap); AKRPEL.el = wrap;
 }
-setInterval(function () { if (AKRP.el && S.view !== "gfx") akGfxReplaceClose(); }, 600);
+setInterval(function () { if (AKRPEL.el && S.view !== "gfx") akGfxReplaceClose(); }, 600);
 akCss("akgfx-replace", [
   ".akrp{position:fixed;left:8px;right:8px;bottom:8px;max-height:46vh;z-index:60;background:var(--panel,#1b1b1b);color:var(--fg,#eee);border:1px solid var(--line,#555);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:8px;display:flex;flex-direction:column;gap:6px;max-width:640px;margin:0 auto}",
   ".akrp-h{display:flex;align-items:center;gap:8px}.akrp-h b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}",
@@ -56881,7 +56895,7 @@ function akMsg() {
     m.std = 1; var std = akmStd(); m.tpls.unshift(std); m.last = std.id;
     ["private", "wedding", "corporate"].forEach(function (k) { var o = m.rates.kinds[k]; if (!o.hourly) o.hourly = "150"; if (!o.minHours) o.minHours = "2"; if (!o.deposit) o.deposit = "100"; if (o.hours === "3" && !o.price) o.hours = ""; });
     if (!m.rates.pay) m.rates.pay = "Zelle, Venmo, Cash App, or credit card";
-    var a = akArtist(); if (typeof akPersonal === "function" && akPersonal()) { if (!a.phone) a.phone = "206-660-5057"; if (!a.email) a.email = "aedryan@yahoo.com"; }
+    var a = akArtist(); if (typeof akPersonal === "function" && akPersonal()) { if (!a.phone) a.phone = "206-660-5057"; if (!a.email) a.email = "aedryan@yahoo.com"; if (!a.legal) a.legal = "Adrian Gantt"; }
     save();
   }
   if (!Array.isArray(m.log)) m.log = [];
@@ -56989,7 +57003,9 @@ function akmSecOn(st, s) {
 }
 var AKM_MINE = { phone: 1, website: 1, email: 1, "booking email": 1, "links page": 1, links: 1, tagline: 1, bio: 1, rider: 1, home: 1, "upcoming shows": 1 };
 /* a line that is only one of my own details that isn't filled in (no phone number saved, say) is left out */
-function akmFill(text, vals) { text = String(text || "").split("\n").filter(function (ln) { var m = ln.trim().match(/^\{([^{}]+)\}$/); if (!m) return true; var k = m[1].trim().toLowerCase(); return !(AKM_MINE[k] && !vals[k]); }).join("\n"); return _akmFill(text, vals); }
+function akmFill(text, vals) { text = String(text || "").split("\n").filter(function (ln) { var m = ln.trim().match(/^\{([^{}]+)\}$/); if (!m) return true; var k = m[1].trim().toLowerCase(); return !(AKM_MINE[k] && !vals[k]); }).join("\n"); return akmSameName(_akmFill(text, vals)); }
+/* 18.9y: no legal name set (or the same as the stage name) -> "Name" instead of "Name, performing as Name" */
+function akmSameName(t) { return String(t).replace(/([^\n,(]{2,60}?), performing as \1(?![\w])/g, "$1").replace(/([^\n,(]{2,60}?) \(performing as \1\)/g, "$1"); }
 function _akmFill(text, vals) { return String(text || "").replace(/\{([^{}\n]{1,40})\}/g, function (m, k) { k = k.trim().toLowerCase(); var v = vals[k]; return v != null && v !== "" ? String(v) : "[" + k + "]"; }); }
 function akmCompose(st, tpl) {
   var vals = akmVals(st, tpl), parts = [];
@@ -58026,7 +58042,7 @@ akCss("akedges", "body.akg-on #mainScroll{padding-left:4px!important;padding-rig
    estimate and what to set aside each quarter. Estimates only, not tax advice. ================= */
 
 /* ---------------------------------------------------------------- legal name */
-function akLegalName() { var a = akArtist(); return String(a.legal || "").trim() || akArtistName(); }
+function akLegalName() { var a = akArtist(); return String(a.legal || "").trim() || (typeof akPersonal === "function" && akPersonal() ? "Adrian Gantt" : "") || akArtistName(); }
 (function () {
   var v0 = akmAutoVals;
   akmAutoVals = function (st) {
@@ -58195,7 +58211,7 @@ function akShFromApp(kind, year) {
   }
   return akShNew("New sheet", [["", "", "", ""], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""], ["", "", "", ""]]);
 }
-var AKSH = { sel: null };
+var AKGSEL = { sel: null };
 function viewSheets() {
   var S0 = akShData(), body = h("div", { class: "akm aksh" }), sh = S0.list.filter(function (x) { return x.id === S0.cur; })[0] || S0.list[0];
   body.appendChild(akDocTabs("sheets"));
@@ -58217,7 +58233,7 @@ function viewSheets() {
     var tr = h("tr", null, h("th", null, String(r + 1)));
     for (var c2 = 0; c2 < nc; c2++) (function (c2) {
       var inp = h("input", { type: "text", "data-r": r, "data-c": c2, value: akShShow(sh, r, c2), class: (r === 0 ? "hd " : "") + (String(row[c2] || "").charAt(0) === "=" ? "fx" : ""), "aria-label": akShCol(c2) + (r + 1),
-        onFocus: function () { this.value = row[c2] == null ? "" : row[c2]; AKSH.sel = [r, c2]; },
+        onFocus: function () { this.value = row[c2] == null ? "" : row[c2]; AKGSEL.sel = [r, c2]; },
         onInput: function () { row[c2] = this.value; save(); },
         onBlur: function () { this.classList.toggle("fx", String(row[c2] || "").charAt(0) === "="); recalc(); this.value = akShShow(sh, r, c2); },
         onKeydown: function (e) { if (e.key === "Enter") { e.preventDefault(); var nx = grid.querySelector('input[data-r="' + (r + 1) + '"][data-c="' + c2 + '"]'); if (nx) nx.focus(); else this.blur(); } } });
@@ -58233,7 +58249,7 @@ function viewSheets() {
         { label: "＋ Add a column", onClick: function () { sh.rows.forEach(function (r) { while (r.length < nc + 1) r.push(""); }); save(); render(); } },
         { label: "Remove the last row", onClick: function () { if (sh.rows.length > 1) sh.rows.pop(); save(); render(); } },
         { label: "Remove the last column", onClick: function () { if (nc > 1) sh.rows.forEach(function (r) { r.length = Math.min(r.length, nc - 1); }); save(); render(); } },
-        { label: (AKSH.sel && (sh.money || []).indexOf(AKSH.sel[1]) >= 0 ? "✓ " : "") + "Show column " + (AKSH.sel ? akShCol(AKSH.sel[1]) : "…") + " as money", onClick: function () { if (!AKSH.sel) { toast("Tap a cell in the column first."); return; } sh.money = sh.money || []; var i = sh.money.indexOf(AKSH.sel[1]); if (i >= 0) sh.money.splice(i, 1); else sh.money.push(AKSH.sel[1]); save(); render(); } },
+        { label: (AKGSEL.sel && (sh.money || []).indexOf(AKGSEL.sel[1]) >= 0 ? "✓ " : "") + "Show column " + (AKGSEL.sel ? akShCol(AKGSEL.sel[1]) : "…") + " as money", onClick: function () { if (!AKGSEL.sel) { toast("Tap a cell in the column first."); return; } sh.money = sh.money || []; var i = sh.money.indexOf(AKGSEL.sel[1]); if (i >= 0) sh.money.splice(i, 1); else sh.money.push(AKGSEL.sel[1]); save(); render(); } },
         src ? { label: "↻ Fill again from my shows", onClick: function () { var n = akShFromApp(src[0], +src[1]); sh.rows = n.rows; sh.money = n.money; save(); render(); toast("Updated from your shows."); } } : null,
         { sep: true },
         { label: "📋 Copy as a table (paste into a spreadsheet)", onClick: function () { akmCopy(sh.rows.map(function (r, ri) { return r.map(function (v, ci) { return akShShow(sh, ri, ci); }).join("\t"); }).join("\n")); } },
@@ -58578,7 +58594,7 @@ function akShowPhoto(id, title) { var d = IMG[id]; if (!d) { toast("The photo is
 })();
 
 /* ---------------------------------------------------------------- receipts in 💰 Money and taxes */
-var AKRC = { pending: null };
+var AKRCP = { pending: null };
 (function () {
   var v0 = AK_VIEWS.money;
   AK_VIEWS.money = function () {
@@ -58586,9 +58602,9 @@ var AKRC = { pending: null };
     try {
       var M = akMoneyCfg(), add = el.querySelector(".akmy-add");
       if (add) {
-        var b = h("button", { class: "sm", title: "Photo of the receipt", onClick: function () { akPickPhoto(function (d) { AKRC.pending = d; b.textContent = "🧾 ✓"; toast("Receipt ready: it's saved with the next expense you add."); }); } }, AKRC.pending ? "🧾 ✓" : "📷 Receipt");
+        var b = h("button", { class: "sm", title: "Photo of the receipt", onClick: function () { akPickPhoto(function (d) { AKRCP.pending = d; b.textContent = "🧾 ✓"; toast("Receipt ready: it's saved with the next expense you add."); }); } }, AKRCP.pending ? "🧾 ✓" : "📷 Receipt");
         add.insertBefore(b, add.lastChild);
-        var addBtn = add.lastChild; addBtn.addEventListener("click", function () { var n0 = M.exp.length; setTimeout(function () { if (!AKRC.pending || M.exp.length <= n0) return; var last = M.exp[M.exp.length - 1]; var id = "rcpt:" + last.id; imgPut(id, { name: "Receipt " + (last.note || last.d), data: AKRC.pending }); last.rc = id; AKRC.pending = null; save(); render(); }, 30); }, true);
+        var addBtn = add.lastChild; addBtn.addEventListener("click", function () { var n0 = M.exp.length; setTimeout(function () { if (!AKRCP.pending || M.exp.length <= n0) return; var last = M.exp[M.exp.length - 1]; var id = "rcpt:" + last.id; imgPut(id, { name: "Receipt " + (last.note || last.d), data: AKRCP.pending }); last.rc = id; AKRCP.pending = null; save(); render(); }, 30); }, true);
       }
       /* each expense: 🧾 to see its receipt, 📷 to add one */
       var y = AKMY.year, list = M.exp.filter(function (e) { return String(e.d).slice(0, 4) === String(y); }).sort(function (a, b) { return b.d.localeCompare(a.d); });
@@ -58612,7 +58628,7 @@ function akTaxPack(y) {
   var R = akMoneyYear(y), M = akMoneyCfg(), $ = akmMoney, files = [];
   sheets.forEach(function (sh) { files.push({ name: sh.name + ".csv", data: akCsvText(sh.rows.map(function (r, ri) { return r.map(function (v, ci) { return akShShow(sh, ri, ci); }); })) }); });
   var lines;
-  lines = ["Music business summary " + y, "Name: " + akLegalName() + " (performing as " + akArtistName() + ")", "", "Shows: " + R.gigs, "Income (pay + tips): " + $(R.inc) + " (pay " + $(R.pay) + ", tips " + $(R.tips) + ")", "Show costs: " + $(R.gigCosts), "Other expenses: " + $(R.exp), "Mileage: " + Math.round(R.miles) + " miles, " + $(R.mileDed), "Profit before tax: " + $(R.net), "", "Expenses by category:"];
+  lines = ["Music business summary " + y, "Name: " + akLegalName() + (akLegalName() !== akArtistName() ? " (performing as " + akArtistName() + ")" : ""), "", "Shows: " + R.gigs, "Income (pay + tips): " + $(R.inc) + " (pay " + $(R.pay) + ", tips " + $(R.tips) + ")", "Show costs: " + $(R.gigCosts), "Other expenses: " + $(R.exp), "Mileage: " + Math.round(R.miles) + " miles, " + $(R.mileDed), "Profit before tax: " + $(R.net), "", "Expenses by category:"];
   Object.keys(R.byCat).forEach(function (k) { lines.push("  " + ((AKMY_CATS.filter(function (c) { return c[0] === k; })[0] || ["", k])[1]) + ": " + $(R.byCat[k])); });
   lines.push("", "Estimates made by Akashic Chords to help with records; not tax advice.");
   files.push({ name: "Summary " + y + ".txt", data: lines.join("\n") });
