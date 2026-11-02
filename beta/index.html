@@ -52263,8 +52263,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9w";
+AK_VERSION = "18.9x";
 AK_WHATS_NEW = [
+  "🎬 Clips (More › 🎬 Clips): cut a short clip or a highlight reel from a show video or recording, shaped 9:16 for Reels, TikTok and Shorts (or 4:5, 1:1, 16:9), Fill or Fit with blurred sides, your name and the venue on it, fades in and out, then save or share. Audio recordings get a photo behind them. It’s all made on your phone.",
   "📆 Free dates (new Business tab): your open days, worked out from your shows and bookings; tap a day to block it, pick the days you play and how far ahead. Show them on your public page (Book tab, or a ?go=free link) without revealing what’s booked; people tap an open day to ask about it. Copy them as text, or use {free dates} in Messages. ☁️ Cloud backup (Settings › Backups): send a backup to iCloud Drive, Google Drive or Dropbox from the share sheet, or connect Google Drive or Dropbox once so every backup goes there, with Restore from a list.",
   "🔔 Follow-ups: eight new ready messages (no reply to a quote, agreement and deposit, confirm the details the week before, balance due, thank you and review, rebook a yearly event, check in with a past venue, holding the date). 📋 Bookings shows 🔔 Follow up with the right one for each request, marks quiet requests and shows to confirm, and has tips on why and when. 🎼 Set lists (new Business tab): each past show with your own songs, venue and address, ready to copy or download for BMI Live, ASCAP OnStage or SESAC; tick Reported when sent.",
   "📋 Bookings: every request from any channel, moved along from new to paid; ✉️ Reply, 📄 Contract and 🧾 Invoice open filled in, 📅 Add to shows, and late deposits or unpaid balances are flagged. 💰 Money › Payers totals each venue’s pay for checking 1099s. Business tabs now sit in a 3 × 3 grid so none are hidden.",
@@ -59407,6 +59408,207 @@ akCss("akav", ".akav-p{font-size:13px;opacity:.85;margin:4px 0}.akav-l{font-size
 if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Dates I'm free (public availability)", a: "💼 Business › 📆 Free dates: worked out from your shows and bookings; tap a day to block it; pick the days you play and how far ahead. Turn on “Show my free dates on my public page” (Book tab, or the ?go=free link). Copy the dates as text, or use {free dates} in ✉️ Messages." });
   AK_HELP_WHERE.push({ t: "Back up to iCloud, Google Drive or Dropbox", a: "⚙ Settings › Backups › ☁️ Cloud backup: “Save a backup to the cloud…” (share sheet: Save to Files › iCloud Drive, Drive, Dropbox), or connect Google Drive / Dropbox once so every one-tap backup goes there, with Restore… to bring one back." });
+}
+
+/* ================= 18.9x: 🎬 Clip maker and highlight reels (for Reels, TikTok, Shorts, posts).
+   AK_VIEWS.clips (More menu › 🎬 Clips; 💼 Business isn't the place, so it sits beside Graphics; a show's recordings link here too).
+   Source: a video or audio file from the phone, or one of the app's own show recordings. Audio-only sources get a picture
+   (a photo you pick) behind them. Parts: one or more stretches of the source (one = a clip, several = a highlight reel), each
+   with its own start and end. Shape: 9:16 (Reels, TikTok, Shorts), 4:5, 1:1, 16:9; Fill (crop) or Fit (blurred background).
+   Words: two lines (name; venue and date) at the top or bottom, fades in and out. Made in the phone: the picture is drawn on a
+   canvas and recorded with the sound in real time (a 30-second clip takes 30 seconds), as MP4 where the phone can, else WebM.
+   Nothing is uploaded. ================= */
+var AKCL = { src: null, url: "", name: "", isAudio: false, dur: 0, parts: [], fmt: "9:16", fit: "fill", t1: "", t2: "", pos: "bottom", words: true, fade: true, bg: null, bgUrl: "", busy: false, out: null, outUrl: "", prog: 0, recId: "" };
+var AKCL_FMTS = [["9:16", "9:16 Reels / TikTok / Shorts", 720, 1280], ["4:5", "4:5 Instagram post", 864, 1080], ["1:1", "1:1 Square", 1080, 1080], ["16:9", "16:9 YouTube", 1280, 720]];
+function akClFmt() { return AKCL_FMTS.filter(function (f) { return f[0] === AKCL.fmt; })[0] || AKCL_FMTS[0]; }
+function akClMime() {
+  var L = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  for (var i = 0; i < L.length; i++) { try { if (window.MediaRecorder && MediaRecorder.isTypeSupported(L[i])) return L[i]; } catch (e) {} }
+  return "";
+}
+function akClOk() { var c = document.createElement("canvas"); return !!(window.MediaRecorder && c.captureStream && (window.AudioContext || window.webkitAudioContext)); }
+function akClSetSrc(blob, name, o) {
+  o = o || {};
+  if (AKCL.url) try { URL.revokeObjectURL(AKCL.url); } catch (e) {}
+  AKCL.src = blob; AKCL.url = URL.createObjectURL(blob); AKCL.name = name || "clip"; AKCL.isAudio = /^audio\//.test(blob.type || "") || /\.(m4a|mp3|wav|ogg|aac)$/i.test(name || ""); AKCL.dur = 0; AKCL.parts = []; AKCL.recId = o.recId || "";
+  akClDropOut();
+  if (o.t1 != null) AKCL.t1 = o.t1; if (o.t2 != null) AKCL.t2 = o.t2;
+  if (!AKCL.t1) AKCL.t1 = akArtistName ? akArtistName() : "";
+  var m = document.createElement(AKCL.isAudio ? "audio" : "video"); m.preload = "metadata"; m.src = AKCL.url;
+  m.onloadedmetadata = function () {
+    var d = m.duration;
+    function done(d) { AKCL.dur = isFinite(d) ? d : 0; AKCL.parts = [{ a: 0, b: Math.min(AKCL.dur || 30, 30) }]; render(); }
+    if (!isFinite(d)) { m.currentTime = 1e7; m.ontimeupdate = function () { m.ontimeupdate = null; done(m.duration); }; } else done(d);
+  };
+  m.onerror = function () { toast("That file couldn't be opened here. Try an MP4 or MOV video, or an M4A, MP3 or WAV recording."); };
+  render();
+}
+function akClDropOut() { if (AKCL.outUrl) try { URL.revokeObjectURL(AKCL.outUrl); } catch (e) {} AKCL.out = null; AKCL.outUrl = ""; }
+function akClPick(accept, cb) { var i = h("input", { type: "file", accept: accept, style: "display:none" }); i.addEventListener("change", function () { var f = i.files && i.files[0]; i.remove(); if (f) cb(f); }); document.body.appendChild(i); i.click(); }
+function akClFromRecs() {
+  if (typeof akRecList !== "function") { toast("No recordings in this version."); return; }
+  akRecList().then(function (L) {
+    if (!L.length) { toast("No show recordings yet. Record from the playing screen, or pick a file."); return; }
+    var close, box = h("div", { class: "list" }, L.slice(0, 60).map(function (r) {
+      var g = r.g && typeof akGig === "function" ? akGig(r.g) : null, d = new Date(r.at);
+      return h("button", { class: "item main-btn", onClick: function () {
+        akRecBlob(r).then(function (b) {
+          if (close) close();
+          var v = g && akVenueFor(g), t2 = g ? [(v && v.name) || g.venue || akGigTitle(g), akmDate ? akmDate(g.date) : g.date].filter(Boolean).join(" · ") : "";
+          akClSetSrc(b, (r.name || "recording") + "." + akRecExt(r), { recId: r.id, t2: t2 });
+        });
+      } }, h("div", { class: "t" }, (r.video ? "🎥 " : "🎙 ") + (r.name || (g ? akGigTitle(g) : "Recording"))), h("div", { class: "s" }, d.toLocaleDateString() + " · " + Math.round((r.secs || 0) / 60) + " min"));
+    }));
+    close = modal("🎙 Pick a recording", box, [{ label: "Cancel" }]);
+  });
+}
+function akClTime(s) { s = Math.max(0, s || 0); var m = Math.floor(s / 60), x = s - m * 60; return m + ":" + (x < 10 ? "0" : "") + x.toFixed(1); }
+/* draw one frame of the finished clip */
+function akClDraw(ctx, W, H, media, img, alpha, tIn) {
+  ctx.globalAlpha = 1; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  var src = AKCL.isAudio ? img : media, sw = src ? (src.videoWidth || src.naturalWidth || src.width || 0) : 0, sh = src ? (src.videoHeight || src.naturalHeight || src.height || 0) : 0;
+  if (src && sw && sh) {
+    var cover = Math.max(W / sw, H / sh), contain = Math.min(W / sw, H / sh);
+    if (AKCL.fit === "fit") {
+      ctx.save(); ctx.filter = "blur(24px) brightness(.6)"; ctx.drawImage(src, (W - sw * cover) / 2, (H - sh * cover) / 2, sw * cover, sh * cover); ctx.restore();
+      ctx.drawImage(src, (W - sw * contain) / 2, (H - sh * contain) / 2, sw * contain, sh * contain);
+    } else ctx.drawImage(src, (W - sw * cover) / 2, (H - sh * cover) / 2, sw * cover, sh * cover);
+  } else if (AKCL.isAudio) {
+    var gr = ctx.createLinearGradient(0, 0, W, H); gr.addColorStop(0, "#1b1030"); gr.addColorStop(1, "#3a1410"); ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  }
+  if (AKCL.words && (AKCL.t1 || AKCL.t2)) {
+    var s = Math.min(W, H) / 1080, top = AKCL.pos === "top", pad = 60 * s, f1 = Math.round(64 * s), f2 = Math.round(40 * s), wa = tIn == null ? 1 : Math.min(1, tIn / 0.6);
+    var y0 = top ? pad + f1 + (AKCL.fmt === "9:16" ? 120 * s : 0) : H - pad - (AKCL.t2 ? f2 + 18 * s : 0) - (AKCL.fmt === "9:16" ? 260 * s : 0);
+    var gH = f1 + f2 + 120 * s, gr2 = ctx.createLinearGradient(0, top ? 0 : H - gH * 2.2, 0, top ? gH * 2.2 : H);
+    gr2.addColorStop(top ? 0 : 1, "rgba(0,0,0,.55)"); gr2.addColorStop(top ? 1 : 0, "rgba(0,0,0,0)");
+    ctx.globalAlpha = wa; ctx.fillStyle = gr2; ctx.fillRect(0, top ? 0 : H - gH * 2.2 - (AKCL.fmt === "9:16" ? 260 * s : 0), W, gH * 2.2 + (AKCL.fmt === "9:16" ? 260 * s : 0));
+    ctx.textAlign = "center"; ctx.shadowColor = "rgba(0,0,0,.6)"; ctx.shadowBlur = 12 * s; ctx.fillStyle = "#fff";
+    if (AKCL.t1) { ctx.font = "800 " + f1 + "px system-ui,-apple-system,Segoe UI,Roboto,sans-serif"; ctx.fillText(AKCL.t1, W / 2, y0, W - pad * 2); }
+    if (AKCL.t2) { ctx.font = "600 " + f2 + "px system-ui,-apple-system,Segoe UI,Roboto,sans-serif"; ctx.fillText(AKCL.t2, W / 2, y0 + f2 + 18 * s, W - pad * 2); }
+    ctx.shadowBlur = 0;
+  }
+  if (alpha < 1) { ctx.globalAlpha = 1 - alpha; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
+  ctx.globalAlpha = 1;
+}
+function akClBgImg() { if (!AKCL.bgUrl) return null; var i = AKCL.__img; if (!i || i.__u !== AKCL.bgUrl) { i = new Image(); i.__u = AKCL.bgUrl; i.src = AKCL.bgUrl; AKCL.__img = i; } return i; }
+/* make it: play each part into a canvas + the sound into a recorder */
+function akClMake(onProg) {
+  return new Promise(function (res, rej) {
+    var parts = AKCL.parts.filter(function (p) { return p.b - p.a > 0.2; }); if (!parts.length) { rej(new Error("Pick a start and end first.")); return; }
+    var mime = akClMime(); if (!mime) { rej(new Error("This browser can't make video files.")); return; }
+    var F = akClFmt(), W = F[2], H = F[3], cv = document.createElement("canvas"); cv.width = W; cv.height = H; var ctx = cv.getContext("2d");
+    var m = document.createElement(AKCL.isAudio ? "audio" : "video"); m.src = AKCL.url; m.playsInline = true; m.setAttribute("playsinline", ""); m.preload = "auto"; m.crossOrigin = "anonymous";
+    var AC = window.AudioContext || window.webkitAudioContext, ac = new AC(), dest = ac.createMediaStreamDestination(), gain = ac.createGain(), node;
+    try { node = ac.createMediaElementSource(m); node.connect(gain); gain.connect(dest); } catch (e) {}
+    var vs = cv.captureStream(30), tracks = vs.getVideoTracks().concat(dest.stream.getAudioTracks()), rec, chunks = [], i = 0, raf = 0, total = parts.reduce(function (a, p) { return a + p.b - p.a; }, 0), doneSecs = 0, stopped = false, img = akClBgImg();
+    try { rec = new MediaRecorder(new MediaStream(tracks), { mimeType: mime, videoBitsPerSecond: 5e6 }); } catch (e) { rej(e); return; }
+    rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = function () { cancelAnimationFrame(raf); try { ac.close(); } catch (e) {} m.pause(); m.removeAttribute("src"); res(new Blob(chunks, { type: mime.split(";")[0] })); };
+    function frame() {
+      if (stopped) return;
+      var p = parts[i], t = m.currentTime, into = t - p.a, left = p.b - t, fd = 0.5, alpha = 1;
+      if (AKCL.fade) { if (i === 0 && into < fd) alpha = Math.max(0, into / fd); if (i === parts.length - 1 && left < fd) alpha = Math.max(0, left / fd); }
+      gain.gain.value = alpha;
+      akClDraw(ctx, W, H, m, img, alpha, doneSecs + into);
+      if (onProg) onProg(Math.min(1, (doneSecs + Math.max(0, into)) / total));
+      if (t >= p.b || m.ended) { next(); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    function next() {
+      doneSecs += parts[i].b - parts[i].a; i++;
+      if (i >= parts.length) { stopped = true; m.pause(); setTimeout(function () { try { rec.stop(); } catch (e) {} }, 120); return; }
+      try { rec.pause(); } catch (e) {} m.pause(); seek(parts[i].a, function () { try { rec.resume(); } catch (e) {} m.play().then(function () { raf = requestAnimationFrame(frame); }, fail); });
+    }
+    function seek(t, cb) { var once = function () { m.removeEventListener("seeked", once); cb(); }; m.addEventListener("seeked", once); m.currentTime = t; }
+    function fail(e) { stopped = true; cancelAnimationFrame(raf); try { rec.stop(); } catch (x) {} rej(e || new Error("Playback stopped.")); }
+    m.onerror = function () { fail(new Error("The file couldn't be played.")); };
+    var started = false;
+    function go0() { if (started) return; started = true; seek(parts[0].a, function () { akClDraw(ctx, W, H, m, img, AKCL.fade ? 0 : 1, 0); ac.resume().then(function () { rec.start(500); return m.play(); }).then(function () { raf = requestAnimationFrame(frame); }, fail); }); }
+    if (m.readyState >= 1) go0(); else m.addEventListener("loadedmetadata", go0);
+    AKCL.__stop = function () { fail(new Error("Stopped.")); };
+  });
+}
+function akClLen() { return AKCL.parts.reduce(function (a, p) { return a + Math.max(0, p.b - p.a); }, 0); }
+function akClSave() {
+  if (!AKCL.out) return; var ext = /mp4/.test(AKCL.out.type) ? "mp4" : "webm", name = String(AKCL.t1 || "clip").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") + "-" + akbStamp(new Date()) + "." + ext;
+  var file = null; try { file = new File([AKCL.out], name, { type: AKCL.out.type }); } catch (e) {}
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: AKCL.t1 || "Clip" }).catch(function (e) { if (e && e.name !== "AbortError") saveFile(name, AKCL.out, AKCL.out.type); }); return; }
+  saveFile(name, AKCL.out, AKCL.out.type);
+}
+function viewClips() {
+  var body = h("div", { class: "akcl" }), F = akClFmt();
+  if (!akClOk()) body.appendChild(h("div", { class: "card warn" }, "This browser can't make video clips. Try Chrome on Android or Safari on iPhone (iOS 15 or later)."));
+  body.appendChild(h("div", { class: "card" },
+    h("div", { class: "row akm-head" }, h("h3", null, "🎬 Clip maker"), h("span", { class: "grow" })),
+    h("p", { class: "akav-p" }, "Cut a short clip or a highlight reel from a show video or recording, shaped for Reels, TikTok, Shorts or a post, with your name on it. Everything happens on your phone."),
+    h("div", { class: "row akcl-b" },
+      h("button", { class: "sm primary", onClick: function () { akClPick("video/*,audio/*", function (f) { akClSetSrc(f, f.name); }); } }, "📂 Pick a video or recording"),
+      typeof akRecList === "function" ? h("button", { class: "sm", onClick: akClFromRecs }, "🎙 My show recordings") : null),
+    AKCL.src ? h("div", { class: "akav-p" }, "Using: " + AKCL.name + (AKCL.dur ? " · " + akClTime(AKCL.dur) : " · loading…")) : null));
+  if (!AKCL.src) { body.appendChild(h("div", { class: "card akav-p" }, "Tip: film in good light, start with your strongest 3 seconds, and keep clips 15 to 45 seconds. Post often: a few short clips a week does more than one long video.")); return shell("🎬 Clips", body, { back: function () { navBack(); } }); }
+  /* preview */
+  var pv = h("canvas", { class: "akcl-cv", width: Math.round(F[2] / 2), height: Math.round(F[3] / 2) }), media = h(AKCL.isAudio ? "audio" : "video", { src: AKCL.url, playsinline: "", preload: "auto", class: "akcl-media" + (AKCL.isAudio ? " aud" : "") });
+  media.controls = true; media.playsInline = true;
+  var loop = 0; function paint() { var c = pv.getContext("2d"); akClDraw(c, pv.width, pv.height, media, akClBgImg(), 1, null); loop = requestAnimationFrame(paint); if (!pv.isConnected) cancelAnimationFrame(loop); }
+  media.addEventListener("loadeddata", function () { try { media.currentTime = (AKCL.parts[0] || { a: 0 }).a; } catch (e) {} }); setTimeout(paint, 50);
+  body.appendChild(h("div", { class: "card akcl-pv" }, pv, media, AKCL.isAudio ? h("div", { class: "row akcl-b" }, h("button", { class: "sm", onClick: function () { akClPick("image/*", function (f) { if (AKCL.bgUrl) try { URL.revokeObjectURL(AKCL.bgUrl); } catch (e) {} AKCL.bgUrl = URL.createObjectURL(f); render(); }); } }, AKCL.bgUrl ? "🖼 Change the picture" : "🖼 Add a picture behind the sound")) : null));
+  /* parts */
+  var pc = h("div", { class: "card" }, h("b", null, AKCL.parts.length > 1 ? "🎞 Parts of the highlight reel" : "✂️ Start and end"),
+    h("div", { class: "akav-p" }, "Play the video above, then tap Start here / End here. Add more parts to make a highlight reel. Total: " + akClTime(akClLen()) + (akClLen() > 90 ? " (Reels and Shorts are best under 90 seconds)" : "")));
+  AKCL.parts.forEach(function (p, i) {
+    pc.appendChild(h("div", { class: "akcl-part" },
+      h("div", { class: "row akcl-pt" }, h("b", null, (AKCL.parts.length > 1 ? "Part " + (i + 1) + ": " : "") + akClTime(p.a) + " → " + akClTime(p.b)), h("span", { class: "hint" }, " (" + akClTime(p.b - p.a) + ")"), h("span", { class: "grow" }),
+        AKCL.parts.length > 1 ? h("button", { class: "icon", "aria-label": "Remove part " + (i + 1), onClick: function () { AKCL.parts.splice(i, 1); akClDropOut(); render(); } }, "✕") : null),
+      h("div", { class: "row akcl-b" },
+        h("button", { class: "sm", onClick: function () { p.a = Math.min(media.currentTime, p.b - 0.5); if (p.b <= p.a) p.b = Math.min(AKCL.dur, p.a + 15); akClDropOut(); render(); } }, "⏮ Start here"),
+        h("button", { class: "sm", onClick: function () { p.b = Math.max(media.currentTime, p.a + 0.5); akClDropOut(); render(); } }, "⏭ End here"),
+        h("button", { class: "sm", onClick: function () { media.currentTime = p.a; media.play(); var st = function () { if (media.currentTime >= p.b) { media.pause(); media.removeEventListener("timeupdate", st); } }; media.addEventListener("timeupdate", st); } }, "▶ Play part")),
+      h("div", { class: "akcl-rng" },
+        h("input", { type: "range", min: 0, max: AKCL.dur || 0, step: 0.1, value: p.a, "aria-label": "Start", onInput: function () { p.a = Math.min(+this.value, p.b - 0.5); media.currentTime = p.a; }, onChange: function () { akClDropOut(); render(); } }),
+        h("input", { type: "range", min: 0, max: AKCL.dur || 0, step: 0.1, value: p.b, "aria-label": "End", onInput: function () { p.b = Math.max(+this.value, p.a + 0.5); media.currentTime = p.b; }, onChange: function () { akClDropOut(); render(); } }))));
+  });
+  pc.appendChild(h("button", { class: "sm", onClick: function () { var last = AKCL.parts[AKCL.parts.length - 1] || { b: 0 }, a = Math.min(Math.max(media.currentTime, last.b), Math.max(0, AKCL.dur - 1)); AKCL.parts.push({ a: a, b: Math.min(AKCL.dur, a + 10) }); akClDropOut(); render(); } }, "＋ Add another part (highlight reel)"));
+  body.appendChild(pc);
+  /* look */
+  body.appendChild(h("div", { class: "card" }, h("b", null, "📐 Shape and words"),
+    h("div", { class: "row akld-f" }, AKCL_FMTS.map(function (f) { return h("button", { class: "chip" + (AKCL.fmt === f[0] ? " on" : ""), onClick: function () { AKCL.fmt = f[0]; akClDropOut(); render(); } }, f[1]); })),
+    h("div", { class: "row akld-f" }, [["fill", "Fill (crop the edges)"], ["fit", "Fit (whole picture, blurred sides)"]].map(function (x) { return h("button", { class: "chip" + (AKCL.fit === x[0] ? " on" : ""), onClick: function () { AKCL.fit = x[0]; akClDropOut(); render(); } }, x[1]); })),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: AKCL.words, onChange: function () { AKCL.words = this.checked; akClDropOut(); render(); } }), "Words on the clip"),
+    AKCL.words ? h("div", null,
+      h("label", { class: "fld" }, h("span", null, "Big line"), h("input", { type: "text", value: AKCL.t1, placeholder: "Your name", onInput: function () { AKCL.t1 = this.value; akClDropOut(); } })),
+      h("label", { class: "fld" }, h("span", null, "Small line"), h("input", { type: "text", value: AKCL.t2, placeholder: "Venue · date, or a song title", onInput: function () { AKCL.t2 = this.value; akClDropOut(); } })),
+      h("div", { class: "row akld-f" }, [["top", "At the top"], ["bottom", "At the bottom"]].map(function (x) { return h("button", { class: "chip" + (AKCL.pos === x[0] ? " on" : ""), onClick: function () { AKCL.pos = x[0]; akClDropOut(); render(); } }, x[1]); }))) : null,
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: AKCL.fade, onChange: function () { AKCL.fade = this.checked; akClDropOut(); } }), "Fade in and out")));
+  /* make */
+  var bar = h("div", { class: "akcl-bar" }, h("span", { style: "width:" + Math.round(AKCL.prog * 100) + "%" }));
+  var mk = h("div", { class: "card" }, h("b", null, "🎬 Make it"),
+    h("div", { class: "akav-p" }, "It plays through once while it's made (" + akClTime(akClLen()) + "). Keep this screen open."),
+    AKCL.busy ? h("div", null, bar, h("button", { class: "sm", onClick: function () { if (AKCL.__stop) AKCL.__stop(); } }, "■ Stop")) :
+      h("button", { class: "primary", disabled: !akClLen() || !akClOk(), onClick: function () {
+        AKCL.busy = true; AKCL.prog = 0; akClDropOut(); media.pause(); render();
+        akClMake(function (p) { AKCL.prog = p; var s = document.querySelector(".akcl-bar span"); if (s) s.style.width = Math.round(p * 100) + "%"; }).then(function (blob) {
+          AKCL.busy = false; AKCL.out = blob; AKCL.outUrl = URL.createObjectURL(blob); render(); toast("🎬 Clip ready.");
+        }, function (e) { AKCL.busy = false; render(); toast(e && e.message ? e.message : "Couldn't make the clip."); });
+      } }, AKCL.out ? "Make it again" : "🎬 Make the clip"));
+  if (AKCL.out) mk.appendChild(h("div", { class: "akcl-out" }, h("video", { src: AKCL.outUrl, controls: true, playsinline: "", class: "akcl-res" }),
+    h("div", { class: "row akcl-b" }, h("button", { class: "sm primary", onClick: akClSave }, "📤 Save or share"), h("span", { class: "hint" }, Math.max(1, Math.round(AKCL.out.size / 1048576 * 10) / 10) + " MB · " + (/mp4/.test(AKCL.out.type) ? "MP4" : "WebM")))));
+  body.appendChild(mk);
+  body.appendChild(h("div", { class: "card akav-p" }, "Posting tips: hook in the first 3 seconds, captions help (most people watch muted), tag the venue, and add your links page in your bio. A clip a few days after each show keeps venues and fans thinking of you."));
+  return shell("🎬 Clips", body, { back: function () { navBack(); } });
+}
+AK_VIEWS.clips = viewClips; AK_VIEW_TAB.clips = "shows";
+/* where to find it: More menu and Artist info › Make */
+(function () {
+  var mAdd = akmMenuAdd;
+  akmMenuAdd = function (list) { list = mAdd(list); if (!list.some(function (i) { return /Clips$/.test((i && i.label) || ""); })) { var at = list.findIndex(function (i) { return /Business$/.test((i && i.label) || ""); }); list.splice(at < 0 ? list.length : at + 1, 0, { label: "🎬 Clips", onClick: function () { go("clips"); } }); } return list; };
+  var a0 = AK_VIEWS.artist;
+  AK_VIEWS.artist = function () { var el = a0.apply(this, arguments); try { var mk = el.querySelector('[data-bk="make"] .ak11-make'); if (mk) mk.insertBefore(h("button", { onClick: function () { go("clips"); } }, "🎬 Clips and highlight reels (Reels, TikTok, Shorts)"), mk.children[1] || null); } catch (e) {} return el; };
+})();
+akCss("akcl", ".akcl-pv{display:flex;flex-direction:column;align-items:center;gap:6px}.akcl-cv{max-width:100%;max-height:52vh;border-radius:8px;background:#000}.akcl-media{width:100%;max-height:40px}.akcl-media:not(.aud){height:40px}" +
+  ".akcl-part{border-top:1px solid rgba(127,127,127,.25);padding-top:6px;margin-top:6px}.akcl-pt{align-items:center;gap:4px}.akcl-rng{display:flex;flex-direction:column;gap:2px}.akcl-rng input{width:100%}" +
+  ".akcl-bar{height:10px;border-radius:6px;background:rgba(127,127,127,.3);overflow:hidden;margin:8px 0}.akcl-bar span{display:block;height:100%;background:#2eb478;transition:width .2s}.akcl-res{width:100%;max-height:50vh;border-radius:8px;margin-top:8px;background:#000}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Make video clips and highlight reels (Reels, TikTok, Shorts)", a: "More › 🎬 Clips (also Artist info › Make): pick a video or recording (or 🎙 My show recordings), set Start here / End here, ＋ Add another part for a highlight reel, pick the shape (9:16, 4:5, 1:1, 16:9) and Fill or Fit, add your name and venue, then 🎬 Make the clip and 📤 Save or share. Audio recordings get a picture behind them." });
 }
 
 /* ---------- turning pasted charts into bracket form ---------- */
