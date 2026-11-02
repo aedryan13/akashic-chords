@@ -36772,6 +36772,14 @@ function viewGfx() {
     if (pinch) {
       var pp = npt(); if (pp.length < 2) return;
       var r1 = cv.getBoundingClientRect(), d = Math.max(10, Math.hypot(pp[0].x - pp[1].x, pp[0].y - pp[1].y)), mx = (pp[0].x + pp[1].x) / 2 - r1.left, my = (pp[0].y + pp[1].y) / 2 - r1.top;
+      /* 18.9p: two fingers moving together (not spreading) when the whole picture shows scroll the page instead (⚙ › Two fingers scroll the page) */
+      if (!pinch.mode) {
+        var ratio = d / pinch.d0, moved = Math.hypot(mx - pinch.mx, my - pinch.my);
+        if (Math.abs(ratio - 1) > 0.08) pinch.mode = "zoom";
+        else if (moved > 10) pinch.mode = (pinch.z0 <= 1.01 && akGfxCfg().twoScroll !== false) ? "scroll" : "zoom";
+        else return;
+      }
+      if (pinch.mode === "scroll") { var msc = document.getElementById("mainScroll"); if (msc) msc.scrollTop -= (my - (pinch.ly == null ? pinch.my : pinch.ly)); pinch.ly = my; return; }
       var z = Math.max(AKG_ZMIN, Math.min(8, pinch.z0 * d / pinch.d0)), s = (cv._k0 || 1) * z, ox = mx - pinch.p.x * s, oy = my - pinch.p.y * s;
       st.zoom = z; st.zc = { x: (cv.clientWidth / 2 - ox) / s, y: (cv.clientHeight / 2 - oy) / s }; paintSoon();
       return;
@@ -49339,7 +49347,7 @@ akGfxEffectsFill = function (d, X) {
   }
   function sync() {
     var m = sc();
-    if (S.view !== "gfx" || !m) { if (bar) remove(); return; }
+    if (S.view !== "gfx" || !m || akGfxCfg().sbar === false) { if (bar) remove(); return; }
     if (!bar) make();
     var r = m.getBoundingClientRect(), room = m.scrollHeight - m.clientHeight;
     bar.style.top = r.top + "px"; bar.style.height = r.height + "px";
@@ -52255,8 +52263,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9o";
+AK_VERSION = "18.9p";
 AK_WHATS_NEW = [
+  "Graphics studio options (⚙ on the divider): turn the scroll bar off, and two fingers moving together on the picture scroll the page when the whole picture shows (spread them to zoom; zoomed in, they move the view).",
   "More picture: sideways, the Quick tools, zoom and tabs move to the tools side so the picture gets the full height; upright, the frame and page edges are thinner so the picture is wider.",
   "Settings: “Options for each screen” and the test version / switch card now fold away (closed until you open them).",
   "Graphics studio sideways: picture and Quick tools on one side, ☰ Sections on the other, a divider you drag left or right, and the top bars in one row. Pick the tools side in ⚙ on the divider. Fix: the studio no longer flickers after turning the phone.",
@@ -57985,6 +57994,21 @@ if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Graphics stud
 akCss("akedges", "body.akg-on #mainScroll{padding-left:4px!important;padding-right:4px!important}" +
   "html body .akg-top.akg-left{padding:3px 3px 2px;border-radius:10px}" +
   "html body.akg-sb .akg{padding-right:17px}html body .akg-sbar{width:16px}html body .akg-sthumb{left:2px;right:2px}");
+
+/* ---- 18.9p: ⚙ on the divider: scroll bar on/off, two-finger scrolling on/off ---- */
+(function () {
+  var vm = akGfxViewMenu;
+  akGfxViewMenu = function (anchor, X) {
+    var m1 = menu, mine = function (a, items) {
+      menu = m1; items = (items || []).slice(); var c = akGfxCfg();
+      items.push({ sep: true }, { head: "Scrolling" },
+        { label: (c.sbar === false ? "" : "✓ ") + "Scroll bar on the right", onClick: function () { if (c.sbar === false) delete c.sbar; else c.sbar = false; save(); document.body.classList.remove("akg-sb"); toast(c.sbar === false ? "Scroll bar off: swipe the tools to scroll." : "Scroll bar on."); } },
+        { label: (c.twoScroll === false ? "" : "✓ ") + "Two fingers on the picture scroll the page (when the whole picture shows; spread them to zoom)", onClick: function () { if (c.twoScroll === false) delete c.twoScroll; else c.twoScroll = false; save(); } });
+      return m1(a, items);
+    };
+    menu = mine; try { vm.apply(this, arguments); } finally { if (menu === mine) menu = m1; }
+  };
+})();
 
 /* ================= 18.9l: 📄 Documents (was ✉️ Messages): Messages, Contracts, 🧾 Invoices, 📊 Sheets, 💰 Money and taxes.
    Stage name vs legal name: Artist info › Legal name (akArtist().legal). {my name} is always the stage name (messages, posters, cards,
