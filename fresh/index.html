@@ -52282,8 +52282,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9v";
+AK_VERSION = "18.9w";
 AK_WHATS_NEW = [
+  "📆 Free dates (new Business tab): your open days, worked out from your shows and bookings; tap a day to block it, pick the days you play and how far ahead. Show them on your public page (Book tab, or a ?go=free link) without revealing what’s booked; people tap an open day to ask about it. Copy them as text, or use {free dates} in Messages. ☁️ Cloud backup (Settings › Backups): send a backup to iCloud Drive, Google Drive or Dropbox from the share sheet, or connect Google Drive or Dropbox once so every backup goes there, with Restore from a list.",
   "🔔 Follow-ups: eight new ready messages (no reply to a quote, agreement and deposit, confirm the details the week before, balance due, thank you and review, rebook a yearly event, check in with a past venue, holding the date). 📋 Bookings shows 🔔 Follow up with the right one for each request, marks quiet requests and shows to confirm, and has tips on why and when. 🎼 Set lists (new Business tab): each past show with your own songs, venue and address, ready to copy or download for BMI Live, ASCAP OnStage or SESAC; tick Reported when sent.",
   "📋 Bookings: every request from any channel, moved along from new to paid; ✉️ Reply, 📄 Contract and 🧾 Invoice open filled in, 📅 Add to shows, and late deposits or unpaid balances are flagged. 💰 Money › Payers totals each venue’s pay for checking 1099s. Business tabs now sit in a 3 × 3 grid so none are hidden.",
   "🧾 Receipt photos on expenses (📷 when adding, or later), 🧳 one-tap Tax pack (sheets plus a .zip with CSV files, a summary and all receipts), and 🎸 Gear: serial numbers, prices, photos, insurance list and CSV; new gear can go into expenses too.",
@@ -59097,6 +59098,334 @@ if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Follow up on booking requests", a: "💼 Business › 📋 Bookings: 🔔 Follow up on each request opens the right message (no reply to a quote, agreement and deposit, confirm the details, balance due, thank you and review, rebook next year). Quiet requests and shows to confirm are marked. 🔔 Why and when to follow up has tips." });
   AK_HELP_WHERE.push({ t: "Follow-up message templates", a: "💼 Business › ✉️ Messages › template list: the ones starting “Follow-up:”, “Confirm details”, “Reminder: balance due”, “Thank you and review”, “Check-in:”. {review link} fills from a link named review/Google/Yelp/GigSalad." });
   AK_HELP_WHERE.push({ t: "Report set lists to BMI / ASCAP / SESAC (live performance royalties)", a: "💼 Business › 🎼 Set lists: pick your PRO and a period; each past show with your own songs (from what you played, or the planned setlist), venue and address. 📋 Copy, ⬇ CSV, ✓ Reported. ✍️ Which songs are mine? picks your originals." });
+}
+
+/* ================= 18.9w: 📆 Free dates (public availability) and ☁️ Cloud backup (Google Drive, Dropbox, iCloud).
+   Free dates: AK_VIEWS.free (💼 Business › 📆 Free dates). Busy = any show on the calendar, booking requests with a contract
+   sent or booked, and days you block by tapping them. Your public page (Book tab, or ?go=free) shows only which days are open,
+   never what's booked. {free dates} in Messages fills with the next open dates. settings().avail = { on, months, wk, block, note, wkend }.
+   Cloud backup (Settings › Backups): the share sheet sends a backup file anywhere (iCloud Drive with Save to Files, Google Drive,
+   Dropbox, email). Direct Google Drive and Dropbox connections back up automatically and restore from a list; they need a client
+   ID (Google) or app key (Dropbox), in AK_CLOUD_KEYS or pasted in Settings. settings().cloud = { gid, dbx, auto, keep, last };
+   sign-in tokens live in localStorage ("akcloud:tok"), never in backups or sync. ================= */
+
+/* ---------------------------------------------------------------- 📆 free dates */
+function akAvail() {
+  var s = settings(); s.avail = s.avail || {}; var a = s.avail;
+  if (a.months == null) a.months = 6; if (!Array.isArray(a.wk)) a.wk = [0, 1, 2, 3, 4, 5, 6]; if (!a.block || typeof a.block !== "object") a.block = {}; if (a.note == null) a.note = "";
+  return a;
+}
+function akKey(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function akKeyDate(k) { var p = k.split("-"); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function akAvailTo() { var a = akAvail(), d = new Date(); d.setMonth(d.getMonth() + (Number(a.months) || 6)); return akKey(d); }
+/* why a day is busy: "show" | "booking" | "block" | "" */
+function akAvailWhy() {
+  var a = akAvail(), out = {};
+  akGigs().forEach(function (g) { if (g.date) out[g.date] = "show"; });
+  try { akLeads().forEach(function (l) { if (l.date && (l.status === "contract" || l.status === "booked") && !out[l.date]) out[l.date] = "booking"; }); } catch (e) {}
+  Object.keys(a.block).forEach(function (k) { if (a.block[k] && !out[k]) out[k] = "block"; });
+  return out;
+}
+function akAvailFree(n, wkendOnly) {
+  var a = akAvail(), why = akAvailWhy(), d = new Date(), to = akAvailTo(), out = [];
+  d.setHours(0, 0, 0, 0);
+  for (var i = 0; i < 400 && out.length < (n || 999); i++) {
+    var k = akKey(d); if (k > to) break;
+    var wd = d.getDay();
+    if (!why[k] && a.wk.indexOf(wd) >= 0 && (!wkendOnly || wd === 5 || wd === 6)) out.push(k);
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+function akAvailText(n, wkendOnly) {
+  var L = akAvailFree(n || 40, wkendOnly), by = {}, order = [];
+  L.forEach(function (k) { var d = akKeyDate(k), m = d.toLocaleDateString(undefined, { month: "long" }); if (!by[m]) { by[m] = []; order.push(m); } by[m].push(d.toLocaleDateString(undefined, { weekday: "short" }) + " " + d.getDate()); });
+  return order.map(function (m) { return m + ": " + by[m].join(", "); }).join("\n");
+}
+/* the public page gets only the busy days (no names, places or times) */
+(function () {
+  var p0 = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = p0.apply(this, arguments);
+    try { var a = akAvail(); if (a.on) { var why = akAvailWhy(), t = akTodayKey(), to = akAvailTo(); p.avail = { on: 1, to: to, wk: a.wk.slice(), note: a.note || "", busy: Object.keys(why).filter(function (k) { return k >= t && k <= to; }).sort() }; } else p.avail = null; } catch (e) {}
+    return p;
+  };
+  var a0 = akmAutoVals;
+  akmAutoVals = function () { var v = a0.apply(this, arguments); try { v["free dates"] = akAvailText(12, !!akAvail().wkend); v["free dates link"] = akPageGoUrl("free") || ""; } catch (e) {} return v; };
+})();
+function akAvailChanged() { save(); try { if (typeof akLinkPublishSoon === "function") akLinkPublishSoon(); } catch (e) {} }
+var AKAV = { ym: "" };
+function viewFree() {
+  var a = akAvail(), body = h("div", { class: "akm akav" }), why = akAvailWhy(), t = akTodayKey(), to = akAvailTo();
+  body.appendChild(akDocTabs("free"));
+  var link = ""; try { link = akPageGoUrl("free") || ""; } catch (e) {}
+  body.appendChild(h("div", { class: "card" },
+    h("div", { class: "row akm-head" }, h("h3", null, "📆 Free dates"), h("span", { class: "grow" })),
+    h("p", { class: "akav-p" }, "The days you're open for bookings, worked out from your shows and bookings. Tap a day below to block it (vacation, family, a day off)."),
+    h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!a.on, onChange: function () { a.on = this.checked; akAvailChanged(); render(); } }), "Show my free dates on my public page"),
+    a.on ? (link ? h("div", { class: "row akav-row" }, h("input", { type: "text", readonly: true, value: link, onFocus: function () { this.select(); } }), h("button", { class: "sm", onClick: function () { akProCopy(link); } }, "📋 Copy link")) :
+      h("p", { class: "akav-p" }, "To share a link, turn on your public page in Settings › Song requests (live page). Until then, copy the dates as text below.")) : null,
+    h("div", { class: "akav-l" }, "Days I play"),
+    h("div", { class: "row akav-wk" }, ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(function (d, i) { var on = a.wk.indexOf(i) >= 0; return h("button", { class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { if (on) a.wk.splice(a.wk.indexOf(i), 1); else a.wk.push(i); a.wk.sort(); akAvailChanged(); render(); } }, d); })),
+    h("div", { class: "row akav-row" }, akGfxSelect("Show how far ahead", [[1, "1 month"], [2, "2 months"], [3, "3 months"], [6, "6 months"], [9, "9 months"], [12, "1 year"]].map(function (x) { return [String(x[0]), x[1]]; }), String(a.months), function (v) { a.months = Number(v); akAvailChanged(); render(); })),
+    h("label", { class: "fld" }, h("span", null, "Note on the page (optional)"), h("textarea", { rows: 2, placeholder: "e.g. Weekday evenings and weekends. Ask about dates not shown!", onChange: function () { a.note = this.value.trim(); akAvailChanged(); } }, a.note || ""))));
+  /* month calendar */
+  if (!AKAV.ym || AKAV.ym < t.slice(0, 7)) AKAV.ym = t.slice(0, 7);
+  var y = +AKAV.ym.slice(0, 4), mo = +AKAV.ym.slice(5, 7) - 1, first = new Date(y, mo, 1), days = new Date(y, mo + 1, 0).getDate();
+  function shift(n) { var d = new Date(y, mo + n, 1), k = akKey(d).slice(0, 7); if (k < t.slice(0, 7)) return; AKAV.ym = k; render(); }
+  var g = h("div", { class: "akav-g" });
+  ["S", "M", "T", "W", "T", "F", "S"].forEach(function (d) { g.appendChild(h("div", { class: "dow" }, d)); });
+  for (var b = 0; b < first.getDay(); b++) g.appendChild(h("div"));
+  for (var d = 1; d <= days; d++) (function (d) {
+    var k = AKAV.ym + "-" + ("0" + d).slice(-2), w = why[k], past = k < t, beyond = k > to, off = a.wk.indexOf(new Date(y, mo, d).getDay()) < 0;
+    var cls = past ? "past" : w === "show" ? "show" : w === "booking" ? "show" : w === "block" ? "block" : off || beyond ? "off" : "free";
+    g.appendChild(h("button", { class: cls, disabled: past, title: w === "show" ? "A show" : w === "booking" ? "A booking" : w === "block" ? "Blocked (tap to open)" : off ? "Not a day you play" : beyond ? "Past how far ahead you show" : "Free (tap to block)",
+      onClick: function () { if (w === "show" || w === "booking") { toast(w === "show" ? "There's a show that day." : "There's a booking that day."); return; } if (a.block[k]) delete a.block[k]; else a.block[k] = 1; akAvailChanged(); render(); } }, String(d)));
+  })(d);
+  var free = akAvailFree(999).filter(function (k) { return k.slice(0, 7) === AKAV.ym; }).length;
+  body.appendChild(h("div", { class: "card" },
+    h("div", { class: "row akav-h" }, h("button", { class: "sm", "aria-label": "Previous month", onClick: function () { shift(-1); } }, "‹"), h("b", null, first.toLocaleDateString(undefined, { month: "long", year: "numeric" })), h("button", { class: "sm", "aria-label": "Next month", onClick: function () { shift(1); } }, "›")),
+    g, h("div", { class: "akav-key" }, h("span", { class: "k free" }, "Free"), h("span", { class: "k show" }, "Show / booking"), h("span", { class: "k block" }, "Blocked"), h("span", { class: "k off" }, "Not playing")),
+    h("div", { class: "akav-p" }, free + (free === 1 ? " free day" : " free days") + " this month.")));
+  /* text to paste */
+  var wkB = h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!a.wkend, onChange: function () { a.wkend = this.checked; save(); render(); } }), "Only Fridays and Saturdays");
+  var txt = akAvailText(40, !!a.wkend);
+  body.appendChild(h("div", { class: "card" }, h("b", null, "Open dates as text"), h("div", { class: "akav-p" }, "For a message, a post or a venue pitch. In ✉️ Messages, {free dates} fills this in for you."), wkB,
+    h("textarea", { class: "akav-t", rows: 5, readonly: true }, txt || "No open dates in this range."),
+    h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akProCopy(txt); } }, "📋 Copy"))));
+  return shell("💼 Business", body);
+}
+AK_VIEWS.free = viewFree; AK_VIEW_TAB.free = "shows";
+(function () {
+  var t0 = akDocTabs;
+  akDocTabs = function (active) {
+    var row = t0.apply(this, arguments);
+    try { var pro = [].slice.call(row.children).filter(function (x) { return /Set lists/.test(x.textContent); })[0]; row.insertBefore(h("button", { class: "chip" + (active === "free" ? " on" : ""), role: "tab", onClick: function () { if (active !== "free") go("free"); } }, "📆 Free dates"), pro || null); } catch (e) {}
+    return row;
+  };
+})();
+
+/* ---------------------------------------------------------------- ☁️ cloud backup */
+var AK_CLOUD_KEYS = { google: "", dropbox: "" };
+function akCloud() { var s = settings(); s.cloud = s.cloud || {}; var c = s.cloud; if (c.keep == null) c.keep = 10; if (c.auto == null) c.auto = true; c.last = c.last || {}; return c; }
+function akCloudKey(w) { var c = akCloud(); return (w === "google" ? c.gid : c.dbx) || AK_CLOUD_KEYS[w] || ""; }
+function akCloudTok(w, v) {
+  var all = {}; try { all = JSON.parse(localStorage.getItem("akcloud:tok") || "{}") || {}; } catch (e) {}
+  if (arguments.length > 1) { if (v) all[w] = v; else delete all[w]; try { localStorage.setItem("akcloud:tok", JSON.stringify(all)); } catch (e) {} return v; }
+  return all[w] || null;
+}
+function akCloudOn(w) { var t = akCloudTok(w); return !!(t && (t.refresh || t.access || t.on)); }
+/* keep the cloud settings out of backups and sync */
+(function () {
+  var b0 = settingsForBackup;
+  settingsForBackup = function () { var c = b0.apply(this, arguments); if (c && c.cloud) { c.cloud = { keep: c.cloud.keep, auto: c.cloud.auto, gid: c.cloud.gid, dbx: c.cloud.dbx }; } return c; };
+  try { if (typeof AK_SY_SET_SKIP !== "undefined") AK_SY_SET_SKIP.cloud = 1; } catch (e) {}
+})();
+function akCloudName() { return "akashic-backup-" + akbStamp(new Date()) + ".json"; }
+/* 1. the share sheet: iCloud Drive (Save to Files), Google Drive, Dropbox, email… */
+function akCloudShare() {
+  var json; try { json = akbJSON(); } catch (e) { toast("Couldn't make the backup: " + e.message); return; }
+  var name = akCloudName(), file = null;
+  try { file = new File([json], name, { type: "application/json" }); } catch (e) {}
+  if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: "Akashic Chords backup" }).then(function () { markBackedUp(); toast("Backup sent. Keep it somewhere safe."); }, function (e) { if (e && e.name !== "AbortError") toast("Couldn't share: saving the file instead."), saveFile(name, json, "application/json"); });
+  } else { saveFile(name, json, "application/json").then(function (ok) { if (ok) markBackedUp(); }); toast("This browser can't share files, so the backup was saved to Downloads. Move it to your cloud from there."); }
+}
+/* restore from any backup text (a cloud file) */
+function akCloudRestoreJson(json, label) {
+  var dd; try { dd = parseBackup(json); } catch (e) { toast(e.message); return; }
+  var n = 0; (dd.libs || []).forEach(function (l) { n += (l.songs || []).length; });
+  modal("Restore this backup?", h("div", null, h("p", null, "Put everything back the way it was in " + label + " (" + n + " songs)?"), h("p", { class: "hint" }, "Your data right now is backed up in the app first, so you can come back to it in Backups.")),
+    [{ label: "Cancel" }, { label: "Restore", danger: true, onClick: function () {
+      akQuickBackup({ quiet: true, noFile: true, noMark: true, label: "before restoring" }).then(function () {
+        try {
+          snap("restore backup"); store.libs = clone(dd.libs); store.cur = store.libs[0].id;
+          var gh0 = settings().github, cl0 = settings().cloud; if (dd.settings) store.settings = deepMerge(clone(DEFAULTS), dd.settings); if (gh0) store.settings.github = gh0; if (cl0) store.settings.cloud = cl0;
+          if (dd.banter) store.banter = dd.banter; if (dd.fingerings) store.fingerings = dd.fingerings;
+          imagesRestore(dd.images); fontsRestore(dd.fonts); normalizeStore(); applyLook(); saveNow(); render();
+          toastUndo("Restored " + label + ".");
+        } catch (e) { toast("That backup couldn't be read."); }
+      });
+    } }]);
+}
+/* 2. Google Drive (Google sign-in, drive.file: the app sees only the files it made) */
+function akGLoad() {
+  if (window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = "https://accounts.google.com/gsi/client"; s.async = true; s.onload = function () { res(); }; s.onerror = function () { rej(new Error("Couldn't reach Google. Are you online?")); }; document.head.appendChild(s); });
+}
+function akGToken(prompt) {
+  var t = akCloudTok("google");
+  if (t && t.access && t.exp > Date.now() + 60000) return Promise.resolve(t.access);
+  var id = akCloudKey("google"); if (!id) return Promise.reject(new Error("Google Drive isn't set up yet (needs a client ID)."));
+  return akGLoad().then(function () {
+    return new Promise(function (res, rej) {
+      var tc = google.accounts.oauth2.initTokenClient({ client_id: id, scope: "https://www.googleapis.com/auth/drive.file", prompt: prompt ? "consent" : "",
+        callback: function (r) { if (r && r.access_token) { akCloudTok("google", { on: 1, access: r.access_token, exp: Date.now() + (Number(r.expires_in) || 3500) * 1000 }); res(r.access_token); } else rej(new Error((r && r.error) || "Google sign-in didn't finish.")); },
+        error_callback: function (e) { rej(new Error((e && e.message) || "Google sign-in was closed.")); } });
+      tc.requestAccessToken();
+    });
+  });
+}
+function akGFetch(url, o) { return akGToken().then(function (tok) { o = o || {}; o.headers = Object.assign({ Authorization: "Bearer " + tok }, o.headers || {}); return fetch(url, o); }).then(function (r) { if (r.status === 401) { var t = akCloudTok("google"); if (t) { t.exp = 0; akCloudTok("google", t); } } if (!r.ok) throw new Error("Google Drive said " + r.status); return r; }); }
+function akGFolder() {
+  var c = akCloud(); if (c.gFolder) return Promise.resolve(c.gFolder);
+  var q = encodeURIComponent("name='Akashic Chords backups' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  return akGFetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id)").then(function (r) { return r.json(); }).then(function (j) {
+    if (j.files && j.files[0]) return (c.gFolder = j.files[0].id);
+    return akGFetch("https://www.googleapis.com/drive/v3/files?fields=id", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Akashic Chords backups", mimeType: "application/vnd.google-apps.folder" }) }).then(function (r) { return r.json(); }).then(function (f) { c.gFolder = f.id; save(); return f.id; });
+  });
+}
+var AKCLOUD_G = {
+  up: function (name, json) {
+    return akGFolder().then(function (fid) {
+      return akGFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable", { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": "application/json" }, body: JSON.stringify({ name: name, parents: [fid], mimeType: "application/json" }) })
+        .then(function (r) { var loc = r.headers.get("Location"); if (!loc) throw new Error("Google Drive didn't start the upload."); return fetch(loc, { method: "PUT", headers: { "Content-Type": "application/json" }, body: json }); })
+        .then(function (r) { if (!r.ok) throw new Error("Upload failed (" + r.status + ")"); return r.json(); });
+    });
+  },
+  list: function () { return akGFolder().then(function (fid) { var q = encodeURIComponent("'" + fid + "' in parents and trashed=false"); return akGFetch("https://www.googleapis.com/drive/v3/files?q=" + q + "&orderBy=createdTime desc&pageSize=100&fields=files(id,name,size,createdTime)").then(function (r) { return r.json(); }).then(function (j) { return (j.files || []).map(function (f) { return { id: f.id, name: f.name, size: Number(f.size) || 0, at: Date.parse(f.createdTime) }; }); }); }); },
+  get: function (id) { return akGFetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id) + "?alt=media").then(function (r) { return r.text(); }); },
+  del: function (id) { return akGFetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id), { method: "DELETE" }).catch(function () {}); },
+  connect: function () { return akGToken(true).then(function () { return akGFolder(); }); },
+  out: function () { var t = akCloudTok("google"); if (t && t.access && window.google && google.accounts && google.accounts.oauth2) try { google.accounts.oauth2.revoke(t.access, function () {}); } catch (e) {} akCloudTok("google", null); delete akCloud().gFolder; save(); }
+};
+/* 3. Dropbox (app folder only: Apps › Akashic Chords) — sign in with PKCE, no server needed */
+function akDbxRedirect() { return location.origin + location.pathname; }
+function akB64u(buf) { var s = "", b = new Uint8Array(buf); for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+function akDbxConnect() {
+  var key = akCloudKey("dropbox"); if (!key) return Promise.reject(new Error("Dropbox isn't set up yet (needs an app key)."));
+  var v = akB64u(crypto.getRandomValues(new Uint8Array(48)));
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)).then(function (hsh) {
+    try { sessionStorage.setItem("akdbx:v", v); } catch (e) {}
+    location.href = "https://www.dropbox.com/oauth2/authorize?client_id=" + encodeURIComponent(key) + "&response_type=code&token_access_type=offline&code_challenge_method=S256&code_challenge=" + akB64u(hsh) + "&redirect_uri=" + encodeURIComponent(akDbxRedirect());
+    return new Promise(function () {});
+  });
+}
+/* back from Dropbox with ?code=… */
+function akDbxFinish() {
+  var P = new URLSearchParams(location.search), code = P.get("code"), v = ""; try { v = sessionStorage.getItem("akdbx:v") || ""; } catch (e) {}
+  if (!code || !v) return;
+  try { sessionStorage.removeItem("akdbx:v"); history.replaceState(null, "", location.pathname + location.hash); } catch (e) {}
+  var body = new URLSearchParams({ code: code, grant_type: "authorization_code", code_verifier: v, client_id: akCloudKey("dropbox"), redirect_uri: akDbxRedirect() });
+  fetch("https://api.dropboxapi.com/oauth2/token", { method: "POST", body: body }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.access_token) throw new Error(j.error_description || j.error || "no token");
+    akCloudTok("dropbox", { access: j.access_token, refresh: j.refresh_token || "", exp: Date.now() + (Number(j.expires_in) || 14000) * 1000 }); toast("☁️ Dropbox connected. Backups go to Apps › Akashic Chords.");
+    try { render(); } catch (e) {}
+  }).catch(function (e) { toast("Dropbox didn't connect: " + e.message); });
+}
+function akDbxToken() {
+  var t = akCloudTok("dropbox"); if (!t) return Promise.reject(new Error("Dropbox isn't connected."));
+  if (t.access && t.exp > Date.now() + 60000) return Promise.resolve(t.access);
+  if (!t.refresh) return Promise.reject(new Error("Dropbox needs you to connect again."));
+  return fetch("https://api.dropboxapi.com/oauth2/token", { method: "POST", body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh, client_id: akCloudKey("dropbox") }) }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.access_token) throw new Error("Dropbox needs you to connect again."); t.access = j.access_token; t.exp = Date.now() + (Number(j.expires_in) || 14000) * 1000; akCloudTok("dropbox", t); return t.access;
+  });
+}
+function akDbxApi(url, o) { return akDbxToken().then(function (tok) { o = o || {}; o.method = "POST"; o.headers = Object.assign({ Authorization: "Bearer " + tok }, o.headers || {}); return fetch(url, o); }).then(function (r) { if (!r.ok) throw new Error("Dropbox said " + r.status); return r; }); }
+var AKCLOUD_D = {
+  up: function (name, json) { return akDbxApi("https://content.dropboxapi.com/2/files/upload", { headers: { "Content-Type": "application/octet-stream", "Dropbox-API-Arg": JSON.stringify({ path: "/" + name, mode: "add", autorename: true }) }, body: json }).then(function (r) { return r.json(); }); },
+  list: function () { return akDbxApi("https://api.dropboxapi.com/2/files/list_folder", { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: "" }) }).then(function (r) { return r.json(); }).then(function (j) { return (j.entries || []).filter(function (e) { return e[".tag"] === "file" && /\.json$/i.test(e.name); }).map(function (e) { return { id: e.path_lower, name: e.name, size: e.size || 0, at: Date.parse(e.server_modified) }; }).sort(function (a, b) { return b.at - a.at; }); }); },
+  get: function (id) { return akDbxApi("https://content.dropboxapi.com/2/files/download", { headers: { "Dropbox-API-Arg": JSON.stringify({ path: id }) } }).then(function (r) { return r.text(); }); },
+  del: function (id) { return akDbxApi("https://api.dropboxapi.com/2/files/delete_v2", { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: id }) }).catch(function () {}); },
+  connect: akDbxConnect,
+  out: function () { var t = akCloudTok("dropbox"); if (t && t.access) fetch("https://api.dropboxapi.com/2/auth/token/revoke", { method: "POST", headers: { Authorization: "Bearer " + t.access } }).catch(function () {}); akCloudTok("dropbox", null); }
+};
+var AKCLOUD = { google: AKCLOUD_G, dropbox: AKCLOUD_D }, AKCLOUD_NAME = { google: "Google Drive", dropbox: "Dropbox" }, AKCLOUD_BUSY = {};
+function akCloudUp(w, quiet) {
+  if (AKCLOUD_BUSY[w]) return Promise.resolve(false);
+  var json; try { json = akbJSON(); } catch (e) { if (!quiet) toast("Couldn't make the backup: " + e.message); return Promise.resolve(false); }
+  AKCLOUD_BUSY[w] = 1; var c = akCloud(), P = AKCLOUD[w];
+  return P.up(akCloudName(), json).then(function () {
+    c.last[w] = Date.now(); save();
+    /* keep the newest ones */
+    P.list().then(function (L) { L.slice(Math.max(1, Number(c.keep) || 10)).forEach(function (f) { P.del(f.id); }); }).catch(function () {});
+    if (!quiet) toast("☁️ Backed up to " + AKCLOUD_NAME[w] + "."); return true;
+  }, function (e) { if (!quiet) toast(AKCLOUD_NAME[w] + ": " + e.message); return false; }).then(function (r) { AKCLOUD_BUSY[w] = 0; return r; });
+}
+function akCloudList(w) {
+  var body = h("div", null, h("p", { class: "hint" }, "Loading…")), close;
+  close = modal("☁️ Backups in " + AKCLOUD_NAME[w], body, [{ label: "Close" }]);
+  AKCLOUD[w].list().then(function (L) {
+    body.textContent = "";
+    if (!L.length) { body.appendChild(h("p", { class: "hint" }, "No backups there yet.")); return; }
+    L.forEach(function (f, i) {
+      var d = new Date(f.at);
+      body.appendChild(h("div", { class: "item" }, h("div", { class: "main-btn", style: "cursor:default" }, h("div", { class: "t" }, (i === 0 ? "Newest · " : "") + d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })), h("div", { class: "s" }, Math.max(1, Math.round(f.size / 1024)) + " KB")),
+        h("button", { onClick: function () { var me = this; me.disabled = true; AKCLOUD[w].get(f.id).then(function (json) { if (close) close(); akCloudRestoreJson(json, "the " + AKCLOUD_NAME[w] + " backup from " + d.toLocaleString()); }, function (e) { me.disabled = false; toast(e.message); }); } }, "Restore")));
+    });
+  }, function (e) { body.textContent = ""; body.appendChild(h("p", null, AKCLOUD_NAME[w] + ": " + e.message)); });
+}
+/* each one-tap backup also goes to the connected clouds (at most every 2 hours unless you press Back up now) */
+(function () {
+  var q0 = akQuickBackup;
+  akQuickBackup = function (o) {
+    var r = q0.apply(this, arguments);
+    try {
+      var c = akCloud(); if (!c.auto || (o && (o.noMark || o.label === "before restoring"))) return r;
+      return r.then(function (ok) {
+        if (ok) ["google", "dropbox"].forEach(function (w) { if (akCloudOn(w) && akCloudKey(w) && (!(o && o.auto) || Date.now() - (c.last[w] || 0) > 2 * 3600e3)) { if (w === "google") { var t = akCloudTok("google"); if (!t || !t.access || t.exp < Date.now() + 60000) return; } akCloudUp(w, true); } });
+        return ok;
+      });
+    } catch (e) { return r; }
+  };
+})();
+function akCloudSetupSteps(w) {
+  var steps = w === "google" ? [
+    "Go to console.cloud.google.com and make a project (any name, e.g. Akashic Chords).",
+    "APIs & Services › Library: turn on “Google Drive API”.",
+    "OAuth consent screen: External, app name Akashic Chords, your email; add yourself as a test user.",
+    "Credentials › Create credentials › OAuth client ID › Web application. Under Authorized JavaScript origins add " + location.origin + ".",
+    "Copy the Client ID (ends in .apps.googleusercontent.com) and paste it below."] : [
+    "Go to dropbox.com/developers/apps › Create app.",
+    "Scoped access, App folder, name it Akashic Chords.",
+    "Permissions tab: tick files.content.write and files.content.read, then Submit.",
+    "Settings tab › Redirect URIs: add " + akDbxRedirect() + ".",
+    "Copy the App key and paste it below."];
+  return h("ol", { class: "akcl-steps" }, steps.map(function (s) { return h("li", null, s); }));
+}
+function akCloudCard(c, w) {
+  var C = akCloud(), key = akCloudKey(w), on = akCloudOn(w) && key, nm = AKCLOUD_NAME[w], last = C.last[w];
+  var box = h("div", { class: "akcl-p" }, h("div", { class: "row akcl-top" }, h("b", null, (w === "google" ? "🟢 " : "🔷 ") + nm), h("span", { class: "grow" }), h("span", { class: "hint" }, on ? "Connected" + (last ? " · last " + new Date(last).toLocaleDateString() : "") : key ? "Not connected" : "Needs setup")));
+  if (on) box.appendChild(h("div", { class: "row akcl-b" },
+    h("button", { class: "sm primary", onClick: function () { akCloudUp(w).then(function () { render(); }); } }, "☁️ Back up now"),
+    h("button", { class: "sm", onClick: function () { akCloudList(w); } }, "Restore…"),
+    h("button", { class: "sm", onClick: function () { AKCLOUD[w].out(); toast(nm + " disconnected."); render(); } }, "Disconnect")));
+  else if (key) box.appendChild(h("div", { class: "row akcl-b" }, h("button", { class: "sm primary", onClick: function () { AKCLOUD[w].connect().then(function () { toast("☁️ " + nm + " connected."); render(); }, function (e) { toast(e.message); }); } }, "Connect " + nm)));
+  var det = h("details", { class: "akcl-set" }, h("summary", null, key ? "Setup (" + (w === "google" ? "client ID" : "app key") + ")" : "How to set it up"), akCloudSetupSteps(w),
+    h("input", { type: "text", value: (w === "google" ? C.gid : C.dbx) || "", placeholder: w === "google" ? "Client ID" : "App key", onChange: function () { if (w === "google") C.gid = this.value.trim(); else C.dbx = this.value.trim(); save(); render(); } }));
+  box.appendChild(det);
+  return box;
+}
+(function () {
+  var b0 = akBackupSettings;
+  akBackupSettings = function (c) {
+    b0.apply(this, arguments);
+    try {
+      var C = akCloud();
+      c.section("☁️ Cloud backup", "iCloud, Google Drive and Dropbox");
+      c.out.appendChild(h("p", { class: "hint" }, "Keep a copy off your phone, so a lost or broken phone doesn't lose your songs, shows and business records."));
+      c.out.appendChild(h("div", { class: "akcl-p" }, h("b", null, "☁️ Any cloud (iCloud, Drive, Dropbox…)"),
+        h("p", { class: "hint" }, "Opens the share sheet with a backup file. On iPhone pick “Save to Files” › iCloud Drive; on Android pick Drive or Dropbox. To restore, use Import › a backup file and pick it from the same place."),
+        h("button", { class: "sm primary", onClick: akCloudShare }, "☁️ Save a backup to the cloud…")));
+      c.out.appendChild(h("p", { class: "hint", style: "margin-top:10px" }, "Or connect Google Drive or Dropbox once, and every backup goes there by itself, with a list to restore from."));
+      c.out.appendChild(akCloudCard(c, "google"));
+      c.out.appendChild(akCloudCard(c, "dropbox"));
+      c.check("Each one-tap backup also goes to the connected clouds", function () { return C.auto !== false; }, function (v) { C.auto = v; });
+      c.range("Backups to keep in each cloud", function () { return C.keep; }, function (v) { C.keep = v; }, 1, 50, 1, function (v) { return v + (v === 1 ? " backup" : " backups"); });
+    } catch (e) {}
+  };
+})();
+try { setTimeout(akDbxFinish, 600); } catch (e) {}
+
+akCss("akav", ".akav-p{font-size:13px;opacity:.85;margin:4px 0}.akav-l{font-size:13px;font-weight:700;margin-top:8px}.akav-wk{gap:4px;flex-wrap:wrap;margin-top:4px}.akav-wk .chip{min-height:32px;padding:2px 10px}.akav-row{gap:6px;align-items:center;margin-top:6px;flex-wrap:nowrap}.akav-row input{flex:1 1 auto;min-width:0}" +
+  ".akav-h{align-items:center;justify-content:space-between}.akav-g{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:6px}.akav-g .dow{text-align:center;font-size:11px;opacity:.7}.akav-g button{min-height:38px;padding:0;border-radius:8px;font-size:14px}" +
+  ".akav-g .free{background:rgba(46,180,120,.28);border:1px solid #2eb478;font-weight:700}.akav-g .show{background:rgba(200,150,46,.35);border:1px solid #C8962E}.akav-g .block{background:rgba(232,65,44,.25);border:1px solid #E8412C;text-decoration:line-through}.akav-g .off{opacity:.45}.akav-g .past{opacity:.2}" +
+  ".akav-key{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;margin-top:6px}.akav-key .k{padding:1px 6px;border-radius:6px}.akav-key .free{background:rgba(46,180,120,.28)}.akav-key .show{background:rgba(200,150,46,.35)}.akav-key .block{background:rgba(232,65,44,.25)}.akav-key .off{opacity:.6;border:1px solid rgba(127,127,127,.4)}" +
+  ".akav-t{width:100%;margin-top:6px;font-size:13px}.akcl-p{border:1px solid rgba(127,127,127,.3);border-radius:10px;padding:8px 10px;margin-top:8px}.akcl-top{align-items:center;gap:6px}.akcl-b{gap:6px;flex-wrap:wrap;margin-top:6px}.akcl-set{margin-top:6px;font-size:13px}.akcl-set input{width:100%;margin-top:4px}.akcl-steps{margin:6px 0 4px 1.2em;padding:0}.akcl-steps li{margin:2px 0}" +
+  "@media (min-width:700px){html body .akm-modes.akm-grid9{grid-template-columns:repeat(11,auto)}}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Dates I'm free (public availability)", a: "💼 Business › 📆 Free dates: worked out from your shows and bookings; tap a day to block it; pick the days you play and how far ahead. Turn on “Show my free dates on my public page” (Book tab, or the ?go=free link). Copy the dates as text, or use {free dates} in ✉️ Messages." });
+  AK_HELP_WHERE.push({ t: "Back up to iCloud, Google Drive or Dropbox", a: "⚙ Settings › Backups › ☁️ Cloud backup: “Save a backup to the cloud…” (share sheet: Save to Files › iCloud Drive, Drive, Dropbox), or connect Google Drive / Dropbox once so every one-tap backup goes there, with Restore… to bring one back." });
 }
 
 /* ---------- turning pasted charts into bracket form ---------- */
