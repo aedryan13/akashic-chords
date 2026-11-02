@@ -52253,8 +52253,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9h";
+AK_VERSION = "18.9i";
 AK_WHATS_NEW = [
+  "Fix: the Graphics screen no longer jumps when you change a setting; it stays where you were while the picture redraws.",
   "🗂 Layers: drag a row by its ⠿ handle to put it in front or behind. Fix: a color screen you move back (or to the back) now stays there instead of jumping in front of the photo.",
   "▦ Color screens (dark overlays) are now layers: ＋ Add › A color screen. Add as many as you like, pick color, strength and where it sits (over the photo, in front, or behind), and give each one effects (✨ Effects › Fade out for a gradient). Your old Page › Dark overlay became one of these. Pattern overlays were already layers and can stack too.",
   "Fix: typing in the Aa Text window (and the other pop-up tool windows) no longer jumps out of the box after each letter.",
@@ -57613,6 +57614,33 @@ function akLayDrag(e, row, d, X) {
 akCss("aklaydrag", ".akg-laygrip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;font-size:18px;line-height:1;padding:6px 4px;opacity:.75;min-width:18px;text-align:center}.akg-laygrip.off{visibility:hidden}" +
   ".akg-lay.drag{position:relative;z-index:5;box-shadow:0 6px 18px rgba(0,0,0,.45);background:rgba(200,150,46,.25);transition:none}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Drag layers to put them in front or behind", a: "Graphics studio › ✏️ Part › 🗂 Layers: drag a row by its ⠿ handle. Top of the list is in front. ↑ ↓ still move one step." });
+
+/* ================= 18.9i: the Graphics screen stays where it is when you change a setting. After a tap, pick or slider change in the tools,
+   the scroll position is held for a moment while the picture and panel redraw (unless you start scrolling yourself), and the
+   "Drawing…" note no longer pushes things down. ================= */
+var AKKS = { until: 0, y: 0, user: false, raf: 0, el: null };
+function akKeepScroll(ms) {
+  var m = document.getElementById("mainScroll"); if (!m) return;
+  if (Date.now() > AKKS.until || AKKS.el !== m) { AKKS.y = m.scrollTop; AKKS.el = m; }
+  AKKS.until = Date.now() + (ms || 900); AKKS.user = false;
+  if (AKKS.raf) return;
+  (function tick() {
+    AKKS.raf = 0; var el = AKKS.el; if (!el || !el.isConnected) { var m2 = document.getElementById("mainScroll"); if (!m2) return; AKKS.el = el = m2; }
+    if (Date.now() > AKKS.until || AKKS.user) return;
+    if (Math.abs(el.scrollTop - AKKS.y) > 2) el.scrollTop = AKKS.y;
+    AKKS.raf = requestAnimationFrame(tick);
+  })();
+}
+["click", "change"].forEach(function (ev) {
+  document.addEventListener(ev, function (e) {
+    if (S.view !== "gfx") return; var t = e.target; if (!t || !t.closest) return;
+    if (t.closest(".akg-panel, .akg-edbar, .akg-pop, .akcw, .akfx-win, .akms, .akg-tools, .modal, .menu")) akKeepScroll(1000);
+  }, true);
+});
+/* your own scrolling always wins */
+["touchstart", "wheel", "keydown"].forEach(function (ev) { document.addEventListener(ev, function (e) { if (Date.now() < AKKS.until && !(e.target && e.target.closest && e.target.closest(".akg-panel button, .akg-panel .chip, .akg-panel label, .akg-panel select, .akg-panel input"))) AKKS.user = true; }, { capture: true, passive: true }); });
+document.addEventListener("scroll", function () {}, true);
+akCss("akkeep", ".akg-status{position:absolute;left:0;right:0;pointer-events:none;margin:0;min-height:0;z-index:2;text-align:center}.akg-status:empty{display:none}html body #mainScroll{overflow-anchor:none}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
