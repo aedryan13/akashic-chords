@@ -63128,6 +63128,135 @@ if (typeof akTcAdd === "function") akTcAdd("19.6", "App", [
   ["show-me", "📍 Show me from search", "Help › Where is…? type \"connections\" › 📍 Show me: it should open Settings, unfold, show the path and ring the button.", ["help", {}, "Where is"]],
   ["show-me-files", "📍 Show me in Files search", "⋯ More › 🔍 Search everything, type \"trash\", tap 📍 Show me on a settings result.", ["files", {}, ""]]]);
 
+/* ================= 19.7: his mock-up picks (11-03).
+   1) Bottom bar order: ← Back on the left, then Songs, Shows, (Playing), Write, Learn, Tonight, Files, Graphics, Settings, then ⋯ More on
+      the far right. Graphics, when it is on the bar (tablet), sits just left of Settings. The ⇩ Import tab is gone (it lives in Settings now).
+   2) Settings › 💾 Your data: one place for saving and getting things back: Back up and restore, Sync, Import and share (the whole old
+      Import screen, inside), 🔐 Sign-ins and connections, Trash, Libraries. Small grey notes say where things used to be.
+   Nothing is renamed and the old places keep working; go("import") still opens the full Import screen. ================= */
+var AKBAR_ORDER = ["songs", "shows", "play", "write", "learn", "tonight", "files", "graphics", "settings"];
+function akBarId(b) {
+  if (b.classList.contains("tbback")) return "_back";
+  if (b.classList.contains("ak8-more")) return "_more";
+  if (b.classList.contains("akbtab")) return "_extra";
+  var dt = b.getAttribute("data-tab"); if (dt) return dt;
+  var ic = b.querySelector(".ic"), t = b.textContent.slice(ic ? ic.textContent.length : 0).trim().toLowerCase();
+  return t === "playing" ? "play" : t;
+}
+function akBarSort(bar) {
+  var bs = Array.prototype.slice.call(bar.children).filter(function (b) { return b.tagName === "BUTTON"; });
+  bs.forEach(function (b) { if (akBarId(b) === "import") b.parentNode.removeChild(b); });
+  bs = bs.filter(function (b) { return b.parentNode === bar; });
+  function rank(b) {
+    var id = akBarId(b);
+    if (id === "_back") return -1;
+    if (id === "_more") return 1000;
+    if (id === "_extra") return AKBAR_ORDER.indexOf("settings") - 0.5;
+    var i = AKBAR_ORDER.indexOf(id); return i < 0 ? AKBAR_ORDER.indexOf("graphics") - 0.6 : i;
+  }
+  bs.map(function (b, i) { return { b: b, r: rank(b), i: i }; }).sort(function (x, y) { return x.r - y.r || x.i - y.i; }).forEach(function (x) { bar.appendChild(x.b); });
+}
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) { var bar = tb.apply(this, arguments); try { if (bar) akBarSort(bar); } catch (e) {} return bar; };
+  /* phone: Import isn't a tab choice any more; anyone who had it picked keeps the rest */
+  try { for (var i = AK_TAB_ALL.length - 1; i >= 0; i--) if (AK_TAB_ALL[i][0] === "import") AK_TAB_ALL.splice(i, 1); } catch (e) {}
+  try { var p = settings().tabsPick; if (Array.isArray(p) && p.indexOf("import") >= 0) { settings().tabsPick = p.filter(function (x) { return x !== "import"; }); save(); } } catch (e) {}
+})();
+
+/* ---------------------------------------------------------------- Settings › 💾 Your data */
+function akYdBtn(label, fn, title) { return h("button", { class: "sm akyd-b", title: title || null, onClick: fn }, label); }
+function akYdRow() { return h("div", { class: "akyd-row" }, [].slice.call(arguments)); }
+function akYdToday(t) { return h("p", { class: "akyd-today" }, "Before: " + t); }
+function akYdCloud(fn) {
+  var on = ["google", "dropbox"].filter(function (w) { return typeof akCloudOn === "function" && akCloudOn(w); });
+  if (!on.length) { akShowMe({ title: "Connect Google Drive or Dropbox first", path: ["Settings", "Data and extras", "Backups"], what: "Backups to Google Drive or Dropbox need a one-time connect.", how: "Open the Google Drive or Dropbox card here and tap Connect." }); return; }
+  if (on.length === 1) { fn(on[0]); return; }
+  menu(document.activeElement, on.map(function (w) { return { label: AKCLOUD_NAME[w], onClick: function () { fn(w); } }; }));
+}
+function akYdBody(c, title, desc) { c.section(title, desc); var m = h("span", { class: "akyd-mark", hidden: true }); c.out.appendChild(m); var b = m.parentElement; m.remove(); return b; }
+function akYourData(c) {
+  c.group("💾 Your data", "Back up, get it back, sync, import, sign-ins, Trash");
+  var mark = h("span", { hidden: true }); c.out.appendChild(mark);
+  var grp = mark.closest("details"), top = grp && grp.parentElement; mark.remove();
+  if (top && top.firstElementChild !== grp) top.insertBefore(grp, top.firstElementChild);
+  if (grp) grp.setAttribute("data-akyd", "1");
+
+  /* 1. back up and restore */
+  akYdBody(c, "💾 Back up and restore", "save it all, get it all back");
+  var st = h("p", { class: "hint akyd-st", "aria-live": "polite" });
+  function stat(t) { st.textContent = t || ""; }
+  var rf = h("input", { type: "file", accept: ".json,application/json", style: "display:none", onChange: function () {
+    var f = this.files && this.files[0], inp = this; if (!f) return;
+    readFileAs(f, "text").then(offerRestore).catch(function (e) { toast(e.message || "Couldn't read that backup."); }).then(function () { inp.value = ""; });
+  } });
+  c.out.appendChild(h("div", { class: "akyd-lab" }, "Back up"));
+  c.out.appendChild(akYdRow(
+    akYdBtn("⬇ Backup file", function () { saveBackupFile(); }),
+    akYdBtn("☁ GitHub", function () { if (typeof akSyncReady === "function" && !ghCfg().repo) { akShowMe({ title: "Set up GitHub backup first", path: ["Settings", "Sync between my devices"], how: "Fill in the repository and token once." }); return; } ghBackupNow(stat); }),
+    akYdBtn("☁ Drive, Dropbox", function () { akYdCloud(function (w) { akCloudUp(w); }); })));
+  c.out.appendChild(h("div", { class: "akyd-lab" }, "Get it back"));
+  c.out.appendChild(akYdRow(
+    akYdBtn("⬆ From a file", function () { rf.click(); }),
+    akYdBtn("☁ From GitHub", function () { ghRestore(stat); }),
+    akYdBtn("☁ Drive, Dropbox", function () { akYdCloud(function (w) { akCloudList(w); }); })));
+  c.out.appendChild(rf);
+  c.out.appendChild(h("p", { class: "hint" }, "Getting it back always asks first: add as new libraries, or replace everything."));
+  c.out.appendChild(st);
+  c.out.appendChild(akYdToday("Data and extras › Backups, Import › Restore, GitHub in Sync. Those still work."));
+
+  /* 2. sync */
+  akYdBody(c, "🔁 Sync between my devices", "phone and tablet");
+  var ss = h("p", { class: "hint akyd-st", "aria-live": "polite" });
+  c.out.appendChild(akYdRow(
+    akYdBtn("⟳ Sync now", function () { if (typeof akSyncNow === "function") akSyncNow(function (t) { ss.textContent = t || ""; }); }),
+    akYdBtn("⚙ Sync settings and link codes", function () { akShowMe({ title: "Sync settings", path: ["Settings", "Sync between my devices"], how: "Turn sync on, pick what syncs, and see the link code for your other device." }); })));
+  c.out.appendChild(ss);
+  c.out.appendChild(h("p", { class: "hint" }, "Sync carries songs, setlists, shows and settings. Recordings and your recorded guitar stay on each device."));
+
+  /* 3. import and share: the whole Import screen, built when you open it */
+  var ib = akYdBody(c, "⇩ Import and share", "songs in, songs out, send and receive");
+  var idt = ib && ib.closest("details");
+  function fill() { if (!ib || ib.getAttribute("data-filled")) return; ib.setAttribute("data-filled", "1"); try { var v = viewImport(); v.classList.add("akyd-imp"); ib.appendChild(v); } catch (e) { ib.appendChild(h("p", { class: "warn" }, "Couldn't show the import tools here: " + (e.message || e) + ". ")); ib.appendChild(akYdBtn("Open Import", function () { go("import"); })); } }
+  if (idt) { idt.addEventListener("toggle", function () { if (idt.open) fill(); }); if (idt.open) setTimeout(fill, 0); }
+  c.out.appendChild(akYdToday("the ⇩ Import tab (it's here now, the same tools)."));
+
+  /* 4. sign-ins */
+  akYdBody(c, "🔐 Sign-ins and connections", "set up a new phone in one step");
+  c.out.appendChild(akYdRow(
+    akYdBtn("⬇ Save locked file", function () { akCnExport(false); }),
+    akYdBtn("📲 Send to my other device", function () { akCnExport(true); }),
+    akYdBtn("⬆ Load file", akCnPick)));
+  c.out.appendChild(h("p", { class: "hint" }, "Locked with a passphrase you pick. Send opens the phone's share sheet. The other device opens the file and types the passphrase. Not part of backups or sync."));
+
+  /* 5. trash and libraries */
+  akYdBody(c, "🗑 Trash and libraries", "30-day Trash, switch or merge libraries");
+  c.out.appendChild(akYdRow(
+    akYdBtn("🗑 Open Trash (" + ((lib().trash || []).length) + ")", function () { try { var F = settings().files || (settings().files = { open: {} }); F.open = F.open || {}; F.open.trash = true; save(); } catch (e) {} akShowMe({ title: "Trash", path: ["Files", "🗑 Trash"], what: "Everything you delete stays here for 30 days.", how: "Tap ⋯ on a row to put it back." }); }),
+    akYdBtn("📚 Libraries", function () { openLibraries(); })));
+}
+(function () {
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) { ns(c); try { akYourData(c); } catch (e) { try { console.warn("your data", e); } catch (x) {} } };
+})();
+/* a saved Settings order from before: put Your data at the top of it */
+(function mig19r() {
+  try { var s = settings(); if (s.mig19r) return; var u = (s.layout || {}).settings; if (u && Array.isArray(u.order) && u.order.length && u.order.indexOf("your-data") < 0) u.order.unshift("your-data"); s.mig19r = 1; save(); } catch (e) {}
+})();
+/* go("import") from old buttons still works; a "where is Import" search lands in Settings */
+akCss("akyd", ".akyd-row{display:flex;gap:6px;margin:4px 0}.akyd-b{flex:1 1 0;min-width:0;font-size:.85rem;white-space:normal;line-height:1.2;padding:2px 6px;border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:40px}.akyd-lab{font-size:.78rem;opacity:.75;margin:8px 0 0;text-transform:uppercase;letter-spacing:.05em}.akyd-today{font-size:.75rem;opacity:.6;margin:6px 0 0}.akyd-st:empty{display:none}.akyd-imp{margin-top:4px}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Import songs, restore a backup, send and receive (the old Import tab)", a: "Settings › 💾 Your data › ⇩ Import and share. Backups and restore are in Settings › 💾 Your data › 💾 Back up and restore.", k: "import tab restore backup onsong chordpro pdf photo link send receive where did import go" });
+  AK_HELP_WHERE.push({ t: "Back up everything, or get a backup back", a: "Settings › 💾 Your data › 💾 Back up and restore: ⬇ Backup file, ☁ GitHub, ☁ Drive / Dropbox, and the same three to get it back.", k: "backup back up restore get back github drive dropbox file save everything" });
+}
+AK_WHATS_NEW = ["💾 Settings › Your data: backup, restore, sync, import and share (the old Import tab), sign-ins and Trash are together in one place.",
+  "▭ Bottom bar: ← Back, Songs, Shows, Write, Settings, then ⋯ More on the far right. Graphics sits just left of Settings when it's on the bar."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("19.7", "App", [
+  ["bar-order", "▭ Bottom bar order", "Back on the left, then Songs, Shows, Write, Settings, ⋯ More on the far right. No Import tab. On the tablet Graphics is just left of Settings.", ["songs", {}, ""]],
+  ["your-data", "💾 Settings › Your data", "Your data is the first section in Settings: back up, get it back, sync, sign-ins, Trash.", ["settings", {}, "Your data"]],
+  ["your-data-import", "⇩ Import inside Settings", "Settings › Your data › ⇩ Import and share: the Import tools open right there (paste a song, OnSong, PDF, send and receive).", ["settings", {}, "Import and share"]]]);
+AK_VERSION = "19.7";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
