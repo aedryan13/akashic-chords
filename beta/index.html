@@ -6342,13 +6342,17 @@ function akFirstRunSamples() {
 }
 function akSampleBanner() {
   if (S.sampleBannerHidden || settings().sampleNoteOff || settings().welcomeOff || !akHasSamples()) return null;
-  return h("div", { class: "akhint banner" },
-    h("div", { class: "grow" }, h("strong", null, "Sample songs"), " are in your list so you can try the app. Play one, open the Chords panel, try a few themes."),
+  /* 19.0: only on the Songs and Shows lists (where the samples are), and short, so new users don't get two cards stacked on every screen */
+  if (["songs", "shows", "home"].indexOf(S.view) < 0) return null;
+  return h("div", { class: "akhint banner aksmp" },
+    h("div", { class: "grow" }, h("strong", null, "Sample songs"), " are here to try the app."),
     h("button", { class: "primary", onClick: function () { openThemePicker(function () { render(); }); } }, "Try themes"),
     h("button", { onClick: function () { confirmBox("Remove the sample songs and the sample setlist? Your own songs are not touched.", "Remove them", function () { snap("remove samples"); akRemoveSamples(); save(); render(); toast("Sample songs removed."); }); } }, "Remove samples"),
     h("button", { class: "icon sm", "aria-label": "Hide this note for good", title: "Hide this note for good", onClick: function () { settings().sampleNoteOff = true; save(); S.sampleBannerHidden = true; render(); toast("Note hidden for good. The sample songs stay. Settings › Welcome notes brings it back."); } }, "✕"));
 }
-akCss("ak-samples", ".akhint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 14px 6px;padding:10px 12px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-bg);color:var(--fg)}.akhint .grow{flex:1;min-width:220px}");
+akCss("ak-samples", ".akhint{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 14px 6px;padding:10px 12px;border-radius:12px;border:1px solid var(--accent);background:var(--accent-bg);color:var(--fg)}.akhint .grow{flex:1;min-width:220px}" +
+  /* 19.0: the sample note is one short row */
+  ".akhint.aksmp{padding:5px 8px 5px 10px;gap:6px;flex-wrap:nowrap;font-size:.86rem}.akhint.aksmp .grow{min-width:0}.akhint.aksmp button{min-height:32px;padding:0 10px;white-space:nowrap}.akhint.aksmp button.icon{padding:0 6px}");
 
 /* ================= Akashic Chords: nature themes (Woodland and Elements) with their own background drawings ================= */
 AK_FAMILIES.push(["Woodland", "Stone, moss, forest, wood, leaves and mushrooms."], ["Elements", "Water, fire, air and earth."]);
@@ -46988,7 +46992,10 @@ function akGfxViewMenu(anchor, X) {
 }
 function akGfxSplitEl(X) {
   var cfg = akGfxCfg(), st = akGfxState(), d = null, lastTap = 0;
-  function set(v) { cfg.split = Math.max(0.05, Math.min(0.92, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
+  function set(v) {
+    /* 18.9z: never let the picture push this bar under the bottom tab bar, where it can't be grabbed again */
+    try { var cv = document.querySelector(".akg-cv"), tb = document.querySelector(".tabbar"); if (cv && tb && tb.offsetHeight) { var lim = (tb.getBoundingClientRect().top - cv.getBoundingClientRect().top - el.offsetHeight - 8) / Math.max(300, window.innerHeight); if (lim > 0.05) v = Math.min(v, lim); } } catch (e) {}
+    cfg.split = Math.max(0.05, Math.min(0.92, v)); X.paintSoon ? X.paintSoon() : X.paint(); }
   function reset() { delete cfg.split; st.zoom = 1; st.zc = null; save(); X.paint(); toast("Picture size back to normal."); }
   var el = h("div", { class: "akg-split", role: "separator", tabindex: "0", "aria-orientation": "horizontal", "aria-label": "Picture size: drag up for more tools, down for a bigger, zoomed-in picture", title: "Drag up for more tools, down for a bigger picture. Double tap: normal size.",
     onKeydown: function (e) {
@@ -52121,7 +52128,10 @@ akCss("akv186b", [
   ".akfold-bar .akfold-arr{display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border-radius:5px;background:var(--accent,#c60);color:var(--on-accent,#000);font-size:.8rem;line-height:1}",
   ".akfold-bar .akfold-arr::before{font-weight:700}",
   ".akcard-tg>span:first-child{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:5px;background:var(--accent,#c60);color:var(--on-accent,#000)}",
-  ".ak9-fs.vis,.ak9-fs.on{opacity:.9}"
+  ".ak9-fs.vis,.ak9-fs.on{opacity:.9}",
+  /* 19.0: slim at rest so it doesn't cover "Open all" or the right end of tab rows; full size while you hold it */
+  ".ak9-fs{width:12px;margin-left:12px;border-radius:6px}.ak9-fs::before{left:3px;right:3px}.ak9-fs.vis:not(.on){opacity:.6}.ak9-fs.on{width:22px;margin-left:2px;border-radius:11px}.ak9-fs.on::before{left:6px;right:6px}",
+  ".akfold-all:not(.akfold-parts){padding-right:16px !important}"
 ].join("\n"));
 akFsHideSoon = function () { /* stays on screen while the page can scroll (see the check below) */ };
 var AKFSLAST = 0;
@@ -52273,8 +52283,11 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "18.9z";
+AK_VERSION = "19.0";
 AK_WHATS_NEW = [
+  "🖼 Graphics studio: the picture-size bar can't be dragged under the bottom tabs any more (it used to get stuck there), and ↶ right after deleting a part brings it back on the first tap.",
+  "↕ The quick-scroll handle on the right is slimmer until you hold it, so it no longer covers “Open all” or the end of button rows.",
+  "🎵 The Sample songs note is one short row and only shows on Songs and Shows, so new users don't get two cards stacked on every screen.",
   "💼 Business tabs show their full names on a phone held sideways and on the tablet (they used to be cut to “Messag…”, “Contrac…”).",
   "🛠 Beta pass fixes: the phone recorder page, the My recordings list and song-by-song Undo work again (a newer part of the app was clearing them when it started).",
   "📦 Restoring a backup with Merge no longer adds a second copy of shows and setlists you already have, so Money and Analytics don't double your pay.",
@@ -56645,6 +56658,8 @@ function akSuPoll() {
   if (AKGU.i !== AKSU.lastI) { /* a new design step: selections after it on the old path no longer apply */
     if (AKGU.i > AKSU.lastI) { AKSU.back = AKSU.back.filter(function (x) { return x.i < AKGU.i; }); AKSU.fwd = []; }
     AKSU.lastI = AKGU.i;
+    /* 19.0: a pick change that came with this design step (Delete lets go of the part) belongs to the step, not a separate ↶ step */
+    AKSU.last = akSuSig(); return;
   }
   var cur = akSuSig();
   if (!AKSU.last) { AKSU.last = cur; return; }
