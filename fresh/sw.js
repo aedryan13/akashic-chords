@@ -1,5 +1,5 @@
 /* Akashic Chords TEST version offline helper. Only looks after the /beta/ folder; its caches are named akfresh-... so the current version's cache is never touched. */
-var CACHE = "akfresh-328f7c703f";
+var CACHE = "akfresh-c9e2b8b1f4";
 var OCR = "akfresh-ocr-25cd554a"; /* the photo reader files: kept across app updates, fetched again only when they change */
 var FILES = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "favicon.png"];
 var OCR_FILES = ["ocr/tesseract.min.js", "ocr/worker.min.js", "ocr/tesseract-core-lstm.wasm.js", "ocr/tesseract-core-simd-lstm.wasm.js", "ocr/eng.traineddata.gz"];
