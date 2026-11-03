@@ -61018,6 +61018,1255 @@ AK_WHATS_NEW = [
   "📥 Restoring a backup on a new install (only the sample songs) now picks “Replace everything”, and “Add” opens the added library when the one on screen only had samples. Before, the backup went into a second library you couldn't see."
 ].concat(AK_WHATS_NEW || []);
 
+/* ================= 19.4: Graphics studio filters (change list item 7, as he meant it: the common filters of
+   Photoshop, Canva and Procreate that the studio was missing). No renames.
+   New effect kinds in the one effects list, group "Filters": sharpen, motion blur, zoom blur, warmth, matte,
+   two-tone, halftone, emboss, sketch, glitch, light leak. Each is an ordinary stack entry (D.edit[id].fxs),
+   so area, strength, order, on/off and "this part / layers below" all work as for the older ones.
+   Extra fields: e.dir (motion blur and light leak direction, degrees), e.col (light leak color). */
+AKFX_GROUPS.push("Filters");
+var AKFI_KINDS = {
+  sharpen: ["Sharpen", 0, 100, 50, "Crisper edges and detail."],
+  mblur: ["Motion blur", 0, 100, 40, "Streaks in one direction, like a fast move."],
+  zblur: ["Zoom blur", 0, 100, 40, "Rays out from the middle of the area, like zooming the lens."],
+  warm: ["Warmth", -100, 100, 35, "Warmer (golden) or cooler (blue) light. Below 0 is cooler."],
+  matte: ["Matte (faded film)", 0, 100, 50, "Lifts the blacks and softens contrast, like old film."],
+  thresh: ["Two-tone (stamp)", 0, 100, 50, "Only black and white, like a stamp or stencil. The amount moves the cut-off."],
+  halftone: ["Halftone dots", 0, 100, 40, "Comic-book printing dots. The amount sets the dot size."],
+  emboss: ["Emboss", 0, 100, 60, "Looks pressed into metal or paper."],
+  sketch: ["Sketch (pencil lines)", 0, 100, 70, "Turns edges into pencil lines on white."],
+  glitch: ["Glitch", 0, 100, 40, "Shifted slices and split colors, like a broken video."],
+  leak: ["Light leak", 0, 100, 50, "A warm glow washing in from one side, like old film cameras. Pick its color."]
+};
+Object.keys(AKFI_KINDS).forEach(function (k) {
+  var a = AKFI_KINDS[k];
+  AKFXT[k] = [a[0], a[1], a[2], a[3], "all", 0, 70, 50, k === "leak", "Filters", k === "halftone" ? "Dot size" : k === "thresh" ? "Cut-off" : "Amount"];
+  if (typeof AKFL_DESC !== "undefined") AKFL_DESC[k] = a[4];
+});
+
+function akFiPix(cv, fn) {
+  var out = akFxCopy(cv), c = out.getContext("2d"), w = out.width, hh = out.height;
+  if (!w || !hh) return out;
+  var im = c.getImageData(0, 0, w, hh); fn(im.data, w, hh); c.putImageData(im, 0, 0); return out;
+}
+function akFiConv(cv, k, bias, gray) {
+  var src = cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+  return akFiPix(cv, function (d, w, hh) {
+    for (var y = 0; y < hh; y++) for (var x = 0; x < w; x++) {
+      var r = 0, g = 0, b = 0, n = 0;
+      for (var j = -1; j <= 1; j++) for (var i = -1; i <= 1; i++) {
+        var xx = Math.min(w - 1, Math.max(0, x + i)), yy = Math.min(hh - 1, Math.max(0, y + j)), p = (yy * w + xx) * 4, kk = k[n++];
+        r += src[p] * kk; g += src[p + 1] * kk; b += src[p + 2] * kk;
+      }
+      var o = (y * w + x) * 4;
+      if (gray) { var v = (r + g + b) / 3 + bias; d[o] = d[o + 1] = d[o + 2] = v; }
+      else { d[o] = r + bias; d[o + 1] = g + bias; d[o + 2] = b + bias; }
+    }
+  });
+}
+function akFiMake(cv, e, P, M, b) {
+  var t = e.t, amt = e.amt == null ? AKFXT[t][3] : e.amt, w = cv.width, hh = cv.height, c, a = amt / 100;
+  if (t === "sharpen") {
+    var bl = akGfxBlurCv(cv, Math.max(1, 0.006 * M)), bd = bl.getContext("2d").getImageData(0, 0, w, hh).data, k = 4 * a;
+    return akFiPix(cv, function (d) { for (var p = 0; p < d.length; p += 4) { d[p] += (d[p] - bd[p]) * k; d[p + 1] += (d[p + 1] - bd[p + 1]) * k; d[p + 2] += (d[p + 2] - bd[p + 2]) * k; } });
+  }
+  if (t === "mblur" || t === "zblur") {
+    var out = akGfxCv(w, hh); c = out.getContext("2d"); var n = 12, L = a * 0.12 * M, ang = (e.dir == null ? 0 : e.dir) * Math.PI / 180;
+    var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    for (var s = 0; s < n; s++) {
+      var f = s / (n - 1) - 0.5; c.globalAlpha = 1 / (s + 1);
+      if (t === "mblur") c.drawImage(cv, Math.cos(ang) * L * f, Math.sin(ang) * L * f);
+      else { var z = 1 + a * 0.25 * (s / (n - 1)); c.setTransform(z, 0, 0, z, cx - cx * z, cy - cy * z); c.drawImage(cv, 0, 0); c.setTransform(1, 0, 0, 1, 0, 0); }
+    }
+    c.globalAlpha = 1; return out;
+  }
+  if (t === "warm") return akFiPix(cv, function (d) { var k = amt * 0.4; for (var p = 0; p < d.length; p += 4) { d[p] += k; d[p + 1] += k * 0.25; d[p + 2] -= k; } });
+  if (t === "matte") return akFiPix(cv, function (d) { var lift = 70 * a, sc = 1 - 0.35 * a; for (var p = 0; p < d.length; p += 4) { d[p] = lift + d[p] * sc; d[p + 1] = lift + d[p + 1] * sc; d[p + 2] = lift * 0.9 + d[p + 2] * sc; } });
+  if (t === "thresh") return akFiPix(cv, function (d) { var cut = 40 + a * 175; for (var p = 0; p < d.length; p += 4) { var v = (d[p] * 0.299 + d[p + 1] * 0.587 + d[p + 2] * 0.114) >= cut ? 255 : 0; d[p] = d[p + 1] = d[p + 2] = v; } });
+  if (t === "halftone") {
+    var cell = Math.max(3, (0.006 + a * 0.03) * M), sd = cv.getContext("2d").getImageData(0, 0, w, hh).data, ht = akGfxCv(w, hh); c = ht.getContext("2d");
+    c.fillStyle = "#ffffff"; c.fillRect(0, 0, w, hh); c.fillStyle = "#111111";
+    for (var y = cell / 2; y < hh; y += cell) for (var x = (Math.round(y / cell) % 2) * cell / 2; x < w; x += cell) {
+      var q = (Math.min(hh - 1, Math.floor(y)) * w + Math.min(w - 1, Math.floor(x))) * 4; if (sd[q + 3] < 20) continue;
+      var lum = (sd[q] * 0.299 + sd[q + 1] * 0.587 + sd[q + 2] * 0.114) / 255, r = (1 - lum) * cell * 0.62;
+      if (r > 0.3) { c.beginPath(); c.arc(x, y, r, 0, 6.2832); c.fill(); }
+    }
+    var keep = akGfxCv(w, hh), kc = keep.getContext("2d"); kc.drawImage(ht, 0, 0); kc.globalCompositeOperation = "destination-in"; kc.drawImage(cv, 0, 0); return keep;
+  }
+  if (t === "emboss") {
+    var em = akFiConv(cv, [-2, -1, 0, -1, 1, 1, 0, 1, 2], 0, false), mix = akFxCopy(cv); c = mix.getContext("2d"); c.globalAlpha = a; c.drawImage(em, 0, 0); c.globalAlpha = 1; return mix;
+  }
+  if (t === "sketch") {
+    var ed = akFiConv(cv, [-1, -1, -1, -1, 8, -1, -1, -1, -1], 0, true), sa = cv.getContext("2d").getImageData(0, 0, w, hh).data;
+    return akFiPix(ed, function (d) { var k = 1 + 3 * a; for (var p = 0; p < d.length; p += 4) { var v = 255 - Math.min(255, d[p] * k); d[p] = d[p + 1] = d[p + 2] = v; d[p + 3] = sa[p + 3]; } });
+  }
+  if (t === "glitch") {
+    var gl = akGfxCv(w, hh); c = gl.getContext("2d"); var seed = e.seed || 11, rnd = function () { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    var sh = Math.max(1, a * 0.025 * M);
+    c.globalCompositeOperation = "lighter";
+    [["#ff0000", -sh], ["#00ff00", 0], ["#0000ff", sh]].forEach(function (ch) {
+      var l = akGfxCv(w, hh), lc = l.getContext("2d"); lc.drawImage(cv, ch[1], 0); lc.globalCompositeOperation = "multiply"; lc.fillStyle = ch[0]; lc.fillRect(0, 0, w, hh); lc.globalCompositeOperation = "destination-in"; lc.drawImage(cv, ch[1], 0); c.drawImage(l, 0, 0);
+    });
+    c.globalCompositeOperation = "source-over";
+    var out2 = akGfxCv(w, hh), oc = out2.getContext("2d"), yy = 0;
+    while (yy < hh) { var hgt = Math.max(2, rnd() * 0.06 * hh), off = rnd() < 0.45 ? (rnd() - 0.5) * a * 0.12 * w : 0; oc.drawImage(gl, 0, yy, w, hgt, off, yy, w, hgt); yy += hgt; }
+    return out2;
+  }
+  if (t === "leak") {
+    var lk = akFxCopy(cv); c = lk.getContext("2d"); var an = (e.dir == null ? 315 : e.dir) * Math.PI / 180, R = Math.max(w, hh);
+    var gx = w / 2 + Math.cos(an) * R * 0.6, gy = hh / 2 + Math.sin(an) * R * 0.6, gr = c.createRadialGradient(gx, gy, 0, gx, gy, R * 0.9), col = e.col || "#ff7a2f";
+    gr.addColorStop(0, col); gr.addColorStop(1, "rgba(0,0,0,0)");
+    c.globalCompositeOperation = "screen"; c.globalAlpha = Math.min(1, a * 1.1); c.fillStyle = gr; c.fillRect(0, 0, w, hh);
+    c.globalCompositeOperation = "destination-in"; c.globalAlpha = 1; c.drawImage(cv, 0, 0); return lk;
+  }
+  return null;
+}
+(function () {
+  var one = akFxOne;
+  akFxOne = function (cv, e, P, sc, g, under) {
+    if (!e || !AKFI_KINDS[e.t]) return one.apply(this, arguments);
+    try {
+      var w = cv.width, hh = cv.height, M = Math.min(P.W, P.H) * sc;
+      var b = { x: (g.b.x - g.R.x) * sc, y: (g.b.y - g.R.y) * sc, w: g.b.w * sc, h: g.b.h * sc };
+      var filt = akFiMake(cv, e, P, M, b); if (!filt) return cv;
+      var mask = akFxMask(e, w, hh, b), out, c;
+      if (!mask) out = filt;
+      else {
+        out = akFxCopy(cv); var tmp = akGfxCv(w, hh), tc = tmp.getContext("2d");
+        tc.drawImage(filt, 0, 0); tc.globalCompositeOperation = "destination-in"; tc.drawImage(mask, 0, 0);
+        c = out.getContext("2d"); c.drawImage(tmp, 0, 0);
+      }
+      if (under && (e.t === "mblur" || e.t === "zblur" || e.t === "glitch")) { c = out.getContext("2d"); c.globalCompositeOperation = "destination-over"; c.drawImage(cv, 0, 0); }
+      return out;
+    } catch (er) { try { console.warn("filter", e.t, er); } catch (e2) {} return cv; }
+  };
+  /* direction slider for motion blur and light leak, right inside the entry */
+  var en = akFxEntryEl;
+  akFxEntryEl = function (X, id, e) {
+    var dd = en.apply(this, arguments);
+    try {
+      if (e && (e.t === "mblur" || e.t === "leak")) {
+        dd.insertBefore(X.slider("Direction", e.dir == null ? (e.t === "leak" ? 315 : 0) : e.dir, 0, 359, 1, function (v) { e.dir = v; }, function (v) { return v + "°"; }, true), dd.lastChild);
+      }
+    } catch (er) {}
+    return dd;
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Graphics: filters (sharpen, motion blur, zoom blur, warmth, matte, two-tone, halftone, emboss, sketch, glitch, light leak)", a: "Graphics studio › pick a part › ✨ Effects › ＋ Add an effect › Filters. Each is one entry in the effects list: strength, area, order and on/off like the others. Motion blur and Light leak have a Direction slider.", k: "filters filter photoshop canva procreate sharpen motion zoom blur warm cool temperature matte faded film threshold stamp stencil halftone comic dots emboss sketch pencil glitch light leak" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+AK_VERSION = "19.4";
+AK_WHATS_NEW = [
+  "🎞 New filters in the Graphics studio (✨ Effects › ＋ Add an effect › Filters): Sharpen, Motion blur, Zoom blur, Warmth, Matte (faded film), Two-tone stamp, Halftone dots, Emboss, Sketch, Glitch and Light leak. They join the ones already there (blur, vignette, grain, pixelate, black and white, sepia, tint, negative…) and work like every other effect."
+].concat(AK_WHATS_NEW || []);
+
+/* ================= 19.4: Remove background and Smart layers in the Graphics studio (all on this device, no internet, free).
+   Engine: MediaPipe Tasks Vision (gfx/seg/, Apache 2.0), loaded the first time it's used, then kept offline by the offline helper.
+   - Remove background: pick a picture part › ⋯ More › ✂ Remove background (or Layers › ⋯). "Person" finds people on its own
+     (selfie_segmenter); "Tap to pick" keeps whatever you tap (magic_touch, any thing: a guitar, a dog, a mug). Brush Keep / Erase
+     touches up the edge, Edge softness sets how soft it is. "Use it" adds the cut-out as a new picture in exactly the same place and
+     hides the original (👁 in Layers shows it again; ↶ Undo puts it back).
+   - Smart layers: the picture is split into separate layers: each person or thing it recognizes (deeplab_v3, 21 kinds), the background
+     with those spots filled in, and (if asked) the words in the photo as editable text parts.
+   Mask helpers work on a "mask" = Float32Array w*h with 0..1. */
+var AKSEG = { lib: null, seg: {}, base: function (f) { return new URL("gfx/seg/" + f, location.href).href; } };
+var AKSEG_DEEPLAB = ["background", "plane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "table", "dog", "horse", "motorbike", "person", "plant", "sheep", "sofa", "train", "TV"];
+
+function akSegLib() {
+  if (AKSEG.lib) return AKSEG.lib;
+  AKSEG.lib = new Promise(function (res, rej) {
+    var done = false, t = setTimeout(function () { if (!done) { AKSEG.lib = null; rej(new Error("The cut-out tool didn't load.")); } }, 45000);
+    window.__akSegDone = function (V) { done = true; clearTimeout(t); res(V); };
+    window.__akSegFail = function (e) { done = true; clearTimeout(t); AKSEG.lib = null; rej(e || new Error("The cut-out tool didn't load.")); };
+    var s = document.createElement("script"); s.type = "module";
+    s.textContent = "import(" + JSON.stringify(AKSEG.base("vision_bundle.mjs")) + ").then(function (V) { window.__akSegDone(V); }, function (e) { window.__akSegFail(e); });";
+    document.head.appendChild(s);
+  });
+  return AKSEG.lib;
+}
+function akSegFiles() { return { wasmLoaderPath: AKSEG.base("vision_wasm_internal.js"), wasmBinaryPath: AKSEG.base("vision_wasm_internal.wasm") }; }
+/* kind: "person" | "tap" | "things" */
+function akSegGet(kind) {
+  if (AKSEG.seg[kind]) return AKSEG.seg[kind];
+  AKSEG.seg[kind] = akSegLib().then(function (V) {
+    var model = kind === "person" ? "selfie_segmenter.tflite" : kind === "tap" ? "magic_touch.tflite" : "deeplab_v3.tflite";
+    var o = { baseOptions: { modelAssetPath: AKSEG.base(model), delegate: "CPU" }, outputCategoryMask: kind !== "person", outputConfidenceMasks: kind !== "things" };
+    if (kind !== "tap") o.runningMode = "IMAGE";
+    return (kind === "tap" ? V.InteractiveSegmenter : V.ImageSegmenter).createFromOptions(akSegFiles(), o);
+  });
+  AKSEG.seg[kind].catch(function () { AKSEG.seg[kind] = null; });
+  return AKSEG.seg[kind];
+}
+/* a picture small enough for the models (they work at 256-513 px inside; 1024 keeps the hand-off quick) */
+function akSegSmall(cv, max) {
+  var k = Math.min(1, (max || 1024) / Math.max(cv.width, cv.height)); if (k >= 1) return cv;
+  var s = akGfxCv(Math.max(1, Math.round(cv.width * k)), Math.max(1, Math.round(cv.height * k))); s.getContext("2d").drawImage(cv, 0, 0, s.width, s.height); return s;
+}
+function akSegMaskOf(m) { var w = m.width, hh = m.height, a; try { a = m.getAsFloat32Array(); } catch (e) { a = Float32Array.from(m.getAsUint8Array(), function (v) { return v / 255; }); } return { w: w, h: hh, a: Float32Array.from(a) }; }
+/* person: chance of "person" for every pixel */
+function akSegPerson(cv) {
+  return akSegGet("person").then(function (S) {
+    var r = S.segment(akSegSmall(cv)), cm = r.confidenceMasks, m = akSegMaskOf(cm[cm.length - 1]);
+    try { cm.forEach(function (x) { x.close(); }); } catch (e) {}
+    return m;
+  });
+}
+/* person, plus what they hold: a tap at the person's middle picks the person with their guitar or mic */
+function akSegPersonPlus(cv) {
+  return akSegPerson(cv).then(function (pm) {
+    var sx = 0, sy = 0, n = 0; for (var y = 0; y < pm.h; y++) for (var x = 0; x < pm.w; x++) if (pm.a[y * pm.w + x] > 0.5) { sx += x; sy += y; n++; }
+    var pa = n / pm.a.length; if (pa < 0.01) return pm;
+    var cx = sx / n / pm.w, cy = sy / n / pm.h;
+    if (pm.a[Math.floor(cy * pm.h) * pm.w + Math.floor(cx * pm.w)] < 0.5) return pm;
+    return akSegTap(cv, cx, cy).then(function (tm) { var r = akSegResize(tm, pm.w, pm.h), ta = akSegArea(r); return ta > pa * 0.6 && ta < pa * 1.8 ? akSegUnion(pm, r) : pm; }, function () { return pm; });
+  });
+}
+/* tap: what's under the point (x, y from 0 to 1) */
+function akSegTap(cv, x, y) {
+  return akSegGet("tap").then(function (S) {
+    var r = S.segment(akSegSmall(cv), { keypoint: { x: x, y: y } }), m;
+    if (r.confidenceMasks && r.confidenceMasks.length) m = akSegMaskOf(r.confidenceMasks[0]);
+    else { var c = r.categoryMask, u = c.getAsUint8Array(); m = { w: c.width, h: c.height, a: Float32Array.from(u, function (v) { return v ? 1 : 0; }) }; }
+    try { (r.confidenceMasks || []).forEach(function (q) { q.close(); }); if (r.categoryMask) r.categoryMask.close(); } catch (e) {}
+    return m;
+  });
+}
+/* things: a class number for every pixel */
+function akSegThings(cv) {
+  return akSegGet("things").then(function (S) {
+    var r = S.segment(akSegSmall(cv, 800)), c = r.categoryMask, out = { w: c.width, h: c.height, c: Uint8Array.from(c.getAsUint8Array()) };
+    try { c.close(); } catch (e) {}
+    return out;
+  });
+}
+/* a mask scaled to w x h as an alpha canvas, with an edge: soft 0 (hard) .. 100 (very soft) */
+function akSegAlphaCv(m, w, hh, soft) {
+  var s = akGfxCv(m.w, m.h), c = s.getContext("2d"), im = c.createImageData(m.w, m.h), d = im.data;
+  var k = 1 + (100 - (soft == null ? 35 : soft)) / 100 * 7;
+  for (var i = 0; i < m.a.length; i++) { var v = Math.max(0, Math.min(1, (m.a[i] - 0.5) * k + 0.5)); d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255; d[i * 4 + 3] = v * 255; }
+  c.putImageData(im, 0, 0);
+  var big = akGfxCv(w, hh), bc = big.getContext("2d"); bc.imageSmoothingEnabled = true; bc.imageSmoothingQuality = "high"; bc.drawImage(s, 0, 0, w, hh);
+  if (soft > 0) { var bl = akGfxBlurCv(big, Math.max(0.5, soft / 100 * 0.012 * Math.max(w, hh))); return bl; }
+  return big;
+}
+function akSegArea(m) { var n = 0; for (var i = 0; i < m.a.length; i++) if (m.a[i] > 0.5) n++; return n / m.a.length; }
+function akSegUnion(a, b, sub) { var o = { w: a.w, h: a.h, a: Float32Array.from(a.a) }; for (var i = 0; i < o.a.length; i++) o.a[i] = sub ? Math.min(o.a[i], 1 - b.a[i]) : Math.max(o.a[i], b.a[i]); return o; }
+function akSegResize(m, w, hh) {
+  if (m.w === w && m.h === hh) return m;
+  var o = { w: w, h: hh, a: new Float32Array(w * hh) };
+  for (var y = 0; y < hh; y++) for (var x = 0; x < w; x++) o.a[y * w + x] = m.a[Math.min(m.h - 1, Math.floor(y * m.h / hh)) * m.w + Math.min(m.w - 1, Math.floor(x * m.w / w))];
+  return o;
+}
+/* the picture part as its own canvas, at its size on the page (x2 when small, for a cleaner edge) */
+function akSegPartCanvas(X, id) {
+  var st = akGfxState(), P = st.P || X.base(), L = P.layers.filter(function (l) { return l.id === id; })[0]; if (!L) return null;
+  var b = akLayerBox(L, P), up = Math.max(1, Math.min(3, 1400 / Math.max(b.w, b.h)));
+  var one = Object.assign({}, L); one.rot = 0; delete one.fxs; delete one.fxo; delete one.op;
+  var full; try { full = akPosterCanvas({ W: P.W, H: P.H, size: P.size, gfx: P.gfx, accent: P.accent, accent2: P.accent2, layers: [one] }, null, up); } catch (e) { try { console.warn("cut-out", e); } catch (e2) {} return null; }
+  var w = Math.max(2, Math.round(b.w * up)), hh = Math.max(2, Math.round(b.h * up)), cv = akGfxCv(w, hh);
+  cv.getContext("2d").drawImage(full, Math.round(b.x * up), Math.round(b.y * up), w, hh, 0, 0, w, hh);
+  return { cv: cv, box: b, L: L, P: P };
+}
+/* add a canvas as a new free picture at box b (page units), just above layer "above" */
+function akSegAddPic(X, cv, b, name, above, cb) {
+  var D = X.D, st = akGfxState(), P = st.P || X.base();
+  cv.toBlob(function (blob) {
+    if (!blob) { toast("Couldn't save the cut-out."); return; }
+    try { blob.name = name; } catch (e) {}
+    akGfxPicIn(blob).then(function (r) {
+      var C = { layers: P.layers.slice() }; akGfxZApply(D, C); var mv = akGfxMovable(C), at = mv.indexOf(above);
+      var nid = uid(); akGfxFree(D).push({ id: nid, t: "pic", img: r.id, name: name, x: (b.x + b.w / 2) / P.W, y: (b.y + b.h / 2) / P.H, w: b.w / P.W, ar: b.h / b.w });
+      var lid = "uf_" + nid; mv.splice(at < 0 ? mv.length : at + 1, 0, lid); D.zord = mv; if (typeof AKLY !== "undefined") AKLY.skip = 1;
+      cb && cb(lid);
+    }, function () { toast("Couldn't save the cut-out."); });
+  }, "image/png");
+}
+function akSegBusy(msg) { var p = h("p", { class: "hint akseg-busy" }, msg), close = modal("Working on it", p, false); return { set: function (t) { p.textContent = t; }, close: close }; }
+
+/* ---------------------------------------------------------------- ✂ Remove background */
+function akSegRemoveBg(X, id) {
+  var st = akGfxState(); id = id || st.sel;
+  var src = akSegPartCanvas(X, id); if (!src) { toast("Pick a picture first."); return; }
+  var cv = src.cv, w = cv.width, hh = cv.height, mask = null, mode = "person", brush = "", soft = 20, size = 40, taps = [], hist = [];
+  var view = h("canvas", { class: "akseg-cv", "aria-label": "The cut-out. Tap to pick what to keep, or brush to touch it up" });
+  var info = h("p", { class: "hint akseg-info" }, "Finding the person…");
+  var paint = akGfxCv(w, hh), pc = paint.getContext("2d"); /* hand brush: white = keep, cleared with "destination-out" = erase */
+  var erase = akGfxCv(w, hh), ec = erase.getContext("2d");
+  function result() {
+    var out = akGfxCv(w, hh), c = out.getContext("2d");
+    c.drawImage(cv, 0, 0);
+    var al = mask ? akSegAlphaCv(mask, w, hh, soft) : (function () { var a = akGfxCv(w, hh); a.getContext("2d").fillRect(0, 0, w, hh); return a; })();
+    var keep = akGfxCv(w, hh), kc = keep.getContext("2d"); kc.drawImage(al, 0, 0); kc.drawImage(paint, 0, 0); kc.globalCompositeOperation = "destination-out"; kc.drawImage(erase, 0, 0);
+    c.globalCompositeOperation = "destination-in"; c.drawImage(keep, 0, 0);
+    return out;
+  }
+  function draw() {
+    var k = Math.min(1, 900 / Math.max(w, hh)); view.width = Math.round(w * k); view.height = Math.round(hh * k);
+    var c = view.getContext("2d"), s = 12; for (var y = 0; y < view.height; y += s) for (var x = 0; x < view.width; x += s) { c.fillStyle = ((x + y) / s) % 2 ? "#cfcfcf" : "#f4f4f4"; c.fillRect(x, y, s, s); }
+    c.drawImage(result(), 0, 0, view.width, view.height);
+    taps.forEach(function (t) { c.beginPath(); c.arc(t.x * view.width, t.y * view.height, 6, 0, 6.3); c.fillStyle = t.sub ? "#d33" : "#2a8"; c.fill(); c.lineWidth = 2; c.strokeStyle = "#fff"; c.stroke(); });
+  }
+  function run(fn, msg) {
+    info.textContent = msg;
+    return fn().then(function () { draw(); var a = mask ? akSegArea(mask) : 0; info.textContent = !mask ? "" : a < 0.01 ? (mode === "person" ? "No person found. Try ‘Tap to pick’ and tap the thing to keep." : "Nothing picked there. Tap right on the thing.") : "Kept " + Math.round(a * 100) + "% of the picture. Touch up with the brush, then Use it."; })
+      .catch(function (e) { info.textContent = "The cut-out tool couldn't run on this device: " + ((e && e.message) || e); });
+  }
+  function doPerson() { mode = "person"; taps = []; return run(function () { return akSegPersonPlus(cv).then(function (m) { mask = m; }); }, "Finding the person…"); }
+  function doTap(x, y, sub) {
+    taps.push({ x: x, y: y, sub: sub });
+    return run(function () { return akSegTap(cv, x, y).then(function (m) { hist.push(mask); mask = !mask || mode !== "tap" ? (sub ? null : m) : akSegUnion(mask, akSegResize(m, mask.w, mask.h), sub); mode = "tap"; }); }, "Picking it out…");
+  }
+  /* pointer: tap = pick (in Tap mode), drag = brush (when a brush is on) */
+  var down = null;
+  function pt(e) { var r = view.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; }
+  function dab(p) { var c = brush === "keep" ? pc : ec, rr = size / 100 * 0.08 * Math.max(w, hh); c.beginPath(); c.arc(p.x * w, p.y * hh, rr, 0, 6.3); c.fillStyle = "#fff"; c.fill(); if (brush === "keep") { ec.save(); ec.globalCompositeOperation = "destination-out"; ec.beginPath(); ec.arc(p.x * w, p.y * hh, rr, 0, 6.3); ec.fill(); ec.restore(); } else { pc.save(); pc.globalCompositeOperation = "destination-out"; pc.beginPath(); pc.arc(p.x * w, p.y * hh, rr, 0, 6.3); pc.fill(); pc.restore(); } }
+  view.addEventListener("pointerdown", function (e) { e.preventDefault(); down = pt(e); if (brush) { dab(down); draw(); } try { view.setPointerCapture(e.pointerId); } catch (er) {} });
+  view.addEventListener("pointermove", function (e) { if (!down || !brush) return; dab(pt(e)); draw(); });
+  view.addEventListener("pointerup", function (e) { var p = pt(e); if (down && !brush && mode === "tap") doTap(p.x, p.y, AKSEG.sub); down = null; });
+  function seg(items, cur, set, aria) {
+    return h("div", { class: "akseg-seg", role: "group", "aria-label": aria }, items.map(function (it) {
+      return h("button", { type: "button", class: "akseg-sb" + (cur() === it[0] ? " on" : ""), "aria-pressed": cur() === it[0] ? "true" : "false", onClick: function () { set(it[0]); refresh(); } }, it[1]);
+    }));
+  }
+  var ctl = h("div", { class: "akseg-ctl" });
+  function refresh() {
+    ctl.textContent = "";
+    ctl.appendChild(seg([["person", "👤 Person"], ["tap", "👆 Tap to pick"]], function () { return mode; }, function (v) { brush = ""; if (v === "person") doPerson(); else { mode = "tap"; mask = null; taps = []; draw(); info.textContent = "Tap the thing you want to keep. Tap more spots to add to it."; } }, "How to find what to keep"));
+    if (mode === "tap") ctl.appendChild(seg([["add", "＋ Add"], ["sub", "－ Take away"]], function () { return AKSEG.sub ? "sub" : "add"; }, function (v) { AKSEG.sub = v === "sub"; brush = ""; }, "What a tap does"));
+    ctl.appendChild(seg([["", "No brush"], ["keep", "🖌 Keep"], ["erase", "⌫ Erase"]], function () { return brush; }, function (v) { brush = v; }, "Touch-up brush"));
+    if (brush) ctl.appendChild(X.slider("Brush size", size, 5, 100, 1, function (v) { size = v; }, null, true));
+    ctl.appendChild(X.slider("Edge softness", soft, 0, 100, 1, function (v) { soft = v; draw(); }, null, true));
+  }
+  refresh();
+  var box = h("div", { class: "akseg" }, h("div", { class: "akseg-wrap" }, view), info, ctl);
+  var close = modal("✂ Remove background", box, [
+    { label: "Cancel" },
+    { label: "Use it", primary: true, onClick: function () {
+      if (!mask && !taps.length) { toast("Nothing picked yet."); return false; }
+      var out = result();
+      akSegAddPic(X, out, src.box, "Cut-out" + (src.L.name ? " of " + String(src.L.name).replace(/^Picture:?\s*/, "") : ""), id, function (lid) {
+        var e = X.D.edit[id] = X.D.edit[id] || {}; e.hide = true; st.sel = lid; X.ch(true);
+        toast("Background removed. The original is hidden (👁 in Layers shows it); ↶ Undo puts it back.");
+      });
+    } }], { wide: true });
+  draw(); doPerson();
+  return close;
+}
+
+/* ---------------------------------------------------------------- 🧩 Smart layers */
+function akSegFill(cv, hole) {
+  /* fill the spots (hole: alpha canvas, solid = fill) from what's around them: every filled pixel mixes the picture mirrored from just
+     left, right, above and below the spot, the nearest side counting most (keeps bricks, pavement and sky going), then a light blur */
+  var w = cv.width, hh = cv.height, src = cv.getContext("2d").getImageData(0, 0, w, hh), sd = src.data;
+  var hd = hole.getContext("2d").getImageData(0, 0, w, hh).data, N = w * hh, inH = new Uint8Array(N), i, x, y;
+  for (i = 0; i < N; i++) inH[i] = hd[i * 4 + 3] > 100 ? 1 : 0;
+  var dl = new Int32Array(N), dr = new Int32Array(N), du = new Int32Array(N), dn = new Int32Array(N);
+  for (y = 0; y < hh; y++) { var run = -1; for (x = 0; x < w; x++) { i = y * w + x; run = inH[i] ? (run < 0 ? (x === 0 ? -2 : 1) : run < -1 ? -2 : run + 1) : -1; dl[i] = run; } run = -1; for (x = w - 1; x >= 0; x--) { i = y * w + x; run = inH[i] ? (run < 0 ? (x === w - 1 ? -2 : 1) : run < -1 ? -2 : run + 1) : -1; dr[i] = run; } }
+  for (x = 0; x < w; x++) { var rn = -1; for (y = 0; y < hh; y++) { i = y * w + x; rn = inH[i] ? (rn < 0 ? (y === 0 ? -2 : 1) : rn < -1 ? -2 : rn + 1) : -1; du[i] = rn; } rn = -1; for (y = hh - 1; y >= 0; y--) { i = y * w + x; rn = inH[i] ? (rn < 0 ? (y === hh - 1 ? -2 : 1) : rn < -1 ? -2 : rn + 1) : -1; dn[i] = rn; } }
+  var out = new Uint8ClampedArray(sd);
+  function px(xx, yy) { xx = Math.max(0, Math.min(w - 1, xx)); yy = Math.max(0, Math.min(hh - 1, yy)); var j = yy * w + xx; return inH[j] ? -1 : j * 4; }
+  for (y = 0; y < hh; y++) for (x = 0; x < w; x++) {
+    i = y * w + x; if (!inH[i]) continue;
+    var r = 0, g = 0, bb = 0, ws = 0, S = [[dl[i], x - 2 * dl[i] + 1, y], [dr[i], x + 2 * dr[i] - 1, y], [du[i], x, y - 2 * du[i] + 1], [dn[i], x, y + 2 * dn[i] - 1]];
+    for (var k = 0; k < 4; k++) {
+      var d = S[k][0]; if (d < 1) continue;
+      var p = px(S[k][1], S[k][2]); if (p < 0) p = px(k === 0 ? x - d : k === 1 ? x + d : x, k === 2 ? y - d : k === 3 ? y + d : y); if (p < 0) continue;
+      var wt = 1 / (d * d); r += sd[p] * wt; g += sd[p + 1] * wt; bb += sd[p + 2] * wt; ws += wt;
+    }
+    var o = i * 4; if (ws > 0) { out[o] = r / ws; out[o + 1] = g / ws; out[o + 2] = bb / ws; } out[o + 3] = 255;
+  }
+  var fin = akGfxCv(w, hh), fc = fin.getContext("2d"); src.data.set(out); fc.putImageData(src, 0, 0);
+  fin = akGfxBlurCv(fin, Math.max(1, 0.003 * Math.max(w, hh)));
+  try { fin = akFxGrain(fin, 8, 5); } catch (e) {}
+  var res = akFxCopy(cv), rc = res.getContext("2d"), patch = akGfxCv(w, hh), ppc = patch.getContext("2d");
+  ppc.drawImage(fin, 0, 0); ppc.globalCompositeOperation = "destination-in"; ppc.drawImage(akGfxBlurCv(hole, Math.max(1, 0.003 * Math.max(w, hh))), 0, 0);
+  rc.drawImage(patch, 0, 0); return res;
+}
+function akSegSmart(X, id) {
+  var st = akGfxState(); id = id || st.sel;
+  var src = akSegPartCanvas(X, id); if (!src) { toast("Pick a picture first."); return; }
+  var wantText = true, list = h("div", { class: "akseg-list" }), found = null;
+  var info = h("p", { class: "hint" }, "Splits this picture into separate layers you can move, resize, recolor and add effects to: each person or thing it recognizes, the background (with those spots filled in) and, if you like, the words in the photo as text you can edit. All on this phone.");
+  var tx = h("label", { class: "akseg-chk" }, h("input", { type: "checkbox", checked: true, onChange: function () { wantText = this.checked; } }), " Also turn words in the photo into text (slower)");
+  var close = modal("🧩 Smart layers", h("div", { class: "akseg" }, info, tx, list), [
+    { label: "Cancel" },
+    { label: "Split it", primary: true, onClick: function () { go(); } }]);
+  function go() {
+    var cv = src.cv, w = cv.width, hh = cv.height, b = src.box, busy = akSegBusy("Looking at the picture…"), parts = [];
+    akSegThings(cv).then(function (T) {
+      var counts = {}; for (var i = 0; i < T.c.length; i++) counts[T.c[i]] = (counts[T.c[i]] || 0) + 1;
+      var kinds = Object.keys(counts).map(Number).filter(function (k) { return k > 0 && counts[k] / T.c.length > (AKSEG_DEEPLAB[k] === "person" ? 0.012 : 0.08); }).sort(function (a, b) { return counts[b] - counts[a]; }).slice(0, 3);
+      busy.set("Cutting out " + (kinds.length ? kinds.map(function (k) { return AKSEG_DEEPLAB[k] || "thing"; }).join(", ") : "the main subject") + "…");
+      var jobs = kinds.map(function (k) {
+        var m = { w: T.w, h: T.h, a: new Float32Array(T.c.length) }; for (var i = 0; i < T.c.length; i++) m.a[i] = T.c[i] === k ? 1 : 0;
+        if (AKSEG_DEEPLAB[k] === "person") return akSegPersonPlus(cv).then(function (pm) { var r = akSegResize(pm, T.w, T.h); return akSegArea(r) > 0.01 ? { k: k, m: pm } : { k: k, m: m }; }, function () { return { k: k, m: m }; });
+        return Promise.resolve({ k: k, m: m });
+      });
+      if (!kinds.length) jobs.push(akSegPerson(cv).then(function (pm) { return akSegArea(pm) > 0.01 ? { k: 15, m: pm } : null; }));
+      return Promise.all(jobs);
+    }).then(function (res) {
+      parts = res.filter(Boolean);
+      var hole = akGfxCv(w, hh), hc = hole.getContext("2d");
+      parts.forEach(function (p) { p.al = akSegAlphaCv(p.m, w, hh, 20); hc.drawImage(p.al, 0, 0); });
+      /* grow the hole a little so no halo is left behind */
+      var grow = akGfxBlurCv(hole, Math.max(1, 0.01 * Math.max(w, hh))), gc = grow.getContext("2d"), gd = gc.getImageData(0, 0, w, hh);
+      for (var i = 3; i < gd.data.length; i += 4) gd.data[i] = gd.data[i] > 20 ? 255 : 0; gc.putImageData(gd, 0, 0);
+      if (!wantText) return { grow: grow, words: [] };
+      busy.set("Reading the words in the photo…");
+      return (typeof akOcrRead === "function" ? akOcrRead(cv) : Promise.resolve({ words: [] })).then(function (r) { return { grow: grow, words: (r.words || []).filter(function (x) { return x.conf > 75 && /[A-Za-z0-9]{2,}/.test(x.t); }) }; }, function () { return { grow: grow, words: [] }; });
+    }).then(function (o) {
+      busy.set("Filling in the background…");
+      var lines = {}; o.words.forEach(function (x) { (lines[x.line] = lines[x.line] || []).push(x); });
+      var L2 = Object.keys(lines).map(function (k) { var ws = lines[k], x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; ws.forEach(function (q) { x0 = Math.min(x0, q.x0); y0 = Math.min(y0, q.y0); x1 = Math.max(x1, q.x1); y1 = Math.max(y1, q.y1); }); return { t: ws.map(function (q) { return q.t; }).join(" "), x0: x0, y0: y0, x1: x1, y1: y1 }; }).filter(function (l) { return l.t.replace(/[^A-Za-z0-9]/g, "").length >= 4; });
+      var hole = o.grow, hc = hole.getContext("2d"), sd = cv.getContext("2d").getImageData(0, 0, w, hh).data;
+      L2.forEach(function (l) {
+        /* the text color: the pixel in the box that differs most from the box's edge color */
+        var pad = Math.round((l.y1 - l.y0) * 0.2), best = 0, col = [255, 255, 255], e = (Math.max(0, l.y0 - 1) * w + Math.max(0, l.x0 - 1)) * 4, ec = [sd[e], sd[e + 1], sd[e + 2]];
+        for (var y = l.y0; y < l.y1; y += 2) for (var x = l.x0; x < l.x1; x += 2) { var q = (y * w + x) * 4, dd = Math.abs(sd[q] - ec[0]) + Math.abs(sd[q + 1] - ec[1]) + Math.abs(sd[q + 2] - ec[2]); if (dd > best) { best = dd; col = [sd[q], sd[q + 1], sd[q + 2]]; } }
+        l.col = "#" + col.map(function (v) { return ("0" + v.toString(16)).slice(-2); }).join("");
+        hc.fillStyle = "#fff"; hc.fillRect(l.x0 - pad, l.y0 - pad, l.x1 - l.x0 + pad * 2, l.y1 - l.y0 + pad * 2);
+      });
+      var bg = akSegFill(cv, hole), steps = [];
+      steps.push({ cv: bg, name: "Background (filled in)" });
+      parts.forEach(function (p) { var c = akFxCopy(cv), cc = c.getContext("2d"); cc.globalCompositeOperation = "destination-in"; cc.drawImage(p.al, 0, 0); var nm = AKSEG_DEEPLAB[p.k] || "Thing"; steps.push({ cv: c, name: nm.charAt(0).toUpperCase() + nm.slice(1) }); });
+      var D = X.D, prev = id, made = [];
+      function next(i) {
+        if (i >= steps.length) {
+          var P = akGfxState().P || X.base(), k = b.w / w;
+          L2.forEach(function (l) {
+            var tid = uid(), hgt = (l.y1 - l.y0) * k;
+            akGfxFree(D).push({ id: tid, t: "text", text: l.t, x: (b.x + (l.x0 + l.x1) / 2 * k) / P.W, y: (b.y + (l.y0 + l.y1) / 2 * k) / P.H, size: hgt * 1.15 / Math.min(P.W, P.H), w: Math.min(1, ((l.x1 - l.x0) * k * 1.3) / P.W), weight: 700, color: l.col });
+            made.push("uf_" + tid);
+          });
+          var e = D.edit[id] = D.edit[id] || {}; e.hide = true;
+          if (made.length > 1 && typeof akLyGroup === "function") { D.groups = (D.groups || []).concat([made.slice()]); }
+          st.sel = made[made.length - 1] || ""; X.ch(true); busy.close(); close();
+          toast("Split into " + made.length + " layers" + (L2.length ? " (" + L2.length + " of them text)" : "") + ". They're grouped: 🔗 Ungroup in Layers › ⋯ to move them one by one. The original is hidden.");
+          return;
+        }
+        akSegAddPic(X, steps[i].cv, b, steps[i].name, prev, function (lid) { made.push(lid); prev = lid; next(i + 1); });
+      }
+      next(0);
+    }).catch(function (e) { busy.close(); toast("Smart layers couldn't run on this device: " + ((e && e.message) || e)); });
+    return false;
+  }
+}
+
+/* ---------------------------------------------------------------- where the buttons are */
+function akSegIsPic(L) { return L && /^(gfree|gpic|gphoto)$/.test(L.type); }
+(function () {
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) {
+    var r = p0.apply(this, arguments);
+    try {
+      var st = akGfxState(), pop = wrap._pop, mr = pop && pop.querySelector(".akg-popmore"), L = st.P && st.sel && st.P.layers.filter(function (l) { return l.id === st.sel; })[0];
+      if (mr && akSegIsPic(L) && !mr.querySelector(".akseg-pb")) {
+        mr.appendChild(h("button", { class: "akg-popb akg-popt akseg-pb", onClick: function () { akSegRemoveBg(X, st.sel); } }, "✂ Remove background"));
+        mr.appendChild(h("button", { class: "akg-popb akg-popt akseg-pb", onClick: function () { akSegSmart(X, st.sel); } }, "🧩 Smart layers"));
+      }
+    } catch (e) {}
+    return r;
+  };
+  if (typeof akLyMore === "function") {
+    var m0 = menu, lm = akLyMore;
+    akLyMore = function (anchor, X) {
+      var st = akGfxState(), L = st.P && st.sel && st.P.layers.filter(function (l) { return l.id === st.sel; })[0];
+      if (!akSegIsPic(L)) return lm.apply(this, arguments);
+      menu = function (a, items) { menu = m0; return m0(a, [{ label: "✂ Remove background", onClick: function () { akSegRemoveBg(X, st.sel); } }, { label: "🧩 Smart layers (split into layers)", onClick: function () { akSegSmart(X, st.sel); } }, { sep: true }].concat(items)); };
+      try { return lm.apply(this, arguments); } finally { menu = m0; }
+    };
+  }
+})();
+akCss("akseg", ".akseg-wrap{display:flex;justify-content:center;background:#111;border:1px solid rgba(127,127,127,.35);border-radius:2px;padding:4px}" +
+  ".akseg-cv{max-width:100%;max-height:52vh;touch-action:none;display:block}.akseg-info{margin:6px 0}" +
+  ".akseg-ctl{display:flex;flex-direction:column;gap:6px}.akseg-seg{display:flex;border:1px solid rgba(127,127,127,.45);border-radius:2px;overflow:hidden}" +
+  ".akseg-sb{flex:1 1 0;border:0;border-radius:0;background:transparent;padding:8px 4px;font-size:13px;min-height:38px}.akseg-sb+.akseg-sb{border-left:1px solid rgba(127,127,127,.45)}" +
+  ".akseg-sb.on{background:rgba(200,150,46,.22);font-weight:600}.akseg-chk{display:flex;gap:8px;align-items:center;margin:6px 0}");
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Graphics: remove a picture's background (cut out a person or thing)", a: "Graphics studio › tap a picture › ⋯ More › ✂ Remove background (also Layers › ⋯). 👤 Person finds people on its own; 👆 Tap to pick keeps whatever you tap (＋ Add / － Take away). 🖌 Keep and ⌫ Erase touch up the edge; Edge softness. Use it puts the cut-out in the same place and hides the original. Runs on this phone, no internet.", k: "remove background cut out cutout erase background bg remover subject person isolate transparent png" },
+  { t: "Graphics: Smart layers (split a photo into layers)", a: "Graphics studio › tap a picture › ⋯ More › 🧩 Smart layers. Each person or thing it recognizes becomes its own layer, the background gets those spots filled in, and words in the photo can become editable text. The new layers are grouped; Layers › ⋯ › Ungroup to move them one by one.", k: "smart layers split layers photo to layers magic layers separate objects editable text from photo" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+AK_WHATS_NEW = [
+  "✂ Remove background in the Graphics studio: tap a picture › ⋯ More › ✂ Remove background. It finds the person by itself, or tap anything to keep it (a guitar, a dog). Touch up the edge with the brush. Runs on your phone, free, no internet.",
+  "🧩 Smart layers: tap a picture › ⋯ More › 🧩 Smart layers splits a photo into layers: the people and things in it, the background (spots filled in) and the words as text you can edit."
+].concat(AK_WHATS_NEW || []);
+
+/* ================= 19.4: organizing (change list item 8, ideas A-E; he wants all five).
+   A  📁 Files (go("files")): everything in one place: songs, setlists, shows, designs. Folders, color tags, list or grid, kind filter, sort.
+   C  The same ⋯ menu on every item there (Open, Rename, Duplicate, Move to folder, Color, Pin, Trash); press and hold a row to pick several,
+      then the bar on top acts on all of them.
+   D  One search box at the top of Files finds songs (title, artist, tags, words), setlists, shows, designs and settings ("Where is…?").
+      📌 Pinned and 🕘 Recent sit under it. ✦ Smart folders fill themselves (not played in 3 months, unpaid shows, this month, saved searches).
+   E  🗑 Trash for everything, kept 30 days: songs and setlists used it already; shows and designs now go there too, however they're
+      deleted (a watcher on save() catches any that disappear and keeps a copy). Restore puts them back.
+   B  A show's page gets a one-row "For this show" strip on top: setlists, designs made for it, reminders due, pay; each jumps to its box.
+   Data: lib().org = { folders: [{ id, name, items: [key] }], pins: [key], recent: [{ k: key, at }], smart: [{ id, name, q }] },
+   key = kind + ":" + id, kinds song | set | gig | design. Item colors live on the items (song.color, setlist.color, show.color, design.color).
+   Entry points: bottom bar ⋯ More › 📁 Files / 🔍 Search everything / 🗑 Trash (a 📁 Files tab button on wide screens). */
+var AKORG = { pick: null, seen: null, seenLib: "", hold: 0 };
+var AKORG_COLS = ["#d9534f", "#e8913a", "#e6c547", "#5cb85c", "#4a90d9", "#9b6fd6"];
+var AKORG_KINDS = [["", "Everything"], ["song", "Songs"], ["set", "Setlists"], ["gig", "Shows"], ["design", "Designs"]];
+function akOrg() { var l = lib(); if (!l.org || typeof l.org !== "object") l.org = {}; var o = l.org; ["folders", "pins", "recent", "smart"].forEach(function (k) { if (!Array.isArray(o[k])) o[k] = []; }); return o; }
+function akOrgDrafts() { try { return akGfxDrafts(); } catch (e) { return []; } }
+function akOrgItem(kind, x) {
+  var it = { key: kind + ":" + x.id, kind: kind, id: x.id, obj: x };
+  if (kind === "song") { it.name = x.title || "Untitled"; it.sub = [x.artist, x.key].filter(Boolean).join(" · "); it.icon = "♫"; it.color = x.color || ""; it.text = [x.title, x.artist, (x.tags || []).join(" "), x.lyrics, x.notes].join(" "); }
+  else if (kind === "set") { var n = 0; (x.sets || []).forEach(function (s) { n += (s.songIds || []).length; }); it.name = x.name || "Setlist"; it.sub = "Setlist · " + n + (n === 1 ? " song" : " songs"); it.icon = "☰"; it.color = x.color || ""; it.text = [x.name, x.notes, x.group].join(" "); }
+  else if (kind === "gig") { it.name = akGigTitle(x); it.sub = "Show" + (x.date ? " · " + x.date : "") + (x.venue && x.venue !== it.name ? " · " + x.venue : ""); it.icon = "🎤"; it.color = x.color || ""; it.text = [x.name, x.venue, x.address, x.notes, x.date].join(" "); it.date = x.date || ""; }
+  else if (kind === "design") { it.name = x.name || "Design"; it.sub = "Design · " + (typeof akGfxKindName === "function" ? akGfxKindName(x.kind) : x.kind || ""); it.icon = "🎨"; it.color = x.color || ""; it.text = [x.name, x.kind].join(" "); it.thumb = x.th || ""; }
+  return it;
+}
+function akOrgAll() {
+  var l = lib(), out = [];
+  (l.songs || []).forEach(function (s) { out.push(akOrgItem("song", s)); });
+  (l.shows || []).forEach(function (s) { out.push(akOrgItem("set", s)); });
+  try { akGigs().forEach(function (g) { out.push(akOrgItem("gig", g)); }); } catch (e) {}
+  akOrgDrafts().forEach(function (d) { out.push(akOrgItem("design", d)); });
+  return out;
+}
+function akOrgFind(key) { var a = akOrgAll(); for (var i = 0; i < a.length; i++) if (a[i].key === key) return a[i]; return null; }
+function akOrgRecent(key) { try { var o = akOrg(); o.recent = o.recent.filter(function (r) { return r.k !== key; }); o.recent.unshift({ k: key, at: Date.now() }); o.recent = o.recent.slice(0, 12); } catch (e) {} }
+function akOrgOpen(it) {
+  akOrgRecent(it.key); save();
+  if (it.kind === "song") go("song", { songId: it.id });
+  else if (it.kind === "set") go("show", { showId: it.id });
+  else if (it.kind === "gig") go("gig", { gigId: it.id });
+  else if (it.kind === "design") { try { akGfxDraftOpen(it.obj); } catch (e) {} go("gfx", { gfxKind: it.obj.kind }); }
+}
+function akOrgRename(it, cb) {
+  askText("Rename", it.name, "Rename", function (v) {
+    var x = it.obj; if (it.kind === "song") x.title = v; else x.name = v; save(); cb && cb();
+  });
+}
+function akOrgDup(it) {
+  var c = clone(it.obj); c.id = uid(); var cp = function (n) { return (typeof akNextCopyName === "function" ? akNextCopyName(n) : n + " (copy)"); };
+  if (it.kind === "song") { c.title = cp(c.title || "Untitled"); c.plays = 0; c.lastPlayed = 0; c.history = []; lib().songs.push(c); }
+  else if (it.kind === "set") { c.name = cp(c.name || "Setlist"); (c.sets || []).forEach(function (s) { s.id = uid(); }); c.played = {}; c.counted = {}; c.runs = []; lib().shows.push(c); }
+  else if (it.kind === "gig") { c.name = cp(akGigTitle(it.obj)); c.date = ""; c.paid = false; c.tips = []; c.used = []; akGigs().push(c); }
+  else if (it.kind === "design") { c.name = cp(c.name || "Design"); var L = akOrgDrafts(); L.splice(L.indexOf(it.obj) + 1, 0, c); }
+  save(); toast("Copied: " + (c.title || c.name) + ".");
+}
+/* ---------------------------------------------------------------- E: one Trash */
+function akOrgTrashPush(kind, obj) { lib().trash.push({ id: uid(), type: kind, item: clone(obj), at: Date.now() }); }
+function akOrgTrash(items) {
+  var l = lib(); AKORG.quiet = 1;
+  try {
+    if (typeof snap === "function") snap("move to Trash");
+    items.forEach(function (it) {
+      if (it.kind === "song") trashSong(it.obj);
+      else if (it.kind === "set") trashShow(it.obj);
+      else if (it.kind === "gig") { akOrgTrashPush("gig", it.obj); l.gigs = akGigs().filter(function (g) { return g.id !== it.id; }); }
+      else if (it.kind === "design") { akOrgTrashPush("design", it.obj); var L = akOrgDrafts(), i = L.indexOf(it.obj); if (i >= 0) L.splice(i, 1); }
+      var o = akOrg(); o.pins = o.pins.filter(function (k) { return k !== it.key; });
+    });
+    save();
+  } finally { AKORG.quiet = 0; akOrgSeen(); }
+  toast(items.length === 1 ? "Moved to 🗑 Trash. It stays 30 days." : items.length + " moved to 🗑 Trash. They stay 30 days.");
+}
+(function () {
+  var r0 = restoreTrash;
+  restoreTrash = function (t) {
+    if (t && (t.type === "gig" || t.type === "design")) {
+      AKORG.quiet = 1;
+      try {
+        if (t.type === "gig") { if (!akGigs().some(function (g) { return g.id === t.item.id; })) akGigs().push(t.item); }
+        else if (!akOrgDrafts().some(function (d) { return d.id === t.item.id; })) akOrgDrafts().push(t.item);
+        lib().trash = lib().trash.filter(function (x) { return x.id !== t.id; }); save();
+      } finally { AKORG.quiet = 0; akOrgSeen(); }
+      return;
+    }
+    return r0.apply(this, arguments);
+  };
+})();
+/* any show or design that disappears (the show's own Delete, My designs › Delete) goes to the Trash too */
+function akOrgSeen() {
+  try {
+    var m = { gig: {}, design: {} };
+    akGigs().forEach(function (g) { m.gig[g.id] = g; }); akOrgDrafts().forEach(function (d) { m.design[d.id] = d; });
+    AKORG.seen = m; AKORG.seenLib = store.cur;
+  } catch (e) {}
+}
+(function () {
+  var s0 = save;
+  save = function () {
+    try {
+      if (!AKORG.quiet && AKORG.seen && AKORG.seenLib === store.cur) {
+        var now = { gig: {}, design: {} }, gone = [];
+        akGigs().forEach(function (g) { now.gig[g.id] = 1; }); akOrgDrafts().forEach(function (d) { now.design[d.id] = 1; });
+        ["gig", "design"].forEach(function (k) { Object.keys(AKORG.seen[k]).forEach(function (id) { if (!now[k][id]) gone.push([k, AKORG.seen[k][id]]); }); });
+        var inTrash = {}; (lib().trash || []).forEach(function (t) { if (t.item && t.item.id) inTrash[t.item.id] = 1; });
+        if (gone.length && gone.length <= 10) gone.forEach(function (x) { if (!inTrash[x[1].id]) akOrgTrashPush(x[0], x[1]); });
+      }
+    } catch (e) {}
+    var r = s0.apply(this, arguments);
+    if (!AKORG.quiet) akOrgSeen();
+    return r;
+  };
+})();
+setTimeout(akOrgSeen, 1500);
+function akOrgTrashDays(t) { return Math.max(0, 30 - Math.floor((Date.now() - (t.at || 0)) / 86400000)); }
+function akOrgTrashName(t) { var it = t.item || {}; return it.title || it.name || (t.type === "gig" ? (it.venue || "Show") : "Untitled"); }
+var AKORG_TNAME = { song: "Song", show: "Setlist", gig: "Show", design: "Design" };
+function akOrgTrashBox(redraw) {
+  var box = h("div", { class: "akorg-trash" }), items = (lib().trash || []).slice().reverse();
+  if (!items.length) box.appendChild(h("p", { class: "hint" }, "Nothing in the Trash. Deleted songs, setlists, shows and designs stay here for 30 days."));
+  items.forEach(function (t) {
+    box.appendChild(h("div", { class: "akorg-row" }, h("span", { class: "akorg-ic" }, t.type === "song" ? "♫" : t.type === "show" ? "☰" : t.type === "gig" ? "🎤" : "🎨"),
+      h("div", { class: "akorg-tx" }, h("div", { class: "akorg-nm" }, akOrgTrashName(t)), h("div", { class: "akorg-sub" }, (AKORG_TNAME[t.type] || "Item") + " · " + akOrgTrashDays(t) + " days left")),
+      h("button", { class: "sm akorg-line", onClick: function () { restoreTrash(t); toast("Restored."); redraw(); } }, "Restore")));
+  });
+  if (items.length) box.appendChild(h("div", { class: "row", style: "margin:8px 0 0;justify-content:flex-end" }, holdButton("Hold to empty the Trash", function () { lib().trash = []; save(); redraw(); toast("Trash emptied."); })));
+  return box;
+}
+openTrash = function () {
+  var body = h("div"), draw = function () { body.textContent = ""; body.appendChild(akOrgTrashBox(draw)); };
+  draw(); modal("🗑 Trash", body, [{ label: "Done", onClick: function () { setTimeout(render, 0); } }], { wide: true });
+};
+/* ---------------------------------------------------------------- C: the same ⋯ menu, and the picked bar */
+function akOrgColorAsk(items, done) {
+  var row = h("div", { class: "akorg-cols" }, AKORG_COLS.concat([""]).map(function (c) {
+    return h("button", { type: "button", class: "akorg-col" + (c ? "" : " none"), style: c ? "background:" + c : "", "aria-label": c ? "Color " + c : "No color", onClick: function () { items.forEach(function (it) { it.obj.color = c; }); save(); close(); done && done(); } }, c ? "" : "✕");
+  }));
+  var close = modal("Color tag", h("div", null, h("p", { class: "hint" }, "A color shows as a line beside the item everywhere."), row), [{ label: "Cancel" }]);
+}
+function akOrgMoveAsk(items, done) {
+  var o = akOrg(), keys = items.map(function (it) { return it.key; });
+  var acts = o.folders.map(function (f) { return { label: "📁 " + f.name, onClick: function () { keys.forEach(function (k) { if (f.items.indexOf(k) < 0) f.items.push(k); }); save(); toast("Added to “" + f.name + "”."); done && done(); } }; });
+  acts.push({ label: "＋ New folder…", onClick: function () { askText("New folder", "", "Create", function (v) { o.folders.push({ id: uid(), name: v, items: keys.slice() }); save(); toast("Folder “" + v + "” made."); done && done(); }); } });
+  if (o.folders.some(function (f) { return keys.some(function (k) { return f.items.indexOf(k) >= 0; }); })) acts.push({ sep: true }, { label: "Take out of its folders", onClick: function () { o.folders.forEach(function (f) { f.items = f.items.filter(function (k) { return keys.indexOf(k) < 0; }); }); save(); done && done(); } });
+  return acts;
+}
+function akOrgPin(items, done) {
+  var o = akOrg(), all = items.every(function (it) { return o.pins.indexOf(it.key) >= 0; });
+  items.forEach(function (it) { o.pins = o.pins.filter(function (k) { return k !== it.key; }); if (!all) o.pins.unshift(it.key); });
+  save(); toast(all ? "Unpinned." : "📌 Pinned to the top of Files."); done && done();
+}
+function akOrgMenu(anchor, it, redraw) {
+  var o = akOrg(), pinned = o.pins.indexOf(it.key) >= 0;
+  menu(anchor, [
+    { label: "Open", onClick: function () { akOrgOpen(it); } },
+    { label: "Rename…", onClick: function () { akOrgRename(it, redraw); } },
+    { label: "Duplicate", onClick: function () { akOrgDup(it); redraw(); } },
+    { label: "Move to folder ▸", onClick: function () { setTimeout(function () { menu(anchor, akOrgMoveAsk([it], redraw)); }, 0); } },
+    { label: "Color tag…", onClick: function () { akOrgColorAsk([it], redraw); } },
+    { label: pinned ? "Unpin" : "📌 Pin", onClick: function () { akOrgPin([it], redraw); } },
+    { sep: true },
+    { label: "🗑 Move to Trash", danger: true, onClick: function () { akOrgTrash([it]); redraw(); } }
+  ]);
+}
+/* ---------------------------------------------------------------- A + D: the Files screen */
+function akOrgMatch(it, q) {
+  if (!q) return true; var t = (it.name + " " + (it.sub || "") + " " + (it.text || "")).toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(function (w) { return t.indexOf(w) >= 0; });
+}
+function akOrgSmart() {
+  var t = typeof akTodayKey === "function" ? akTodayKey() : new Date().toISOString().slice(0, 10), mo = t.slice(0, 7), ago = Date.now() - 90 * 86400000;
+  var out = [
+    { id: "old", name: "Not played in 3 months", test: function (it) { return it.kind === "song" && it.obj.active !== false && (it.obj.lastPlayed || 0) < ago; } },
+    { id: "unpaid", name: "Unpaid shows", test: function (it) { return it.kind === "gig" && it.date && it.date < t && !it.obj.paid && Number(it.obj.pay) > 0; } },
+    { id: "month", name: "Shows this month", test: function (it) { return it.kind === "gig" && (it.date || "").slice(0, 7) === mo; } }
+  ];
+  akOrg().smart.forEach(function (s) { out.push({ id: s.id, name: s.name, q: s.q, own: s, test: function (it) { return akOrgMatch(it, s.q); } }); });
+  return out;
+}
+function viewFiles() {
+  var cfg = settings(), body = h("div", { class: "akorg" }), all = [];
+  if (!cfg.files || typeof cfg.files !== "object") cfg.files = { view: "list", kind: "", sort: "name", open: {} };
+  var F = cfg.files; F.open = F.open || {};
+  var q = h("input", { type: "search", class: "akorg-q", placeholder: "Search songs, setlists, shows, designs, settings", "aria-label": "Search everything", value: S.orgQ || "", onInput: function () { S.orgQ = this.value; fill(); } });
+  function pickOn() { return !!AKORG.pick; }
+  function sect(key, title, kids, extra) {
+    var d = h("details", { class: "akorg-sec", open: F.open[key] === undefined ? (key !== "trash" && key !== "smart") : !!F.open[key] });
+    d.addEventListener("toggle", function () { F.open[key] = d.open; save(); });
+    d.appendChild(h("summary", null, h("span", { class: "grow" }, title), extra || null));
+    kids.forEach(function (k) { if (k) d.appendChild(k); });
+    return d;
+  }
+  function row(it) {
+    var picked = AKORG.pick && AKORG.pick[it.key], tm = null, moved = false;
+    var main = h("button", { class: "akorg-main", onClick: function () { if (AKORG.hold) { AKORG.hold = 0; return; } if (pickOn()) { if (AKORG.pick[it.key]) delete AKORG.pick[it.key]; else AKORG.pick[it.key] = it; if (!Object.keys(AKORG.pick).length) AKORG.pick = null; fill(); } else akOrgOpen(it); } },
+      F.view === "grid" ? (it.thumb ? h("img", { class: "akorg-th", src: it.thumb, alt: "" }) : h("span", { class: "akorg-big" }, it.icon)) : h("span", { class: "akorg-ic" }, pickOn() ? (picked ? "☑" : "☐") : it.icon),
+      h("span", { class: "akorg-tx" }, h("span", { class: "akorg-nm" }, it.name), h("span", { class: "akorg-sub" }, it.sub || " ")));
+    main.addEventListener("pointerdown", function () { moved = false; tm = setTimeout(function () { if (moved) return; AKORG.hold = 1; AKORG.pick = AKORG.pick || {}; AKORG.pick[it.key] = it; try { navigator.vibrate && navigator.vibrate(15); } catch (e) {} fill(); }, 520); });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(function (ev) { main.addEventListener(ev, function () { clearTimeout(tm); }); });
+    main.addEventListener("pointermove", function () { moved = true; });
+    return h("div", { class: "akorg-row" + (picked ? " on" : ""), style: it.color ? "border-left-color:" + it.color : "" }, main,
+      pickOn() ? null : h("button", { class: "akorg-dots", "aria-label": "More for " + it.name, title: "More", onClick: function () { akOrgMenu(this, it, fill); } }, "⋯"));
+  }
+  function listOf(items, max) {
+    var wrap = h("div", { class: F.view === "grid" ? "akorg-grid" : "akorg-list" }), shown = max ? items.slice(0, max) : items;
+    shown.forEach(function (it) { wrap.appendChild(row(it)); });
+    if (!items.length) wrap.appendChild(h("p", { class: "hint" }, "Nothing here yet."));
+    if (max && items.length > max) wrap.appendChild(h("button", { class: "sm akorg-line", onClick: function () { F.more = (F.more || 0) + 1; fill(); } }, "Show all " + items.length));
+    return wrap;
+  }
+  function sorted(items) {
+    var s = F.sort || "name";
+    return items.slice().sort(function (a, b) {
+      if (s === "kind") return a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      if (s === "date") return (b.date || "").localeCompare(a.date || "") || a.name.localeCompare(b.name);
+      return titleKey(a.name).localeCompare(titleKey(b.name), undefined, { sensitivity: "base" });
+    });
+  }
+  function bar() {
+    if (!pickOn()) return null;
+    var ks = Object.keys(AKORG.pick), items = ks.map(function (k) { return AKORG.pick[k]; }), done = function () { AKORG.pick = null; fill(); };
+    return h("div", { class: "akorg-pickbar" },
+      h("button", { class: "akorg-x", "aria-label": "Stop picking", onClick: done }, "✕"), h("strong", { class: "grow" }, ks.length + " picked"),
+      h("button", { class: "sm akorg-line", onClick: function () { menu(this, akOrgMoveAsk(items, done)); } }, "Move"),
+      h("button", { class: "sm akorg-line", onClick: function () { akOrgColorAsk(items, done); } }, "Color"),
+      h("button", { class: "sm akorg-line", onClick: function () { akOrgPin(items, done); } }, "Pin"),
+      h("button", { class: "sm akorg-line danger", onClick: function () { akOrgTrash(items); done(); } }, "Trash"));
+  }
+  function fill() {
+    var sc = $("mainScroll"), keep = sc ? sc.scrollTop : 0;
+    body.textContent = ""; all = akOrgAll();
+    var byKey = {}; all.forEach(function (it) { byKey[it.key] = it; });
+    if (AKORG.pick) Object.keys(AKORG.pick).forEach(function (k) { if (!byKey[k]) delete AKORG.pick[k]; else AKORG.pick[k] = byKey[k]; });
+    var pb = bar(); if (pb) body.appendChild(pb);
+    /* top row: search, then kind / sort / view in one row */
+    body.appendChild(h("div", { class: "akorg-top" }, q));
+    var kindSel = h("select", { "aria-label": "Show", onChange: function () { F.kind = this.value; save(); fill(); } }, AKORG_KINDS.map(function (k) { return h("option", { value: k[0], selected: (F.kind || "") === k[0] }, k[1]); }));
+    var sortSel = h("select", { "aria-label": "Sort by", onChange: function () { F.sort = this.value; save(); fill(); } }, [["name", "A to Z"], ["kind", "By kind"], ["date", "Newest date"]].map(function (k) { return h("option", { value: k[0], selected: (F.sort || "name") === k[0] }, k[1]); }));
+    var vw = h("div", { class: "akorg-seg", role: "group", "aria-label": "List or grid" }, [["list", "☰ List"], ["grid", "▦ Grid"]].map(function (v) { return h("button", { type: "button", class: "akorg-sb" + (F.view === v[0] ? " on" : ""), "aria-pressed": F.view === v[0] ? "true" : "false", onClick: function () { F.view = v[0]; save(); fill(); } }, v[1]); }));
+    body.appendChild(h("div", { class: "akorg-opts" }, kindSel, sortSel, vw));
+    var Q = (S.orgQ || "").trim(), kindOk = function (it) { return !F.kind || it.kind === F.kind; };
+    if (Q) {
+      /* D: one search for everything */
+      var hits = sorted(all.filter(function (it) { return kindOk(it) && akOrgMatch(it, Q); }));
+      var nameHits = hits.filter(function (it) { return it.name.toLowerCase().indexOf(Q.toLowerCase()) >= 0; }), other = hits.filter(function (it) { return nameHits.indexOf(it) < 0; });
+      var help = (typeof AK_HELP_WHERE !== "undefined" ? AK_HELP_WHERE : []).filter(function (e) { var t = ((e.t || "") + " " + (e.k || "")).toLowerCase(); return Q.toLowerCase().split(/\s+/).every(function (w) { return t.indexOf(w) >= 0; }); }).slice(0, 6);
+      body.appendChild(h("div", { class: "akorg-res" }, h("div", { class: "akorg-h" }, hits.length + (hits.length === 1 ? " match" : " matches")), listOf(nameHits.concat(other))));
+      if (help.length) body.appendChild(h("div", { class: "akorg-res" }, h("div", { class: "akorg-h" }, "⚙ Settings and where things are"), h("div", { class: "akorg-list" }, help.map(function (e) {
+        return h("div", { class: "akorg-row" }, h("button", { class: "akorg-main", onClick: function () { var a = typeof e.a === "function" ? e.a() : e.a; modal(e.t, h("p", null, a), [{ label: "Got it", primary: true }]); } }, h("span", { class: "akorg-ic" }, "⚙"), h("span", { class: "akorg-tx" }, h("span", { class: "akorg-nm" }, e.t))));
+      }))));
+      body.appendChild(h("div", { class: "row", style: "margin:6px 0" }, h("button", { class: "sm akorg-line", onClick: function () { askText("Name this smart folder", Q, "Save", function (v) { akOrg().smart.push({ id: uid(), name: v, q: Q }); F.open.smart = true; save(); toast("Saved under ✦ Smart folders. It fills itself."); fill(); }); } }, "✦ Save this search as a smart folder")));
+    } else {
+      var o = akOrg();
+      var pins = o.pins.map(function (k) { return byKey[k]; }).filter(Boolean).filter(kindOk);
+      body.appendChild(sect("pins", "📌 Pinned (" + pins.length + ")", [pins.length ? listOf(pins) : h("p", { class: "hint" }, "Pin anything from its ⋯ menu to keep it here.")]));
+      var rec = o.recent.map(function (r) { return byKey[r.k]; }).filter(Boolean).filter(kindOk).slice(0, 8);
+      body.appendChild(sect("recent", "🕘 Recent", [rec.length ? listOf(rec) : h("p", { class: "hint" }, "What you open from here shows up here.")]));
+      var fk = o.folders.map(function (f) {
+        var its = f.items.map(function (k) { return byKey[k]; }).filter(Boolean).filter(kindOk);
+        var d = h("details", { class: "akorg-fold", open: !!(F.fopen || {})[f.id] }, h("summary", null, h("span", { class: "grow" }, "📁 " + f.name + " (" + its.length + ")"),
+          h("button", { class: "akorg-dots", "aria-label": "Folder options", onClick: function (e) { e.preventDefault(); menu(this, [{ label: "Rename…", onClick: function () { askText("Rename folder", f.name, "Rename", function (v) { f.name = v; save(); fill(); }); } }, { label: "Delete the folder (keeps what's in it)", danger: true, onClick: function () { o.folders = o.folders.filter(function (x) { return x !== f; }); save(); fill(); } }]); } }, "⋯")), listOf(its));
+        d.addEventListener("toggle", function () { F.fopen = F.fopen || {}; F.fopen[f.id] = d.open; save(); });
+        return d;
+      });
+      fk.push(h("button", { class: "sm akorg-line", onClick: function () { askText("New folder", "", "Create", function (v) { o.folders.push({ id: uid(), name: v, items: [] }); save(); fill(); }); } }, "＋ New folder"));
+      body.appendChild(sect("folders", "📁 Folders (" + o.folders.length + ")", fk));
+      var sm = akOrgSmart().map(function (s) {
+        var its = sorted(all.filter(function (it) { return kindOk(it) && s.test(it); }));
+        var d = h("details", { class: "akorg-fold", open: !!(F.sopen || {})[s.id] }, h("summary", null, h("span", { class: "grow" }, "✦ " + s.name + " (" + its.length + ")"),
+          s.own ? h("button", { class: "akorg-dots", "aria-label": "Smart folder options", onClick: function (e) { e.preventDefault(); menu(this, [{ label: "Delete this smart folder", danger: true, onClick: function () { o.smart = o.smart.filter(function (x) { return x !== s.own; }); save(); fill(); } }]); } }, "⋯") : null), listOf(its, 30));
+        d.addEventListener("toggle", function () { F.sopen = F.sopen || {}; F.sopen[s.id] = d.open; save(); });
+        return d;
+      });
+      sm.push(h("p", { class: "hint" }, "They fill themselves. Type a search above and tap ✦ Save to add your own."));
+      body.appendChild(sect("smart", "✦ Smart folders", sm));
+      var every = sorted(all.filter(kindOk));
+      body.appendChild(sect("all", "All (" + every.length + ")", [listOf(every, F.more ? 0 : 60)]));
+      body.appendChild(sect("trash", "🗑 Trash (" + (lib().trash || []).length + ")", [akOrgTrashBox(fill)]));
+      body.appendChild(h("p", { class: "hint" }, "Press and hold a row to pick several. ⋯ on any row: open, rename, copy, folder, color, pin, Trash."));
+    }
+    if (sc) sc.scrollTop = keep;
+  }
+  fill();
+  setTimeout(function () { if (S.orgFocus) { S.orgFocus = false; try { q.focus(); } catch (e) {} } }, 60);
+  return shell("Files", body);
+}
+AK_VIEWS.files = viewFiles; AK_VIEW_TAB.files = "files";
+function akOrgGoFiles(search) { S.orgFocus = !!search; if (search) S.orgQ = ""; go("files"); }
+/* remember what was opened anywhere (Recent) */
+(function () {
+  var g0 = go;
+  go = function (view, params) {
+    try { params = params || {}; if (view === "song" && params.songId) akOrgRecent("song:" + params.songId); else if (view === "show" && params.showId) akOrgRecent("set:" + params.showId); else if (view === "gig" && params.gigId) akOrgRecent("gig:" + params.gigId); } catch (e) {}
+    return g0.apply(this, arguments);
+  };
+  if (typeof akGfxDraftOpen === "function") { var d0 = akGfxDraftOpen; akGfxDraftOpen = function (dr) { try { akOrgRecent("design:" + dr.id); } catch (e) {} return d0.apply(this, arguments); }; }
+})();
+/* the way in: bottom bar ⋯ More (phone), a 📁 Files tab button (wide screens) */
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) {
+    var bar = tb.apply(this, arguments);
+    try {
+      var more = bar.querySelector(".ak8-more"), leave = function (fn) { if (o && o.leave) o.leave(fn); else fn(); };
+      var extra = [{ label: "📁 Files", onClick: function () { leave(function () { akOrgGoFiles(false); }); } }, { label: "🔍 Search everything", onClick: function () { leave(function () { akOrgGoFiles(true); }); } }, { label: "🗑 Trash", onClick: function () { openTrash(); } }, { sep: true }];
+      if (more) more.addEventListener("click", function () { var m0 = menu; menu = function (a, items) { menu = m0; return m0(a, extra.concat(items)); }; setTimeout(function () { menu = m0; }, 0); }, true);
+      else if (!bar.querySelector(".akorg-tab")) {
+        var b = h("button", { class: "akorg-tab", "aria-current": S.view === "files" ? "page" : null, onClick: function () { leave(function () { akOrgGoFiles(false); }); } }, h("span", { class: "ic" }, "📁"), "Files");
+        var bk = bar.querySelector(".akbtab"); if (bk) bar.insertBefore(b, bk); else bar.appendChild(b);
+      }
+      if (more && S.view === "files") more.setAttribute("aria-current", "page");
+    } catch (e) {}
+    return bar;
+  };
+})();
+/* ---------------------------------------------------------------- B: everything for one show, in one row on its page */
+function akOrgGigStrip(g) {
+  var lists = (g.setlists || []).map(findShow).filter(Boolean), des = akOrgDrafts().filter(function (d) { return d.d && d.d.gigId === g.id; });
+  var rem = []; try { rem = akRmList().filter(function (r) { return r.key.indexOf(g.id) >= 0; }); } catch (e) {}
+  var m = {}; try { m = akGigMoney(g) || {}; } catch (e) {}
+  function jump(bk) { return function () { var el = document.querySelector('.akgig9 [data-bk="' + bk + '"]') || document.querySelector('[data-bk="' + bk + '"]'); if (!el) { toast("That box is folded away or hidden. Look further down."); return; } if (el.tagName === "DETAILS") el.open = true; var d = el.querySelector("details"); if (d) d.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }; }
+  function cell(n, lab, fn) { return h("button", { class: "akorg-cell", onClick: fn }, h("b", null, String(n)), h("span", null, lab)); }
+  return h("div", { class: "akorg-strip", "aria-label": "Everything for this show" },
+    cell(lists.length, lists.length === 1 ? "Setlist" : "Setlists", jump("setlists")),
+    cell(des.length, des.length === 1 ? "Design" : "Designs", function () { if (!des.length) { jump("gfxgrp")(); return; } menu(this, des.map(function (d) { return { label: "🎨 " + (d.name || "Design"), onClick: function () { akOrgOpen(akOrgItem("design", d)); } }; })); }),
+    cell(rem.length, rem.length === 1 ? "Reminder" : "Reminders", function () { if (!rem.length) { toast("Nothing due for this show."); return; } menu(this, rem.map(function (r) { return { label: r.ic + " " + r.txt, onClick: function () { try { (r.acts && r.acts[0] && r.acts[0].run) ? r.acts[0].run() : null; } catch (e) {} } }; })); }),
+    cell(g.paid ? "✓" : (Number(g.pay) > 0 ? "$" + Math.round(Number(g.pay)) : "–"), g.paid ? "Paid" : "Pay", jump("money")));
+}
+(function () {
+  if (typeof viewGig !== "function") return;
+  var vg = viewGig;
+  viewGig = function () {
+    var root = vg.apply(this, arguments);
+    try {
+      var g = akGig(S.gigId), body = g && root.querySelector(".akgig9");
+      if (g && body && body.parentNode && !root.querySelector(".akorg-strip")) body.parentNode.insertBefore(akOrgGigStrip(g), body);
+    } catch (e) {}
+    return root;
+  };
+  try { if (typeof AK_VIEWS === "object" && AK_VIEWS.gig) AK_VIEWS.gig = viewGig; } catch (e) {}
+})();
+akCss("akorg", ".akorg-top{margin:4px 0 6px}.akorg-q{width:100%;box-sizing:border-box;min-height:42px;border-radius:2px}" +
+  ".akorg-opts{display:flex;gap:6px;align-items:center;margin:0 0 8px}.akorg-opts select{flex:1 1 0;min-width:0;border-radius:2px}" +
+  ".akorg-seg{display:flex;border:1px solid rgba(127,127,127,.45);border-radius:2px;overflow:hidden;flex:0 0 auto}.akorg-sb{border:0;border-radius:0;background:transparent;padding:6px 10px;min-height:36px;font-size:13px}" +
+  ".akorg-sb+.akorg-sb{border-left:1px solid rgba(127,127,127,.45)}.akorg-sb.on{background:rgba(200,150,46,.22);font-weight:600}" +
+  ".akorg-sec,.akorg-fold{border:1px solid rgba(127,127,127,.3);border-radius:2px;margin:6px 0;padding:0 8px}.akorg-sec>summary,.akorg-fold>summary{display:flex;align-items:center;gap:6px;min-height:40px;cursor:pointer;font-weight:600}" +
+  ".akorg-fold{margin:4px 0 6px}.akorg-fold>summary{font-weight:500;min-height:36px}" +
+  ".akorg-list{display:flex;flex-direction:column;gap:3px;margin:2px 0 8px}.akorg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;margin:2px 0 8px}" +
+  ".akorg-row{display:flex;align-items:stretch;border:1px solid rgba(127,127,127,.25);border-left:3px solid transparent;border-radius:2px;background:rgba(127,127,127,.06)}.akorg-row.on{background:rgba(200,150,46,.18);border-color:rgba(200,150,46,.6)}" +
+  ".akorg-main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:0;text-align:left;padding:8px 10px;min-height:46px;color:inherit;-webkit-user-select:none;user-select:none}" +
+  ".akorg-grid .akorg-main{flex-direction:column;align-items:flex-start;gap:6px}.akorg-th{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:2px}.akorg-big{font-size:28px;opacity:.8}" +
+  ".akorg-ic{width:1.4em;text-align:center;opacity:.85}.akorg-tx{display:flex;flex-direction:column;min-width:0}.akorg-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.akorg-sub{font-size:12px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+  ".akorg-dots{background:transparent;border:0;border-left:1px solid rgba(127,127,127,.2);border-radius:0;min-width:42px;font-size:18px}" +
+  ".akorg-line{border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5)}" +
+  ".akorg-pickbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:6px;padding:6px 8px;margin:0 0 6px;border:1px solid rgba(200,150,46,.7);border-radius:2px;background:var(--bg,#141018)}.akorg-x{background:transparent;border:0;min-width:40px;font-size:18px}" +
+  ".akorg-h{font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.7;margin:8px 0 4px}" +
+  ".akorg-cols{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.akorg-col{width:40px;height:40px;border-radius:2px;border:1px solid rgba(127,127,127,.5)}.akorg-col.none{background:transparent}" +
+  ".akorg-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 0 8px;border:1px solid rgba(127,127,127,.35);border-radius:2px;overflow:hidden}" +
+  ".akorg-cell{display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 2px;background:transparent;border:0;border-radius:0;min-height:48px}.akorg-cell+.akorg-cell{border-left:1px solid rgba(127,127,127,.3)}.akorg-cell b{font-size:16px;color:var(--accent,#C8962E)}.akorg-cell span{font-size:12px;opacity:.8}" +
+  ".akorg-trash .akorg-row{align-items:center;padding-right:6px}.akorg-trash .akorg-ic{padding-left:8px}.akorg-trash .akorg-tx{flex:1 1 auto;padding:6px 8px}");
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Files: everything in one place (songs, setlists, shows, designs), folders, list or grid", a: "Bottom bar ⋯ More › 📁 Files (a 📁 Files button on a tablet). Pick what to show and how to sort in the row under the search. 📁 Folders: ＋ New folder, then ⋯ › Move to folder on any item.", k: "files folders organize organise hub library grid list" },
+  { t: "Search everything", a: "⋯ More › 🔍 Search everything (or the box at the top of 📁 Files). It finds songs (title, artist, tags, words), setlists, shows, designs and settings. ✦ Save this search makes it a smart folder.", k: "search find everything global look up" },
+  { t: "Pin, color tag, rename, copy or trash anything (the same ⋯ menu)", a: "📁 Files › ⋯ on any row: Open, Rename, Duplicate, Move to folder, Color tag, 📌 Pin, 🗑 Move to Trash. Press and hold a row to pick several; the bar on top moves, colors, pins or trashes them all.", k: "pin color tag rename duplicate copy select several multi select hold" },
+  { t: "Smart folders (not played in 3 months, unpaid shows…)", a: "📁 Files › ✦ Smart folders. They fill themselves; save any search as your own.", k: "smart folders not played unpaid this month saved search" },
+  { t: "Trash: get back a deleted song, setlist, show or design", a: "⋯ More › 🗑 Trash (also at the bottom of 📁 Files, and Settings › Libraries › Recently deleted). Everything stays 30 days; Restore puts it back.", k: "trash recently deleted restore undelete bin recycle" },
+  { t: "A show's page: setlists, designs, reminders and pay at a glance", a: "Open a show: the row on top counts its setlists, designs made for it, reminders due and pay. Tap one to jump to it.", k: "show page gig summary everything for this show designs reminders" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+AK_WHATS_NEW = [
+  "📁 Files: everything in one place (songs, setlists, shows, designs), with folders, color tags, list or grid, and one search box that finds everything (settings too). ⋯ More › 📁 Files.",
+  "⋯ The same menu on every item in Files: open, rename, copy, move to a folder, color, 📌 pin, Trash. Press and hold to pick several. 📌 Pinned and 🕘 Recent sit at the top; ✦ smart folders fill themselves (not played in 3 months, unpaid shows).",
+  "🗑 One Trash for everything: deleted shows and designs now stay 30 days too, next to songs and setlists. ⋯ More › 🗑 Trash.",
+  "🎤 A show's page has a row on top with its setlists, designs, reminders and pay; tap one to jump there."
+].concat(AK_WHATS_NEW || []);
+
+/* ================= 19.4: 🔐 Connections file (Settings › Data and extras). One small file, locked with a passphrase he picks
+   (PBKDF2 250 000 rounds + AES-GCM, WebCrypto), that carries every outside connection to a new install or a new test APK:
+   GitHub token + repo, YouTube key, cloud backup keys and sign-ins (Google client ID, Dropbox key and token), Google Calendar
+   client ID / key, the requests Firebase settings and performer email (and, only if he types it, the password, so the new
+   install signs in by itself), device link codes and this device's name. Never in normal backups or sync, never uploaded.
+   The recorded guitar is not in it (too big); it moves with ⇪ Export in Settings › Chord sound. */
+var AKCN_LS = [["chordbook:gh", "GitHub token"], ["akyt:key", "YouTube key"], ["akcloud:tok", "Cloud backup sign-ins"], ["akrr:link", "Device link codes"], ["akrr:auto", "Device link: start by itself"], ["akdev:name", "This device's name"]];
+function akCnB64(u8) { var s = ""; for (var i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function akCnUnB64(s) { var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+function akCnKey(pass, salt) {
+  var enc = new TextEncoder();
+  return crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]).then(function (k) {
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt, iterations: 250000, hash: "SHA-256" }, k, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  });
+}
+function akCnCollect(pw) {
+  var s = settings(), out = { ls: {}, s: {} }, lv = (typeof akLive === "function" ? akLive() : s.live) || {};
+  AKCN_LS.forEach(function (k) { try { var v = localStorage.getItem(k[0]); if (v) out.ls[k[0]] = v; } catch (e) {} });
+  if (s.github && (s.github.repo || s.github.path)) out.s.github = { repo: s.github.repo || "", path: s.github.path || "" };
+  if (s.cloud && (s.cloud.gid || s.cloud.dbx)) out.s.cloud = { gid: s.cloud.gid || "", dbx: s.cloud.dbx || "" };
+  if (s.cal && (s.cal.gClient || s.cal.key || s.cal.id)) out.s.cal = { gClient: s.cal.gClient || "", key: s.cal.key || "", id: s.cal.id || "" };
+  if (lv.fb && lv.fb.apiKey) out.s.live = { fb: clone(lv.fb), email: lv.email || "", mode: lv.mode || "" };
+  if (pw) out.pw = pw;
+  return out;
+}
+function akCnList(o) {
+  var L = [];
+  AKCN_LS.forEach(function (k) { if (o.ls[k[0]]) L.push(k[1]); });
+  if (o.s.github) L.push("GitHub backup place (" + (o.s.github.repo || "no repo") + ")");
+  if (o.s.cloud) { if (o.s.cloud.gid) L.push("Google Drive client ID"); if (o.s.cloud.dbx) L.push("Dropbox app key"); }
+  if (o.s.cal) { if (o.s.cal.gClient) L.push("Google Calendar client ID"); if (o.s.cal.key || o.s.cal.id) L.push("Calendar key and ID"); }
+  if (o.s.live) L.push("Requests Firebase settings" + (o.s.live.email ? " (" + o.s.live.email + ")" : ""));
+  if (o.pw) L.push("Performer password (signs in by itself)");
+  return L;
+}
+function akCnExport() {
+  var p1 = h("input", { type: "password", placeholder: "Passphrase (8 or more letters)", "aria-label": "Passphrase", autocomplete: "new-password" });
+  var p2 = h("input", { type: "password", placeholder: "Same passphrase again", "aria-label": "Passphrase again", autocomplete: "new-password" });
+  var lv = (typeof akLive === "function" ? akLive() : settings().live) || {}, pw = h("input", { type: "password", placeholder: "Performer password (optional)", "aria-label": "Performer password", autocomplete: "off" });
+  var have = akCnList(akCnCollect(""));
+  var msg = h("p", { class: "hint", role: "status" });
+  var body = h("div", { class: "akcn" },
+    h("p", { class: "hint" }, "One locked file with your connections, so a new install or test APK is set up in one step. Keep it somewhere private (Google Drive, your computer). Without the passphrase it can't be opened, and nobody can get it back if you forget it."),
+    have.length ? h("ul", { class: "akcn-ul" }, have.map(function (x) { return h("li", null, x); })) : h("p", { class: "hint" }, "Nothing is set up on this device yet."),
+    lv.fb && lv.fb.apiKey ? h("label", { class: "fld" }, "Performer password, so the new install signs in to requests by itself (leave empty to sign in by hand)", pw) : null,
+    h("label", { class: "fld" }, "Passphrase", p1), h("label", { class: "fld" }, "Again", p2), msg);
+  modal("🔐 Save my connections file", body, [{ label: "Cancel" }, { label: "Save the file", primary: true, onClick: function (close) {
+    var a = p1.value, b = p2.value;
+    if (a.length < 8) { msg.textContent = "Use at least 8 letters for the passphrase."; return false; }
+    if (a !== b) { msg.textContent = "The two passphrases don't match."; return false; }
+    if (!have.length && !pw.value) { msg.textContent = "There's nothing to save yet."; return false; }
+    msg.textContent = "Locking…";
+    var data = new TextEncoder().encode(JSON.stringify(akCnCollect(pw.value || ""))), salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    akCnKey(a, salt).then(function (k) { return crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, k, data); }).then(function (ct) {
+      var file = JSON.stringify({ app: "akashic-connections", v: 1, at: new Date().toISOString(), kdf: "PBKDF2-SHA256-250000", salt: akCnB64(salt), iv: akCnB64(iv), data: akCnB64(new Uint8Array(ct)) });
+      return saveFile("akashic-connections.json", file, "application/json");
+    }).then(function (ok) { if (ok !== false) { close(); toast("Connections file saved. Open it on the new install: Settings › Data and extras › 🔐 Connections file › Load."); } }, function (e) { msg.textContent = "Couldn't save it: " + ((e && e.message) || e); });
+    return false;
+  } }]);
+}
+function akCnApply(o) {
+  var s = settings(), n = 0;
+  Object.keys(o.ls || {}).forEach(function (k) { if (AKCN_LS.some(function (x) { return x[0] === k; })) { try { localStorage.setItem(k, o.ls[k]); n++; } catch (e) {} } });
+  if (o.s && o.s.github) { s.github = s.github || {}; s.github.repo = o.s.github.repo; s.github.path = o.s.github.path; n++; }
+  if (o.s && o.s.cloud) { var c = typeof akCloud === "function" ? akCloud() : (s.cloud = s.cloud || {}); if (o.s.cloud.gid) c.gid = o.s.cloud.gid; if (o.s.cloud.dbx) c.dbx = o.s.cloud.dbx; n++; }
+  if (o.s && o.s.cal) { var cal = typeof calSet === "function" ? calSet() : (s.cal = s.cal || {}); ["gClient", "key", "id"].forEach(function (k) { if (o.s.cal[k]) cal[k] = o.s.cal[k]; }); n++; }
+  if (o.s && o.s.live) { var L = typeof akLive === "function" ? akLive() : (s.live = s.live || {}); L.fb = clone(o.s.live.fb); if (o.s.live.email) L.email = o.s.live.email; if (o.s.live.mode) L.mode = o.s.live.mode; n++; }
+  save();
+  var signIn = o.pw && o.s && o.s.live && o.s.live.email && typeof akCloudSignIn === "function";
+  if (signIn) akCloudSignIn(o.s.live.email, o.pw, false).then(function () { toast("Signed in to your performer account."); render(); }, function (e) { toast("Connections loaded. Signing in to requests didn't work (" + ((e && e.message) || e) + "); sign in under Settings › Requests and tips."); });
+  try { if (typeof akLiveStart === "function" && o.s && o.s.live) akLiveStart(); } catch (e) {}
+  return n;
+}
+function akCnImport(file) {
+  var r = new FileReader();
+  r.onload = function () {
+    var j; try { j = JSON.parse(r.result); } catch (e) { toast("That isn't a connections file."); return; }
+    if (!j || j.app !== "akashic-connections" || !j.data) { toast("That isn't a connections file (it may be a library backup: use Restore for those)."); return; }
+    var p = h("input", { type: "password", placeholder: "Passphrase", "aria-label": "Passphrase", autocomplete: "current-password" }), msg = h("p", { class: "hint", role: "status" });
+    modal("🔐 Load my connections", h("div", { class: "akcn" }, h("p", { class: "hint" }, "Saved " + String(j.at || "").slice(0, 10) + ". Type the passphrase you picked. What's on this device is replaced by what's in the file."), h("label", { class: "fld" }, "Passphrase", p), msg),
+      [{ label: "Cancel" }, { label: "Load", primary: true, onClick: function (close) {
+        msg.textContent = "Unlocking…";
+        akCnKey(p.value, akCnUnB64(j.salt)).then(function (k) { return crypto.subtle.decrypt({ name: "AES-GCM", iv: akCnUnB64(j.iv) }, k, akCnUnB64(j.data)); }).then(function (pt) {
+          var o = JSON.parse(new TextDecoder().decode(pt)), names = akCnList(o); akCnApply(o); close(); render();
+          modal("Connections loaded", h("div", null, h("p", null, "Filled in on this device:"), h("ul", { class: "akcn-ul" }, names.map(function (x) { return h("li", null, x); }))), [{ label: "Done", primary: true }]);
+        }, function () { msg.textContent = "That passphrase doesn't open this file."; });
+        return false;
+      } }]);
+    setTimeout(function () { try { p.focus(); } catch (e) {} }, 40);
+  };
+  r.readAsText(file);
+}
+function akCnPick() { var i = h("input", { type: "file", accept: ".json,application/json,*/*", style: "display:none", onChange: function () { if (this.files && this.files[0]) akCnImport(this.files[0]); i.remove(); } }); document.body.appendChild(i); i.click(); }
+(function () {
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("🔐 Connections file", "GitHub token, Firebase, Google and Dropbox keys, link codes: fill in a new install in one step");
+      c.out.appendChild(h("div", { class: "akcn-row" },
+        h("button", { class: "sm akcn-b", onClick: akCnExport }, "⬇ Save file…"),
+        h("button", { class: "sm akcn-b", onClick: akCnPick }, "⬆ Load file…")));
+      c.out.appendChild(h("p", { class: "hint" }, "Locked with a passphrase you pick. Not part of backups or sync. Your recorded guitar isn't in it (move it with ⇪ Export under Settings › Chord sound)."));
+    } catch (e) {}
+  };
+})();
+akCss("akcn", ".akcn-row{display:flex;gap:6px;margin:4px 0}.akcn-b{flex:1 1 0;border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:40px}.akcn-ul{margin:4px 0 8px;padding-left:20px}.akcn-ul li{margin:2px 0}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Save my GitHub token, Firebase and other connections for a new install (connections file)", a: "Settings › Data and extras › 🔐 Connections file › ⬇ Save file… (pick a passphrase). On the new install or test APK: same place › ⬆ Load file… and type the passphrase: GitHub, requests Firebase (and the performer sign-in, if you saved the password), Google and Dropbox keys, calendar and device link codes are filled in.", k: "connections token github firebase keys autofill new phone new apk transfer passwords sign in credentials" });
+AK_WHATS_NEW = ["🔐 Connections file: Settings › Data and extras › 🔐 Connections file saves your GitHub token, requests Firebase settings (and sign-in), Google and Dropbox keys and link codes in one locked file. Load it on a new install or test APK and everything is filled in."].concat(AK_WHATS_NEW || []);
+/* ---------------------------------------------------------------- 19.4: 📝 Notepad bubble off by default (Settings › Songs and shows › Writing extras turns it on).
+   Once for existing installs: off, unless he moved the bubble somewhere (then he uses it, so it stays). */
+DEFAULTS.akPad = { bubble: false, play: true };
+akwrPad = function () { var s = settings(); if (!s.akPad) s.akPad = { bubble: false, play: true }; return s.akPad; };
+function akPadOffOnce() {
+  var st = store && store.settings; if (!st || st.mig19m) return;
+  st.mig19m = 1; var P = st.akPad; if (P && P.bubble !== false && P.x == null && P.y == null) P.bubble = false;
+}
+(function () {
+  var n0 = normalizeStore;
+  normalizeStore = function () { var out = n0.apply(this, arguments); try { akPadOffOnce(); } catch (e) {} return out; };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Floating notepad bubble on or off", a: "Settings › Songs and shows › Writing extras › 📝 Notepad bubble on every screen. It's off to start. The notepad still opens from the Write tab and the song menus.", k: "notepad bubble floating notes scratch pad" });
+AK_WHATS_NEW = ["📝 The floating notepad bubble is off to start. Turn it on in Settings › Songs and shows › Writing extras."].concat(AK_WHATS_NEW || []);
+
+/* ================= 19.4: 🧪 Test checklist. A list of features to try on a real phone, each with "Go ›" (opens the screen and
+   points at the control), then ✓ Works or ✗ Not working (with a note). Results: settings().akTest {id: {r: "ok"|"bad", at, dev, note}}
+   (they sync, so a check on the tablet shows on the phone). The What's new card gets "🧪 Test what's new (N)".
+   Personal edition and the /beta/, /fresh/, /testers/ copies only. EVERY NEW BUILD: push its features onto AKTC with its version
+   (id, v, area, t, how, go). go: [view, args, findText] or a function. */
+var AKTC = [];
+function akTcAdd(v, area, list) { list.forEach(function (x) { AKTC.push({ id: x[0], v: v, area: area, t: x[1], how: x[2], go: x[3] }); }); }
+function akTcOn() { try { return akPersonal() || /\/(beta|fresh|testers)\//.test(location.pathname); } catch (e) { return true; } }
+function akTcSong() { var L = lib().songs || []; var s = (S.songId && findSong && findSong(S.songId)) || L.filter(function (x) { return !x.sample; })[0] || L[0]; return s; }
+var AKTC_SONG = function () { var s = akTcSong(); if (!s) { toast("Add a song first."); return; } go("song", { songId: s.id }); };
+var AKTC_PLAY = function () { var s = akTcSong(); if (!s) { toast("Add a song first."); return; } startPlay([{ songId: s.id, setName: "Test", setNo: 1 }], 0, function () { go("testlist"); }); };
+var AKTC_GIG = function () { var g = (typeof akGigs === "function" ? akGigs() : [])[0]; if (!g) { go("shows"); toast("Make a show first (Shows › + New)."); return; } go("gig", { gigId: g.id }); };
+var AKTC_SET = function () { var s = (lib().shows || [])[0]; if (!s) { go("shows"); toast("Make a setlist first."); return; } go("show", { showId: s.id }); };
+var AKTC_FLY = ["gfx", { gfxKind: "flyer", gfxGig: "" }, ""];
+
+akTcAdd("19.4", "Graphics", [
+  ["fi-filters", "Filters", "Graphics › tap the photo › ✨ Effects › Filters: try Sketch, Halftone, Light leak (Direction slider).", AKTC_FLY],
+  ["cut-person", "Remove background (person)", "Tap a photo of a person › ⋯ More › ✂ Remove background › Use it. The guitar should stay.", AKTC_FLY],
+  ["cut-tap", "Remove background (tap to pick + brush)", "In the same window: 👆 Tap to pick, then 🖌 Keep / ⌫ Erase to touch up.", AKTC_FLY],
+  ["smart-layers", "Smart layers", "Tap a photo › ⋯ More › 🧩 Smart layers. Check Layers: background, person, words as text.", AKTC_FLY]]);
+akTcAdd("19.4", "Library", [
+  ["files", "📁 Files view", "⋯ More › 📁 Files: pinned, recent, folders, smart folders, list/grid.", ["files", {}, ""]],
+  ["files-search", "🔍 One search", "Type a song, show or design name, and a setting like \"trash\".", ["files", {}, "Search"]],
+  ["files-hold", "Hold to pick several", "In Files hold a row, pick more, then Move / Color / Pin / Trash.", ["files", {}, ""]],
+  ["trash", "🗑 30-day Trash", "Delete a show or a design, then bring it back from 🗑 Trash.", ["files", {}, "Trash"]],
+  ["gig-strip", "Show page strip", "A show's page: the row on top with Setlists, Designs, Reminders, Pay (tap each).", AKTC_GIG],
+  ["conn-file", "🔐 Connections file", "Save the file, then on another install (or the test APK) Load it and type the passphrase.", ["settings", {}, "Connections file"]],
+  ["pad-off", "Notepad bubble off to start", "No 📝 bubble on screens; Writing extras turns it on.", ["settings", {}, "Writing extras"]]]);
+akTcAdd("19.3", "Graphics", [
+  ["ly-toolbar", "Layers toolbar", "Graphics › Layers: ＋ New, ⧉, 🗑, 👁, 🔒, ↑ ↓, ⋯ (Group, Merge, Copy, Paste).", AKTC_FLY],
+  ["ly-stay", "Layers stay put", "Add an overlay and a color screen: nothing jumps in order.", AKTC_FLY],
+  ["fill", "🎨 Fill and gradients", "Tap a part › ✨ Effects › 🎨 Fill: solid, gradient, save a gradient.", AKTC_FLY],
+  ["dropper", "💧 Dropper and ⭐ saved colors", "Any color box: 💧 pick a color from the picture, ⭐ save it.", AKTC_FLY]]);
+akTcAdd("19.3", "App", [
+  ["setup-q", "🧭 Setup questions", "Settings › Look › Set up my app: try Simple and Advanced.", ["settings", {}, "Set up my app"]],
+  ["web-cal", "🗓 Website calendar", "Website calendar: Month / Week / Upcoming, tap a show for the map.", ["settings", {}, "calendar"]],
+  ["reminders", "🔔 Gig reminders", "A show's page: reminders row, snooze one, packing list.", AKTC_GIG]]);
+akTcAdd("19.2", "App", [
+  ["tips-i", "Small ⓘ tips", "Tap any small ⓘ: the tip opens; Settings › Tips and descriptions shows all.", ["settings", {}, "Tips"]],
+  ["msg-tpl", "Message templates dropdown", "💼 Business › ✉️ Messages: grouped dropdown, ‹ › to step.", ["msgs", {}, ""]],
+  ["learn-hidden", "Learn tab hidden", "No Learn tab; Settings › Tabs brings it back.", ["settings", {}, "Tabs"]]]);
+akTcAdd("19.1", "Band", [
+  ["band-sync", "🎸 Band sync", "Settings › Requests and tips › Band sync: share a show; open the link on a second phone; Follow jumps songs.", ["settings", {}, "Band sync"]]]);
+akTcAdd("19.0", "App", [
+  ["phone-rec", "Phone recorder page", "Open as the recording phone, record a song, check My recordings.", ["recs", {}, ""]],
+  ["merge-restore", "Restore with Merge", "Restore a backup with Merge: no doubled shows or pay.", ["settings", {}, "Restore"]],
+  ["storage-full", "Storage warning", "Only if you see it: a warning when the phone is full.", ["settings", {}, ""]]]);
+akTcAdd("18.9", "Business", [
+  ["clips", "🎬 Clip maker", "⋯ More › 🎬 Clips: pick a video, two parts, 9:16, make it, watch it.", ["clips", {}, ""]],
+  ["notepad", "📝 Floating notepad", "Turn the bubble on, tap it, type in This song and General, drag it.", ["settings", {}, "Writing extras"]]]);
+akTcAdd("17.x", "Playing", [
+  ["undo-hist", "↶ Undo and 🕘 Change history", "Delete a song, ↶ Undo; open the history and go back a step.", ["songs", {}, ""]],
+  ["group-by", "Group songs", "Songs: group by tag, key or first letter, as rows or tiles.", ["songs", {}, ""]],
+  ["autoscroll-wait", "Auto-scroll wait and count-in", "Play a song: ▶ Start song waits, counts in, then scrolls.", AKTC_PLAY],
+  ["start-end", "Start / End song button", "Playing screen recorder: one button lights while recording; Between songs choice.", AKTC_PLAY],
+  ["sync-msg", "GitHub sync message", "Sync: it says what came in and what went out.", ["settings", {}, "GitHub"]],
+  ["send-show", "Send a show", "Import › Send and receive: send a show to the other device.", ["settings", {}, "Send"]],
+  ["strums", "🎸 Strums from my notes", "Settings › Chord sound › Strums: play chords, try speed.", ["settings", {}, "Chord sound"]],
+  ["libraries", "Libraries", "Tap the library name: switch, duplicate, merge.", ["songs", {}, ""]],
+  ["testers", "Testers copy", "Open /testers/ with the code; send feedback.", ["settings", {}, "Testers"]]]);
+akTcAdd("17.x", "Graphics", [
+  ["gfx-undo", "Studio ↶ ↷", "Move a part, ↶ puts it back, ↷ again.", AKTC_FLY],
+  ["gfx-dice", "🎲 Randomize and 💡 Ideas", "🎲 a few times, ↶ back; 💡 tick what 🎲 keeps.", AKTC_FLY],
+  ["gfx-zoom", "Zoom and handles", "Pinch to zoom; drag corner handle to resize, round one to turn.", AKTC_FLY],
+  ["gfx-pdf", "Flyer PDF", "Save the flyer as PDF; the words should be real text.", AKTC_FLY],
+  ["tipsign", "Tip sign", "Graphics › Tip sign: QR codes scan on another phone.", ["graphics", {}, ""]]]);
+
+function akTc() { var s = settings(); if (!s.akTest || typeof s.akTest !== "object") s.akTest = {}; return s.akTest; }
+function akTcState(id) { var r = akTc()[id]; return r ? r.r : ""; }
+function akTcMark(id, r, note) {
+  var T = akTc(); if (!r) delete T[id]; else T[id] = { r: r, at: new Date().toISOString().slice(0, 10), dev: (function () { try { return localStorage.getItem("akdev:name") || ""; } catch (e) { return ""; } })(), note: note || "" };
+  save();
+}
+function akTcCounts(list) { var c = { todo: 0, ok: 0, bad: 0 }; list.forEach(function (x) { var r = akTcState(x.id); c[r === "ok" ? "ok" : r === "bad" ? "bad" : "todo"]++; }); return c; }
+function akTcNew() { return AKTC.filter(function (x) { return x.v === AK_VERSION; }); }
+function akTcBad(id, done) {
+  var it = AKTC.filter(function (x) { return x.id === id; })[0], ta = h("textarea", { rows: 3, placeholder: "What went wrong? (optional)", "aria-label": "What went wrong" });
+  var old = akTc()[id]; if (old && old.note) ta.value = old.note;
+  modal("✗ Not working: " + (it ? it.t : ""), h("div", null, ta), [{ label: "Cancel" }, { label: "Save", primary: true, onClick: function () { akTcMark(id, "bad", ta.value.trim()); done && done(); } }]);
+  setTimeout(function () { try { ta.focus(); } catch (e) {} }, 40);
+}
+/* point at the control once the screen is drawn */
+function akTcFind(txt) {
+  if (!txt) return;
+  var re = new RegExp(txt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), tries = 0;
+  (function look() {
+    var el = null, cands = document.querySelectorAll("#app summary, #app button, #app h2, #app h3, #app label, #app input[placeholder]");
+    for (var i = 0; i < cands.length; i++) { var c = cands[i], t = c.textContent || c.placeholder || ""; if (re.test(t)) { el = c; break; } }
+    if (!el && tries++ < 12) { setTimeout(look, 150); return; }
+    if (!el) return;
+    for (var p = el; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+    el.classList.add("aktc-flash"); setTimeout(function () { el.classList.remove("aktc-flash"); }, 2600);
+  })();
+}
+function akTcGo(it) {
+  S.akTcCur = it.id;
+  try { if (typeof it.go === "function") it.go(); else { go(it.go[0], it.go[1] || {}); setTimeout(function () { akTcFind(it.go[2]); }, 250); } } catch (e) { toast("Couldn't open that screen: " + ((e && e.message) || e)); }
+  setTimeout(akTcBar, 60);
+}
+/* the bar that rides along while testing one thing */
+function akTcBar() {
+  var old = document.querySelector(".aktc-bar"); if (old) old.remove();
+  var it = AKTC.filter(function (x) { return x.id === S.akTcCur; })[0]; if (!it) return;
+  var how = h("div", { class: "aktc-how" }, it.how);
+  var bar = h("div", { class: "aktc-bar", role: "region", "aria-label": "Testing" },
+    h("div", { class: "aktc-top" },
+      h("button", { class: "aktc-t", "aria-expanded": "true", onClick: function () { var o = how.style.display !== "none"; how.style.display = o ? "none" : ""; this.setAttribute("aria-expanded", o ? "false" : "true"); } }, "🧪 " + it.t),
+      h("button", { class: "aktc-ok", onClick: function () { akTcMark(it.id, "ok"); toast("✓ " + it.t + ": works"); akTcNext(it); } }, "✓ Works"),
+      h("button", { class: "aktc-no", onClick: function () { akTcBad(it.id, function () { akTcNext(it); }); } }, "✗ No"),
+      h("button", { class: "aktc-x", "aria-label": "Back to the test list", onClick: function () { S.akTcCur = ""; akTcBar(); go("testlist"); } }, "☰")),
+    how);
+  document.body.appendChild(bar);
+}
+function akTcNext(it) {
+  var L = (S.akTcOnly === "new" ? akTcNew() : AKTC), i = L.indexOf(it), nx = null;
+  for (var j = i + 1; j < L.length; j++) if (!akTcState(L[j].id)) { nx = L[j]; break; }
+  S.akTcCur = ""; akTcBar();
+  if (nx) modal("Next: " + nx.t, h("p", { class: "hint" }, nx.how), [{ label: "Back to the list", onClick: function () { go("testlist"); } }, { label: "Go ›", primary: true, onClick: function () { akTcGo(nx); } }]);
+  else go("testlist");
+}
+function akTcCopyBad() {
+  var T = akTc(), L = AKTC.filter(function (x) { return akTcState(x.id) === "bad"; });
+  if (!L.length) { toast("Nothing marked Not working."); return; }
+  var txt = "Not working (" + AK_VERSION + "):\n" + L.map(function (x) { var r = T[x.id]; return "- " + x.t + " [" + x.v + "]" + (r.note ? ": " + r.note : "") + (r.dev ? " (" + r.dev + ")" : ""); }).join("\n");
+  try { navigator.clipboard.writeText(txt).then(function () { toast("Copied. Paste it to Claude."); }, function () { modal("Not working list", h("textarea", { rows: 8, value: txt }), [{ label: "Done", primary: true }]); }); }
+  catch (e) { modal("Not working list", h("textarea", { rows: 8, value: txt }), [{ label: "Done", primary: true }]); }
+}
+function viewTestList() {
+  var f = S.akTcF || "todo", only = S.akTcOnly === "new";
+  var L = only ? akTcNew() : AKTC, c = akTcCounts(L);
+  var sel = h("select", { "aria-label": "Show", onChange: function () { S.akTcF = this.value; render(); } },
+    [["todo", "To test (" + c.todo + ")"], ["bad", "Not working (" + c.bad + ")"], ["ok", "Works (" + c.ok + ")"], ["all", "All (" + L.length + ")"]].map(function (o) { return h("option", { value: o[0], selected: f === o[0] ? "selected" : null }, o[1]); }));
+  var head = h("div", { class: "aktc-head" },
+    h("button", { class: "aktc-sw", "aria-pressed": only ? "true" : "false", onClick: function () { S.akTcOnly = only ? "" : "new"; render(); } }, only ? "New in " + AK_VERSION : "Everything"),
+    sel,
+    h("button", { class: "aktc-sw", onClick: akTcCopyBad, title: "Copy the Not working list to paste to Claude" }, "📋"));
+  var bar = h("div", { class: "aktc-prog", "aria-label": c.ok + " work, " + c.bad + " not working, " + c.todo + " to test" },
+    h("span", { class: "ok", style: "flex:" + c.ok }), h("span", { class: "bad", style: "flex:" + c.bad }), h("span", { class: "todo", style: "flex:" + c.todo }));
+  var groups = {}, order = [];
+  L.forEach(function (x) { var r = akTcState(x.id); if (f === "todo" && r) return; if (f === "ok" && r !== "ok") return; if (f === "bad" && r !== "bad") return; var k = x.v + " · " + x.area; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(x); });
+  var T = akTc();
+  var body = h("div", { class: "aktc" }, head, bar,
+    order.length ? null : h("p", { class: "hint" }, f === "todo" ? "All tested. Thank you!" : "Nothing here."),
+    order.map(function (k, gi) {
+      return h("details", { class: "aktc-g", open: gi < 3 ? "open" : null }, h("summary", null, k, h("span", { class: "muted" }, "  " + groups[k].length)),
+        groups[k].map(function (x) {
+          var r = akTcState(x.id), note = T[x.id] && T[x.id].note;
+          return h("div", { class: "aktc-row" + (r ? " is-" + r : "") },
+            h("button", { class: "aktc-box ok" + (r === "ok" ? " on" : ""), "aria-label": "Works: " + x.t, "aria-pressed": r === "ok" ? "true" : "false", onClick: function () { akTcMark(x.id, r === "ok" ? "" : "ok"); render(); } }, "✓"),
+            h("button", { class: "aktc-box bad" + (r === "bad" ? " on" : ""), "aria-label": "Not working: " + x.t, "aria-pressed": r === "bad" ? "true" : "false", onClick: function () { if (r === "bad") { akTcMark(x.id, ""); render(); } else akTcBad(x.id, render); } }, "✗"),
+            h("div", { class: "aktc-txt" }, h("b", null, x.t), h("small", null, note ? "✗ " + note : x.how)),
+            h("button", { class: "aktc-go", onClick: function () { akTcGo(x); } }, "Go ›"));
+        }));
+    }),
+    h("p", { class: "hint" }, "✓ = works, ✗ = not working (add a note). Go › opens the screen; a bar at the bottom lets you check it off there. Checks sync with your other devices."));
+  return shell("🧪 Test checklist", body);
+}
+AK_VIEWS.testlist = viewTestList; AK_VIEW_TAB.testlist = "settings";
+/* the bar stays only while you're testing; leaving to the list clears it */
+(function () {
+  var r0 = render;
+  render = function () { var out = r0.apply(this, arguments); try { if (S.view === "testlist" && S.akTcCur) S.akTcCur = ""; if (S.akTcCur) { if (!document.querySelector(".aktc-bar")) akTcBar(); } else { var b = document.querySelector(".aktc-bar"); if (b) b.remove(); } } catch (e) {} return out; };
+})();
+/* ways in: What's new card, ⋯ More, Settings */
+(function () {
+  var wn = akWhatsNewCard;
+  akWhatsNewCard = function () {
+    var card = wn.apply(this, arguments);
+    try {
+      if (card && akTcOn()) { var n = akTcNew().filter(function (x) { return !akTcState(x.id); }).length, sm = card.querySelector("summary");
+        if (n && sm) sm.appendChild(h("button", { class: "aktc-wn", onClick: function (e) { e.preventDefault(); e.stopPropagation(); S.akTcOnly = "new"; S.akTcF = "todo"; go("testlist"); } }, "🧪 Test what's new (" + n + ")")); }
+    } catch (e) {}
+    return card;
+  };
+  var tb = tabBarEl;
+  tabBarEl = function (o) {
+    var bar = tb.apply(this, arguments);
+    try {
+      var more = bar.querySelector(".ak8-more");
+      if (more && akTcOn()) more.addEventListener("click", function () { var m0 = menu; menu = function (a, items) { menu = m0; return m0(a, items.concat([{ sep: true }, { label: "🧪 Test checklist", onClick: function () { S.akTcOnly = ""; go("testlist"); } }])); }; setTimeout(function () { menu = m0; }, 0); }, true);
+    } catch (e) {}
+    return bar;
+  };
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      if (!akTcOn()) return;
+      c.again("data-and-extras");
+      var k = akTcCounts(AKTC);
+      c.section("🧪 Test checklist", k.todo + " to test, " + k.bad + " not working");
+      c.out.appendChild(h("div", { class: "akcn-row" }, h("button", { class: "sm akcn-b", onClick: function () { S.akTcOnly = ""; go("testlist"); } }, "🧪 Open the checklist"), h("button", { class: "sm akcn-b", onClick: akTcCopyBad }, "📋 Copy ✗ list")));
+    } catch (e) {}
+  };
+})();
+akCss("aktc", [
+  ".aktc-head{display:flex;gap:6px;align-items:center;margin:4px 0 6px}.aktc-head select{flex:1 1 auto;min-width:0;border-radius:2px}",
+  ".aktc-wn{display:block;margin:6px 0 2px;font-size:14px}.aktc-sw,.aktc-go,.aktc-wn,.aktc-bar button{border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:36px;padding:0 10px;white-space:nowrap}",
+  ".aktc-prog{display:flex;height:4px;margin:0 0 8px;background:rgba(127,127,127,.25)}.aktc-prog .ok{background:#3a9a5b}.aktc-prog .bad{background:#c94a4a}",
+  ".aktc-g{border-top:1px solid rgba(127,127,127,.3);padding:4px 0}.aktc-g>summary{font-weight:700;padding:6px 0;cursor:pointer}",
+  ".aktc-row{display:flex;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid rgba(127,127,127,.15)}",
+  ".aktc-box{width:30px;height:30px;min-width:30px;padding:0;border-radius:2px;border:1.5px solid rgba(127,127,127,.6);background:transparent;font-weight:800;font-size:16px;line-height:1}",
+  ".aktc-box:not(.on){opacity:.35}.aktc-box.ok:not(.on){color:#3a9a5b}.aktc-box.bad:not(.on){color:#c94a4a}.aktc-box.ok.on{background:#3a9a5b;border-color:#3a9a5b;color:#fff}.aktc-box.bad.on{background:#c94a4a;border-color:#c94a4a;color:#fff}",
+  ".aktc-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}.aktc-txt small{opacity:.7;font-size:12px;line-height:1.3}",
+  ".aktc-row.is-ok .aktc-txt b{opacity:.6}",
+  ".aktc-bar{position:fixed;left:0;right:0;bottom:calc(var(--tabh,56px) + env(safe-area-inset-bottom,0px));z-index:9000;background:var(--bg,#111);border-top:2px solid #e0a020;padding:6px 8px;box-shadow:0 -2px 10px rgba(0,0,0,.3)}",
+  ".aktc-top{display:flex;gap:6px;align-items:center}.aktc-t{flex:1 1 auto;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;font-weight:700;border:0!important}",
+  ".aktc-ok{color:#3a9a5b;border-color:#3a9a5b!important}.aktc-no{color:#c94a4a;border-color:#c94a4a!important}.aktc-how{font-size:13px;opacity:.85;padding:4px 2px 0}",
+  ".aktc-flash{outline:3px solid #e0a020!important;outline-offset:2px;transition:outline-color .3s}"].join(""));
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Test checklist: try new features and check them off", a: "What's new card › 🧪 Test what's new, or ⋯ More › 🧪 Test checklist, or Settings › Data and extras › 🧪 Test checklist. Go › opens the screen; tap ✓ Works or ✗ No (with a note). 📋 Copy ✗ copies the broken list to paste to Claude.", k: "test testing checklist check off works broken bugs try new features" });
+AK_WHATS_NEW = ["🧪 Test checklist: the What's new card has 🧪 Test what's new. Each feature has Go › to open its screen, then ✓ Works or ✗ Not working. Older features are in ⋯ More › 🧪 Test checklist."].concat(AK_WHATS_NEW || []);
+/* ---------------------------------------------------------------- 19.4: Settings › Look starts folded (his default, 11-03). Once per install,
+   unless Look was already opened or shut by hand. */
+function akLookFoldOnce() {
+  var st = store && store.settings; if (!st || st.mig19n) return;
+  st.mig19n = 1; st.akOpen = st.akOpen && typeof st.akOpen === "object" ? st.akOpen : {};
+  if (!("settings/look" in st.akOpen)) { st.akOpen["settings/look"] = false; if (S.layOpen && !("settings/look" in S.layOpen)) S.layOpen["settings/look"] = false; }
+}
+(function () {
+  var n0 = normalizeStore;
+  normalizeStore = function () { var out = n0.apply(this, arguments); try { akLookFoldOnce(); } catch (e) {} return out; };
+})();
+/* ---------------------------------------------------------------- 19.4: 📐 My defaults. He arranges pages with ⇅ (move, width, hide,
+   starts open/closed), folds what he wants folded, and adds "✎ Note for Claude" on any block (Arrange › ⋯). Then
+   Settings › Data and extras › 🧪 Test checklist › 📐 Send my layout to Claude copies (and saves) one file with all of it;
+   the next build bakes it into AK_LAYOUT_DEFAULTS / fold defaults for everyone. */
+function akDzNotes() { var s = settings(); if (!s.akDesignNotes || typeof s.akDesignNotes !== "object") s.akDesignNotes = {}; return s.akDesignNotes; }
+function akDzNote(key, title) {
+  var N = akDzNotes(), ta = h("textarea", { rows: 4, placeholder: "How you want it: smaller, next to …, folded, one row, a different name…", "aria-label": "Note for Claude" });
+  ta.value = (N[key] && N[key].note) || "";
+  modal("✎ Note for Claude: " + title, h("div", null, ta, h("p", { class: "hint" }, "Saved with your layout. 📐 Send my layout to Claude (Settings › Data and extras) sends every note at once.")),
+    [{ label: "Cancel" }, N[key] ? { label: "Delete note", danger: true, onClick: function () { delete N[key]; save(); toast("Note deleted."); } } : null, { label: "Save", primary: true, onClick: function () { var v = ta.value.trim(); if (v) N[key] = { note: v, title: title, page: S.view, at: new Date().toISOString().slice(0, 10) }; else delete N[key]; save(); toast(v ? "Note saved." : "Note deleted."); } }].filter(Boolean));
+  setTimeout(function () { try { ta.focus(); } catch (e) {} }, 40);
+}
+(function () {
+  if (typeof layChipMenu !== "function") return;
+  var cm = layChipMenu;
+  layChipMenu = function (c, cid, el, k, anchor) {
+    var key = cid + "/" + k, title = (typeof layTitle === "function" ? layTitle(el) : k).slice(0, 50), has = !!akDzNotes()[key];
+    var m0 = menu; menu = function (a, items) { menu = m0; return m0(a, [{ label: (has ? "✎ Edit note for Claude…" : "✎ Note for Claude…"), onClick: function () { akDzNote(key, title); } }, { sep: true }].concat(items)); };
+    try { return cm.apply(this, arguments); } finally { menu = m0; }
+  };
+})();
+function akDzExport() {
+  var s = settings(), N = akDzNotes();
+  var out = { app: "akashic-my-defaults", v: 1, ver: AK_VERSION, at: new Date().toISOString(), layout: clone(s.layout || {}), open: clone(s.akOpen || {}), folds: clone(s.akCol || {}), notes: clone(N),
+    look: { bshape: s.bshape, theme: s.theme, toolsLook: s.toolsLook, foldAllBtn: s.foldAllBtn } };
+  var txt = JSON.stringify(out, null, 1), n = Object.keys(N).length, nl = Object.keys(out.layout).length;
+  var summary = "My defaults (" + AK_VERSION + "): " + nl + " page" + (nl === 1 ? "" : "s") + " arranged, " + Object.keys(out.open).length + " + " + Object.keys(out.folds).length + " folds, " + n + " note" + (n === 1 ? "" : "s") + ".";
+  saveFile("akashic-my-defaults.json", txt, "application/json");
+  try { navigator.clipboard.writeText(summary + "\n" + txt).then(function () { toast("Copied and saved. Paste it to Claude, or attach the file."); }, function () {}); } catch (e) {}
+  return out;
+}
+(function () {
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      if (!akTcOn()) return;
+      c.again("data-and-extras");
+      c.section("📐 My defaults", "Arrange and fold pages how you want them, add notes, then send it to Claude to make it the default");
+      c.out.appendChild(h("div", { class: "akcn-row" },
+        h("button", { class: "sm akcn-b", onClick: function () { go("songs"); setTimeout(function () { try { layStart(); } catch (e) { toast("Tap ⇅ at the top of any page."); } }, 300); } }, "⇅ Start arranging"),
+        h("button", { class: "sm akcn-b", onClick: akDzExport }, "📐 Send my layout to Claude")));
+      c.out.appendChild(h("p", { class: "hint" }, "On any page tap ⇅, drag the ⠇⠇ handles, and tap ⋯ for width, hide, starts open or closed, and ✎ Note for Claude. Folding a section by hand counts too. " + Object.keys(akDzNotes()).length + " notes so far."));
+    } catch (e) {}
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Set how pages look by default (my defaults, notes for Claude)", a: "Tap ⇅ on any page: drag the handles, ⋯ for width, hide, starts open or closed and ✎ Note for Claude. Fold sections how you like. Then Settings › Data and extras › 📐 My defaults › 📐 Send my layout to Claude.", k: "default layout fold arrange design notes mock-up my defaults" });
+AK_WHATS_NEW = ["📐 My defaults: arrange and fold any page with ⇅, add ✎ Note for Claude on anything, then Settings › Data and extras › 📐 Send my layout to Claude to make it the app's default."].concat(AK_WHATS_NEW || []);
+akTcAdd("19.4", "App", [
+  ["look-folded", "Settings › Look starts folded", "Open Settings: Look is folded.", ["settings", {}, "Look"]],
+  ["my-defaults", "📐 My defaults", "Tap ⇅ on a page, ⋯ › ✎ Note for Claude, then Send my layout to Claude.", ["settings", {}, "My defaults"]],
+  ["test-list", "🧪 This checklist", "Go › and ✓ / ✗ work, and checks show on your other device after sync.", ["testlist", {}, ""]]]);
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
