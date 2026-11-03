@@ -48011,7 +48011,12 @@ copyMoveSelected = function () {
       h("option", { value: "merge" }, "Merge into my libraries with the same names"),
       h("option", { value: "replace" }, "Replace everything I have with the file"));
     how.addEventListener("change", function () { box.style.display = how.value === "merge" ? "" : "none"; });
+    /* 19.0a: a new install (only the sample songs, or none) restores the whole file by default; "Add" used to tuck the
+       backup into a second library while the sample library stayed on screen, so it looked like nothing happened */
+    var onlySamples = store.libs.every(function (l) { return (l.songs || []).every(akIsSample); });
+    if (onlySamples) how.value = "replace";
     modal("Restore backup", h("div", null,
+      onlySamples ? h("p", { class: "hint" }, "This app only has the sample songs, so “Replace everything” is picked.") : null,
       h("p", null, d.libs.length + (d.libs.length === 1 ? " library" : " libraries") + " with " + n + " songs in this file: " + d.libs.map(function (l) { return l.name || "Library"; }).join(", ") + "."),
       h("label", { class: "fld" }, "How", how), box,
       h("p", { class: "hint" }, "“Replace everything” swaps all your songs, shows and settings for the file's (you can undo it right after).")),
@@ -48026,13 +48031,16 @@ copyMoveSelected = function () {
           return;
         }
         snap("restore backup");
-        var msgs = [];
+        var msgs = [], firstNew = null, curWasSamples = (lib().songs || []).every(akIsSample);
         d.libs.forEach(function (l) {
           var c = clone(l), mine = how.value === "merge" ? store.libs.filter(function (x) { return normTitle(x.name) === normTitle(l.name || ""); })[0] : null;
           if (mine) { var r = akMergeLib(c, mine, songs.value, names.value); msgs.push(mine.name + ": " + akMergeMsg(r)); return; }
           c.id = uid(); c.name = store.libs.some(function (x) { return x.name === c.name; }) ? (c.name || "Library") + " (restored)" : c.name || "Restored";
-          store.libs.push(c); msgs.push(c.name + ": added as a new library.");
+          store.libs.push(c); if (!firstNew) firstNew = c; msgs.push(c.name + ": added as a new library.");
         });
+        /* 19.0a: show what was restored: open the added library when the one on screen only had samples */
+        if (firstNew && curWasSamples) { store.cur = firstNew.id; msgs.push("Showing it now."); }
+        else if (firstNew) msgs.push("Switch to it from the library menu.");
         if (d.banter) d.banter.forEach(function (j) { if (!store.banter.some(function (x) { return x.text === j.text; })) store.banter.push(j); });
         imagesRestore(d.images); normalizeStore(); saveNow(); render(); toastUndo(msgs.join(" "));
       } }]);
@@ -60096,6 +60104,911 @@ akCss("ak19e", [
   ".akfold-rowh > .row:first-child > h2::after,.akfold-rowh > .row:first-child > h3::after,.akfold-rowh > .row:first-child > h4::after{content:' ▾';opacity:.6;font-weight:400}",
   ".akfold-rowh.akfold-shut > .row:first-child > h2::after,.akfold-rowh.akfold-shut > .row:first-child > h3::after,.akfold-rowh.akfold-shut > .row:first-child > h4::after{content:' ▸'}"
 ].join(""));
+
+/* ================= 19.3: Graphics studio layers (change list items 1, 4, 6).
+   Item 1: layers stay where they are in the order. A new layer gets its starting spot once (cfg.lyStart: "" automatic, front, words, photo, back),
+     chosen in the ＋ New layer window (or the ＋ Add menu); after that it is pinned in D.zord, so it never jumps when you change it.
+     Overlays and color screens no longer have a sticky "Where it sits" / "In front of the words": that is now a one-time ⇅ Move to… menu.
+   Item 4: "Put every part back" is now "↺ Reset all parts to the layout" in the Layers ⋯ menu, with a plain explanation.
+   Item 6: a layer toolbar at the top of 🗂 Layers: ＋ new, ⧉ duplicate, 🗑 delete, 👁 show/hide, 🔒 lock, ↑ ↓, and ⋯ (group, ungroup, merge,
+     front/back, copy/paste, reset). Groups (D.groups, lists of part ids) move together. Merge draws the parts into one picture and hides the originals.
+   ================= */
+var AKLY = { known: typeof WeakMap === "function" ? new WeakMap() : null, pend: null, snap: {}, raf: 0, skip: 0 };
+var AKLY_STARTS = [["", "Automatic (overlays under words)"], ["front", "In front of everything"], ["words", "Just under the words"], ["photo", "Just over the photo"], ["back", "At the back (over the background)"]];
+var AKLY_WORDY = { text: 1, gicon: 1, qr: 1, gbtn: 1 };
+function akLyStart() { var c = akGfxCfg(); return c.lyStart || ""; }
+/* where an id goes in the movable order (back first) */
+function akLyTarget(P, ids, id, where) {
+  var by = {}; P.layers.forEach(function (l) { by[l.id] = l; });
+  var rest = ids.filter(function (x) { return x !== id; }), j;
+  if (where === "front") j = rest.length;
+  else if (where === "back") j = 0;
+  else if (where === "words") { j = rest.findIndex(function (x) { return by[x] && AKLY_WORDY[by[x].type] && x !== id; }); if (j < 0) j = rest.length; }
+  else if (where === "photo") { j = 0; rest.forEach(function (x, i) { var l = by[x]; if (l && (l.type === "gphoto" || (l.type === "gfree" && /photo/i.test(l.name || "")))) j = i + 1; }); }
+  else return ids;
+  rest.splice(j, 0, id); return rest;
+}
+function akLyMoveTo(D, P, id, where) {
+  var C = { layers: P.layers.slice() }; akGfxZApply(D, C);
+  var ids = akGfxMovable(C); if (ids.indexOf(id) < 0) return false;
+  var n = akLyTarget(C, ids, id, where); if (JSON.stringify(n) === JSON.stringify(ids)) return false;
+  D.zord = n; return true;
+}
+(function () {
+  var L0 = akGfxLayers;
+  akGfxLayers = function (D) {
+    var P = L0.apply(this, arguments);
+    try {
+      if (!D || !P || !P.layers) return P;
+      var ids = akGfxMovable(P), seen = AKLY.known && AKLY.known.get(D), fresh = [];
+      if (!seen) { if (AKLY.known) AKLY.known.set(D, seen = {}); else seen = {}; ids.forEach(function (x) { seen[x] = 1; }); seen._first = 1; }
+      else ids.forEach(function (x) { if (!seen[x]) { fresh.push(x); seen[x] = 1; } });
+      var zo = Array.isArray(D.zord) ? D.zord : [], changed = false;
+      /* a new part (one or two at a time: more means a new layout) gets its starting spot once */
+      if (fresh.length && fresh.length <= 2 && !AKLY.skip) {
+        var where = AKLY.pend && Date.now() - AKLY.pendT < 8000 ? AKLY.pend : akLyStart();
+        fresh.forEach(function (id) {
+          var l = P.layers.filter(function (x) { return x.id === id; })[0]; if (!l || !where) return;
+          var C = { layers: P.layers.slice() }; akGfxZApply(D, C); var cur = akGfxMovable(C);
+          if (where.above) { var a = cur.indexOf(where.above); if (a < 0) return; cur.splice(cur.indexOf(id), 1); cur.splice(cur.indexOf(where.above) + 1, 0, id); D.zord = cur; }
+          else D.zord = akLyTarget(C, cur, id, where);
+          zo = D.zord; changed = true;
+        });
+        AKLY.pend = null;
+      }
+      if (AKLY.skip) AKLY.skip--;
+      /* overlays and color screens stay where they are: pin any that isn't in the order yet */
+      var loose = P.layers.filter(function (l) { return l.type === "govl" && !l.fixed && zo.indexOf(l.id) < 0; });
+      if (loose.length) { var C2 = { layers: P.layers.slice() }; akGfxZApply(D, C2); D.zord = akGfxMovable(C2); changed = true; }
+      if (changed) akGfxZApply(D, P);
+    } catch (e) { try { console.warn("layers 19.3", e); } catch (e2) {} }
+    return P;
+  };
+})();
+
+/* ---- overlays: the sticky position controls become a one-time ⇅ Move to… */
+function akLyMoveMenu(anchor, X, id) {
+  var D = X.D, P = X.base() || akGfxState().P;
+  menu(anchor, AKLY_STARTS.slice(1).map(function (s) { return { label: s[1], onClick: function () { if (P && akLyMoveTo(D, P, id, s[0])) { X.ch(true); toast("Moved. It stays there until you move it again."); } else toast("It's already there."); } }; }));
+}
+(function () {
+  var c0 = akGfxOvlControls;
+  akGfxOvlControls = function (d, o, X) {
+    var n0 = d.childNodes.length, r = c0.apply(this, arguments);
+    try {
+      var kids = [].slice.call(d.childNodes, n0);
+      kids.forEach(function (k) {
+        if (k.tagName === "LABEL" && /^Where it sits/.test(k.textContent)) k.remove();
+        [].slice.call(k.querySelectorAll ? k.querySelectorAll("button") : []).forEach(function (b) { if (/^In front of the words/.test(b.textContent)) b.remove(); });
+      });
+      var row = h("div", { class: "row akly-mv" },
+        h("button", { class: "sm", onClick: function () { akLyMoveMenu(this, X, "uo_" + o.id); } }, "⇅ Move to… ▾"),
+        h("span", { class: "hint" }, "It stays put in 🗂 Layers until you move it (drag ⠿ or ↑ ↓)."));
+      d.insertBefore(row, kids[1] || null);
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---- the "where new layers start" choice, in the Overlay tab, the ＋ Add menu and the ＋ New layer window */
+function akLyStartPick(onDone) {
+  var c = akGfxCfg(), cur = c.lyStart || "";
+  return h("div", { class: "akly-start" }, h("span", { class: "akly-sl" }, "New layers start:"),
+    h("select", { "aria-label": "Where new layers start", onChange: function () { c.lyStart = this.value; save(); if (onDone) onDone(this.value); } },
+      AKLY_STARTS.map(function (s) { return h("option", { value: s[0], selected: s[0] === cur }, s[1]); })));
+}
+(function () {
+  var f0 = akGfxOvlFill;
+  akGfxOvlFill = function (d, X) {
+    f0.apply(this, arguments);
+    try { var g = [].slice.call(d.querySelectorAll(".akg-grp")).filter(function (x) { return /^Add an overlay/.test(x.textContent); })[0]; if (g) g.parentNode.insertBefore(akLyStartPick(), g.nextSibling); } catch (e) {}
+  };
+  var t0 = akGfxTools;
+  akGfxTools = function (bar, X) {
+    t0.apply(this, arguments);
+    try {
+      var add = bar.querySelector(".akg-addbtn"); if (!add || add._ly) return; add._ly = 1;
+      add.addEventListener("click", function () {
+        var m1 = menu, mine = function (a, items) { menu = m1; items = (items || []).slice();
+          var cur = AKLY_STARTS.filter(function (s) { return s[0] === akLyStart(); })[0];
+          items.unshift({ label: "＋ New layer window (pick where it starts)…", onClick: function () { akLyNew(X); } });
+          items.push({ label: "📍 New layers start: " + (cur ? cur[1].replace(/ \(.*/, "") : "Automatic") + " ▸", onClick: function () { modal("Where new layers start", h("div", null, akLyStartPick(), h("p", { class: "hint" }, "Only the starting spot. After that a layer stays where it is until you move it.")), [{ label: "Done", primary: true }]); } });
+          return m1(a, items); };
+        menu = mine; setTimeout(function () { if (menu === mine) menu = m1; }, 0);
+      }, true);
+    } catch (e) {}
+  };
+})();
+function akLyNew(X) {
+  var D = X.D, close;
+  function go(fn) { return function () { if (close) close(); setTimeout(function () { try { fn(); } catch (e) { toast("Couldn't add that."); } }, 30); }; }
+  function pic() { var inp = document.querySelector(".akg-tools input[type=file]") || document.querySelector(".akg-edbar input[type=file]"); if (inp) inp.click(); else X.cat("pics"); }
+  var kinds = [
+    ["T", "Words", function () { akGfxAddWords(D, X); }],
+    ["🖼", "Picture", pic],
+    ["🗃", "My pictures", function () { X.cat("pics"); }],
+    ["⬛", "Shape", function () { menu(document.querySelector(".akg-addbtn") || document.body, AKG_SHAPES.map(function (s) { return { label: s[1], onClick: function () { akGfxAddShape(D, X, s[0]); } }; })); }],
+    ["🌀", "Overlay", function () { X.cat("ovl"); }],
+    ["▦", "Color screen", function () { if (window.akGfxAddScreen) akGfxAddScreen(X); }],
+    ["🫧", "Blob", function () { akGfxAddShape(D, X, "blob"); }],
+    ["📥", "Paste", function () { akGfxPaste(D, X); }]];
+  var grid = h("div", { class: "akly-kinds" }, kinds.map(function (k) { return h("button", { class: "akly-kind", onClick: go(k[2]) }, h("i", null, k[0]), h("span", null, k[1])); }));
+  close = modal("＋ New layer", h("div", null, akLyStartPick(), grid, h("p", { class: "hint" }, "It starts in that spot, then stays where it is in 🗂 Layers until you move it.")), [{ label: "Cancel" }]);
+}
+
+/* ---- groups: parts that move together */
+function akLyGroups(D) { if (!Array.isArray(D.groups)) D.groups = []; return D.groups; }
+function akLyGroupOf(D, id) { return (Array.isArray(D.groups) ? D.groups : []).filter(function (g) { return g.indexOf(id) >= 0; })[0] || null; }
+function akLySync() {
+  try {
+    var st = akGfxState(), X = st.X; if (!X || S.view !== "gfx") return;
+    var D = X.D, G = Array.isArray(D.groups) ? D.groups : []; if (!G.length) return;
+    var moved = false;
+    G.forEach(function (g) {
+      var ch = [];
+      g.forEach(function (id) { var e = D.edit[id] || {}, s = AKLY.snap[id], dx = e.dx || 0, dy = e.dy || 0; if (s && (s[0] !== dx || s[1] !== dy)) ch.push([id, dx - s[0], dy - s[1]]); });
+      if (ch.length === 1) {
+        var c = ch[0];
+        g.forEach(function (id) { if (id === c[0]) return; var e = D.edit[id] = D.edit[id] || {}; if (e.lock) return; e.dx = (e.dx || 0) + c[1]; e.dy = (e.dy || 0) + c[2]; });
+        moved = true;
+      }
+      g.forEach(function (id) { var e = D.edit[id] || {}; AKLY.snap[id] = [e.dx || 0, e.dy || 0]; });
+    });
+    if (moved) { if (!AKLY.raf) AKLY.raf = requestAnimationFrame(function () { AKLY.raf = 0; try { X.paint(); } catch (e) {} }); }
+  } catch (e) {}
+}
+["pointermove", "pointerup"].forEach(function (ev) { document.addEventListener(ev, function () { if (S.view === "gfx") akLySync(); }, false); });
+setInterval(function () { if (S.view === "gfx") akLySync(); }, 400);
+function akLyPicked(X) {
+  var st = akGfxState(), ids = (st.multi || []).filter(Boolean);
+  if (ids.length < 2 && st.sel) ids = [st.sel];
+  return ids;
+}
+function akLyGroup(X) {
+  var D = X.D, st = akGfxState(), ids = (st.multi || []).slice();
+  if (ids.length < 2) { toast("Pick two or more parts first: ☑ Several under the picture, then tap them. Then ⋯ › Group."); return; }
+  var G = akLyGroups(D);
+  ids.forEach(function (id) { var g = akLyGroupOf(D, id); if (g) G.splice(G.indexOf(g), 1); });
+  G.push(ids); ids.forEach(function (id) { var e = D.edit[id] || {}; AKLY.snap[id] = [e.dx || 0, e.dy || 0]; });
+  st.multiMode = false; st.multi = []; st.sel = ids[0];
+  X.ch(true); try { akMsSync(); } catch (e) {} toast("Grouped " + ids.length + " parts: drag one and they all move. 🔗 shows them in Layers.");
+}
+function akLyUngroup(X) {
+  var D = X.D, st = akGfxState(), g = akLyGroupOf(D, st.sel); if (!g) { toast("Pick a grouped part (🔗) first."); return; }
+  akLyGroups(D).splice(akLyGroups(D).indexOf(g), 1); X.ch(true); toast("Ungrouped. Each part moves on its own again.");
+}
+/* merge: draw the parts into one picture (as you see them), hide the originals */
+function akLyMerge(X) {
+  var D = X.D, st = akGfxState(), P = st.P || X.base(); if (!P) return;
+  var ids = (st.multi || []).slice();
+  if (ids.length < 2 && st.sel) {
+    var C = { layers: P.layers.slice() }; akGfxZApply(D, C); var mv = akGfxMovable(C), i = mv.indexOf(st.sel);
+    var below = null; for (var k = i - 1; k >= 0; k--) { var e = D.edit[mv[k]] || {}; if (!e.hide) { below = mv[k]; break; } }
+    if (i < 0 || !below) { toast("Nothing under it to merge with. Pick two or more with ☑ Several."); return; }
+    ids = [below, st.sel];
+  }
+  if (ids.length < 2) { toast("Pick a part (it merges with the one under it), or two or more with ☑ Several."); return; }
+  var ls = P.layers.filter(function (l) { return ids.indexOf(l.id) >= 0 && !(D.edit[l.id] || {}).hide && l.type !== "gbg"; });
+  if (ls.length < 2) { toast("Pick at least two visible parts."); return; }
+  var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  ls.forEach(function (l) { var b = akLayerBox(l, P); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); });
+  var pad = Math.round(Math.min(P.W, P.H) * 0.03); x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad)); x1 = Math.min(P.W, Math.ceil(x1 + pad)); y1 = Math.min(P.H, Math.ceil(y1 + pad));
+  var w = x1 - x0, hh = y1 - y0; if (w < 2 || hh < 2) { toast("Those parts are off the page."); return; }
+  var full; try { full = akPosterCanvas({ W: P.W, H: P.H, size: P.size, gfx: P.gfx, accent: P.accent, accent2: P.accent2, layers: ls }); } catch (e) { toast("Couldn't merge those."); return; }
+  var cv = document.createElement("canvas"); cv.width = w; cv.height = hh; cv.getContext("2d").drawImage(full, x0, y0, w, hh, 0, 0, w, hh);
+  cv.toBlob(function (blob) {
+    if (!blob) { toast("Couldn't merge those."); return; }
+    try { blob.name = "Merged"; } catch (e) {}
+    akGfxPicIn(blob).then(function (r) {
+      var C = { layers: P.layers.slice() }; akGfxZApply(D, C); var mv = akGfxMovable(C), top = -1;
+      ids.forEach(function (id) { top = Math.max(top, mv.indexOf(id)); var e = D.edit[id] = D.edit[id] || {}; e.hide = true; });
+      var nid = uid(); akGfxFree(D).push({ id: nid, t: "pic", img: r.id, name: "Merged (" + ls.length + " parts)", x: (x0 + w / 2) / P.W, y: (y0 + hh / 2) / P.H, w: w / P.W, ar: hh / w });
+      var lid = "uf_" + nid; mv.splice(top + 1, 0, lid); D.zord = mv; AKLY.skip = 1;
+      st.multiMode = false; st.multi = []; st.sel = lid; X.ch(true); try { akMsSync(); } catch (e) {}
+      toast("Merged into one picture. The originals are hidden (👁 in Layers shows them); ↶ Undo splits them again.");
+    }, function () { toast("Couldn't merge those."); });
+  }, "image/png");
+}
+/* duplicate the picked part, right above it */
+function akLyDup(X) {
+  var D = X.D, st = akGfxState(), P = st.P || X.base(), id = st.sel; if (!id || !P) { toast("Pick a layer first."); return; }
+  var keep = AKGFX.clip, t0 = toast; toast = function () {};
+  var ok = false; try { ok = akGfxCopy(D, P, id); } catch (e) {}
+  if (!ok) { toast = t0; AKGFX.clip = keep; t0("This part can't be duplicated. Words, pictures, shapes and overlays can."); return; }
+  AKGFX.clip.from = D; AKLY.pend = { above: id }; AKLY.pendT = Date.now();
+  try { akGfxPaste(D, X); } catch (e) {}
+  toast = t0; AKGFX.clip = keep;
+  toast("Duplicated, just above the original. Drag it where you want it.");
+}
+function akLyDelete(X) {
+  var D = X.D, st = akGfxState(), id = st.sel; if (!id) { toast("Pick a layer first."); return; }
+  var f = akGfxFreeOf(D, id), s = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id);
+  if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s), 1); else if (o) akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1);
+  else { var e = D.edit[id] = D.edit[id] || {}; e.hide = true; st.sel = ""; X.ch(true); toast("Parts that come with the layout can't be deleted, so it's hidden. 👁 brings it back."); return; }
+  delete D.edit[id]; var g = akLyGroupOf(D, id); if (g) { g.splice(g.indexOf(id), 1); if (g.length < 2) akLyGroups(D).splice(akLyGroups(D).indexOf(g), 1); }
+  st.sel = ""; X.ch(true); toast("Deleted. ↶ Undo brings it back.");
+}
+function akLyReset(X) {
+  var D = X.D, st = akGfxState();
+  modal("↺ Reset all parts to the layout", h("div", null,
+    h("p", null, "This undoes every move, size, turn, color, effect, hide and lock you've made to the parts, so they look the way the layout made them."),
+    h("p", { class: "hint" }, "Parts you added (words, pictures, shapes, overlays) stay, and so does the layer order. ↶ Undo brings your changes back.")),
+    [{ label: "Cancel" }, { label: "↺ Reset all parts", danger: true, onClick: function () { D.edit = {}; st.sel = ""; X.ch(true); toast("Every part is back to the layout. ↶ Undo if you change your mind."); } }]);
+}
+function akLyMore(anchor, X) {
+  var D = X.D, st = akGfxState(), base = X.base(), id = st.sel, g = id && akLyGroupOf(D, id), nm = (st.multi || []).length;
+  menu(anchor, [
+    { label: "🔗 Group " + (nm >= 2 ? "the " + nm + " picked parts" : "(pick several first)"), onClick: function () { akLyGroup(X); } },
+    g ? { label: "⛓ Ungroup", onClick: function () { akLyUngroup(X); } } : null,
+    { label: "⧉ Merge " + (nm >= 2 ? "the " + nm + " picked parts" : "with the layer under it") + " into one picture", onClick: function () { akLyMerge(X); } },
+    { label: "☑ Select several…", onClick: function () { try { akMsOn(true); } catch (e) {} } },
+    { label: "⤒ To the very front", disabled: !id, onClick: function () { if (akGfxZMove(D, base, id, "top")) X.ch(true); } },
+    { label: "⤓ To the very back", disabled: !id, onClick: function () { if (akGfxZMove(D, base, id, "bottom")) X.ch(true); } },
+    { label: "📋 Copy", disabled: !id, onClick: function () { akGfxCopy(D, st.P || base, id); X.refill("parts", true); } },
+    { label: "📥 Paste" + (AKGFX.clip ? "" : " (copy something first)"), onClick: function () { akGfxPaste(D, X); } },
+    { label: "📍 Where new layers start…", onClick: function () { modal("Where new layers start", h("div", null, akLyStartPick()), [{ label: "Done", primary: true }]); } },
+    { label: "↺ Reset all parts to the layout…", onClick: function () { akLyReset(X); } }].filter(Boolean));
+}
+function akLyBar(X) {
+  var D = X.D, st = akGfxState(), base = X.base(), id = st.sel, e0 = (id && D.edit[id]) || {}, L = base && id ? base.layers.filter(function (l) { return l.id === id; })[0] : null, mov = L && !L.fixed;
+  function B(ic, lab, fn, off, on) { return h("button", { class: "icon sm akly-b" + (on ? " on" : ""), "aria-label": lab, title: lab, disabled: !!off, onClick: fn }, ic); }
+  return h("div", { class: "akly-bar", role: "toolbar", "aria-label": "Layer tools" },
+    B("＋", "New layer", function () { akLyNew(X); }),
+    B("⧉", "Duplicate", function () { akLyDup(X); }, !mov),
+    B("🗑", "Delete", function () { akLyDelete(X); }, !mov),
+    B(e0.hide ? "◌" : "👁", e0.hide ? "Show it" : "Hide it", function () { var e = D.edit[id] = D.edit[id] || {}; if (e.hide) delete e.hide; else e.hide = true; X.ch(true); }, !L, e0.hide),
+    B(e0.lock ? "🔒" : "🔓", e0.lock ? "Unlock" : "Lock (can't be dragged)", function () { var e = D.edit[id] = D.edit[id] || {}; if (e.lock) delete e.lock; else e.lock = true; X.ch(true); }, !mov, e0.lock),
+    B("↑", "Forward (up the list)", function () { if (akGfxZMove(D, base, id, "up")) X.ch(true); }, !mov),
+    B("↓", "Back (down the list)", function () { if (akGfxZMove(D, base, id, "down")) X.ch(true); }, !mov),
+    B("⋯", "More: group, merge, reset all…", function () { akLyMore(this, X); }),
+    h("span", { class: "akly-nm" }, L ? L.name : (st.multi && st.multi.length ? "☑ " + st.multi.length + " picked" : "Tap a layer")));
+}
+(function () {
+  var f0 = akGfxLayersFill;
+  akGfxLayersFill = function (d, X) {
+    f0.apply(this, arguments);
+    try {
+      var D = X.D;
+      /* item 4: the old row (Paste + Put every part back) moves into ⋯ */
+      [].slice.call(d.querySelectorAll("button")).forEach(function (b) { if (/^Put every part back/.test(b.textContent)) { var r = b.parentNode; b.remove(); [].slice.call(r.querySelectorAll("button")).forEach(function (x) { if (/^📥 Paste/.test(x.textContent)) x.remove(); }); if (!r.children.length) r.remove(); } });
+      var hint = d.querySelector(":scope > p.hint");
+      if (hint) { hint.textContent = "Top of the list is in front. Tap a name to pick it; drag ⠿ to move it."; hint.classList.add("akly-hint"); }
+      d.insertBefore(akLyBar(X), d.firstChild);
+      /* 🔗 on grouped rows */
+      [].slice.call(d.querySelectorAll(".akg-lay[data-lid]")).forEach(function (row) { var g = akLyGroupOf(D, row.getAttribute("data-lid")); if (g) { var n = row.querySelector(".akg-pname"); if (n) n.insertBefore(h("span", { class: "akly-ln", title: "Grouped: moves with " + (g.length - 1) + " other part" + (g.length > 2 ? "s" : "") }, "🔗 "), n.firstChild); } });
+    } catch (e) { try { console.warn("layers bar", e); } catch (e2) {} }
+  };
+})();
+akCss("akly-19e",
+  ".akly-bar{display:flex;align-items:center;gap:3px;flex-wrap:nowrap;overflow-x:auto;padding:4px;margin:0 0 4px;border-radius:10px;background:rgba(200,150,46,.1);position:sticky;top:0;z-index:3;backdrop-filter:blur(6px)}" +
+  ".akly-bar .akly-b{min-width:34px;width:34px;height:34px;min-height:34px;padding:0;font-size:16px;flex:0 0 auto}.akly-bar .akly-b.on{background:rgba(200,150,46,.35)}.akly-bar .akly-b[disabled]{opacity:.35}" +
+  ".akly-nm{flex:1 1 auto;min-width:0;font-size:12px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}" +
+  ".akly-hint{margin:2px 0 4px;font-size:12px}.akly-start{display:flex;align-items:center;gap:6px;margin:4px 0 8px}.akly-start select{flex:1 1 auto;min-width:0;min-height:32px}.akly-sl{font-size:13px;white-space:nowrap}" +
+  ".akly-kinds{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0}.akly-kind{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px;min-height:58px;font-size:12px}.akly-kind i{font-style:normal;font-size:20px;line-height:1}" +
+  ".akly-mv{align-items:center;gap:6px;flex-wrap:wrap}.akly-mv .hint{margin:0;font-size:12px}");
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Graphics: layer toolbar (new, duplicate, delete, hide, lock, group, merge)", a: "Graphics studio › 🗂 Layers: the row at the top. ＋ New layer, ⧉ Duplicate, 🗑 Delete, 👁 Show/hide, 🔒 Lock, ↑ ↓ move it, and ⋯ for Group, Ungroup, Merge into one picture, To the front/back, Copy, Paste, Where new layers start and ↺ Reset all parts to the layout.", k: "layers toolbar group merge duplicate photoshop" },
+  { t: "Graphics: where a new layer starts (overlays, color screens)", a: "Graphics studio › ＋ Add ▾ › ＋ New layer window, or 🗂 Layers › ⋯ › Where new layers start, or the Overlay tab above the gallery. Pick In front, Just under the words, Just over the photo or At the back. After that the layer stays where it is until you drag it (⠿) or use ⇅ Move to… on an overlay.", k: "overlay color screen layer order position stays" },
+  { t: "Graphics: reset all parts to the layout", a: "Graphics studio › 🗂 Layers › ⋯ › ↺ Reset all parts to the layout. It undoes every move, size, color and effect on the parts; parts you added stay. ↶ Undo brings your changes back.", k: "put every part back reset" },
+  { t: "Graphics: group parts so they move together", a: "Graphics studio › ☑ Several, tap the parts, then 🗂 Layers › ⋯ › 🔗 Group. Drag one and they all move. ⋯ › Ungroup splits them.", k: "group link move together" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+/* ================= 19.3: Graphics studio fill, effects and colors (change list items 2 and 3).
+   Item 2: 🎨 Fill = Solid or Gradient on any part (D.edit[id].gfill {on, type lin|rad, c1, c2, ang, mid, soft}); drawn over the part's own pixels
+     (shadow, glow and outline keep their colors underneath). Soft edges, shadow, glow, outline and the bold looks (poster, two-color, color split,
+     blocky) are now kinds in the effects stack ("＋ Add an effect" › Around the part and bold looks): kinds "a_<fxo key>"; at bake time they turn
+     back into the layer's fxo values, so they draw exactly as before. Old sliders move into the stack when the layer's effects open.
+     See-through is a standard slider in the Layers toolbar. Every overlay setting gets a short description.
+   Item 3: in the Graphics studio every color box gets 💧 Dropper (tap the picture), 🎨 Colors from this design, and ⭐ Saved colors
+     (settings().gfx.savedCols, shared by every design, front and back). Gradients can be saved too (settings().gfx.savedGrads).
+   ================= */
+var AKFL = { drop: null };
+/* ---------------------------------------------------------------- item 2: stackable "around" effects */
+var AKFL_AROUND = { feather: ["Soft edges (feather)", false, "Fades the part's edges into what's under it."], shadow: ["Shadow", true, "A shadow under the part. Style, distance, softness and direction are below."],
+  glow: ["Glow around it", true, "A soft light around the part's edges."], outline: ["Outline (sticker edge)", true, "A solid line around the part's shape, like a sticker."],
+  poster: ["Poster (few colors)", false, "Fewer colors, flat areas, like a screen print."], duo: ["Two-color (duotone)", false, "Dark parts take the first color, light parts the second."],
+  rgb: ["Color split (3D glitch)", false, "Shifts red and blue apart, like a 3D or glitch look."], pixel: ["Blocky (pixelate)", false, "Big square pixels."] };
+var AKFL_GRP = "Around the part and bold looks";
+Object.keys(AKFL_AROUND).forEach(function (k) { var a = AKFL_AROUND[k]; AKFXT["a_" + k] = [a[0], 0, 100, k === "duo" ? 100 : 50, "all", 0, 70, 50, a[1], AKFL_GRP, "Strength"]; });
+AKFX_GROUPS.unshift(AKFL_GRP);
+AKFX_MAX = 8;
+var AKFL_DESC = { vig: "Darkens (or lightens) toward the edges.", bloom: "Bright areas spill soft light.", blur: "Softens everything.", pixelate: "Big square pixels.", grain: "Fine film noise.",
+  bright: "Lighter (+) or darker (−).", contrast: "More (+) or less (−) difference between light and dark.", sat: "Stronger (+) or duller (−) colors.", hue: "Turns every color around the color wheel.",
+  gray: "Takes the color out.", sepia: "Old brown photo look.", tint: "Washes everything in one color.", invert: "Like a film negative.", fade: "Makes the part see-through toward one side (a see-through gradient)." };
+function akFlAroundOf(e) { return e && /^a_/.test(e.t || "") ? e.t.slice(2) : ""; }
+/* bake: the "around" kinds go back to fxo, so the existing drawing does them */
+(function () {
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) {
+      var e = E[l.id] || {}, c = l;
+      if (e.gfill && e.gfill.on) { c = Object.assign({}, c); c.gfill = e.gfill; }
+      if (c.fxs && c.fxs.some(function (x) { return akFlAroundOf(x); })) {
+        c = c === l ? Object.assign({}, l) : c;
+        var f = Object.assign({}, c.fxo || {}), rest = [];
+        c.fxs.forEach(function (x) {
+          var k = akFlAroundOf(x); if (!k) { rest.push(x); return; }
+          if (x.on === 0 || x.on === false || !x.amt) return;
+          f[k] = Math.max(f[k] || 0, x.amt);
+          if (x.col && (k === "shadow" || k === "glow" || k === "outline")) f[k + "C"] = x.col;
+          if (k === "shadow") ["S", "D", "B", "A"].forEach(function (s) { if (x["s" + s] != null && x["s" + s] !== "") f["shadow" + s] = x["s" + s]; });
+          if (k === "duo") { if (x.c1) f.duoA = x.c1; if (x.c2) f.duoB = x.c2; }
+        });
+        c.fxo = f; if (rest.length) c.fxs = rest; else { delete c.fxs; delete c._below; }
+      }
+      return c;
+    });
+    return out;
+  };
+  var one = akFxOne;
+  akFxOne = function (cv, e) { if (akFlAroundOf(e)) return cv; return one.apply(this, arguments); };
+  var mg = akFxMigrate;
+  akFxMigrate = function (D, id) {
+    mg.apply(this, arguments);
+    var e = D.edit[id]; if (!e || !e.fxo) return;
+    var f = e.fxo, list = akFxList(D, id, true), moved = 0;
+    Object.keys(AKFL_AROUND).forEach(function (k) {
+      if (!f[k] || list.length >= AKFX_MAX) return;
+      var n = akFxNew("a_" + k); n.amt = f[k];
+      if (f[k + "C"]) n.col = f[k + "C"];
+      if (k === "shadow") ["S", "D", "B", "A"].forEach(function (s) { if (f["shadow" + s] != null) { n["s" + s] = f["shadow" + s]; delete f["shadow" + s]; } });
+      if (k === "duo") { if (f.duoA) n.c1 = f.duoA; if (f.duoB) n.c2 = f.duoB; delete f.duoA; delete f.duoB; }
+      list.push(n); delete f[k]; delete f[k + "C"]; moved++;
+    });
+    if (!Object.keys(f).some(function (k) { return f[k]; })) delete e.fxo;
+    if (!list.length) delete e.fxs;
+    if (moved) save();
+  };
+  var nw = akFxNew;
+  akFxNew = function (t) { var n = nw.apply(this, arguments); if (/^a_/.test(t)) { n.col = t === "a_outline" ? "#ffffff" : t === "a_shadow" ? "#000000" : ""; if (t === "a_duo") { n.c1 = "#1b1464"; n.c2 = "#ff5e8a"; } } return n; };
+  /* one effect's box: the around kinds don't need "Where it works"; every kind gets a one-line description */
+  var en = akFxEntryEl;
+  akFxEntryEl = function (X, id, e) {
+    var dd = en.apply(this, arguments);
+    try {
+      var k = akFlAroundOf(e), sum = dd.querySelector("summary"), desc = k ? AKFL_AROUND[k][2] : AKFL_DESC[e.t];
+      if (desc && sum) sum.parentNode.insertBefore(h("p", { class: "hint akfl-desc" }, desc), sum.nextSibling);
+      if (!k) return dd;
+      [].slice.call(dd.querySelectorAll("label.fld")).forEach(function (l) { if (/^Where it works/.test(l.textContent)) l.remove(); });
+      [].slice.call(dd.querySelectorAll("p.hint")).forEach(function (p) { if (/^The effect is (inside|outside)/.test(p.textContent)) p.remove(); });
+      var last = dd.lastChild, again = function () { save(); akFxAfter(X); };
+      if (k === "shadow") {
+        dd.insertBefore(akGfxSelect("Shadow style", AKGN_SHSTYLES, e.sS || "soft", function (v) { if (v === "soft") delete e.sS; else e.sS = v; again(); }), last);
+        [["sD", "Distance", 0, 100, "How far the shadow falls from the part."], ["sB", "Softness", 0, 100, "0 = a sharp edge, 100 = very blurry."], ["sA", "Direction", -180, 180, "Which way the light comes from, in degrees."]].forEach(function (s) {
+          dd.insertBefore(X.slider(s[1], e[s[0]] == null ? (s[0] === "sA" ? 45 : 50) : e[s[0]], s[2], s[3], 1, function (v) { e[s[0]] = v; }, s[0] === "sA" ? function (v) { return v + "°"; } : null, true), last);
+        });
+      }
+      if (k === "duo") dd.insertBefore(h("div", { class: "row" }, [["c1", "Dark color"], ["c2", "Light color"]].map(function (c) {
+        return h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk(c[1], e[c[0]] || "", function (v) { e[c[0]] = v || ""; save(); akFxAfter(X); akFxRefresh(X); }); } },
+          h("span", { class: "akg-fxdot", style: "background:" + (e[c[0]] || "transparent") }), c[1] + " ▾");
+      })), last);
+    } catch (er) {}
+    return dd;
+  };
+  /* the effects window: Fill section on top; the separate-slider section becomes a pointer to the stack */
+  var bd = akFxBody;
+  akFxBody = function (X, compact) {
+    var root = bd.apply(this, arguments);
+    try {
+      [].slice.call(root.querySelectorAll("details.akfx-sec")).forEach(function (d) {
+        var s = d.querySelector("summary"); if (s && /^Soft edges, shadow, glow/.test(s.textContent)) {
+          var p = h("p", { class: "hint akfl-moved" }, "Soft edges, shadow, glow, outline and the bold looks are now in ＋ Add an effect › " + AKFL_GRP + ", so they stack with the others.");
+          d.parentNode.replaceChild(p, d);
+        }
+      });
+      var L = akFxTarget(X);
+      if (L && L.type !== "gbg") {
+        var sec = akFxSec("fill", "🎨 Fill: solid or gradient", [akFlFillUi(X, L.id)], false);
+        var after = root.querySelector(".akfx-scope") || root.querySelector(".akfx-target");
+        if (after && after.nextSibling) root.insertBefore(sec, after.nextSibling); else root.appendChild(sec);
+      }
+    } catch (er) { try { console.warn("fill ui", er); } catch (e2) {} }
+    return root;
+  };
+})();
+
+/* ---------------------------------------------------------------- item 2: gradient fill */
+var AKFL_GTYPES = [["lin", "Straight (linear)"], ["rad", "From the middle (radial)"]];
+function akFlFill(D, id, make) { var e = D.edit[id]; if (!e) { if (!make) return null; e = D.edit[id] = {}; } if (!e.gfill && make) e.gfill = { on: 0, type: "lin", c1: "", c2: "#000000", ang: 90, mid: 50, soft: 100 }; return e.gfill || null; }
+function akFlFillUi(X, id) {
+  var D = X.D, box = h("div", { class: "akfl-fill" }), g0 = akFlFill(D, id);
+  function again() { save(); try { X.paint(); } catch (e) {} }
+  function redraw() { box.parentNode && box.parentNode.replaceChild(akFlFillUi(X, id), box); }
+  var on = !!(g0 && g0.on);
+  box.appendChild(h("div", { class: "akfl-seg", role: "group", "aria-label": "Fill" }, [["0", "Solid"], ["1", "Gradient"]].map(function (s) {
+    var cur = (on ? "1" : "0") === s[0];
+    return h("button", { type: "button", class: "sm" + (cur ? " primary" : ""), "aria-pressed": cur ? "true" : "false", onClick: function () { var g = akFlFill(D, id, true); g.on = s[0] === "1" ? 1 : 0; if (!g.on) delete D.edit[id].gfill; again(); redraw(); } }, s[1]);
+  })));
+  if (!on) { box.appendChild(h("p", { class: "hint" }, "Solid: the part keeps its own color (🎨 Color on the part). Gradient fades it from one color to another.")); return box; }
+  var g = g0;
+  box.appendChild(akGfxSelect("Gradient type", AKFL_GTYPES, g.type || "lin", function (v) { g.type = v; again(); redraw(); }));
+  box.appendChild(h("div", { class: "row akfl-cols" },
+    h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk("Start color (empty = the part's own color)", g.c1 || "", function (v) { g.c1 = v || ""; again(); redraw(); }); } }, h("span", { class: "akg-fxdot", style: "background:" + (g.c1 || "transparent") }), "From ▾"),
+    h("button", { type: "button", class: "sm akg-fxcol", onClick: function () { akGfxColorAsk("Color to fade to", g.c2 || "", function (v) { g.c2 = v || "#000000"; again(); redraw(); }); } }, h("span", { class: "akg-fxdot", style: "background:" + (g.c2 || "transparent") }), "Fade to ▾"),
+    h("button", { type: "button", class: "sm", title: "Swap the two colors", onClick: function () { var t = g.c1; g.c1 = g.c2; g.c2 = t || ""; again(); redraw(); } }, "⇄")));
+  if ((g.type || "lin") === "lin") box.appendChild(X.slider("Direction", g.ang == null ? 90 : g.ang, 0, 355, 5, function (v) { g.ang = v; }, function (v) { return v + "° " + ["↓", "↙", "←", "↖", "↑", "↗", "→", "↘"][Math.round(((v % 360) + 360) % 360 / 45) % 8]; }, true, 90));
+  box.appendChild(X.slider("Where it changes", g.mid == null ? 50 : g.mid, 0, 100, 1, function (v) { g.mid = v; }, function (v) { return v + "%"; }, true, 50));
+  box.appendChild(X.slider("Softness (depth of the fade)", g.soft == null ? 100 : g.soft, 0, 100, 1, function (v) { g.soft = v; }, function (v) { return v ? v + "%" : "hard line"; }, true, 100));
+  /* saved gradients, for any part on any design */
+  var cfg = akGfxCfg(), sv = Array.isArray(cfg.savedGrads) ? cfg.savedGrads : (cfg.savedGrads = []);
+  box.appendChild(h("div", { class: "akfl-saved" }, h("span", { class: "akfl-sl" }, "⭐ Saved:"), sv.map(function (s, i) {
+    return h("button", { type: "button", class: "akfl-gsw", title: "Use this gradient (hold to remove)", style: "background:linear-gradient(90deg," + (s.c1 || "#fff") + "," + (s.c2 || "#000") + ")", onClick: function () { Object.assign(g, clone(s), { on: 1 }); again(); redraw(); },
+      onContextmenu: function (ev) { ev.preventDefault(); sv.splice(i, 1); save(); redraw(); } });
+  }), h("button", { type: "button", class: "sm", onClick: function () { var c = clone(g); delete c.on; sv.unshift(c); if (sv.length > 12) sv.length = 12; save(); redraw(); toast("Saved. It's in ⭐ Saved on every part and design."); } }, "＋ Save")));
+  return box;
+}
+function akFlGrad(ctx, g, b, base) {
+  var c1 = g.c1 || base || "#ffffff", c2 = g.c2 || "#000000", mid = (g.mid == null ? 50 : g.mid) / 100, soft = (g.soft == null ? 100 : g.soft) / 100, gr;
+  if ((g.type || "lin") === "rad") gr = ctx.createRadialGradient(b.x + b.w / 2, b.y + b.h / 2, 0, b.x + b.w / 2, b.y + b.h / 2, Math.max(1, Math.hypot(b.w, b.h) / 2));
+  else {
+    var a = ((g.ang == null ? 90 : g.ang) - 90) * Math.PI / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2, r = Math.abs(b.w / 2 * Math.cos(a)) + Math.abs(b.h / 2 * Math.sin(a));
+    var dx = -Math.sin(a) * r, dy = Math.cos(a) * r; gr = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
+  }
+  var lo = Math.max(0, Math.min(1, mid - soft / 2)), hi = Math.max(0, Math.min(1, mid + soft / 2));
+  if (hi - lo < 0.002) { lo = Math.max(0, mid - 0.001); hi = Math.min(1, mid + 0.001); }
+  gr.addColorStop(0, c1); gr.addColorStop(lo, c1); gr.addColorStop(hi, c2); gr.addColorStop(1, c2);
+  return gr;
+}
+(function () {
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    if (!l || !l.gfill || !l.gfill.on || l.type === "gbg" || l._flIn) return dl.apply(this, arguments);
+    dl.apply(this, arguments);
+    try {
+      /* the part's own pixels, without its effects, recolored with the gradient and drawn over it */
+      var me = Object.assign({}, l, { _flIn: 1 }); delete me.fxs; delete me._below; delete me.blend; delete me.shadow;
+      var f = me.fxo; if (f) { f = Object.assign({}, f); ["shadow", "glow", "outline", "shadowS", "shadowD", "shadowB", "shadowA", "shadowC", "glowC", "outlineC"].forEach(function (k) { delete f[k]; }); me.fxo = f; }
+      var tr = ctx.getTransform ? ctx.getTransform() : null, sx = tr ? Math.hypot(tr.a, tr.b) : 1, k = Math.max(0.25, Math.min(2, sx || 1));
+      var cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(P.W * k)); cv.height = Math.max(1, Math.round(P.H * k));
+      var c = cv.getContext("2d"); c.scale(k, k); dl.call(this, c, me, P);
+      c.globalCompositeOperation = "source-atop"; c.fillStyle = akFlGrad(c, l.gfill, akLayerBox(l, P), typeof l.color === "string" ? l.color : ""); c.fillRect(0, 0, P.W, P.H);
+      ctx.save(); ctx.globalAlpha = 1; ctx.drawImage(cv, 0, 0, P.W, P.H); ctx.restore();
+    } catch (e) {}
+  };
+})();
+
+/* ---------------------------------------------------------------- see-through in the Layers toolbar (a standard slider on every layer) */
+(function () {
+  var b0 = akLyBar;
+  akLyBar = function (X) {
+    var bar = b0.apply(this, arguments);
+    try {
+      var D = X.D, st = akGfxState(), id = st.sel; if (!id) return bar;
+      var e0 = D.edit[id] || {}, wrap = h("div", { class: "akly-wrap" }, bar);
+      var s = X.slider("See-through", Math.round(100 - (e0.op == null ? 1 : e0.op) * 100), 0, 95, 5, function (v) { var e = D.edit[id] = D.edit[id] || {}; if (v) e.op = 1 - v / 100; else delete e.op; }, function (v) { return v ? v + "%" : "off"; }, true, 0);
+      s.classList.add("akly-op"); wrap.appendChild(s); return wrap;
+    } catch (e) { return bar; }
+  };
+})();
+
+/* ---------------------------------------------------------------- overlay settings: say what each one does */
+var AKFL_OVDESC = { "Pattern": "The kind of marks (dots, lines, waves…).", "Size": "How big each mark is.", "Spacing": "How far apart the marks are.", "Line thickness": "How thick lines and outlines are.",
+  "Mix of sizes": "0 = all the same size, higher = a mix of big and small.", "Scatter": "0 = a neat grid, higher = more random places.", "Angle": "Turns the whole pattern.",
+  "Fade": "Lets the pattern fade away toward one side or the middle.", "How far it reaches": "How much of the page the pattern covers before it fades out.", "See-through": "0 = solid, higher = more see-through.",
+  "Blend with what's under it": "How its colors mix with the picture under it. Normal = just on top.", "Strength": "How strong the color screen is: 100% = solid color.",
+  "Middle: left ↔ right": "Moves the center of the pattern sideways.", "Middle: up ↕ down": "Moves the center of the pattern up or down." };
+(function () {
+  var c0 = akGfxOvlControls;
+  akGfxOvlControls = function (d, o, X) {
+    var n0 = d.childNodes.length, r = c0.apply(this, arguments);
+    try {
+      [].slice.call(d.childNodes, n0).forEach(function (k) {
+        var t = (k.textContent || "").trim(), key = Object.keys(AKFL_OVDESC).filter(function (x) { return t.indexOf(x) === 0; }).sort(function (a, b) { return b.length - a.length; })[0];
+        if (key && !k.querySelector(".akfl-od")) k.appendChild(h("span", { class: "akfl-od" }, AKFL_OVDESC[key]));
+      });
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- item 3: dropper, colors from the design, saved colors */
+function akFlHex(r, g, b) { return "#" + [r, g, b].map(function (v) { return ("0" + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2); }).join(""); }
+function akFlCanvas() { var cs = [].slice.call(document.querySelectorAll("canvas.akg-cv")); return cs.filter(function (c) { return c.offsetParent; })[0] || cs[0] || null; }
+function akFlPalette(n) {
+  var cv = akFlCanvas(); if (!cv) return [];
+  try {
+    var s = document.createElement("canvas"); s.width = 60; s.height = 75; var c = s.getContext("2d"); c.drawImage(cv, 0, 0, 60, 75);
+    var d = c.getImageData(0, 0, 60, 75).data, bins = {};
+    for (var i = 0; i < d.length; i += 4) { if (d[i + 3] < 200) continue; var key = (d[i] >> 5) + "," + (d[i + 1] >> 5) + "," + (d[i + 2] >> 5), b = bins[key] || (bins[key] = [0, 0, 0, 0]); b[0] += d[i]; b[1] += d[i + 1]; b[2] += d[i + 2]; b[3]++; }
+    var list = Object.keys(bins).map(function (k) { var b = bins[k]; return { c: [b[0] / b[3], b[1] / b[3], b[2] / b[3]], n: b[3] }; }).sort(function (a, b) { return b.n - a.n; }), out = [];
+    list.forEach(function (x) { if (out.length >= (n || 8)) return; if (out.every(function (y) { return Math.abs(y.c[0] - x.c[0]) + Math.abs(y.c[1] - x.c[1]) + Math.abs(y.c[2] - x.c[2]) > 70; })) out.push(x); });
+    return out.map(function (x) { return akFlHex(x.c[0], x.c[1], x.c[2]); });
+  } catch (e) { return []; }
+}
+function akFlDropper(done) {
+  var cv = akFlCanvas(); if (!cv) { toast("Open a design first."); return; }
+  var ms = [].slice.call(document.querySelectorAll(".modal")); ms.forEach(function (m) { m.style.visibility = "hidden"; });
+  var tip = h("div", { class: "akfl-droptip" }, "💧 Tap the picture to pick a color", h("button", { type: "button", class: "sm", onClick: function () { end(); } }, "Cancel"));
+  document.body.appendChild(tip);
+  function end() { cv.removeEventListener("pointerdown", pick, true); tip.remove(); ms.forEach(function (m) { m.style.visibility = ""; }); AKFL.drop = null; }
+  function pick(e) {
+    e.preventDefault(); e.stopPropagation();
+    var r = cv.getBoundingClientRect(), x = Math.floor((e.clientX - r.left) * cv.width / r.width), y = Math.floor((e.clientY - r.top) * cv.height / r.height), col = "";
+    try { var p = cv.getContext("2d").getImageData(Math.max(0, Math.min(cv.width - 1, x)), Math.max(0, Math.min(cv.height - 1, y)), 1, 1).data; col = akFlHex(p[0], p[1], p[2]); } catch (er) {}
+    end(); if (col) { done(col); toast("Picked " + col + "."); } else toast("Couldn't read that spot.");
+  }
+  AKFL.drop = end; cv.addEventListener("pointerdown", pick, true);
+}
+function akFlSaved() { var c = akGfxCfg(); if (!Array.isArray(c.savedCols)) c.savedCols = []; return c.savedCols; }
+(function () {
+  var cp = colorPicker;
+  colorPicker = function (current, onPick) {
+    if (S.view !== "gfx") return cp.apply(this, arguments);
+    var cur = current || "", wrap = h("div", { class: "akfl-cp" }), inner = null, tools = h("div", { class: "akfl-tools" }), fromRow = h("div", { class: "akfl-from" });
+    function pickIt(c) { cur = c || ""; onPick(cur); }
+    function drawInner() { var n = cp(cur, pickIt); if (inner) wrap.replaceChild(n, inner); else wrap.insertBefore(n, wrap.firstChild); inner = n; }
+    function sw(c, title, rm) { return h("button", { type: "button", class: "sw akfl-sw" + (c === cur ? " sel" : ""), style: "background:" + c, "aria-label": title + " " + c, title: title + (rm ? " (hold to remove)" : ""), onClick: function () { pickIt(c); drawInner(); drawTools(); }, onContextmenu: rm ? function (ev) { ev.preventDefault(); rm(); drawTools(); } : null }); }
+    function drawTools() {
+      tools.textContent = "";
+      tools.appendChild(h("button", { type: "button", class: "sm", title: "Pick a color from the picture", onClick: function () { akFlDropper(function (c) { pickIt(c); drawInner(); drawTools(); }); } }, "💧 Dropper"));
+      tools.appendChild(h("button", { type: "button", class: "sm", "aria-expanded": fromRow.childNodes.length ? "true" : "false", title: "The main colors in this design", onClick: function () {
+        if (fromRow.childNodes.length) { fromRow.textContent = ""; return; }
+        var p = akFlPalette(8); if (!p.length) { toast("Couldn't read the picture's colors."); return; }
+        fromRow.appendChild(h("span", { class: "akfl-sl" }, "From this design:")); p.forEach(function (c) { fromRow.appendChild(sw(c, "From the design")); });
+      } }, "🎨 From design"));
+      var sv = akFlSaved();
+      tools.appendChild(h("span", { class: "akfl-sl" }, "⭐"));
+      sv.forEach(function (c, i) { tools.appendChild(sw(c, "Saved color", function () { sv.splice(i, 1); save(); })); });
+      tools.appendChild(h("button", { type: "button", class: "sm akfl-add", title: "Save this color for every design", disabled: !cur || sv.indexOf(cur) >= 0, onClick: function () { if (!cur) return; sv.unshift(cur); if (sv.length > 16) sv.length = 16; save(); drawTools(); toast("Saved: it's in ⭐ on every color box, in every design."); } }, "＋"));
+    }
+    drawInner(); wrap.appendChild(tools); wrap.appendChild(fromRow); drawTools();
+    return wrap;
+  };
+})();
+akCss("akfl-19f",
+  ".akfl-desc{margin:2px 0 4px;font-size:12px}.akfl-moved{font-size:12px;margin:4px 0}" +
+  ".akfl-seg{display:flex;gap:4px;margin:2px 0 6px}.akfl-seg button{flex:1 1 0}.akfl-cols{gap:6px;align-items:center}" +
+  ".akfl-saved,.akfl-tools,.akfl-from{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0}.akfl-sl{font-size:12px;opacity:.8}" +
+  ".akfl-gsw{width:34px;height:24px;min-height:24px;border-radius:6px;border:1px solid rgba(127,127,127,.6);padding:0}" +
+  ".akfl-tools .sm{min-height:28px;height:28px;padding:0 8px;font-size:12px}.akfl-sw{width:24px!important;height:24px!important;min-height:24px!important}" +
+  ".akfl-od{display:block;font-size:11px;opacity:.7;font-weight:400;margin-top:1px;line-height:1.25}" +
+  ".akly-wrap{position:sticky;top:0;z-index:3}.akly-wrap .akly-bar{position:static}.akly-op{margin:0 0 6px;padding:0 4px}" +
+  ".akfl-droptip{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;background:rgba(10,10,20,.92);color:#fff;padding:6px 10px;border-radius:10px;display:flex;gap:8px;align-items:center;font-size:13px;box-shadow:0 6px 18px rgba(0,0,0,.4)}");
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Graphics: gradient fill on a part (solid or gradient)", a: "Graphics studio › pick a part › ✨ Effects › 🎨 Fill: Solid or Gradient. Gradient: straight or from the middle, the color it fades to, direction, where it changes and softness. ⭐ Save keeps a gradient for every part and design.", k: "gradient fill fade color" },
+  { t: "Graphics: shadow, glow, outline, soft edges as stacked effects", a: "Graphics studio › ✨ Effects › ＋ Add an effect › Around the part and bold looks. They stack with the other effects (up to 8 per part) and each can be turned off, reordered or removed.", k: "shadow glow outline feather poster duotone stack" },
+  { t: "Graphics: dropper, colors from the design, saved colors", a: "Graphics studio › any color box: 💧 Dropper (tap the picture), 🎨 From design (its main colors), ⭐ saved colors with ＋ to save one. Saved colors are shared by every design (front and back of a card too). Hold a saved color to remove it.", k: "dropper eyedropper palette saved colors swatches" },
+  { t: "Graphics: see-through for any layer", a: "Graphics studio › 🗂 Layers: pick a layer and the See-through slider sits right under the layer toolbar.", k: "opacity see-through transparency" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+/* ================= 19.3: first-launch questions (change list item 20).
+   settings().profile = { who: {solo, band, worship, teacher, writer}, level: "simple" | "advanced", at }.
+   The answers set the usage modes (akModes), the bottom tabs (settings().tabsPick, 4 or 5), Simple mode (settings().simple) and the
+   🎸 Band toolbar button. Everything stays changeable: Settings › Look › Tabs and usage modes › "Set up my app (questions)".
+   In the store (Public) edition the questions replace the old "How will you use Akashic Chords?" box on the first start.
+   Simple mode now also keeps the Write tab's bigger tools (arranger, chord workshop, looper) behind one "🎛 More tools" button
+   (Simple mode part "wtools"); lyrics, chords, song parts and the chord picker stay in view. ================= */
+var AKQ_WHO = [["solo", "🎤", "Solo performer"], ["band", "🎸", "In a band"], ["worship", "⛪", "Worship team"], ["teacher", "🍎", "Teacher"], ["writer", "✍️", "Songwriter"]];
+var AKQ_TABNAME = { songs: "Songs", shows: "Shows", write: "Write", learn: "Learn", settings: "Settings", import: "Import", tonight: "Tonight" };
+function akqProfile() { var s = settings(); if (!s.profile || typeof s.profile !== "object") s.profile = { who: {}, level: "" }; if (!s.profile.who) s.profile.who = {}; return s.profile; }
+function akqPlan(who, level) {
+  var perform = !!(who.solo || who.band || who.worship), any = Object.keys(who).some(function (k) { return who[k]; });
+  if (!any) perform = true;
+  var tabs = ["songs"]; if (perform) tabs.push("shows"); if (who.writer) tabs.push("write"); if (who.teacher) tabs.push("learn"); tabs.push("settings");
+  return { modes: { perform: perform, learn: !!who.teacher, write: !!who.writer || !any, picked: true }, tabs: tabs.slice(0, 5), simple: level !== "advanced", band: !!(who.band || who.worship) };
+}
+function akqApply(who, level) {
+  var s = settings(), p = akqPlan(who, level), m = akModes();
+  Object.keys(p.modes).forEach(function (k) { m[k] = p.modes[k]; });
+  if (!m.perform && !m.learn && !m.write) m.perform = true;
+  s.tabsPick = p.tabs; s.simple = p.simple;
+  if (p.simple) { s.simpleParts = s.simpleParts || {}; s.simpleParts.write = !who.writer; s.simpleParts.learn = !who.teacher; }
+  try { (s.toolbar.items || []).forEach(function (it) { if (it.id === "band" && p.band) it.on = true; }); } catch (e) {}
+  var pr = akqProfile(); pr.who = who; pr.level = level || "simple"; pr.at = new Date().toISOString();
+  save(); try { akModeBodyClass(); } catch (e) {} try { akSimpleApply(); } catch (e) {}
+  render();
+  toast("Set up: " + p.tabs.map(function (t) { return AKQ_TABNAME[t] || t; }).join(" · ") + (p.simple ? ", Simple." : ", Advanced.") + " Change it any time in Settings › Look.");
+}
+function akqDialog(first) {
+  if (first && document.querySelector(".modal .akq")) return function () {};
+  var pr = akqProfile(), who = Object.assign({}, pr.who), level = pr.level || (settings().simple ? "simple" : (first ? "simple" : "advanced"));
+  var box = h("div", { class: "akq" }), close;
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("div", { class: "akq-h" }, "What do you do? Pick any."));
+    box.appendChild(h("div", { class: "akq-who" }, AKQ_WHO.map(function (x) {
+      var on = !!who[x[0]];
+      return h("button", { type: "button", class: "akq-chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { who[x[0]] = !who[x[0]]; draw(); } }, h("i", null, x[1]), h("span", null, x[2]));
+    })));
+    box.appendChild(h("div", { class: "akq-h" }, "How much do you want to see?"));
+    box.appendChild(h("div", { class: "akq-lv" }, [["simple", "Simple", "Lyrics, chords, song parts and the chord picker. Bigger tools are one tap away."], ["advanced", "Advanced", "Everything on show: arranger, multitrack, looper, detailed sound, business tools."]].map(function (x) {
+      var on = level === x[0];
+      return h("button", { type: "button", class: "akq-card" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { level = x[0]; draw(); } }, h("b", null, (on ? "✓ " : "") + x[1]), h("span", null, x[2]));
+    })));
+    var p = akqPlan(who, level);
+    box.appendChild(h("p", { class: "hint akq-prev" }, "Your tabs: " + p.tabs.map(function (t) { return AKQ_TABNAME[t] || t; }).join(" · ") + (p.band ? ". 🎸 Band sync button on." : ".") + " You can change all of this later."));
+  }
+  draw();
+  close = modal(first ? "Set up Akashic Chords for you" : "Set up my app", box, [
+    { label: first ? "Skip" : "Cancel", onClick: function () { if (first) { var m = akModes(); m.picked = true; save(); } } },
+    { label: "Set it up", primary: true, onClick: function () { akqApply(who, level); } }]);
+  return close;
+}
+/* the first start in the store edition asks these instead of the usage-modes box */
+(function () {
+  var md = akModesDialog;
+  akModesDialog = function (first) { if (first) return akqDialog(true); return md.apply(this, arguments); };
+  /* the store edition's first-run welcome (akWelcome16, ak16_a) is these questions too, so a new user sees one window, not two */
+  akWelcome16 = function () { return akqDialog(true); };
+  if (typeof akSettingsExtra26 === "function") {
+    var ns = akSettingsExtra26;
+    akSettingsExtra26 = function (c) {
+      ns(c);
+      try {
+        c.again("look");
+        c.section("Set up my app (questions)", "Solo, band, worship, teacher or songwriter; Simple or Advanced");
+        var pr = akqProfile(), who = AKQ_WHO.filter(function (x) { return pr.who[x[0]]; }).map(function (x) { return x[2]; });
+        c.out.appendChild(h("div", { class: "row akq-set" }, h("span", { class: "hint grow" }, pr.level ? (who.join(", ") || "Not answered") + " · " + (pr.level === "advanced" ? "Advanced" : "Simple") : "Pick what you do and how much to see; it sets your tabs, tools and Simple mode."),
+          h("button", { class: "sm", onClick: function () { akqDialog(false); } }, "Answer the questions")));
+      } catch (e) {}
+    };
+  }
+})();
+/* Simple mode: the Write tab's bigger tools sit behind one button */
+AK_SIMPLE_PARTS.push(["wtools", "Write tab: keep the arranger, chord workshop and looper behind one “🎛 More tools” button", true]);
+akCss("akq-19h",
+  "html.akq-wsimple:not(.akq-wmore) [data-blocks=\"write9\"] > [data-bk=\"arranger\"], html.akq-wsimple:not(.akq-wmore) [data-blocks=\"write9\"] > [data-bk=\"wheel\"], html.akq-wsimple:not(.akq-wmore) [data-blocks=\"write9\"] > [data-bk=\"aloop\"]{display:none!important}" +
+  ".akq-more{display:flex;align-items:center;gap:8px;margin:6px 0}.akq-more .hint{margin:0;font-size:12px}" +
+  ".akq-h{font-weight:700;margin:6px 0 6px}.akq-who{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}" +
+  ".akq-chip{display:flex;align-items:center;gap:6px;justify-content:flex-start;min-height:42px;padding:6px 8px;font-size:13px;text-align:left}.akq-chip i{font-style:normal;font-size:18px}" +
+  ".akq-chip.on,.akq-card.on{outline:2px solid var(--accent);background:rgba(200,150,46,.18)}" +
+  ".akq-lv{display:grid;grid-template-columns:1fr 1fr;gap:6px}.akq-card{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:8px;height:auto;min-height:84px;font-weight:400}.akq-card span{font-size:12px;opacity:.8;line-height:1.3}" +
+  ".akq-prev{margin:8px 0 0}.akq-set{align-items:center;gap:8px}");
+(function () {
+  var rd = render;
+  render = function () {
+    var r = rd.apply(this, arguments);
+    try {
+      var on = !!settings().simple && akSimpleOn("wtools"), de = document.documentElement;
+      de.classList.toggle("akq-wsimple", on); de.classList.toggle("akq-wmore", !!S.akqWMore);
+      if (on && S.view === "write") {
+        var pad = document.querySelector('[data-blocks="write9"] > [data-bk="pad"]');
+        if (pad && !document.querySelector(".akq-more")) pad.parentNode.insertBefore(h("div", { class: "akq-more" },
+          h("button", { class: "sm", "aria-expanded": S.akqWMore ? "true" : "false", onClick: function () { S.akqWMore = !S.akqWMore; document.documentElement.classList.toggle("akq-wmore", S.akqWMore); this.textContent = S.akqWMore ? "🎛 Fewer tools ▴" : "🎛 More tools ▾"; this.setAttribute("aria-expanded", S.akqWMore ? "true" : "false"); } }, S.akqWMore ? "🎛 Fewer tools ▴" : "🎛 More tools ▾"),
+          h("span", { class: "hint" }, "Arranger, chord workshop and looper (Simple mode)")), pad.nextSibling);
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Set up the app for what you do (solo, band, worship, teacher, songwriter; Simple or Advanced)", a: "Settings › Look › Set up my app (questions) › Answer the questions. Your answers pick the bottom tabs, the usage modes, Simple or Advanced, and turn on the 🎸 Band button for bands. Everything can be changed after.", k: "questionnaire setup first start simple advanced profile who" },
+  { t: "Write tab: arranger, chord workshop and looper in Simple mode", a: "Write tab › 🎛 More tools (under Lyrics) shows them. Settings › Look › Simple mode: what it does › untick the Write tab line to always show them.", k: "simple write arranger looper workshop more tools" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+
+/* ================= 19.3: website calendar look (item 9) and gig reminders (item 13).
+   Item 9: settings().webCal.style = "styled" (default: black, deep red header row and buttons, Syncopate, white grid lines, show chips with a dot,
+     time and venue; Month with ‹ Today ›, This week, Upcoming shows; no Powered by / Print / Subscribe) | "light" | "fiery" (the older look).
+     webCal.hd = the header and button color. Drawn by the public page (site_src/request, go=cal, drawCalStyled).
+   Item 13: one list of reminders worked out from your shows, bookings and gear (akRmList), shown as a 🔔 bar at the top of the tab screens
+     (folded to one row), a count on the Shows tab, and phone notifications while the app is open (Notification API; the store app can do
+     real push later). settings().rem = { off: {kind: true}, done: {key: day}, snooze: {key: day}, notify, noted: {key: 1}, packs: {kind: [items]}, open }.
+     Kinds: confirm (week before, "Confirm details" message), daybefore, dayof (time, venue, map), charge (night before, gear marked "needs
+     charging": gear.charge), pack (day of: the show type's checklist, editable per show: gig.pack), after ("nothing left behind?"), money
+     (deposit or balance due), thanks (next day), log (log tips and miles the next day), clip (post a clip the next day), pro (quarterly
+     set list report). ================= */
+
+/* ---------------------------------------------------------------- item 9: the app side */
+(function () {
+  var cf = akWcCfg;
+  akWcCfg = function () { var c = cf.apply(this, arguments); if (!c.style) c.style = "styled"; if (!c.hd) c.hd = "#8B0000"; return c; };
+  var prof = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = prof.apply(this, arguments); try { var c = akWcCfg(); p.cal = p.cal || {}; p.cal.style = c.style; p.cal.hd = c.hd; if (c.style !== "fiery" && !c.font) p.cal.font = "syncopate"; } catch (e) {} return p; };
+  var card = akPublicCalCard;
+  akPublicCalCard = function () {
+    var d = card.apply(this, arguments);
+    try {
+      var c = akWcCfg();
+      var box = h("div", { class: "akrm-calst" },
+        h("label", { class: "fld" }, "Calendar look", h("select", { onChange: function () { c.style = this.value; save(); akWcPublishSoon(); render(); } },
+          [["styled", "Styled: black with a deep red header (Syncopate)"], ["light", "Styled, light: white with a red header"], ["fiery", "Fiery: gradient title, dots on days"]].map(function (s) { return h("option", { value: s[0], selected: c.style === s[0] }, s[1]); }))),
+        c.style === "fiery" ? null : h("label", { class: "chk" }, h("input", { type: "color", value: /^#[0-9a-f]{6}$/i.test(c.hd) ? c.hd : "#8B0000", "aria-label": "Header and button color", onInput: function () { c.hd = this.value; save(); akWcPublishSoon(); } }), "Header and button color"),
+        c.style === "fiery" ? null : h("p", { class: "hint" }, "Month view with ‹ Today ›, a This week view and an Upcoming shows list. Tap a day for the details. No “Powered by”, print or subscribe buttons."));
+      var sum = d.querySelector("summary"); if (sum && sum.nextSibling) d.insertBefore(box, sum.nextSibling.nextSibling || null); else d.appendChild(box);
+    } catch (e) {}
+    return d;
+  };
+})();
+
+/* ---------------------------------------------------------------- item 13: reminders */
+var AKRM_KINDS = [["confirm", "Week before: confirm the details with the client"], ["daybefore", "Day before: time, venue and map"], ["dayof", "Day of: time, venue and map"],
+  ["charge", "Night before: charge your gear"], ["pack", "Day of: packing checklist"], ["after", "After the show: nothing left behind?"], ["money", "Deposit or balance due"],
+  ["thanks", "Next day: thank you and ask for a review"], ["log", "Next day: log tips and miles"], ["clip", "Next day: post a clip"], ["pro", "Every quarter: send your set list report"]];
+var AKRM_PACK = {
+  public: ["Guitar and spare strings", "Capo, tuner, picks", "Amp or PA, power strip, extension cord", "Mic, stand, cables (and spares)", "Pedal and tablet with charger", "Tip jar and QR sign", "Water and a towel"],
+  private: ["Guitar and spare strings", "Capo, tuner, picks", "PA, mic, stand, cables", "Power strip and extension cord", "Pedal and tablet with charger", "Setlist and the client's requests", "Contract and invoice", "Lights (if outdoors or evening)"],
+  wedding: ["Guitar and spare strings", "Capo, tuner, picks", "PA, wireless mic for toasts, stands, cables", "Power strip and extension cord", "Pedal and tablet with charger", "Ceremony and first-dance songs", "Timeline and contact for the day", "Contract and invoice", "Nice clothes and a spare shirt"],
+  corporate: ["Guitar and spare strings", "Capo, tuner, picks", "PA, mic, stand, cables", "Power strip and extension cord", "Pedal and tablet with charger", "Invoice and W-9", "Business cards"]
+};
+var AKRM_KNAME = { public: "Bar, restaurant or venue", private: "Private party", wedding: "Wedding", corporate: "Corporate event" };
+function akRm() { var s = settings(); if (!s.rem || typeof s.rem !== "object") s.rem = {}; var r = s.rem; ["off", "done", "snooze", "noted", "packs"].forEach(function (k) { if (!r[k] || typeof r[k] !== "object") r[k] = {}; }); return r; }
+function akRmOn(k) { return !akRm().off[k]; }
+function akRmDay(n) { var d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + (n || 0)); return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
+function akRmLead(g) { try { return akLeads().filter(function (l) { return l.gigId === g.id; })[0] || null; } catch (e) { return null; } }
+function akRmKind(g) {
+  var l = akRmLead(g); if (l && l.kind && AKRM_PACK[l.kind]) return l.kind;
+  if (g.kind && AKRM_PACK[g.kind]) return g.kind;
+  return "public";
+}
+function akRmPackFor(g) {
+  if (Array.isArray(g.pack)) return g.pack;
+  var k = akRmKind(g), mine = akRm().packs[k];
+  return (Array.isArray(mine) ? mine : AKRM_PACK[k] || AKRM_PACK.public).map(function (t) { return { t: t, done: false }; });
+}
+function akRmGigTime(g) { return g.start ? (typeof fmtClock === "function" ? fmtClock(g.start) : g.start) : ""; }
+function akRmFmtTime(t) { var m = /^(\d+):(\d+)/.exec(t || ""); if (!m) return t || ""; var d = new Date(2000, 0, 1, +m[1], +m[2]); return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function akRmWhere(g) { return [g.venue || g.name, akRmFmtTime(g.start)].filter(Boolean).join(" · "); }
+function akRmMapBtn(g) { var u = akMapsUrl(g.venue || g.name, akGigAddr(g)); return u ? { label: "📍 Map", run: function () { window.open(u, "_blank"); } } : null; }
+function akRmGigBtn(g, label) { return { label: label || "Open the show", run: function () { go("gig", { gigId: g.id }); } }; }
+/* everything due today (and anything overdue that isn't done) */
+function akRmList() {
+  var out = [], t = akRmDay(0), tm = akRmDay(1), yd = akRmDay(-1), R = akRm(), gigs = [];
+  try { gigs = akGigs().filter(function (g) { return g.date; }); } catch (e) {}
+  function push(k, key, ic, txt, acts, sub) { if (!akRmOn(k)) return; key = k + ":" + key; if (R.done[key] || (R.snooze[key] && R.snooze[key] > t)) return; out.push({ k: k, key: key, ic: ic, txt: txt, sub: sub || "", acts: (acts || []).filter(Boolean) }); }
+  gigs.forEach(function (g) {
+    var d = g.date, title = akGigTitle(g), to = akDaysTo(d);
+    if (d === t) {
+      push("dayof", g.id + d, "🎤", "Today: " + akRmWhere(g), [akRmMapBtn(g), akRmGigBtn(g)], akGigAddr(g));
+      var pk = akRmPackFor(g), left = pk.filter(function (p) { return !p.done; }).length;
+      if (pk.length && left) push("pack", g.id + d, "🧳", "Pack for " + title + " (" + left + " of " + pk.length + " to go)", [{ label: "☑ Checklist", run: function () { akRmPackDlg(g, false); } }]);
+      if (g.end) { var now = new Date(), m = /^(\d+):(\d+)/.exec(g.end); if (m && now.getHours() * 60 + now.getMinutes() >= +m[1] * 60 + +m[2] - 10) push("after", g.id + d, "👀", "Nothing left behind at " + title + "?", [{ label: "☑ Check", run: function () { akRmPackDlg(g, true); } }]); }
+    }
+    if (d === tm) {
+      push("daybefore", g.id + d, "📅", "Tomorrow: " + akRmWhere(g), [akRmMapBtn(g), akRmGigBtn(g)], akGigAddr(g));
+      var ch = (typeof akGear === "function" ? akGear() : []).filter(function (x) { return x.charge; });
+      if (ch.length && new Date().getHours() >= 16) push("charge", g.id + d, "🔋", "Charge tonight: " + ch.map(function (x) { return x.name || x.model || "gear"; }).join(", "), []);
+    }
+    if (d === yd) {
+      push("after", g.id + d, "👀", "Nothing left behind at " + title + "?", [{ label: "☑ Check", run: function () { akRmPackDlg(g, true); } }]);
+      if (!(g.tips || []).length) push("log", g.id + d, "💵", "Log the tips and miles for " + title, [akRmGigBtn(g, "💵 Log them")]);
+      push("clip", g.id + d, "🎬", "Post a clip from " + title, [{ label: "🎬 Clips", run: function () { go("clips"); } }]);
+    }
+  });
+  try {
+    akLeads().forEach(function (l) {
+      var f = akLeadFollow(l); if (!f || !f.due) return;
+      var k = f.fu === "confirm" ? "confirm" : f.fu === "balance" || f.fu === "contract" ? "money" : f.fu === "thanks" ? "thanks" : ""; if (!k) return;
+      push(k, l.id + (l.date || ""), k === "confirm" ? "✉️" : k === "money" ? "💰" : "⭐", (l.name || "Client") + ": " + f.why, [{ label: k === "confirm" ? "✉️ Confirm details" : "✉️ Write it", run: function () { akLeadFollowGo(l, f.fu); go("msgs"); } }]);
+    });
+  } catch (e) {}
+  var mo = new Date().getMonth(), dt = new Date().getDate();
+  if (mo % 3 === 0 && dt <= 15) push("pro", new Date().getFullYear() + "q" + (mo / 3 + 1), "🎼", "New quarter: send your set list report (ASCAP, BMI…)", [{ label: "🎼 Set lists", run: function () { go("pro"); } }]);
+  return out;
+}
+function akRmDone(key) { var R = akRm(); R.done[key] = akRmDay(0); /* forget old ones */ Object.keys(R.done).forEach(function (k) { if (R.done[k] < akRmDay(-60)) delete R.done[k]; }); save(); render(); }
+function akRmSnooze(key) { var R = akRm(); R.snooze[key] = akRmDay(1); save(); render(); toast("I'll show it again tomorrow."); }
+function akRmPackDlg(g, after) {
+  if (!Array.isArray(g.pack)) g.pack = akRmPackFor(g);
+  var list = g.pack, box = h("div", { class: "akrm-pack" });
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("p", { class: "hint" }, after ? "Before you drive off: is everything back in the car?" : "For " + akGigTitle(g) + " (" + AKRM_KNAME[akRmKind(g)] + "). Changes here are for this show only."));
+    list.forEach(function (p, i) {
+      var on = after ? !!p.back : !!p.done;
+      box.appendChild(h("div", { class: "akrm-pi" }, h("label", { class: "chk grow" }, h("input", { type: "checkbox", checked: on, onChange: function () { if (after) p.back = this.checked; else p.done = this.checked; save(); } }), p.t),
+        after ? null : h("button", { class: "icon sm", "aria-label": "Remove " + p.t, onClick: function () { list.splice(i, 1); save(); draw(); } }, "✕")));
+    });
+    if (!after) {
+      var inp = h("input", { type: "text", placeholder: "Add an item", "aria-label": "Add an item", onKeydown: function (e) { if (e.key === "Enter") addIt(); } });
+      function addIt() { var v = inp.value.trim(); if (!v) return; list.push({ t: v, done: false }); save(); draw(); }
+      box.appendChild(h("div", { class: "row akrm-add" }, inp, h("button", { class: "sm", onClick: addIt }, "＋")));
+    }
+  }
+  draw();
+  modal(after ? "👀 Nothing left behind?" : "🧳 Packing checklist", box, [{ label: "Done", primary: true, onClick: function () { if (after && list.every(function (p) { return p.back; })) akRmDone("after:" + g.id + g.date); else render(); } }]);
+}
+/* the bar at the top of the tab screens */
+function akRmBar() {
+  var list; try { list = akRmList(); } catch (e) { return null; }
+  if (!list.length) return null;
+  var R = akRm(), open = !!R.open;
+  var bar = h("div", { class: "akrm-bar" + (open ? " open" : "") },
+    h("button", { class: "akrm-head", "aria-expanded": open ? "true" : "false", onClick: function () { R.open = !R.open; save(); render(); } },
+      h("span", { class: "grow" }, "🔔 " + list.length + (list.length === 1 ? " reminder: " : " reminders: ") + list[0].txt.replace(/^Today: /, "")), h("span", { "aria-hidden": "true" }, open ? "▴" : "▾")));
+  if (open) list.forEach(function (x) {
+    bar.appendChild(h("div", { class: "akrm-it" }, h("span", { class: "akrm-ic", "aria-hidden": "true" }, x.ic),
+      h("div", { class: "grow akrm-tx" }, x.txt, x.sub ? h("small", null, x.sub) : null),
+      x.acts.map(function (a) { return h("button", { class: "sm", onClick: a.run }, a.label); }),
+      h("button", { class: "icon sm", title: "Show it tomorrow", "aria-label": "Snooze until tomorrow", onClick: function () { akRmSnooze(x.key); } }, "💤"),
+      h("button", { class: "icon sm", title: "Done", "aria-label": "Done", onClick: function () { akRmDone(x.key); } }, "✓")));
+  });
+  if (open) bar.appendChild(h("div", { class: "akrm-foot" }, h("button", { class: "sm", onClick: function () { akRmSettings(); } }, "⚙ Which reminders")));
+  return bar;
+}
+function akRmSettings() {
+  var R = akRm(), box = h("div", { class: "akrm-set" });
+  function draw() {
+    box.textContent = "";
+    AKRM_KINDS.forEach(function (k) { box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !R.off[k[0]], onChange: function () { if (this.checked) delete R.off[k[0]]; else R.off[k[0]] = true; save(); } }), k[1])); });
+    var nt = typeof Notification !== "undefined";
+    box.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", disabled: !nt, checked: !!R.notify && nt && Notification.permission === "granted", onChange: function () {
+      var me = this; if (!me.checked) { R.notify = false; save(); return; }
+      Notification.requestPermission().then(function (p) { R.notify = p === "granted"; me.checked = R.notify; save(); if (!R.notify) toast("Notifications are blocked in this browser's settings."); });
+    } }), "Phone notifications (while the app is open or in the background; the store app will add real push)"));
+    var gear = typeof akGear === "function" ? akGear() : [];
+    var gd = h("details", { class: "akrm-sub" }, h("summary", null, "🔋 Gear that needs charging (" + gear.filter(function (g) { return g.charge; }).length + ")"));
+    if (!gear.length) gd.appendChild(h("p", { class: "hint" }, "Add your gear in 💼 Business › Gear first."));
+    gear.forEach(function (g) { gd.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!g.charge, onChange: function () { g.charge = this.checked; save(); } }), g.name || g.model || "Gear")); });
+    box.appendChild(gd);
+    var pd = h("details", { class: "akrm-sub" }, h("summary", null, "🧳 Packing lists for each kind of show"));
+    Object.keys(AKRM_PACK).forEach(function (k) {
+      var cur = (Array.isArray(R.packs[k]) ? R.packs[k] : AKRM_PACK[k]).join("\n");
+      pd.appendChild(h("label", { class: "fld" }, AKRM_KNAME[k] + " (one item per line)", h("textarea", { rows: 4, value: cur, onChange: function () { var v = this.value.split("\n").map(function (x) { return x.trim(); }).filter(Boolean); R.packs[k] = v; save(); } })));
+    });
+    pd.appendChild(h("p", { class: "hint" }, "A show's kind comes from its booking (private party, wedding, corporate); other shows use the venue list. Each show keeps its own copy once you open its checklist."));
+    box.appendChild(pd);
+  }
+  draw();
+  modal("🔔 Gig reminders", box, [{ label: "Done", primary: true, onClick: function () { render(); } }]);
+}
+/* phone notifications for the day-of, day-before, confirm and charge reminders (once each) */
+function akRmNotify() {
+  try {
+    var R = akRm(); if (!R.notify || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    var list = akRmList().filter(function (x) { return /^(dayof|daybefore|confirm|charge|pack)$/.test(x.k) && !R.noted[x.key]; });
+    if (!list.length) return;
+    list.forEach(function (x) {
+      R.noted[x.key] = akRmDay(0);
+      var opt = { body: x.sub || "Open Akashic Chords for the details.", tag: x.key, icon: "icon-192.png" };
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { if (r && r.showNotification) r.showNotification(x.ic + " " + x.txt, opt); else new Notification(x.ic + " " + x.txt, opt); }).catch(function () {});
+      else new Notification(x.ic + " " + x.txt, opt);
+    });
+    Object.keys(R.noted).forEach(function (k) { if (R.noted[k] < akRmDay(-30)) delete R.noted[k]; });
+    save();
+  } catch (e) {}
+}
+setTimeout(akRmNotify, 4000); setInterval(akRmNotify, 10 * 60 * 1000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) akRmNotify(); });
+(function () {
+  var sb = akSampleBanner;
+  akSampleBanner = function () { var a = sb.apply(this, arguments), b = null; try { if (/^(songs|shows|home|write|settings)$/.test(S.view)) b = akRmBar(); } catch (e) {} return b ? [b, a] : a; };
+  var tb = tabBarEl;
+  tabBarEl = function (o) {
+    var bar = tb.apply(this, arguments);
+    try {
+      var n = akRmList().length; if (!n) return bar;
+      var btn = [].slice.call(bar.querySelectorAll("button")).filter(function (b) { return /Shows/.test(b.textContent) && !b.getAttribute("data-tab"); })[0];
+      if (btn && !btn.querySelector(".akrm-badge")) { btn.style.position = "relative"; btn.appendChild(h("span", { class: "akrm-badge", "aria-label": n + " reminders" }, String(n))); }
+    } catch (e) {}
+    return bar;
+  };
+})();
+akCss("akrm-19i",
+  ".akrm-bar{margin:4px 14px;border-radius:12px;background:rgba(200,150,46,.14);border:1px solid rgba(200,150,46,.35);overflow:hidden}" +
+  ".akrm-head{display:flex;align-items:center;gap:6px;width:100%;text-align:left;background:transparent;border:0;min-height:36px;padding:4px 10px;font-size:13px;font-weight:600;color:inherit}" +
+  ".akrm-head .grow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+  ".akrm-it{display:flex;align-items:center;gap:6px;padding:5px 8px;border-top:1px solid rgba(127,127,127,.25);flex-wrap:wrap}.akrm-ic{font-size:16px}.akrm-tx{font-size:13px;min-width:140px}.akrm-tx small{display:block;opacity:.7}" +
+  ".akrm-it .sm{min-height:30px;height:30px;padding:0 8px;font-size:12px}.akrm-it .icon.sm{width:30px;min-width:30px;padding:0}.akrm-foot{padding:4px 8px;border-top:1px solid rgba(127,127,127,.25)}" +
+  ".akrm-badge{position:absolute;top:2px;right:18%;min-width:16px;height:16px;border-radius:8px;background:#c0392b;color:#fff;font-size:10px;line-height:16px;font-weight:700;padding:0 4px;pointer-events:none}" +
+  ".akrm-pi{display:flex;align-items:center;gap:6px}.akrm-add input{flex:1 1 auto;min-width:0}.akrm-sub{margin:8px 0}.akrm-sub summary{cursor:pointer;font-weight:600}.akrm-calst{margin:6px 0}");
+if (typeof AK_HELP_WHERE !== "undefined") [
+  { t: "Gig reminders (confirm, day before, day of, pack, charge, after the show, money, thank you, tips and miles, clips, set list report)", a: "The 🔔 bar at the top of Songs and Shows when something is due (tap to open; ✓ done, 💤 tomorrow). The Shows tab shows how many. Pick which ones, phone notifications, gear that needs charging and packing lists: open the 🔔 bar › ⚙ Which reminders, or Settings › Requests and tips › Gig reminders.", k: "reminders notifications alerts pack checklist charge confirm" },
+  { t: "Website calendar look (styled, black and red)", a: "Graphics tab › 🗓 Public calendar for my website › Calendar look: Styled (black with a deep red header, Syncopate), Styled light, or Fiery. Month view with ‹ Today ›, This week and Upcoming shows.", k: "website calendar style embed bandzoogle" }
+].forEach(function (e) { AK_HELP_WHERE.push(e); });
+/* a way into the reminder settings from Settings */
+(function () {
+  if (typeof akSettingsExtra26 !== "function") return;
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try { c.again("requests-and-tips"); c.section("🔔 Gig reminders", "Confirm, day before, day of, packing, charging, after the show, money, thank you"); c.out.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akRmSettings(); } }, "⚙ Which reminders"))); } catch (e) {}
+  };
+})();
+
+/* 19.3 version and what is new: set here, in the last module, so it lands on top of any earlier list. */
+AK_VERSION = "19.3";
+AK_WHATS_NEW = [
+  "🎨 Graphics studio › Effects has a “Fill: solid or gradient” box on top (straight or round gradients, save the ones you like). Soft edges, shadow, glow, outline, bold looks and two-color now go in the same effects list as everything else (up to 8), each with a one-line note on what it does.",
+  "💧 Every color box in the Graphics studio has a 💧 Dropper (tap the picture to copy a color), 🎨 colors from this design, and ⭐ saved colors (＋ to save, hold to remove). Layers has a See-through slider for the picked part.",
+  "🧭 New setup questions: who you are (solo, band, worship, teacher, songwriter) and Simple or Advanced. It sets your tabs and how much shows. Change it any time in Settings › Look › Set up my app. In Simple, the Write tab tucks the extra tools under 🎛 More tools.",
+  "🗓 Your website calendar has a new styled look (dark or light, header color you pick, Month / This week / Upcoming, tap a show for map and Add to calendar). Pick the look in the public calendar card.",
+  "🔔 Gig reminders: a small 🔔 row on top lists what's due (confirm the show, the day before, pack, charge gear, log money, thank the venue, save clips). Tap to finish or snooze; packing lists per kind of show. Settings › Requests and tips › Gig reminders, with phone notifications if you want them.",
+  "🗂 Graphics studio › Layers has a toolbar at the top, like other editors: ＋ New layer, ⧉ Duplicate, 🗑 Delete, 👁 Hide, 🔒 Lock, ↑ ↓, and ⋯ for 🔗 Group (parts move together), Merge into one picture, Copy, Paste and more.",
+  "📍 Layers stay where they are. Overlays and color screens no longer jump when you change them. Pick where a new layer starts (in front, under the words, over the photo, at the back) in the ＋ New layer window; after that it stays put until you move it (⇅ Move to… on an overlay).",
+  "↺ “Put every part back” is now “Reset all parts to the layout” in Layers › ⋯, with a note on what it does (moves, sizes, colors and effects go back; parts you added stay).",
+  "📥 Restoring a backup on a new install (only the sample songs) now picks “Replace everything”, and “Add” opens the added library when the one on screen only had samples. Before, the backup went into a second library you couldn't see."
+].concat(AK_WHATS_NEW || []);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
