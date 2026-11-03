@@ -52283,8 +52283,9 @@ setInterval(function () { try { if (S.view === "write") akPopBelowDivider(); } c
 document.addEventListener("pointermove", function () { try { akPopBelowDivider(); } catch (e) {} }, true);
 
 /* 18.6d: the show page holds fewer, tidier boxes: Details, Setlists, then Graphics, Media and Analytics (each folds). */
-AK_VERSION = "19.0";
+AK_VERSION = "19.1";
 AK_WHATS_NEW = [
+  "🎸 Band sync: share your show's setlists and charts with your band, live. Settings › Requests and tips › Band sync, or the 🎸 Band box on a show's page. Bandmates open your band link and get their own “🎸 Band” library; with Follow on, their screen jumps to the song you open. Copy the Firebase rules again once.",
   "🖼 Graphics studio: the picture-size bar can't be dragged under the bottom tabs any more (it used to get stuck there), and ↶ right after deleting a part brings it back on the first tap.",
   "↕ The quick-scroll handle on the right is slimmer until you hold it, so it no longer covers “Open all” or the end of button rows.",
   "🎵 The Sample songs note is one short row and only shows on Songs and Shows, so new users don't get two cards stacked on every screen.",
@@ -59643,6 +59644,343 @@ akCss("akcl", ".akcl-pv{display:flex;flex-direction:column;align-items:center;ga
 if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Make video clips and highlight reels (Reels, TikTok, Shorts)", a: "More › 🎬 Clips (also Artist info › Make): pick a video or recording (or 🎙 My show recordings), set Start here / End here, ＋ Add another part for a highlight reel, pick the shape (9:16, 4:5, 1:1, 16:9) and Fill or Fit, add your name and venue, then 🎬 Make the clip and 📤 Save or share. Audio recordings get a picture behind them." });
 }
+
+/* ================= 19.1: 🎸 Band sync (item 118). You share, the band follows.
+   Leader (you): Settings › Requests and tips › Band sync. Uses the same free Firebase project and performer sign-in as online
+   requests. One document performers/{you}/band/{key} holds { name, data: JSON text of the shared show, setlists and charts, now: the
+   song you have open }. The key is long and random, so only people with the link can read it; only you can write it
+   (rules block in AK_FB_RULES). What is shared: the show picked on its show page (🎸 Band box) or else your next show from today on,
+   plus whatever you are playing right now. Charts go out about 2 s after you change them; the song you open goes out at once.
+   Bandmates: open the link (…/?band=1&k=…&j=…&p=…&b=…). The app asks once, then keeps a separate library "🎸 <band>" (lib.band)
+   with the setlists and charts. Their own songs are never touched. With Follow on, their playing screen jumps to the song you open.
+   Their text size and view per song are kept; everything else follows you (edits they make in the band library are replaced).
+   Firestore can't hold arrays inside arrays, so the shared part is one JSON string (limit about 1 MB, checked). ================= */
+var AKB = { db: null, uid: "", err: "", state: "off", sig: "", nowSig: "", t: 0, starting: false, subs: {}, last: {}, joinAsked: false };
+function akBandCfg() {
+  var s = settings(); if (!s.band || typeof s.band !== "object") s.band = {};
+  var b = s.band; if (b.on === undefined) b.on = false; if (!b.key) b.key = akBandNewKey(); if (b.follow === undefined) b.follow = true;
+  if (typeof b.name !== "string") b.name = ""; if (typeof b.gigId !== "string") b.gigId = ""; return b;
+}
+function akBandNewKey() { var a = "abcdefghijkmnpqrstuvwxyz23456789", k = ""; try { var r = new Uint8Array(22); crypto.getRandomValues(r); for (var i = 0; i < r.length; i++) k += a[r[i] % a.length]; } catch (e) { while (k.length < 22) k += a[Math.floor(Math.random() * a.length)]; } return k; }
+function akBandName() { var b = akBandCfg(); return b.name || (typeof akArtistName === "function" && akArtistName() ? akArtistName() + "'s band" : "The band"); }
+function akBandLibs() { return store.libs.filter(function (l) { return l.band && l.band.b; }); }
+function akBandIsBandLib(l) { return !!(l && l.band && l.band.b); }
+
+/* ---------------------------------------------------------------- leader: what is shared */
+var AKB_DROP = { images: 1, audio: 1, history: 1, jokeIds: 1, plays: 1, lastPlayed: 1, practice: 1, versions: 1, recs: 1, recordings: 1, photos: 1, takes: 1, banter: 1, played: 1, counted: 1, runs: 1, log: 1 };
+var AKB_KEEP = ["id", "title", "artist", "key", "timeSig", "tempo", "duration", "lyrics", "chords", "notes", "capo", "transpose", "view", "scrollSpeed", "scrollMode", "preRoll", "chartName", "origArtist", "writers", "ytUrl", "spUrl"];
+function akBandSong(s) {
+  var o = {}; Object.keys(s).forEach(function (k) { if (!AKB_DROP[k] && s[k] !== undefined && typeof s[k] !== "function") o[k] = s[k]; });
+  var j = ""; try { j = JSON.stringify(o); } catch (e) { j = ""; }
+  if (!j || j.length > 60000) { o = {}; AKB_KEEP.forEach(function (k) { if (s[k] !== undefined) o[k] = s[k]; }); }
+  return o;
+}
+function akBandHomeLib() { var b = akBandCfg(), l = b.libId && store.libs.filter(function (x) { return x.id === b.libId; })[0]; if (!l || akBandIsBandLib(l)) l = akBandIsBandLib(lib()) ? store.libs.filter(function (x) { return !akBandIsBandLib(x); })[0] : lib(); return l || lib(); }
+function akBandGig() {
+  var b = akBandCfg(), L = akBandHomeLib(), gigs = Array.isArray(L.gigs) ? L.gigs : [];
+  var g = b.gigId && gigs.filter(function (x) { return x.id === b.gigId; })[0];
+  if (g) return g;
+  var today = typeof akTodayKey === "function" ? akTodayKey() : new Date().toISOString().slice(0, 10);
+  return gigs.filter(function (x) { return x.date && x.date >= today && (x.setlists || []).length; }).sort(function (a, c) { return (a.date + (a.start || "")).localeCompare(c.date + (c.start || "")); })[0] || null;
+}
+function akBandPlaying() {
+  if (S.view !== "play" || !S.play || !S.play.list || !S.play.list.length || akBandIsBandLib(lib())) return null;
+  var sets = [], by = {};
+  S.play.list.forEach(function (it) { var k = String(it.setNo || 1) + "|" + (it.setName || ""); if (!by[k]) { by[k] = { name: it.setName || "Set " + (it.setNo || 1), songIds: [] }; sets.push(by[k]); } by[k].songIds.push(it.songId); });
+  var sh = S.play.list[0].showId && findShow(S.play.list[0].showId);
+  return { id: "band-now", name: "▶ Now playing" + (sh && sh.name ? ": " + sh.name : ""), sets: sets };
+}
+function akBandDoc() {
+  var L = akBandHomeLib(), g = akBandGig(), songs = {}, lists = [];
+  function songOf(id) { for (var i = 0; i < L.songs.length; i++) if (L.songs[i].id === id) return L.songs[i]; return null; }
+  function addList(sh) {
+    if (!sh || lists.some(function (x) { return x.id === sh.id; })) return;
+    var o = { id: sh.id, name: sh.name || "Setlist", sets: (sh.sets || []).map(function (st) { return { name: st.name || "Set", color: st.color || "", songIds: (st.songIds || []).filter(function (id) { return !!songOf(id); }) }; }) };
+    lists.push(o);
+  }
+  if (g) (g.setlists || []).forEach(function (id) { addList(L.shows.filter(function (x) { return x.id === id; })[0]); });
+  var p = akBandPlaying();
+  if (p) { p.sets.forEach(function (st) { st.songIds = st.songIds.filter(function (id) { return !!songOf(id); }); }); lists.push(p); }
+  lists.forEach(function (sh) { sh.sets.forEach(function (st) { st.songIds.forEach(function (id) { if (!songs[id]) songs[id] = akBandSong(songOf(id)); }); }); });
+  var gig = g ? { id: g.id, name: g.name || "", date: g.date || "", start: g.start || "", end: g.end || "", venue: g.venue || "", address: g.address || "", setlists: (g.setlists || []).slice() } : null;
+  return { v: 1, name: akBandName(), gig: gig, lists: lists, songs: songs };
+}
+function akBandNow() { var it = S.view === "play" && S.play && S.play.list && S.play.list[S.play.idx]; if (!it || akBandIsBandLib(lib())) return null; return { id: it.songId, list: it.showId || "", i: S.play.idx, at: Date.now() }; }
+
+/* ---------------------------------------------------------------- leader: connection and sending */
+function akBandRef() { return AKB.db && AKB.uid ? AKB.db.doc("performers/" + AKB.uid + "/band/" + akBandCfg().key) : null; }
+function akBandStart() {
+  var b = akBandCfg(); if (!b.on || AKB.db || AKB.starting) return;
+  if (typeof akCloudApp !== "function") { AKB.err = "Online requests aren't in this build."; return; }
+  AKB.starting = true; AKB.err = ""; AKB.state = "connecting"; akBandPaint();
+  akCloudApp().then(function (app) {
+    var u = app.auth().currentUser; if (u && !u.isAnonymous) return [app, u];
+    return new Promise(function (res) { var off = app.auth().onAuthStateChanged(function (x) { off(); res([app, x && !x.isAnonymous ? x : null]); }); });
+  }).then(function (r) {
+    AKB.starting = false;
+    if (!r[1]) { AKB.state = "off"; AKB.err = "Sign in first: Settings › Requests and tips › Online (your performer account)."; akBandPaint(); return; }
+    AKB.db = r[0].firestore(); AKB.uid = r[1].uid; AKB.state = "on"; AKB.sig = ""; akBandSend(true);
+  }).catch(function (e) { AKB.starting = false; AKB.state = "off"; AKB.err = /load/.test(e.message || "") ? "Couldn't reach Firebase (offline?)" : (e.message || String(e)); akBandPaint(); });
+}
+function akBandStop() { AKB.db = null; AKB.uid = ""; AKB.state = "off"; AKB.sig = ""; AKB.nowSig = ""; akBandPaint(); }
+function akBandErr(e) { var c = (e && (e.code || e.message)) || "error"; AKB.err = /permission/i.test(c) ? "Firebase refused it: copy the rules again (Settings › Requests and tips › Setup steps › Copy the rules) and press Publish in Firebase." : "Couldn't send to the band: " + c; akBandPaint(); }
+/* full: send the setlists and charts if they changed (or always when force) */
+function akBandSend(force) {
+  var ref = akBandRef(); if (!ref) return Promise.resolve(false);
+  var d = akBandDoc(), data = JSON.stringify(d);
+  if (data.length > 1000000) { AKB.err = "Too much to share at once (" + Math.round(data.length / 1000) + " KB, Firebase takes about 1000 KB). Share fewer setlists."; akBandPaint(); return Promise.resolve(false); }
+  var now = akBandNow(), nowSig = now ? now.id + "|" + now.list + "|" + now.i : "";
+  if (!force && data === AKB.sig) return akBandSendNow();
+  AKB.sig = data; AKB.nowSig = nowSig;
+  var o = { name: d.name, data: data, updated: Date.now() }; if (now) o.now = now;
+  return ref.set(o, { merge: true }).then(function () { AKB.err = ""; AKB.sentAt = Date.now(); akBandPaint(); return true; }, function (e) { AKB.sig = ""; akBandErr(e); return false; });
+}
+/* just the song you have open (small and quick) */
+function akBandSendNow() {
+  var ref = akBandRef(), b = akBandCfg(); if (!ref || !b.follow) return Promise.resolve(false);
+  var now = akBandNow(); if (!now) return Promise.resolve(false);
+  var sig = now.id + "|" + now.list + "|" + now.i; if (sig === AKB.nowSig) return Promise.resolve(false);
+  AKB.nowSig = sig;
+  return ref.set({ now: now }, { merge: true }).then(function () { AKB.sentAt = Date.now(); return true; }, function (e) { AKB.nowSig = ""; akBandErr(e); return false; });
+}
+function akBandSoon() { if (!AKB.db) return; clearTimeout(AKB.t); AKB.t = setTimeout(function () { akBandSend(false); }, 2000); }
+function akBandLink() {
+  var b = akBandCfg(), L = typeof akLive === "function" ? akLive() : { fb: {} }, base = /^https?:/.test(location.protocol) ? new URL("./", location.href).href : location.href.split("?")[0];
+  return base + "?band=1&k=" + encodeURIComponent(L.fb.apiKey || "") + "&j=" + encodeURIComponent(L.fb.projectId || "") + "&p=" + encodeURIComponent(AKB.uid || (L.uid || "")) + "&b=" + encodeURIComponent(b.key);
+}
+function akBandStatus() {
+  var b = akBandCfg(); if (!b.on) return "Off";
+  if (AKB.err) return AKB.err;
+  if (AKB.state === "connecting") return "Connecting…";
+  if (AKB.state !== "on") return "Not connected";
+  var g = akBandGig(), d = akBandDoc(), n = Object.keys(d.songs).length;
+  return "Sharing " + (g ? "“" + akGigTitle(g) + "”" + (g.date ? " (" + g.date + ")" : "") : "no show yet") + ": " + d.lists.length + (d.lists.length === 1 ? " setlist, " : " setlists, ") + n + (n === 1 ? " song" : " songs") + (b.follow ? ". Bandmates follow the song you open." : ".");
+}
+function akBandPaint() { if (typeof AKB.paint === "function") try { AKB.paint(); } catch (e) {} }
+
+function openBandShare() {
+  var b = akBandCfg(), url = akBandLink();
+  if (!AKB.uid) { toast(AKB.err || "Turn on Band sync and sign in first (Settings › Requests and tips)."); return; }
+  modal("Band link", h("div", { class: "center" },
+    h("p", { class: "hint" }, "Bandmates scan this or open the link on their phone or tablet. They get a separate “🎸 " + akBandName() + "” library with the setlists and charts you share."),
+    typeof akQrSvg === "function" ? h("div", { class: "akb-qr" }, akQrSvg(url, 220)) : null,
+    h("div", { class: "row center" }, h("button", { class: "primary", onClick: function () { copyPlain(url, "Band link copied."); } }, "Copy the link"),
+      navigator.share ? h("button", { onClick: function () { navigator.share({ title: akBandName(), text: "Our setlists and charts, live:", url: url }).catch(function () {}); } }, "Share…") : null)),
+    [{ label: "Close", primary: true }]);
+}
+function akBandNewLink() {
+  confirmBox("Make a new band link? The old link stops working, so send the new one to everyone who should still follow.", "New link", function () {
+    var ref = akBandRef(); if (ref) ref.set({ name: akBandName(), data: JSON.stringify({ v: 1, name: akBandName(), gone: true, lists: [], songs: {} }), now: null }).catch(function () {});
+    akBandCfg().key = akBandNewKey(); AKB.sig = ""; AKB.nowSig = ""; save(); akBandSend(true); akBandPaint(); toast("New band link made.");
+  });
+}
+/* the leader panel (Settings, the 🎸 Band box on a show page, and the Band button on the playing screen) */
+function akBandLeaderBox(onChange) {
+  var b = akBandCfg(), box = h("div", { class: "akb-box" });
+  function draw() {
+    box.textContent = "";
+    var on = h("input", { type: "checkbox", checked: b.on, onChange: function () { b.on = this.checked; save(); if (b.on) akBandStart(); else akBandStop(); draw(); if (onChange) onChange(); } });
+    box.appendChild(h("label", { class: "chk" }, on, "Share setlists and charts with my band (live)"));
+    if (b.on) {
+      var fol = h("input", { type: "checkbox", checked: b.follow, onChange: function () { b.follow = this.checked; save(); AKB.nowSig = ""; akBandSendNow(); draw(); } });
+      box.appendChild(h("label", { class: "chk" }, fol, "Their screens follow the song I open"));
+      box.appendChild(h("p", { class: "hint akb-st" }, akBandStatus()));
+      box.appendChild(h("div", { class: "row akb-row" },
+        h("button", { class: "primary", onClick: openBandShare }, "Band link / QR"),
+        h("button", { onClick: function () { akBandSend(true).then(function (ok) { if (ok) toast("Sent to the band."); }); } }, "Send now"),
+        h("button", { onClick: function () { askText("Band name", b.name || akBandName(), "Save", function (v) { b.name = v; save(); akBandSoon(); draw(); }); } }, "Name…")));
+    }
+  }
+  AKB.paint = draw; draw(); return box;
+}
+
+/* ---------------------------------------------------------------- bandmate: joining and following */
+function akBandJoinCheck() {
+  var q; try { q = new URLSearchParams(location.search); } catch (e) { return; }
+  if (q.get("band") !== "1" || !q.get("b") || !q.get("p")) return;
+  var info = { k: q.get("k") || "", j: q.get("j") || "", p: q.get("p"), b: q.get("b") };
+  try { history.replaceState(null, "", location.pathname); } catch (e) {}
+  setTimeout(function () { akBandJoin(info); }, 700);
+}
+function akBandJoin(info, quiet) {
+  var have = akBandLibs().filter(function (l) { return l.band.p === info.p && l.band.b === info.b; })[0];
+  if (have) { store.cur = have.id; save(); akBandListen(have); if (!quiet) { settings().showsTab = "sets"; go("shows"); toast("Opened the band library “" + have.name + "”."); } return have; }
+  if (quiet) return akBandMakeLib(info);
+  modal("Follow this band?", h("div", null,
+    h("p", null, "This adds a separate library with the band's setlists and charts. They update live, and with Follow on your screen jumps to the song the band leader opens."),
+    h("p", { class: "hint" }, "Your own songs aren't touched. Switch libraries any time from the Songs tab (Libraries), or leave the band in Settings › Requests and tips › Band sync.")),
+    [{ label: "Not now" }, { label: "Follow the band", primary: true, onClick: function () { var l = akBandMakeLib(info); settings().showsTab = "sets"; save(); go("shows"); toast("Joined. Waiting for the band's setlists…"); return l; } }]);
+}
+function akBandMakeLib(info) {
+  var l = newLib("🎸 Band"); l.band = { k: info.k, j: info.j, p: info.p, b: info.b, follow: true, joined: Date.now() };
+  store.libs.push(l); store.cur = l.id; save(); akBandListen(l); return l;
+}
+function akBandLeave(l) {
+  confirmBox("Leave “" + l.name + "”? Its library is removed from this device (the band's charts stay with the band leader).", "Leave the band", function () {
+    var u = AKB.subs[l.id]; if (u) try { u(); } catch (e) {} delete AKB.subs[l.id];
+    store.libs = store.libs.filter(function (x) { return x !== l; }); if (!store.libs.length) store.libs.push(newLib()); if (store.cur === l.id) store.cur = store.libs[0].id; save(); render(); toast("Left the band.");
+  });
+}
+function akBandListen(l) {
+  if (!l || !l.band || AKB.subs[l.id]) return;
+  if (!l.band.k || !l.band.j) { l.band.err = "This link is missing the band's Firebase settings."; return; }
+  AKB.subs[l.id] = function () {};
+  akFirebase().then(function (fb) {
+    var name = "akband-" + l.band.j, app = fb.apps.filter(function (a) { return a.name === name; })[0] || fb.initializeApp({ apiKey: l.band.k, authDomain: l.band.j + ".firebaseapp.com", projectId: l.band.j }, name);
+    var off = app.firestore().doc("performers/" + l.band.p + "/band/" + l.band.b).onSnapshot(function (snap) {
+      l.band.err = ""; var x = snap && snap.exists !== false && snap.data ? snap.data() : null;
+      if (!x) { l.band.err = "The band hasn't shared anything yet."; akBandPaintMate(); return; }
+      akBandApply(l, x);
+    }, function (e) { l.band.err = "Can't read the band's charts (" + (e.code || e.message) + "). The leader may need to update the Firebase rules."; akBandPaintMate(); });
+    AKB.subs[l.id] = off;
+  }).catch(function () { delete AKB.subs[l.id]; l.band.err = "Couldn't reach Firebase (offline?). It tries again when the app opens."; akBandPaintMate(); });
+}
+/* put a band document into the band library; keep this device's text size and view per song */
+function akBandApply(l, x) {
+  var d = null; try { d = typeof x.data === "string" ? JSON.parse(x.data) : x.data; } catch (e) { d = null; }
+  var last = AKB.last[l.id] || (AKB.last[l.id] = {});
+  if (d && x.data !== last.data) {
+    last.data = x.data;
+    if (d.gone) { l.band.err = "The band leader made a new link. Ask them for it."; }
+    var mine = {}; l.songs.forEach(function (s) { mine[s.id] = s; });
+    var curId = S.view === "play" && store.cur === l.id && S.play && S.play.list[S.play.idx] ? S.play.list[S.play.idx].songId : "";
+    var before = curId && mine[curId] ? JSON.stringify(mine[curId]) : "";
+    l.name = "🎸 " + (d.name || "Band");
+    l.songs = Object.keys(d.songs || {}).map(function (id) { var o = d.songs[id], m = mine[id], s = newSong(Object.assign({}, o, { id: id, active: true })); if (m) { ["size", "view", "fit"].forEach(function (k) { if (m[k] !== undefined) s[k] = m[k]; }); s.plays = m.plays || 0; s.lastPlayed = m.lastPlayed || 0; } return s; });
+    var oldShows = {}; l.shows.forEach(function (sh) { oldShows[sh.id] = sh; });
+    l.shows = (d.lists || []).map(function (o) { var sh = oldShows[o.id] || newShow(o.name); sh.id = o.id; sh.name = o.name; sh.sets = (o.sets || []).map(function (st, i) { var n = newSet(st.name); n.id = o.id + "-s" + i; n.color = st.color || ""; n.songIds = st.songIds || []; return n; }); return sh; });
+    if (d.gig && typeof akNewGig === "function") { var g0 = (l.gigs || [])[0]; l.gigs = [akNewGig(Object.assign(g0 && g0.id === d.gig.id ? g0 : {}, { id: d.gig.id, name: d.gig.name, date: d.gig.date, start: d.gig.start, end: d.gig.end, venue: d.gig.venue, address: d.gig.address, setlists: (d.gig.setlists || []).filter(function (id) { return l.shows.some(function (sh) { return sh.id === id; }); }) }))]; }
+    else l.gigs = [];
+    var busy = typeof AKUH !== "undefined" && AKUH; if (busy) busy.busy = true; save(); if (busy) setTimeout(function () { busy.busy = false; }, 0);
+    var after = curId ? JSON.stringify(l.songs.filter(function (s) { return s.id === curId; })[0] || "") : "";
+    if (store.cur === l.id) { if (S.view === "play") { if (before !== after && typeof keepAutoRender === "function") keepAutoRender(); } else if (S.view === "shows" || S.view === "songs" || S.view === "gig") render(); }
+  }
+  var now = x.now || null;
+  if (now && now.id && now.at !== last.at) { var first = last.at === undefined; last.at = now.at; if (!first || Date.now() - now.at < 10 * 60 * 1000) akBandFollow(l, now); }
+  akBandPaintMate();
+}
+function akBandItems(l, listId) {
+  var sh = l.shows.filter(function (x) { return x.id === listId; })[0] || l.shows.filter(function (x) { return x.id === "band-now"; })[0];
+  if (!sh) return [];
+  var out = []; sh.sets.forEach(function (st, si) { st.songIds.forEach(function (id) { if (l.songs.some(function (s) { return s.id === id; })) out.push({ songId: id, setName: st.name, setNo: si + 1, setColor: st.color, showId: sh.id }); }); });
+  return out;
+}
+function akBandFollow(l, now) {
+  if (l.band.follow === false) return;
+  var song = l.songs.filter(function (s) { return s.id === now.id; })[0]; if (!song) return;
+  if (store.cur !== l.id || S.view !== "play") {
+    if (S.view === "play" && store.cur !== l.id) return; /* playing their own songs: leave them alone */
+    toast("🎸 The band is on “" + song.title + "”.", { label: "Open it", fn: function () { akBandOpen(l, now); } });
+    return;
+  }
+  var p = S.play, cur = p.list[p.idx];
+  if (cur && cur.songId === now.id) return;
+  var i = -1; p.list.forEach(function (it, k) { if (i < 0 && it.songId === now.id) i = k; });
+  if (i >= 0) { if (typeof stopAuto === "function") stopAuto(); p.idx = i; render(); return; }
+  akBandOpen(l, now);
+}
+function akBandOpen(l, now) {
+  if (store.cur !== l.id) { store.cur = l.id; save(); }
+  var items = akBandItems(l, now.list), i = -1;
+  items.forEach(function (it, k) { if (i < 0 && it.songId === now.id) i = k; });
+  if (i < 0) { items = [{ songId: now.id, setName: "", setNo: 1, setColor: "", showId: "" }]; i = 0; }
+  if (S.view === "play" && typeof stopAuto === "function") stopAuto();
+  startPlay(items, i, function () { settings().showsTab = "sets"; go("shows"); });
+}
+function akBandPaintMate() { if (typeof AKB.paintMate === "function") try { AKB.paintMate(); } catch (e) {} }
+function akBandMateBox() {
+  var box = h("div", { class: "akb-box" });
+  function draw() {
+    box.textContent = "";
+    var ls = akBandLibs();
+    if (!ls.length) { box.appendChild(h("p", { class: "hint" }, "To follow someone else's band, open the band link they send you.")); return; }
+    ls.forEach(function (l) {
+      var fol = h("input", { type: "checkbox", checked: l.band.follow !== false, onChange: function () { l.band.follow = this.checked; save(); } });
+      box.appendChild(h("div", { class: "akb-mate" },
+        h("div", { class: "row akb-row" }, h("b", { class: "grow" }, l.name), store.cur === l.id ? h("span", { class: "hint" }, "open") : h("button", { class: "sm", onClick: function () { store.cur = l.id; save(); settings().showsTab = "sets"; go("shows"); } }, "Open"), h("button", { class: "sm danger", onClick: function () { akBandLeave(l); } }, "Leave")),
+        h("label", { class: "chk" }, fol, "Jump to the song the band is on"),
+        h("p", { class: "hint" }, l.band.err || (l.shows.length + (l.shows.length === 1 ? " setlist, " : " setlists, ") + l.songs.length + (l.songs.length === 1 ? " song" : " songs") + ". Charts update by themselves; changes you make here are replaced by the band's."))));
+    });
+  }
+  AKB.paintMate = draw; draw(); return box;
+}
+
+/* ---------------------------------------------------------------- hooks: playing screen, saving, start-up */
+(function () {
+  var rp = renderPlay;
+  renderPlay = function () { var r = rp.apply(this, arguments); try { if (AKB.db) { var pl = akBandPlaying(), sig = pl ? JSON.stringify(pl) : ""; if (sig !== AKB.plSig) { AKB.plSig = sig; akBandSend(false); } else akBandSendNow(); } } catch (e) {} return r; };
+  var sv = save;
+  save = function () { var r = sv.apply(this, arguments); try { if (AKB.db) akBandSoon(); } catch (e) {} return r; };
+})();
+setTimeout(function () {
+  try { akBandJoinCheck(); } catch (e) {}
+  try { if (settings().band && settings().band.on) akBandStart(); } catch (e) {}
+  try { akBandLibs().forEach(function (l) { akBandListen(l); }); } catch (e) {}
+}, 1500);
+
+/* Firebase rules: anyone with the long band key may read; only you write */
+if (typeof AK_FB_RULES === "string" && AK_FB_RULES.indexOf("/band/") < 0)
+  AK_FB_RULES = AK_FB_RULES.replace("      match /requests/{rid} {", "      match /band/{bid} {\n        allow read: if bid.size() >= 16;\n        allow write: if request.auth != null && request.auth.uid == pid;\n      }\n      match /requests/{rid} {");
+
+/* Play screen button (off by default; Settings › Playing screen › top buttons) */
+AK_IC.band = "M9 18V5l12-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0z M21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z";
+TB_ITEMS.push(["band", "🎸 Band sync (share or follow live)"]); TB_SHORT.band = "Band";
+function openBandPanel() {
+  if (akBandIsBandLib(lib())) { modal("🎸 " + lib().name.replace(/^🎸\s*/, ""), akBandMateBox(), [{ label: "Done", primary: true }]); return; }
+  modal("🎸 Band sync", akBandLeaderBox(), [{ label: "Done", primary: true }]);
+}
+(function () {
+  var tb = akExtraTb25;
+  akExtraTb25 = function (id) { if (id === "band") return h("button", { "aria-label": "Band sync", onClick: function () { openBandPanel(); this.blur(); } }, akIcon("band")); return tb.apply(this, arguments); };
+})();
+
+/* the show page: a folding 🎸 Band box under the setlists */
+function akBandGigCard(g) {
+  var b = akBandCfg(), picked = b.gigId === g.id, auto = !b.gigId && akBandGig() === g;
+  var det = h("details", { class: "card akgig-card akb-gig", "data-bk": "bandsync", "data-bt": "Band" });
+  det._layInit = true; det.open = !!(settings().gigGrpOpen || {}).band;
+  det.addEventListener("toggle", function () { var s = settings(); s.gigGrpOpen = s.gigGrpOpen || {}; s.gigGrpOpen.band = det.open ? 1 : 0; save(); });
+  det.appendChild(h("summary", null, h("span", null, "🎸 Band"), h("span", { class: "hint akgig18-n" }, b.on && (picked || auto) ? "Shared live" : "Share with the band")));
+  var chk = h("input", { type: "checkbox", checked: picked, onChange: function () { b.gigId = this.checked ? g.id : ""; save(); if (this.checked && !b.on) { b.on = true; save(); akBandStart(); } AKB.sig = ""; akBandSoon(); inner(); } });
+  var holder = h("div");
+  function inner() {
+    holder.textContent = "";
+    holder.appendChild(h("label", { class: "chk" }, chk, "Share this show's setlists with the band"));
+    if (!picked && auto && b.on) holder.appendChild(h("p", { class: "hint" }, "Shared now anyway: it's your next show (that's the default when no show is picked)."));
+    holder.appendChild(akBandLeaderBox(function () { inner(); }));
+  }
+  inner(); det.appendChild(holder); return det;
+}
+(function () {
+  var lr = layRun;
+  layRun = function (root) {
+    try {
+      if (root && root.getAttribute && root.getAttribute("data-blocks") === "gig" && !root.querySelector(":scope > [data-bk=bandsync]") && !akBandIsBandLib(lib())) {
+        var g = akGig(S.gigId);
+        if (g) { var sets = root.querySelector(":scope > [data-bk=setlists]"); root.insertBefore(akBandGigCard(g), sets ? sets.nextSibling : null); }
+      }
+    } catch (e) { if (window.console) console.error(e); }
+    return lr.apply(this, arguments);
+  };
+})();
+
+/* Settings › Requests and tips › Band sync */
+(function () {
+  var prev = akSettingsExtra27;
+  akSettingsExtra27 = function (c) {
+    prev(c);
+    c.again("requests-and-tips");
+    c.section("Band sync", "Share setlists and charts with your band, live");
+    c.out.appendChild(h("p", { class: "hint" }, "Uses your online requests Firebase project and performer sign-in. Bandmates open your band link; their screens follow the song you open. Needs the newest Firebase rules once (Setup steps › Copy the rules, then Publish in Firebase)."));
+    c.out.appendChild(akBandLeaderBox());
+    c.out.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: akBandNewLink }, "Make a new link…"), h("button", { class: "sm", onClick: function () { copyPlain(AK_FB_RULES, "Rules copied. Paste them in Firebase › Firestore Database › Rules and press Publish."); } }, "Copy the rules")));
+    c.out.appendChild(h("h4", null, "Bands I follow"));
+    c.out.appendChild(akBandMateBox());
+  };
+})();
+akCss("akband", ".akb-box{display:flex;flex-direction:column;gap:6px}.akb-row{flex-wrap:wrap;gap:6px;margin:0}.akb-st{margin:0}.akb-qr svg{width:220px;height:220px;background:#fff;padding:6px;border-radius:8px}" +
+  ".akb-mate{border-top:1px solid var(--line,#8884);padding-top:6px}.akb-gig>summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:8px;align-items:center;font-weight:700;min-height:34px}.akb-gig[open]>summary{margin-bottom:8px}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Band sync: share setlists and charts with your band, live", a: "Settings › Requests and tips › Band sync (or the 🎸 Band box on a show's page). It uses your online requests Firebase sign-in. Send bandmates the Band link / QR: they get a separate “🎸 Band” library, and with Follow on their screen jumps to the song you open. You share the show you pick (else your next show) plus whatever you're playing. Add the 🎸 Band button to the playing screen in Settings › Playing screen › top buttons.", k: "band sync share bandmates follow live setlist charts musicians group leader link qr", go: function () { go("settings"); setTimeout(function () { var d = document.querySelector('[data-bk="requests-and-tips"]'); if (d) { d.open = true; d.scrollIntoView({ block: "start" }); } }, 300); } });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
