@@ -61893,7 +61893,7 @@ function akCnList(o) {
   if (o.pw) L.push("Performer password (signs in by itself)");
   return L;
 }
-function akCnExport() {
+function akCnExport(share) {
   var p1 = h("input", { type: "password", placeholder: "Passphrase (8 or more letters)", "aria-label": "Passphrase", autocomplete: "new-password" });
   var p2 = h("input", { type: "password", placeholder: "Same passphrase again", "aria-label": "Passphrase again", autocomplete: "new-password" });
   var lv = (typeof akLive === "function" ? akLive() : settings().live) || {}, pw = h("input", { type: "password", placeholder: "Performer password (optional)", "aria-label": "Performer password", autocomplete: "off" });
@@ -61904,7 +61904,7 @@ function akCnExport() {
     have.length ? h("ul", { class: "akcn-ul" }, have.map(function (x) { return h("li", null, x); })) : h("p", { class: "hint" }, "Nothing is set up on this device yet."),
     lv.fb && lv.fb.apiKey ? h("label", { class: "fld" }, "Performer password, so the new install signs in to requests by itself (leave empty to sign in by hand)", pw) : null,
     h("label", { class: "fld" }, "Passphrase", p1), h("label", { class: "fld" }, "Again", p2), msg);
-  modal("🔐 Save my connections file", body, [{ label: "Cancel" }, { label: "Save the file", primary: true, onClick: function (close) {
+  modal(share ? "📲 Send my connections" : "🔐 Save my connections file", body, [{ label: "Cancel" }, { label: share ? "Send it" : "Save the file", primary: true, onClick: function (close) {
     var a = p1.value, b = p2.value;
     if (a.length < 8) { msg.textContent = "Use at least 8 letters for the passphrase."; return false; }
     if (a !== b) { msg.textContent = "The two passphrases don't match."; return false; }
@@ -61913,8 +61913,9 @@ function akCnExport() {
     var data = new TextEncoder().encode(JSON.stringify(akCnCollect(pw.value || ""))), salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
     akCnKey(a, salt).then(function (k) { return crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, k, data); }).then(function (ct) {
       var file = JSON.stringify({ app: "akashic-connections", v: 1, at: new Date().toISOString(), kdf: "PBKDF2-SHA256-250000", salt: akCnB64(salt), iv: akCnB64(iv), data: akCnB64(new Uint8Array(ct)) });
+      if (share) { try { var fl = new File([file], "akashic-connections.json", { type: "application/json" }); if (navigator.canShare && navigator.canShare({ files: [fl] })) return navigator.share({ files: [fl], title: "My Akashic Chords connections" }).then(function () { return true; }, function (e) { if (e && e.name === "AbortError") return false; return saveFile("akashic-connections.json", file, "application/json"); }); } catch (e) {} toast("This phone can't send files from the app; saving it instead. Send the saved file yourself."); }
       return saveFile("akashic-connections.json", file, "application/json");
-    }).then(function (ok) { if (ok !== false) { close(); toast("Connections file saved. Open it on the new install: Settings › Data and extras › 🔐 Connections file › Load."); } }, function (e) { msg.textContent = "Couldn't save it: " + ((e && e.message) || e); });
+    }).then(function (ok) { if (ok !== false) { close(); toast((share ? "Sent. " : "Connections file saved. ") + "Open it on the new install: Settings › Data and extras › 🔐 Connections file › Load."); } }, function (e) { msg.textContent = "Couldn't save it: " + ((e && e.message) || e); });
     return false;
   } }]);
 }
@@ -61959,13 +61960,14 @@ function akCnPick() { var i = h("input", { type: "file", accept: ".json,applicat
       c.again("data-and-extras");
       c.section("🔐 Connections file", "GitHub token, Firebase, Google and Dropbox keys, link codes: fill in a new install in one step");
       c.out.appendChild(h("div", { class: "akcn-row" },
-        h("button", { class: "sm akcn-b", onClick: akCnExport }, "⬇ Save file…"),
+        h("button", { class: "sm akcn-b", onClick: function () { akCnExport(false); } }, "⬇ Save file…"),
+        h("button", { class: "sm akcn-b", onClick: function () { akCnExport(true); } }, "📲 Send to my other device"),
         h("button", { class: "sm akcn-b", onClick: akCnPick }, "⬆ Load file…")));
       c.out.appendChild(h("p", { class: "hint" }, "Locked with a passphrase you pick. Not part of backups or sync. Your recorded guitar isn't in it (move it with ⇪ Export under Settings › Chord sound)."));
     } catch (e) {}
   };
 })();
-akCss("akcn", ".akcn-row{display:flex;gap:6px;margin:4px 0}.akcn-b{flex:1 1 0;border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:40px}.akcn-ul{margin:4px 0 8px;padding-left:20px}.akcn-ul li{margin:2px 0}");
+akCss("akcn", ".akcn-row{display:flex;gap:6px;margin:4px 0}.akcn-b{flex:1 1 0;white-space:normal;line-height:1.2;padding:2px 6px;border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:40px}.akcn-ul{margin:4px 0 8px;padding-left:20px}.akcn-ul li{margin:2px 0}");
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Save my GitHub token, Firebase and other connections for a new install (connections file)", a: "Settings › Data and extras › 🔐 Connections file › ⬇ Save file… (pick a passphrase). On the new install or test APK: same place › ⬆ Load file… and type the passphrase: GitHub, requests Firebase (and the performer sign-in, if you saved the password), Google and Dropbox keys, calendar and device link codes are filled in.", k: "connections token github firebase keys autofill new phone new apk transfer passwords sign in credentials" });
 AK_WHATS_NEW = ["🔐 Connections file: Settings › Data and extras › 🔐 Connections file saves your GitHub token, requests Firebase settings (and sign-in), Google and Dropbox keys and link codes in one locked file. Load it on a new install or test APK and everything is filled in."].concat(AK_WHATS_NEW || []);
 /* ---------------------------------------------------------------- 19.4: 📝 Notepad bubble off by default (Settings › Songs and shows › Writing extras turns it on).
@@ -62083,19 +62085,40 @@ function akTcGo(it) {
   try { if (typeof it.go === "function") it.go(); else { go(it.go[0], it.go[1] || {}); setTimeout(function () { akTcFind(it.go[2]); }, 250); } } catch (e) { toast("Couldn't open that screen: " + ((e && e.message) || e)); }
   setTimeout(akTcBar, 60);
 }
-/* the bar that rides along while testing one thing */
+/* the helper that rides along while testing one thing: a small 🧪 square you can drag anywhere (remembered on this device).
+   Tap it for the steps and ✓ / ✗. Starts small so it never covers what you're checking. */
+function akTcLS(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
 function akTcBar() {
-  var old = document.querySelector(".aktc-bar"); if (old) old.remove();
+  var old = document.querySelector(".aktc-dock"); if (old) old.remove();
   var it = AKTC.filter(function (x) { return x.id === S.akTcCur; })[0]; if (!it) return;
-  var how = h("div", { class: "aktc-how" }, it.how);
-  var bar = h("div", { class: "aktc-bar", role: "region", "aria-label": "Testing" },
-    h("div", { class: "aktc-top" },
-      h("button", { class: "aktc-t", "aria-expanded": "true", onClick: function () { var o = how.style.display !== "none"; how.style.display = o ? "none" : ""; this.setAttribute("aria-expanded", o ? "false" : "true"); } }, "🧪 " + it.t),
+  var pos = {}; try { pos = JSON.parse(akTcLS("aktc:pos") || "{}") || {}; } catch (e) {}
+  var W = window.innerWidth, H = window.innerHeight, x = pos.x != null ? pos.x : W - 56, y = pos.y != null ? pos.y : Math.round(H * 0.42);
+  var open = akTcLS("aktc:open") === "1";
+  var dock = h("div", { class: "aktc-dock" + (open ? " open" : ""), role: "region", "aria-label": "Testing " + it.t });
+  var chip = h("button", { class: "aktc-chip", "aria-label": open ? "Hide the test helper" : "Show the test helper: " + it.t, "aria-expanded": open ? "true" : "false", title: it.t }, open ? "▾" : "🧪");
+  var card = h("div", { class: "aktc-card" },
+    h("div", { class: "aktc-ct" }, it.t),
+    h("div", { class: "aktc-how" }, it.how),
+    h("div", { class: "aktc-acts" },
       h("button", { class: "aktc-ok", onClick: function () { akTcMark(it.id, "ok"); toast("✓ " + it.t + ": works"); akTcNext(it); } }, "✓ Works"),
       h("button", { class: "aktc-no", onClick: function () { akTcBad(it.id, function () { akTcNext(it); }); } }, "✗ No"),
-      h("button", { class: "aktc-x", "aria-label": "Back to the test list", onClick: function () { S.akTcCur = ""; akTcBar(); go("testlist"); } }, "☰")),
-    how);
-  document.body.appendChild(bar);
+      h("button", { class: "aktc-x", "aria-label": "Back to the test list", onClick: function () { S.akTcCur = ""; akTcBar(); go("testlist"); } }, "☰ List"),
+      h("button", { class: "aktc-x", "aria-label": "Stop testing", onClick: function () { S.akTcCur = ""; akTcBar(); } }, "✕")));
+  dock.appendChild(card); dock.appendChild(chip);
+  function place() {
+    var cw = 48, ww = window.innerWidth, hh = window.innerHeight; x = Math.max(4, Math.min(ww - cw - 4, x)); y = Math.max(50, Math.min(hh - cw - 70, y));
+    dock.style.left = x + "px"; dock.style.top = y + "px";
+    dock.classList.toggle("left", x < ww / 2); dock.classList.toggle("up", y > hh / 2);
+    /* keep the open card on the screen */
+    var cwid = Math.min(300, ww - 16); card.style.right = "auto"; card.style.left = Math.max(8 - x, Math.min(ww - 8 - cwid - x, x < ww / 2 ? 0 : 48 - cwid)) + "px";
+  }
+  /* drag the square; a tap (no drag) opens or closes it */
+  var sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
+  chip.addEventListener("pointerdown", function (e) { sx = e.clientX; sy = e.clientY; ox = x; oy = y; moved = false; try { chip.setPointerCapture(e.pointerId); } catch (er) {} });
+  chip.addEventListener("pointermove", function (e) { if (!e.buttons && e.pointerType === "mouse") return; if (sx === 0 && sy === 0) return; var dx = e.clientX - sx, dy = e.clientY - sy; if (!moved && Math.abs(dx) + Math.abs(dy) < 8) return; moved = true; x = ox + dx; y = oy + dy; place(); });
+  chip.addEventListener("pointerup", function () { sx = sy = 0; if (moved) { akTcLS("aktc:pos", JSON.stringify({ x: x, y: y })); return; } open = !open; akTcLS("aktc:open", open ? "1" : "0"); akTcBar(); });
+  chip.style.touchAction = "none";
+  document.body.appendChild(dock); place();
 }
 function akTcNext(it) {
   var L = (S.akTcOnly === "new" ? akTcNew() : AKTC), i = L.indexOf(it), nx = null;
@@ -62145,7 +62168,7 @@ AK_VIEWS.testlist = viewTestList; AK_VIEW_TAB.testlist = "settings";
 /* the bar stays only while you're testing; leaving to the list clears it */
 (function () {
   var r0 = render;
-  render = function () { var out = r0.apply(this, arguments); try { if (S.view === "testlist" && S.akTcCur) S.akTcCur = ""; if (S.akTcCur) { if (!document.querySelector(".aktc-bar")) akTcBar(); } else { var b = document.querySelector(".aktc-bar"); if (b) b.remove(); } } catch (e) {} return out; };
+  render = function () { var out = r0.apply(this, arguments); try { if (S.view === "testlist" && S.akTcCur) S.akTcCur = ""; if (S.akTcCur) { if (!document.querySelector(".aktc-dock")) akTcBar(); } else { var b = document.querySelector(".aktc-dock"); if (b) b.remove(); } } catch (e) {} return out; };
 })();
 /* ways in: What's new card, ⋯ More, Settings */
 (function () {
@@ -62189,9 +62212,12 @@ akCss("aktc", [
   ".aktc-box:not(.on){opacity:.35}.aktc-box.ok:not(.on){color:#3a9a5b}.aktc-box.bad:not(.on){color:#c94a4a}.aktc-box.ok.on{background:#3a9a5b;border-color:#3a9a5b;color:#fff}.aktc-box.bad.on{background:#c94a4a;border-color:#c94a4a;color:#fff}",
   ".aktc-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}.aktc-txt small{opacity:.7;font-size:12px;line-height:1.3}",
   ".aktc-row.is-ok .aktc-txt b{opacity:.6}",
-  ".aktc-bar{position:fixed;left:0;right:0;bottom:calc(var(--tabh,56px) + env(safe-area-inset-bottom,0px));z-index:9000;background:var(--bg,#111);border-top:2px solid #e0a020;padding:6px 8px;box-shadow:0 -2px 10px rgba(0,0,0,.3)}",
-  ".aktc-top{display:flex;gap:6px;align-items:center}.aktc-t{flex:1 1 auto;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;font-weight:700;border:0!important}",
-  ".aktc-ok{color:#3a9a5b;border-color:#3a9a5b!important}.aktc-no{color:#c94a4a;border-color:#c94a4a!important}.aktc-how{font-size:13px;opacity:.85;padding:4px 2px 0}",
+  ".aktc-dock{position:fixed;z-index:9000;width:48px;height:48px}",
+  ".aktc-chip{width:48px;height:48px;min-height:48px;padding:0;border-radius:2px;border:2px solid #e0a020;background:var(--bg,#111);font-size:22px;box-shadow:0 2px 10px rgba(0,0,0,.35);opacity:.92}",
+  ".aktc-card{display:none;position:absolute;width:min(300px,calc(100vw - 16px));background:var(--bg,#111);border:2px solid #e0a020;border-radius:2px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.4);right:0;top:52px}",
+  ".aktc-dock.left .aktc-card{left:0;right:auto}.aktc-dock.up .aktc-card{top:auto;bottom:52px}.aktc-dock.open .aktc-card{display:block}",
+  ".aktc-ct{font-weight:700;margin-bottom:2px}.aktc-how{font-size:13px;opacity:.85;margin-bottom:6px}.aktc-acts{display:flex;gap:4px;flex-wrap:wrap}.aktc-acts button{border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:36px;padding:0 8px}",
+  ".aktc-ok{color:#3a9a5b;border-color:#3a9a5b!important}.aktc-no{color:#c94a4a;border-color:#c94a4a!important}",
   ".aktc-flash{outline:3px solid #e0a020!important;outline-offset:2px;transition:outline-color .3s}"].join(""));
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Test checklist: try new features and check them off", a: "What's new card › 🧪 Test what's new, or ⋯ More › 🧪 Test checklist, or Settings › Data and extras › 🧪 Test checklist. Go › opens the screen; tap ✓ Works or ✗ No (with a note). 📋 Copy ✗ copies the broken list to paste to Claude.", k: "test testing checklist check off works broken bugs try new features" });
 AK_WHATS_NEW = ["🧪 Test checklist: the What's new card has 🧪 Test what's new. Each feature has Go › to open its screen, then ✓ Works or ✗ Not working. Older features are in ⋯ More › 🧪 Test checklist."].concat(AK_WHATS_NEW || []);
@@ -62258,6 +62284,223 @@ akTcAdd("19.4", "App", [
   ["look-folded", "Settings › Look starts folded", "Open Settings: Look is folded.", ["settings", {}, "Look"]],
   ["my-defaults", "📐 My defaults", "Tap ⇅ on a page, ⋯ › ✎ Note for Claude, then Send my layout to Claude.", ["settings", {}, "My defaults"]],
   ["test-list", "🧪 This checklist", "Go › and ✓ / ✗ work, and checks show on your other device after sync.", ["testlist", {}, ""]]]);
+/* ---------------------------------------------------------------- 19.5: Go › for picture features lands on the button itself:
+   opens a flyer, picks its first picture (or says to add one), opens ⋯ More in the pop-up and lights up the button. */
+function akTcPic(open, how) {
+  return function () {
+    var gig = (typeof akGigs === "function" ? akGigs() : [])[0];
+    go("gfx", { gfxKind: "flyer", gfxGig: gig ? gig.id : "" });
+    var tries = 0;
+    (function look() {
+      var st = typeof akGfxState === "function" ? akGfxState() : null, P = st && st.P, X = st && st.X;
+      if (!P || !X) { if (tries++ < 25) setTimeout(look, 200); return; }
+      var isPic = function (l) { return typeof akSegIsPic === "function" ? akSegIsPic(l) : /^(gfree|gpic|gphoto)$/.test(l.type); };
+      var L = P.layers.filter(function (l) { return l.type === "gphoto" && !l.hidden; }).concat(P.layers.filter(function (l) { return isPic(l) && l.type !== "gphoto" && !/logo/i.test(l.name || ""); }));
+      if (!L.length) { toast("This design has no photo yet. Add one with ＋ Picture (lit up), then try again."); akTcFind("Picture"); return; }
+      st.sel = L[0].id; try { X.paint(); } catch (e) {}
+      setTimeout(function () { try { open(X, st.sel); } catch (e) { toast(how); } toast(how); }, 300);
+    })();
+  };
+}
+AKTC.forEach(function (x) {
+  if (x.id === "cut-person") { x.go = akTcPic(function (X, id) { akSegRemoveBg(X, id); }, "This is ✂ Remove background. Next time: tap a photo › ⋯ More › ✂ Remove background (or Layers › ⋯)."); x.how = "Go › opens the Remove background window on the flyer photo (best with a photo of a person). Try 👤 Person, then Use it. It lives under photo › ⋯ More."; }
+  if (x.id === "cut-tap") { x.go = akTcPic(function (X, id) { akSegRemoveBg(X, id); }, "Try 👆 Tap to pick, then 🖌 Keep / ⌫ Erase."); x.how = "In the Remove background window: 👆 Tap to pick, then 🖌 Keep / ⌫ Erase to touch up."; }
+  if (x.id === "smart-layers") { x.go = akTcPic(function (X, id) { akSegSmart(X, id); }, "This is 🧩 Smart layers (photo › ⋯ More). Then open Layers to see the new parts."); x.how = "Go › runs 🧩 Smart layers on the flyer photo. Then check Layers: background, person, words as text."; }
+  if (x.id === "fi-filters") { x.go = akTcPic(function () { akTcFind("Effects"); }, "Photo picked. Open ✨ Effects › Filters: try Sketch, Halftone, Light leak."); }
+});
+
+/* ---------------------------------------------------------------- 19.5: 📤 Send to Claude. Every ✗ (with its note) goes to a file in your
+   private GitHub backup repo (claude-fix-list.json, next to your backup), sent by itself when you save a ✗ if GitHub backup is set up.
+   Claude reads that file when you say "check my fix list". Without GitHub it copies the list to paste instead. */
+var AKTC_FIX_PATH = "claude-fix-list.json";
+function akTcFixList() {
+  var T = akTc(), dev = akTcLS("akdev:name") || "";
+  return AKTC.filter(function (x) { return T[x.id] && T[x.id].r === "bad"; }).map(function (x) { var r = T[x.id]; return { id: x.id, what: x.t, ver: x.v, note: r.note || "", at: r.at, dev: r.dev || dev }; });
+}
+function akTcGhReq(method, body) {
+  var c = ghCfg(), t = ghToken();
+  if (!t || !/^[\w.-]+\/[\w.-]+$/.test(c.repo)) return Promise.reject(new Error("nogh"));
+  return fetch("https://api.github.com/repos/" + c.repo + "/contents/" + AKTC_FIX_PATH, { method: method, cache: "no-store", headers: { Authorization: "Bearer " + t, "X-GitHub-Api-Version": "2022-11-28", Accept: "application/vnd.github.object+json", "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined })
+    .then(function (r) { if (r.status === 404 && method === "GET") return null; if (!r.ok) throw new Error(ghErr(r.status)); return r.json(); });
+}
+function akTcSend(quiet) {
+  var mine = akTcFixList(), ver = AK_VERSION;
+  return akTcGhReq("GET").then(function (cur) {
+    var old = { items: [] }; try { if (cur && cur.content) old = JSON.parse(decodeURIComponent(escape(atob(cur.content.replace(/\s/g, ""))))); } catch (e) {}
+    var by = {}; (old.items || []).forEach(function (x) { by[x.id + "@" + (x.dev || "")] = x; });
+    mine.forEach(function (x) { by[x.id + "@" + (x.dev || "")] = Object.assign({}, by[x.id + "@" + (x.dev || "")] || {}, x, { open: true }); });
+    /* something marked ✓ again on this device is no longer broken there */
+    var T = akTc(), dev = akTcLS("akdev:name") || ""; Object.keys(by).forEach(function (k) { var x = by[k]; if ((x.dev || "") === dev && T[x.id] && T[x.id].r === "ok") x.open = false; });
+    var notes = typeof akDzNotes === "function" ? akDzNotes() : {};
+    var out = { app: "akashic-fix-list", updated: new Date().toISOString(), version: ver, items: Object.keys(by).map(function (k) { return by[k]; }), designNotes: notes };
+    return akTcGhReq("PUT", { message: "Fix list for Claude (" + mine.length + " not working)", content: b64utf8(JSON.stringify(out, null, 1)), sha: cur && cur.sha ? cur.sha : undefined });
+  }).then(function () { settings().akTcSent = Date.now(); save(); if (!quiet) toast("Sent to Claude's fix list (" + mine.length + " not working). Tell Claude: check my fix list."); return true; },
+    function (e) { if (quiet) return false; if (e && e.message === "nogh") { akTcCopyBad(); toast("GitHub backup isn't set up on this device, so the list was copied. Paste it to Claude."); } else toast("Couldn't send: " + ((e && e.message) || e) + " The list is copied instead."), akTcCopyBad(); return false; });
+}
+(function () {
+  /* a ✗ with its note goes out by itself (quietly) when GitHub is set up */
+  var mk = akTcMark;
+  akTcMark = function (id, r, note) { var out = mk.apply(this, arguments); try { if ((r === "bad" || r === "ok") && typeof akSyncReady === "function" && akSyncReady()) { clearTimeout(akTcMark._t); akTcMark._t = setTimeout(function () { akTcSend(true); }, 1500); } } catch (e) {} return out; };
+  /* list header: 📤 next to 📋 */
+  var vt = viewTestList;
+  viewTestList = function () {
+    var el = vt.apply(this, arguments);
+    try {
+      var hd = el.querySelector(".aktc-head"); if (hd) hd.appendChild(h("button", { class: "aktc-sw", title: "Send the Not working list to Claude", onClick: function () { akTcSend(false); } }, "📤 Send"));
+      var info = el.querySelector(".aktc > p.hint:last-child"), ready = typeof akSyncReady === "function" && akSyncReady(), sent = settings().akTcSent;
+      if (info) info.textContent = "✓ = works, ✗ = not working (add a note). Go › opens the screen with a small 🧪 square you can drag anywhere; tap it for ✓ / ✗. " + (ready ? "Each ✗ and its note goes to Claude's fix list by itself (your private GitHub repo)" + (sent ? ", last sent " + new Date(sent).toLocaleString() : "") + ". Tell Claude: check my fix list." : "To send ✗ notes straight to Claude, set up GitHub backup (Settings › Data and extras). Until then 📤 copies the list to paste.");
+    } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.testlist = viewTestList;
+  var ag = akTcGo; akTcGo = function (it) { var r = ag.apply(this, arguments); try { if (typeof it.go !== "function") toast("🧪 " + it.how); } catch (e) {} return r; };
+})();
+AK_WHATS_NEW = ["🧪 Test helper is now a small square you can drag anywhere; tap it for ✓ / ✗. Each ✗ with its note goes straight to Claude's fix list. Go › on Remove background and Smart layers lights up the button."].concat(AK_WHATS_NEW || []);
+
+/* ================= 19.5: sound reading for video (used by the clip editor). All on the phone.
+   akVxRead(blob, onProg) -> Promise {dur, rate:100, env:Float32Array (loudness per 10 ms, 0..1), sm (smoothed 1 s)}
+     Files up to AKVX_MAXDEC are decoded in one go. Longer ones are read by playing the file silently at 16x through an
+     analyser (a 3-hour show takes about 11 minutes); the waveform fills in as it goes and the editor works meanwhile.
+   akVxBeats(R) -> {beats:[t], phr:[t], bpm:[{a,b,bpm}]}  tempo is found per 20 s window, so each song keeps its own.
+   akVxSongs(R) -> [{a,b}]  music between quiet gaps (6 s or more), at least 45 s long.
+   akVxBest(R, songs, n) -> [{a,b,score}]  loudest 12-second stretches, each song's big ending and the applause after.
+   akVxSnap(R, t, mode "beat"|"phrase"|"off") -> t
+   akVxSongStart(R, t) -> first beat of the next song after t (or null). */
+var AKVX_MAXDEC = 260e6;
+var AKVX = { cache: {} };
+function akVxKey(b) { return (b && (b.name || "") + ":" + b.size + ":" + (b.lastModified || "")) || ""; }
+function akVxRead(blob, onProg) {
+  var key = akVxKey(blob);
+  if (AKVX.cache[key]) return AKVX.cache[key];
+  var p = (blob.size <= AKVX_MAXDEC ? akVxDecode(blob, onProg) : Promise.reject(new Error("big"))).catch(function () { return akVxScan(blob, onProg); });
+  AKVX.cache[key] = p; p.catch(function () { delete AKVX.cache[key]; });
+  return p;
+}
+function akVxDecode(blob, onProg) {
+  return blob.arrayBuffer().then(function (buf) {
+    var AC = window.AudioContext || window.webkitAudioContext, ac = new AC();
+    return new Promise(function (res, rej) { var d = ac.decodeAudioData(buf, res, rej); if (d && d.then) d.then(res, rej); }).then(function (ab) { try { ac.close(); } catch (e) {} return ab; });
+  }).then(function (ab) {
+    var sr = ab.sampleRate, hop = Math.round(sr / 100), n = Math.floor(ab.length / hop), env = new Float32Array(n), chs = [];
+    for (var c = 0; c < Math.min(2, ab.numberOfChannels); c++) chs.push(ab.getChannelData(c));
+    for (var i = 0; i < n; i++) {
+      var s = 0, o = i * hop;
+      for (var j = 0; j < hop; j += 2) { var v = chs[0][o + j]; if (chs[1]) v = (v + chs[1][o + j]) / 2; s += v * v; }
+      env[i] = Math.sqrt(s / (hop / 2));
+    }
+    if (onProg) onProg(1);
+    return akVxFinish(env, ab.duration, true);
+  });
+}
+/* long files: play muted-to-the-speaker at 16x and listen with an analyser */
+function akVxScan(blob, onProg) {
+  return new Promise(function (res, rej) {
+    var url = URL.createObjectURL(blob), m = document.createElement("video"); m.src = url; m.preload = "auto"; m.playsInline = true; m.setAttribute("playsinline", "");
+    var AC = window.AudioContext || window.webkitAudioContext, ac = new AC(), an = ac.createAnalyser(), g = ac.createGain(); an.fftSize = 2048; g.gain.value = 0;
+    var src; try { src = ac.createMediaElementSource(m); src.connect(an); an.connect(g); g.connect(ac.destination); } catch (e) { rej(e); return; }
+    var buf = new Float32Array(an.fftSize), env = null, dur = 0, timer = 0, R = null;
+    m.onloadedmetadata = function () {
+      dur = m.duration; if (!isFinite(dur) || !dur) { rej(new Error("no length")); return; }
+      env = new Float32Array(Math.ceil(dur * 100)); R = akVxFinish(env, dur, false); R.partial = true;
+      m.playbackRate = 16; m.muted = false;
+      ac.resume().then(function () { return m.play(); }).then(function () {
+        timer = setInterval(function () {
+          an.getFloatTimeDomainData(buf); var s = 0; for (var i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+          var v = Math.sqrt(s / buf.length), t = m.currentTime, i0 = Math.max(0, Math.floor((t - 0.16) * 100)), i1 = Math.min(env.length, Math.ceil(t * 100));
+          for (var k = i0; k < i1; k++) if (!env[k]) env[k] = v * (0.8 + 0.4 * ((k * 7919) % 13) / 13);
+          if (onProg) onProg(t / dur, R);
+        }, 10);
+      }, rej);
+      res(R);
+    };
+    m.onended = function () { clearInterval(timer); try { ac.close(); } catch (e) {} URL.revokeObjectURL(url); akVxFinish(env, dur, true, R); R.partial = false; if (onProg) onProg(1, R); };
+    m.onerror = function () { clearInterval(timer); rej(new Error("can't read")); };
+  });
+}
+function akVxFinish(env, dur, norm, R) {
+  R = R || { dur: dur, rate: 100, env: env };
+  if (norm) {
+    var srt = Array.prototype.slice.call(env.filter ? env.filter(function (x, i) { return i % 7 === 0; }) : env).sort(function (a, b) { return a - b; }), top = srt[Math.floor(srt.length * 0.995)] || 1;
+    for (var i = 0; i < env.length; i++) env[i] = Math.min(1, env[i] / (top || 1));
+    R.sm = akVxSmooth(env, 100); R.beatsC = null; R.songsC = null;
+  }
+  return R;
+}
+function akVxSmooth(a, w) { var out = new Float32Array(a.length), s = 0, h = w >> 1; for (var i = 0; i < a.length + h; i++) { if (i < a.length) s += a[i]; if (i - w >= 0) s -= a[i - w]; var j = i - h; if (j >= 0 && j < a.length) out[j] = s / Math.min(w, i + 1); } return out; }
+/* onset strength: rise in log loudness */
+function akVxOnset(R) {
+  if (R.on) return R.on;
+  var e = R.env, n = e.length, on = new Float32Array(n), prev = 0;
+  for (var i = 0; i < n; i++) { var l = Math.log(1e-4 + e[i]); on[i] = Math.max(0, l - prev); prev = prev * 0.6 + l * 0.4; }
+  R.on = on; return on;
+}
+function akVxBeats(R) {
+  if (R.beatsC && !R.partial) return R.beatsC;
+  var on = akVxOnset(R), n = on.length, W = 2000, out = { beats: [], phr: [], bpm: [] }, songs = akVxSongs(R);
+  songs.forEach(function (sg) {
+    var a0 = Math.floor(sg.a * 100), b0 = Math.floor(sg.b * 100), lastBeat = -1, cnt = 0;
+    for (var w0 = a0; w0 < b0; w0 += W) {
+      var w1 = Math.min(b0, w0 + W), best = 0, bl = 50;
+      for (var lag = 33; lag <= 100; lag++) { var s = 0; for (var i = w0; i + lag < w1; i++) s += on[i] * on[i + lag]; s *= 1 + 0.15 * Math.exp(-Math.pow((lag - 55) / 20, 2)); if (s > best) { best = s; bl = lag; } }
+      var ph = 0, pb = -1; for (var p = 0; p < bl; p++) { var t = 0; for (var k = w0 + p; k < w1; k += bl) t += on[k] + 0.5 * (on[k - 1] || 0) + 0.5 * (on[k + 1] || 0); if (t > pb) { pb = t; ph = p; } }
+      out.bpm.push({ a: w0 / 100, b: w1 / 100, bpm: Math.round(6000 / bl) });
+      for (var x = w0 + ph; x < w1; x += bl) { if (lastBeat >= 0 && x - lastBeat < bl * 0.6) continue; out.beats.push({ t: x / 100, k: cnt++ }); lastBeat = x; }
+    }
+    /* phrase starts: every 8 beats, the offset with the strongest onsets */
+    var mine = out.beats.filter(function (b) { return b.t >= sg.a && b.t <= sg.b; }), bo = 0, bs = -1;
+    for (var o = 0; o < 8; o++) { var sum = 0; for (var q = o; q < mine.length; q += 8) sum += on[Math.round(mine[q].t * 100)] || 0; if (sum > bs) { bs = sum; bo = o; } }
+    for (var r = bo; r < mine.length; r += 8) out.phr.push(mine[r].t);
+  });
+  out.beats = out.beats.map(function (b) { return b.t; });
+  if (!R.partial) R.beatsC = out;
+  return out;
+}
+function akVxSongs(R) {
+  if (R.songsC && !R.partial) return R.songsC;
+  var sm = R.sm || akVxSmooth(R.env, 100), n = sm.length, srt = Array.prototype.slice.call(sm).filter(function (x, i) { return i % 10 === 0; }).sort(function (a, b) { return a - b; });
+  var q = srt[Math.floor(srt.length * 0.2)] || 0, hi = srt[Math.floor(srt.length * 0.8)] || 1, th = q + (hi - q) * 0.3, L = [], st = -1, quiet = 0;
+  for (var i = 0; i < n; i++) {
+    if (sm[i] > th) { if (st < 0) st = i; quiet = 0; }
+    else if (st >= 0) { quiet++; if (quiet >= 600) { if (i - quiet - st >= 4500) L.push({ a: st / 100, b: (i - quiet) / 100 }); st = -1; quiet = 0; } }
+  }
+  if (st >= 0 && n - st >= 4500) L.push({ a: st / 100, b: n / 100 });
+  if (!L.length && n) L.push({ a: 0, b: n / 100 });
+  if (!R.partial) R.songsC = L;
+  return L;
+}
+function akVxBest(R, n) {
+  var sm = R.sm || akVxSmooth(R.env, 100), songs = akVxSongs(R), C = [];
+  songs.forEach(function (s) {
+    var a = Math.floor(s.a * 100), b = Math.floor(s.b * 100), best = -1, at = a;
+    for (var i = a; i + 1200 <= b; i += 100) { var v = 0; for (var k = i; k < i + 1200; k += 10) v += sm[k]; if (v > best) { best = v; at = i; } }
+    C.push({ a: at / 100, b: at / 100 + 12, score: best / 120, why: "loudest part" });
+    var end = Math.max(s.a, s.b - 10); C.push({ a: end, b: Math.min(R.dur, s.b + 6), score: (sm[Math.floor(s.b * 100) + 200] || 0) + 0.3, why: "ending and applause" });
+  });
+  C.sort(function (x, y) { return y.score - x.score; });
+  var out = []; C.forEach(function (c) { if (out.length < (n || 6) && !out.some(function (o) { return c.a < o.b && c.b > o.a; })) out.push(c); });
+  return out.sort(function (x, y) { return x.a - y.a; });
+}
+function akVxSnap(R, t, mode) {
+  if (!R || !mode || mode === "off") return t;
+  var B = akVxBeats(R), L = mode === "phrase" ? B.phr : B.beats; if (!L.length) return t;
+  var lo = 0, hi = L.length - 1; while (lo < hi) { var mid = (lo + hi) >> 1; if (L[mid] < t) lo = mid + 1; else hi = mid; }
+  var c = L[lo], p = L[lo - 1]; var best = p != null && Math.abs(p - t) < Math.abs(c - t) ? p : c;
+  return Math.abs(best - t) < (mode === "phrase" ? 8 : 1.5) ? best : t;
+}
+function akVxSongStart(R, t) {
+  var s = akVxSongs(R).filter(function (x) { return x.a > t + 0.5; })[0]; if (!s) return null;
+  var on = akVxOnset(R), L = akVxBeats(R).beats.filter(function (b) { return b >= s.a - 0.05; }), f = L[0];
+  if (f == null) return { t: s.a, song: s };
+  /* the song's level is found a little late (smoothing), so step back a beat at a time while there's a real hit */
+  var per = (L[1] || f + 0.5) - f, pk = function (t) { var i = Math.round(t * 100), m = 0; for (var k = i - 4; k <= i + 4; k++) m = Math.max(m, on[k] || 0); return m; }, ref = Math.max(pk(f), pk(L[1] || f));
+  for (var n = 0; n < 4 && f - per > s.a - 2 && pk(f - per) > ref * 0.4; n++) f -= per;
+  return { t: f, song: s };
+}
+if (typeof akTcAdd === "function") akTcAdd("19.5", "App", [
+  ["tc-dock", "🧪 Test helper square", "Drag the 🧪 square anywhere; tap it for ✓ / ✗, tap ▾ to make it small again.", ["testlist", {}, ""]],
+  ["tc-send", "📤 Send ✗ notes to Claude", "Mark something ✗ with a note: it goes to Claude's fix list by itself (needs GitHub backup). 📤 Send in the list sends it all.", ["testlist", {}, ""]],
+  ["conn-send", "📲 Send connections to my other device", "Settings › Data and extras › 🔐 Connections file › 📲 Send: pick Messages, Drive or Nearby Share.", ["settings", {}, "Connections file"]]]);
+AK_VERSION = "19.5";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
