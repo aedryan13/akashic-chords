@@ -62510,6 +62510,632 @@ if (typeof akTcAdd === "function") akTcAdd("19.5", "App", [
   ["conn-send", "📲 Send connections to my other device", "Settings › Data and extras › 🔐 Connections file › 📲 Send: pick Messages, Drive or Nearby Share.", ["settings", {}, "Connections file"]]]);
 AK_VERSION = "19.5";
 
+/* ================= 19.6: 🎬 Clip editor (the approved mock-up, 11-03). Replaces the Clips screen of 18.9x; same AKCL state and maker.
+   - Timeline: waveform of the sound (ak_v19o reads it), beat ticks, zoom from the whole video down to single frames (− ＋, pinch,
+     Ctrl+wheel), an overview bar to move around, drag the playhead to scrub, drag the [ ] marks.
+   - Marks: [ Set start, ▶ Start (hear 3 s from it), End ▶ (hear the 3 s before it), Set end ]. Snap to the beat or phrase. Tap ■
+     while playing to set the end there. 🔁 loops between the marks while you fine-tune. ♪ Next song start finds the next song's
+     first beat. ✂ Make clip adds the marks to the list; several clips = a highlight reel; ▶ Preview the finished clip plays them all.
+   - Tools: ⬚ Crop (shape + drag the frame, Follow me), 🎞 Filters (the Graphics filters), T Text (lines with Pop, Typewriter, Slide,
+     Glow, Word by word, Lower third), ◐ Blur (background blurred, you sharp: the 19.4 person finder), ♪ Sound (rumble and hiss,
+     voice, even loudness, fades), ⏱ Speed, ✦ Extras (best moments, beat cuts, chords or lyrics from a song, logo, end card,
+     song · venue · date), ⬆ Make it.
+   Everything on the phone; nothing uploaded. AKCL.ed holds the editor state (not saved). ================= */
+var AKED_FILTERS = [["none", "None"], ["warm", "Warmth"], ["matte", "Matte"], ["bw", "Black & white"], ["thresh", "Two-tone"], ["vivid", "Vivid"], ["cool", "Cool"], ["sepia", "Sepia"],
+  ["sharpen", "Sharpen"], ["sketch", "Sketch"], ["halftone", "Halftone"], ["glitch", "Glitch"], ["leak", "Light leak"], ["emboss", "Emboss"]];
+var AKED_CSSF = { warm: function (a) { return "sepia(" + 0.35 * a + ") saturate(" + (1 + 0.4 * a) + ") hue-rotate(-8deg)"; }, matte: function (a) { return "contrast(" + (1 - 0.2 * a) + ") brightness(" + (1 + 0.08 * a) + ") saturate(" + (1 - 0.25 * a) + ")"; },
+  bw: function (a) { return "grayscale(" + a + ")"; }, vivid: function (a) { return "saturate(" + (1 + a) + ") contrast(" + (1 + 0.15 * a) + ")"; }, cool: function (a) { return "hue-rotate(" + 12 * a + "deg) saturate(" + (1 + 0.2 * a) + ")"; },
+  sepia: function (a) { return "sepia(" + a + ")"; }, thresh: function (a) { return "grayscale(1) contrast(" + (1 + 6 * a) + ")"; } };
+var AKED_TFX = [["pop", "Pop in"], ["type", "Typewriter"], ["slide", "Slide up"], ["glow", "Glow"], ["word", "Word by word"], ["lower", "Lower third"], ["none", "Plain"]];
+var AKED_FONTS = [["system-ui,-apple-system,Segoe UI,Roboto,sans-serif", "Clean"], ["Georgia,serif", "Classic"], ["Impact,'Arial Black',sans-serif", "Poster"], ["ui-monospace,Menlo,monospace", "Typewriter"]];
+var AKED_ZOOMS = [1800, 600, 60, 10, 2, 0.5];
+function akEd() {
+  if (!AKCL.ed) AKCL.ed = { t: 0, v0: 0, v1: 0, a: 0, b: 0, loop: false, snap: "beat", tapStop: true, playing: false, stopAt: null, playAll: null, R: null, rp: 0, best: [], tool: "",
+    filt: "none", famt: 70, texts: [], blur: false, bamt: 8, cx: 0.5, cy: 0.5, follow: false, speed: 1, chords: "", lyrics: "", lyrLines: [], logo: false, endcard: false, lower: false, trans: "cut", noise: 30, voice: 50, even: true, mask: null, maskAt: 0 };
+  return AKCL.ed;
+}
+/* a new source: fresh editor state, read the sound */
+function akEdMedia() {
+  var E = akEd(); if (E.media) return E.media;
+  var m = E.media = h(AKCL.isAudio ? "audio" : "video", { src: AKCL.url, playsinline: "", preload: "auto", class: "aked-media" }); m.playsInline = true;
+  m.addEventListener("loadedmetadata", function () {
+    var d = m.duration;
+    function done(d) { if (!isFinite(d) || !d) return; AKCL.dur = d; E.v0 = 0; E.v1 = d; E.a = 0; E.b = Math.min(d, 15); render(); }
+    if (!isFinite(d)) { m.currentTime = 1e7; m.ontimeupdate = function () { m.ontimeupdate = null; m.currentTime = 0; done(m.duration); }; } else done(d);
+  });
+  m.addEventListener("seeked", function () { akEdPaint(); });
+  m.addEventListener("loadeddata", function () { akEdPaint(); });
+  m.onerror = function () { toast("That file couldn't be opened here. Try an MP4 or MOV video, or an M4A, MP3 or WAV recording."); };
+  return m;
+}
+akClSetSrc = function (blob, name, o) {
+  o = o || {}; if (AKCL.ed && AKCL.ed.media) try { AKCL.ed.media.pause(); AKCL.ed.media.removeAttribute("src"); } catch (e) {}
+  if (AKCL.url) try { URL.revokeObjectURL(AKCL.url); } catch (e) {}
+  AKCL.src = blob; AKCL.url = URL.createObjectURL(blob); AKCL.name = name || "clip"; AKCL.isAudio = /^audio\//.test(blob.type || "") || /\.(m4a|mp3|wav|ogg|aac)$/i.test(name || ""); AKCL.dur = 0; AKCL.parts = []; AKCL.recId = o.recId || ""; AKCL.words = false;
+  akClDropOut();
+  if (o.t1 != null) AKCL.t1 = o.t1; if (o.t2 != null) AKCL.t2 = o.t2; if (!AKCL.t1) AKCL.t1 = typeof akArtistName === "function" ? akArtistName() : "";
+  AKCL.ed = null; var E = akEd();
+  E.texts = [{ w: AKCL.t1 || "", fx: "pop", pos: "top", font: AKED_FONTS[0][0], when: "first" }];
+  if (AKCL.t2) E.texts.push({ w: AKCL.t2, fx: "lower", pos: "bot", font: AKED_FONTS[0][0], when: "all" });
+  akEdMedia();
+  akVxRead(blob, function (p, R) { if (AKCL.ed !== E) return; E.rp = p; if (R) E.R = R; akEdRedraw(); }).then(function (R) { if (AKCL.ed !== E) return; E.R = R; if (E.rp < 1 && !R.partial) E.rp = 1; akEdRedraw(); }, function () { if (AKCL.ed === E) { E.rp = -1; akEdRedraw(); } });
+  render();
+};
+function akEdTime(t) { t = Math.max(0, t || 0); var hh = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60), ms = Math.floor(t * 1000 % 1000); return (hh ? hh + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (s < 10 ? "0" : "") + s + "." + ("00" + ms).slice(-3); }
+function akEdShort(t) { if (t < 60) return (t < 10 ? +t.toFixed(2) : +t.toFixed(1)) + " s"; var m = Math.floor(t / 60), s = Math.round(t % 60); if (t >= 3600) return Math.floor(t / 3600) + " h " + (m % 60) + " min"; return m + " min" + (s ? " " + s + " s" : ""); }
+function akEdSpan() { var E = akEd(); return Math.max(0.25, (E.v1 || AKCL.dur) - E.v0); }
+function akEdStep() { var sp = akEdSpan(); return sp > 600 ? 10 : sp > 60 ? 1 : sp > 10 ? 0.1 : sp > 2 ? 1 / 30 : 1 / 60; }
+function akEdZoom(sp, c) { var E = akEd(), d = AKCL.dur || 1; sp = Math.max(0.25, Math.min(d, sp)); c = c == null ? E.t : c; var a = Math.max(0, Math.min(d - sp, c - sp / 2)); E.v0 = a; E.v1 = a + sp; akEdRedraw(); }
+function akEdSnap(t) { var E = akEd(); return E.R ? akVxSnap(E.R, t, E.snap) : t; }
+/* loudest value over a stretch, fast at any zoom (blocks of 64 kept once) */
+function akEdMax(R, i0, i1) {
+  var e = R.env; if (!R.blk || R.blkN !== e.length || R.partial) { var n = Math.ceil(e.length / 64), b = new Float32Array(n); for (var k = 0; k < n; k++) { var m = 0; for (var j = k * 64; j < Math.min(e.length, k * 64 + 64); j++) if (e[j] > m) m = e[j]; b[k] = m; } R.blk = b; R.blkN = e.length; }
+  i0 = Math.max(0, i0 | 0); i1 = Math.min(e.length, Math.max(i0 + 1, i1 | 0)); var mx = 0, i = i0;
+  if (i1 - i0 > 256) { while (i < i1 && i % 64) { if (e[i] > mx) mx = e[i]; i++; } var b0 = i / 64 | 0, b1 = (i1 / 64) | 0; for (var q = b0; q < b1; q++) if (R.blk[q] > mx) mx = R.blk[q]; i = b1 * 64; }
+  for (; i < i1; i++) if (e[i] > mx) mx = e[i];
+  return mx;
+}
+function akEdCol(n) { try { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); } catch (e) { return ""; } }
+function akEdFit(c) { var r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1, w = Math.max(1, Math.round(r.width * d)), hh = Math.max(1, Math.round(r.height * d)); if (c.width !== w || c.height !== hh) { c.width = w; c.height = hh; } return d; }
+function akEdRedraw() {
+  var E = akEd(), tl = document.querySelector(".aked-tl canvas"), ov = document.querySelector(".aked-ov canvas");
+  if (ov) akEdDrawOver(ov); if (tl) akEdDrawTL(tl);
+  var now = document.querySelector(".aked-now"); if (now) now.textContent = akEdTime(E.t);
+  var rg = document.querySelector(".aked-range"); if (rg) rg.textContent = "Start " + akEdTime(E.a) + " · End " + akEdTime(E.b) + " · " + akEdShort(Math.max(0, E.b - E.a));
+  var zl = document.querySelector(".aked-zl"); if (zl) zl.textContent = (akEdSpan() >= (AKCL.dur || 1) * 0.99 ? "Whole video" : akEdShort(akEdSpan())) + " · step " + akEdShort(akEdStep()) + (E.rp >= 0 && E.rp < 1 ? " · reading the sound " + Math.round(E.rp * 100) + "%" : "");
+  var win = document.querySelector(".aked-win"), ovb = document.querySelector(".aked-ov"); if (win && ovb) { var W = ovb.clientWidth, d = AKCL.dur || 1; win.style.left = (E.v0 / d * W) + "px"; win.style.width = Math.max(4, akEdSpan() / d * W) + "px"; }
+  akEdPaint();
+}
+function akEdDrawOver(c) {
+  var E = akEd(), d = akEdFit(c), x = c.getContext("2d"), W = c.width, H = c.height, D = AKCL.dur || 1; x.clearRect(0, 0, W, H);
+  x.fillStyle = "rgba(76,201,184,.55)";
+  if (E.R) for (var px = 0; px < W; px += 2 * d) { var i0 = px / W * D * 100, a = akEdMax(E.R, i0, i0 + 2 * d / W * D * 100); x.fillRect(px, H / 2 - a * H * 0.45, 1.5 * d, Math.max(1, a * H * 0.9)); }
+  x.fillStyle = "#3ccf7a"; AKCL.parts.forEach(function (p) { x.fillRect(p.a / D * W, H - 3 * d, Math.max(2, (p.b - p.a) / D * W), 3 * d); });
+  x.fillStyle = "rgba(242,179,61,.8)"; E.best.forEach(function (m) { x.fillRect(m.a / D * W, 0, Math.max(2, (m.b - m.a) / D * W), 3 * d); });
+  x.fillStyle = "#fff"; x.fillRect(E.t / D * W, 0, 1.5 * d, H);
+}
+function akEdDrawTL(c) {
+  var E = akEd(), d = akEdFit(c), x = c.getContext("2d"), W = c.width, H = c.height, v0 = E.v0, sp = akEdSpan(), X = function (t) { return (t - v0) / sp * W; };
+  x.clearRect(0, 0, W, H);
+  x.fillStyle = "rgba(76,201,184,.16)"; x.fillRect(X(E.a), 0, X(E.b) - X(E.a), H);
+  x.fillStyle = "rgba(242,179,61,.22)"; E.best.forEach(function (m) { x.fillRect(X(m.a), 0, X(m.b) - X(m.a), H); });
+  AKCL.parts.forEach(function (p) { x.fillStyle = "rgba(60,207,122,.12)"; x.fillRect(X(p.a), H - 6 * d, X(p.b) - X(p.a), 6 * d); });
+  var mid = H * 0.55, n = Math.max(60, Math.floor(W / (2 * d)));
+  if (E.R) { x.fillStyle = "rgba(127,169,162,.9)"; for (var i = 0; i < n; i++) { var t = v0 + i / n * sp, a = akEdMax(E.R, t * 100, (t + sp / n) * 100 + 1); x.fillRect(i / n * W, mid - a * H * 0.38, Math.max(1, W / n - 0.5 * d), Math.max(1, a * H * 0.76)); } }
+  else { x.fillStyle = "rgba(127,127,127,.6)"; x.font = (11 * d) + "px system-ui,sans-serif"; x.fillText(E.rp < 0 ? "No waveform for this file (the timeline still works)" : "Reading the sound…", 8 * d, mid); }
+  if (E.R && sp <= 90) { var B = akVxBeats(E.R), ph = {}; B.phr.forEach(function (t) { ph[t.toFixed(2)] = 1; }); B.beats.forEach(function (t) { if (t < v0 || t > v0 + sp) return; var p = ph[t.toFixed(2)]; x.fillStyle = p ? "rgba(255,255,255,.9)" : "rgba(160,170,168,.8)"; x.fillRect(X(t), p ? 0 : H * 0.12, p ? 1.5 * d : d, p ? H * 0.16 : H * 0.08); }); }
+  x.fillStyle = "rgba(160,170,168,.9)"; x.font = (10 * d) + "px ui-monospace,Menlo,monospace";
+  var L = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600], tk = L.filter(function (q) { return q >= sp / 5; })[0] || 3600;
+  for (var tt = Math.ceil(v0 / tk) * tk; tt < v0 + sp; tt += tk) { x.fillRect(X(tt), H - 8 * d, d, 8 * d); var lab = tk < 1 ? (tt % 60).toFixed(tk < 0.1 ? 2 : 1) + "s" : (function () { var hh = Math.floor(tt / 3600), m = Math.floor(tt % 3600 / 60), s = Math.floor(tt % 60); return (hh ? hh + ":" + (m < 10 ? "0" : "") + m : m) + ":" + (s < 10 ? "0" : "") + s; })(); x.fillText(lab, X(tt) + 3 * d, H - 2 * d); }
+  function mark(px, col, ch) { x.fillStyle = col; x.fillRect(px - 1.5 * d, 0, 3 * d, H); x.fillRect(ch === "[" ? px : px - 10 * d, 0, 10 * d, 14 * d); x.fillStyle = "#fff"; x.font = "bold " + (11 * d) + "px sans-serif"; x.fillText(ch, ch === "[" ? px + 2 * d : px - 8 * d, 11 * d); }
+  mark(X(E.a), "#2fb36a", "["); mark(X(E.b), "#e2554b", "]");
+  x.fillStyle = "#fff"; x.fillRect(X(E.t) - d, 0, 2 * d, H);
+}
+
+/* ---------------------------------------------------------------- drawing one frame (preview and the finished clip) */
+function akEdPersonMask(src, now) {
+  var E = akEd(); if (!E.blur && !E.follow) return E.mask;
+  if (E.maskBusy || now - E.maskAt < 180 || typeof akSegPerson !== "function") return E.mask;
+  E.maskBusy = true; E.maskAt = now;
+  try {
+    var sw = src.videoWidth || src.width, sh = src.videoHeight || src.height; if (!sw) { E.maskBusy = false; return E.mask; }
+    var k = 256 / Math.max(sw, sh), s = akGfxCv(Math.round(sw * k), Math.round(sh * k)); s.getContext("2d").drawImage(src, 0, 0, s.width, s.height);
+    akSegPerson(s).then(function (m) { E.mask = m; E.maskCv = akSegAlphaCv(m, m.w, m.h, 30); E.maskBusy = false;
+      var sx = 0, n = 0; for (var y = 0; y < m.h; y += 2) for (var xx = 0; xx < m.w; xx += 2) { var v = m.a[y * m.w + xx]; if (v > 0.5) { sx += xx; n++; } } if (n > 20) E.pcx = sx / n / m.w; }, function () { E.maskBusy = false; });
+  } catch (e) { E.maskBusy = false; }
+  return E.mask;
+}
+function akEdFrame(ctx, W, H, src, img, alpha, T, L, cropView) {
+  var E = akEd(), now = performance.now();
+  ctx.globalAlpha = 1; ctx.filter = "none"; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  var s = AKCL.isAudio ? img : src, sw = s ? (s.videoWidth || s.naturalWidth || s.width || 0) : 0, sh = s ? (s.videoHeight || s.naturalHeight || s.height || 0) : 0;
+  if (s && sw && sh) {
+    if (!AKCL.isAudio) akEdPersonMask(s, now);
+    if (E.follow && E.pcx != null) E.cx += (E.pcx - E.cx) * 0.08;
+    var cover = Math.max(W / sw, H / sh), dw = sw * cover, dh = sh * cover, ox, oy;
+    if (cropView) { var ct = Math.min(W / sw, H / sh); dw = sw * ct; dh = sh * ct; ox = (W - dw) / 2; oy = (H - dh) / 2; }
+    else if (AKCL.fit === "fit") { var cn = Math.min(W / sw, H / sh); ctx.save(); ctx.filter = "blur(24px) brightness(.6)"; ctx.drawImage(s, (W - dw) / 2, (H - dh) / 2, dw, dh); ctx.restore(); dw = sw * cn; dh = sh * cn; ox = (W - dw) / 2; oy = (H - dh) / 2; }
+    else { ox = Math.max(W - dw, Math.min(0, W / 2 - E.cx * dw)); oy = Math.max(H - dh, Math.min(0, H / 2 - E.cy * dh)); }
+    var fc = akGfxCv(W, H), fx = fc.getContext("2d"), css = AKED_CSSF[E.filt];
+    fx.filter = (E.blur && E.maskCv ? "blur(" + Math.max(1, E.bamt * W / 640) + "px) " : "") + (css ? css(E.famt / 100) : "");
+    if (fx.filter === "") fx.filter = "none";
+    fx.drawImage(s, ox, oy, dw, dh); fx.filter = "none";
+    if (E.blur && E.maskCv) { /* you, sharp, over the blurred frame */
+      var pc = akGfxCv(W, H), px = pc.getContext("2d"); if (css) px.filter = css(E.famt / 100); px.drawImage(s, ox, oy, dw, dh); px.filter = "none";
+      px.globalCompositeOperation = "destination-in"; px.drawImage(E.maskCv, ox, oy, dw, dh); fx.drawImage(pc, 0, 0);
+    }
+    if (!css && E.filt !== "none" && typeof akFiMake === "function" && AKFXT[E.filt]) { try { var out = akFiMake(fc, { t: E.filt, amt: E.famt, dir: 0 }, null, Math.max(W, H), { x: 0, y: 0, w: W, h: H }); if (out) fc = out; } catch (e) {} }
+    ctx.drawImage(fc, 0, 0);
+    if (cropView) { /* the shape being kept */ var F = akClFmt(), ar = F[2] / F[3], bh = dh, bw = bh * ar; if (bw > dw) { bw = dw; bh = bw / ar; } var bx = ox + Math.max(0, Math.min(dw - bw, E.cx * dw - bw / 2)), by = oy + Math.max(0, Math.min(dh - bh, E.cy * dh - bh / 2));
+      ctx.fillStyle = "rgba(0,0,0,.5)"; ctx.fillRect(0, 0, W, by); ctx.fillRect(0, by + bh, W, H - by - bh); ctx.fillRect(0, by, bx, bh); ctx.fillRect(bx + bw, by, W - bx - bw, bh); ctx.strokeStyle = "#f2b33d"; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh); E._crop = { ox: ox, oy: oy, dw: dw, dh: dh }; return; }
+  } else if (AKCL.isAudio) { var g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, "#1b1030"); g.addColorStop(1, "#3a1410"); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+  akEdWords(ctx, W, H, T || 0, L || 0);
+  if (alpha < 1) { ctx.globalAlpha = 1 - alpha; ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
+  ctx.globalAlpha = 1;
+}
+/* words, chords, lyrics, logo, end card */
+function akEdWords(ctx, W, H, T, L) {
+  var E = akEd(), u = Math.min(W, H) / 1080, safeB = AKCL.fmt === "9:16" ? 0.18 : 0.08, safeT = AKCL.fmt === "9:16" ? 0.1 : 0.06;
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  E.texts.concat(E.lower ? [{ w: akEdLowerText(), fx: "lower", pos: "bot", font: AKED_FONTS[0][0], when: "all" }] : []).forEach(function (tx) {
+    if (!tx.w) return;
+    var a0 = 0, a1 = L || 1e9; if (tx.when === "first") a1 = 3; else if (tx.when === "last") a0 = Math.max(0, (L || 0) - 3);
+    if (T < a0 || T > a1) return;
+    var p = T - a0, fs = Math.round((tx.fx === "lower" ? 46 : 70) * u), y = tx.pos === "top" ? H * safeT + fs : tx.pos === "mid" ? H / 2 : H * (1 - safeB);
+    ctx.save(); ctx.font = "800 " + fs + "px " + tx.font; ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(0,0,0,.65)"; ctx.shadowBlur = 14 * u;
+    var txt = tx.w, out = Math.min(1, (a1 - T) / 0.3);
+    ctx.globalAlpha = Math.max(0, Math.min(1, out));
+    if (tx.fx === "pop") { var k = p < 0.35 ? 0.4 + p / 0.35 * 0.75 : p < 0.55 ? 1.15 - (p - 0.35) / 0.2 * 0.15 : 1; ctx.globalAlpha *= Math.min(1, p / 0.2); ctx.translate(W / 2, y); ctx.scale(k, k); ctx.fillText(txt, 0, 0, W * 0.9 / k); }
+    else if (tx.fx === "slide") { var q = Math.min(1, p / 0.5), e = 1 - Math.pow(1 - q, 3); ctx.globalAlpha *= q; ctx.fillText(txt, W / 2, y + (1 - e) * 60 * u, W * 0.9); }
+    else if (tx.fx === "type") { var nch = Math.floor(Math.min(1, p / Math.max(0.6, txt.length * 0.06)) * txt.length); ctx.fillText(txt.slice(0, nch) + (nch < txt.length && Math.floor(p * 4) % 2 ? "▍" : ""), W / 2, y, W * 0.9); }
+    else if (tx.fx === "glow") { ctx.shadowColor = "#f2b33d"; ctx.shadowBlur = (18 + 16 * Math.sin(p * 4)) * u; ctx.fillText(txt, W / 2, y, W * 0.9); }
+    else if (tx.fx === "word") { var ws = txt.split(/\s+/), per = 0.35, shown = Math.min(ws.length, Math.floor(p / per) + 1), line = ws.slice(0, shown); ctx.textAlign = "left"; var full = ctx.measureText(ws.join(" ")).width, xx = W / 2 - Math.min(full, W * 0.9) / 2;
+      line.forEach(function (wd, i) { ctx.fillStyle = i === shown - 1 && p < ws.length * per ? "#f2b33d" : "#fff"; ctx.fillText(wd, xx, y); xx += ctx.measureText(wd + " ").width; }); }
+    else if (tx.fx === "lower") { var q2 = Math.min(1, p / 0.4), bw = Math.min(W * 0.92, ctx.measureText(txt).width + 60 * u), bx = W * 0.04 - (1 - q2) * bw, by = y - fs * 1.1;
+      ctx.shadowBlur = 0; var gr = ctx.createLinearGradient(bx, 0, bx + bw, 0); gr.addColorStop(0, "rgba(0,0,0,.78)"); gr.addColorStop(1, "rgba(0,0,0,0)"); ctx.fillStyle = gr; ctx.fillRect(bx, by, bw, fs * 1.6);
+      ctx.fillStyle = "#f2b33d"; ctx.fillRect(bx, by, 6 * u, fs * 1.6); ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.fillText(txt, bx + 24 * u, y, W * 0.86); }
+    else ctx.fillText(txt, W / 2, y, W * 0.9);
+    ctx.restore();
+  });
+  if (E.chords) { ctx.save(); ctx.font = "700 " + Math.round(44 * u) + "px ui-monospace,Menlo,monospace"; ctx.fillStyle = "#fff"; ctx.shadowColor = "#000"; ctx.shadowBlur = 8 * u; ctx.textAlign = "center"; ctx.fillText(E.chords, W / 2, H * (safeT + 0.12), W * 0.92); ctx.restore(); }
+  if (E.lyrLines.length && L) { var per2 = L / E.lyrLines.length, li = Math.min(E.lyrLines.length - 1, Math.floor(T / per2)), ln = E.lyrLines[li]; ctx.save(); ctx.font = "700 " + Math.round(48 * u) + "px system-ui,sans-serif"; ctx.textAlign = "center"; ctx.fillStyle = "#fff"; ctx.shadowColor = "#000"; ctx.shadowBlur = 10 * u; ctx.fillText(ln, W / 2, H * (1 - safeB - 0.08), W * 0.92); ctx.restore(); }
+  if (E.logo) { ctx.save(); ctx.globalAlpha = 0.75; ctx.font = "800 " + Math.round(30 * u) + "px system-ui,sans-serif"; ctx.textAlign = "right"; ctx.fillStyle = "#fff"; ctx.shadowColor = "#000"; ctx.shadowBlur = 6 * u; ctx.fillText(String((typeof akArtistName === "function" && akArtistName()) || "").toUpperCase(), W - 28 * u, H - 28 * u - H * (AKCL.fmt === "9:16" ? 0.1 : 0)); ctx.restore(); }
+  if (E.endcard && L && T > L - 3) { var q3 = Math.min(1, (T - (L - 3)) / 0.5); ctx.save(); ctx.globalAlpha = q3 * 0.88; ctx.fillStyle = "#0d1312"; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = q3; ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+    var nm = (typeof akArtistName === "function" && akArtistName()) || "", g = typeof akNextGig === "function" ? akNextGig() : null, url = ""; try { url = akLinksUrl(); } catch (e) {}
+    ctx.font = "800 " + Math.round(80 * u) + "px system-ui,sans-serif"; ctx.fillText(nm, W / 2, H * 0.42, W * 0.9);
+    ctx.font = "600 " + Math.round(40 * u) + "px system-ui,sans-serif"; if (g) ctx.fillText("Next show: " + (g.date || "") + (g.venue ? " · " + g.venue : ""), W / 2, H * 0.5, W * 0.9);
+    ctx.fillStyle = "#f2b33d"; if (url) ctx.fillText(url.replace(/^https?:\/\//, ""), W / 2, H * 0.57, W * 0.9); ctx.restore(); }
+}
+function akEdLowerText() { var E = akEd(); return E.lowerText || AKCL.t2 || ((typeof akArtistName === "function" && akArtistName()) || ""); }
+/* the maker draws with the same function */
+akClDraw = function (ctx, W, H, media, img, alpha, tIn) {
+  var L = akClLen(), E = akEd(), T = tIn == null ? 0 : tIn;
+  if (E.trans === "fade" && AKCL.parts.length > 1) { var acc = 0; for (var i = 0; i < AKCL.parts.length - 1; i++) { acc += AKCL.parts[i].b - AKCL.parts[i].a; var d = Math.abs(T - acc); if (d < 0.25) alpha = Math.min(alpha, 0.15 + 0.85 * d / 0.25); } }
+  akEdFrame(ctx, W, H, media, img, alpha, T, L, false);
+};
+/* preview paint */
+function akEdPaint() {
+  var E = akEd(), cv = document.querySelector(".aked-cv"); if (!cv || !E.media) return;
+  var F = akClFmt(), crop = E.tool === "crop" && !AKCL.isAudio, ar = crop ? ((E.media.videoWidth || 16) / (E.media.videoHeight || 9)) : F[2] / F[3], maxW = 540, W = ar >= 1 ? maxW : Math.round(maxW * ar), H = Math.round(W / ar);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+  var T, L;
+  if (E.playAll) { T = E.playAll.done + (E.t - AKCL.parts[E.playAll.i].a); L = akClLen(); } else { T = Math.max(0, E.t - E.a); L = Math.max(0.1, E.b - E.a); }
+  akEdFrame(cv.getContext("2d"), W, H, E.media, akClBgImg(), 1, T, L, crop);
+}
+/* ---------------------------------------------------------------- playing */
+function akEdPlay(from, until, msg) {
+  var E = akEd(), m = E.media; if (!m) return;
+  if (from != null) { E.t = from; m.currentTime = from; }
+  E.stopAt = until == null ? null : until; E.playing = true; m.playbackRate = E.speed || 1;
+  m.play().catch(function () {}); cancelAnimationFrame(E.raf); E.raf = requestAnimationFrame(akEdTick); akEdBtns(); if (msg) toast(msg);
+}
+function akEdPause() { var E = akEd(); E.playing = false; E.stopAt = null; E.playAll = null; try { E.media.pause(); } catch (e) {} cancelAnimationFrame(E.raf); akEdBtns(); akEdRedraw(); }
+function akEdTick() {
+  var E = akEd(), m = E.media; if (!m || !document.querySelector(".aked")) { akEdPause(); return; }
+  E.t = m.currentTime;
+  if (E.playAll) { var p = AKCL.parts[E.playAll.i]; if (E.t >= p.b - 0.02) { E.playAll.done += p.b - p.a; E.playAll.i++; if (E.playAll.i >= AKCL.parts.length) { if (E.loop) { E.playAll = { i: 0, done: 0 }; } else { akEdPause(); toast("That's the finished clip."); return; } } E.t = AKCL.parts[E.playAll.i].a; m.currentTime = E.t; } }
+  else if (E.stopAt != null && E.t >= E.stopAt) { if (E.loop) { E.t = E.a; m.currentTime = E.a; } else { m.pause(); E.t = E.stopAt; akEdPause(); return; } }
+  else if (E.loop && E.t >= E.b) { E.t = E.a; m.currentTime = E.a; }
+  if (m.ended) { akEdPause(); return; }
+  if (E.t < E.v0 || E.t > E.v0 + akEdSpan()) akEdZoom(akEdSpan(), E.t + akEdSpan() * 0.4);
+  akEdRedraw(); E.raf = requestAnimationFrame(akEdTick);
+}
+function akEdBtns() { var E = akEd(), b = document.querySelector(".aked-play"); if (b) { b.textContent = E.playing ? "■" : "▶"; b.setAttribute("aria-label", E.playing ? (E.tapStop && !E.playAll ? "Stop and set the end here" : "Pause") : "Play"); } var lp = document.querySelector(".aked-loop"); if (lp) lp.setAttribute("aria-pressed", E.loop ? "true" : "false"); }
+function akEdSeek(t) { var E = akEd(); E.t = Math.max(0, Math.min(AKCL.dur || 0, t)); try { E.media.currentTime = E.t; } catch (e) {} akEdRedraw(); }
+/* ---------------------------------------------------------------- timeline gestures */
+function akEdWireTL(tl) {
+  var E = akEd(), ptrs = {}, pinch = null, mode = null;
+  function tAt(cx) { var r = tl.getBoundingClientRect(); return E.v0 + Math.max(0, Math.min(1, (cx - r.left) / r.width)) * akEdSpan(); }
+  tl.addEventListener("pointerdown", function (e) {
+    try { tl.setPointerCapture(e.pointerId); } catch (er) {} ptrs[e.pointerId] = e.clientX; var ids = Object.keys(ptrs);
+    if (ids.length === 2) { var xs = ids.map(function (k) { return ptrs[k]; }); pinch = { d: Math.abs(xs[0] - xs[1]) || 1, sp: akEdSpan(), c: tAt((xs[0] + xs[1]) / 2) }; mode = null; return; }
+    var r = tl.getBoundingClientRect(), xa = (E.a - E.v0) / akEdSpan() * r.width, xb = (E.b - E.v0) / akEdSpan() * r.width, x = e.clientX - r.left;
+    mode = Math.abs(x - xa) < 16 ? "a" : Math.abs(x - xb) < 16 ? "b" : "t";
+    if (mode === "t" && E.playing && !E.loop) akEdPause();
+    mv(e);
+  });
+  tl.addEventListener("pointermove", function (e) { if (!(e.pointerId in ptrs)) return; ptrs[e.pointerId] = e.clientX; var ids = Object.keys(ptrs); if (ids.length === 2 && pinch) { var xs = ids.map(function (k) { return ptrs[k]; }); akEdZoom(pinch.sp * pinch.d / (Math.abs(xs[0] - xs[1]) || 1), pinch.c); return; } mv(e); });
+  function end(e) { delete ptrs[e.pointerId]; if (Object.keys(ptrs).length < 2) pinch = null; if (mode === "a" || mode === "b") { E[mode] = akEdSnap(E[mode]); if (E.a > E.b) { var q = E.a; E.a = E.b; E.b = q; } akEdRedraw(); } mode = null; }
+  tl.addEventListener("pointerup", end); tl.addEventListener("pointercancel", end);
+  tl.addEventListener("wheel", function (e) { e.preventDefault(); if (e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX)) akEdZoom(akEdSpan() * (e.deltaY > 0 ? 1.25 : 0.8), tAt(e.clientX)); else akEdZoom(akEdSpan(), E.v0 + akEdSpan() / 2 + e.deltaX / tl.clientWidth * akEdSpan()); }, { passive: false });
+  function mv(e) { if (!mode) return; var t = tAt(e.clientX); if (mode === "t") { var r = tl.getBoundingClientRect(), x = e.clientX - r.left; if (x < 10) akEdZoom(akEdSpan(), E.v0 + akEdSpan() * 0.48); else if (x > r.width - 10) akEdZoom(akEdSpan(), E.v0 + akEdSpan() * 0.52); akEdSeek(t); } else { E[mode] = t; akEdRedraw(); } }
+}
+function akEdWireOver(ov) {
+  var E = akEd(); function at(e) { var r = ov.getBoundingClientRect(), t = (e.clientX - r.left) / r.width * (AKCL.dur || 0); if (akEdSpan() >= (AKCL.dur || 1) * 0.99) akEdSeek(t); else akEdZoom(akEdSpan(), t); }
+  ov.addEventListener("pointerdown", function (e) { try { ov.setPointerCapture(e.pointerId); } catch (er) {} at(e); ov.onpointermove = at; });
+  ov.addEventListener("pointerup", function () { ov.onpointermove = null; });
+}
+function akEdWireCrop(cv) {
+  var E = akEd();
+  cv.addEventListener("pointerdown", function (e) {
+    if (E.tool !== "crop" || !E._crop) return; try { cv.setPointerCapture(e.pointerId); } catch (er) {}
+    function mv(ev) { var r = cv.getBoundingClientRect(), k = cv.width / r.width, c = E._crop; E.cx = Math.max(0, Math.min(1, ((ev.clientX - r.left) * k - c.ox) / c.dw)); E.cy = Math.max(0, Math.min(1, ((ev.clientY - r.top) * k - c.oy) / c.dh)); E.follow = false; var f = document.querySelector(".aked-follow"); if (f) f.checked = false; akEdPaint(); }
+    mv(e); cv.onpointermove = mv;
+  });
+  cv.addEventListener("pointerup", function () { cv.onpointermove = null; });
+}
+/* ---------------------------------------------------------------- the screen */
+function akEdB(label, fn, o) { o = o || {}; return h("button", { class: "aked-b" + (o.cls ? " " + o.cls : ""), "aria-label": o.aria || null, "aria-pressed": o.pressed == null ? null : (o.pressed ? "true" : "false"), title: o.title || null, onClick: fn }, label); }
+function akEdPane(k) {
+  var E = akEd(), P = h("div", { class: "aked-pane" });
+  function rr() { akClDropOut(); akEdPaint(); }
+  if (k === "crop") {
+    P.appendChild(h("div", { class: "aked-g2" }, AKCL_FMTS.map(function (f) { return akEdB(f[1], function () { AKCL.fmt = f[0]; akClDropOut(); render(); }, { cls: AKCL.fmt === f[0] ? "on" : "" }); })));
+    P.appendChild(h("div", { class: "aked-g2" }, [["fill", "Fill (crop the edges)"], ["fit", "Fit (whole picture)"]].map(function (x) { return akEdB(x[1], function () { AKCL.fit = x[0]; akClDropOut(); render(); }, { cls: AKCL.fit === x[0] ? "on" : "" }); })));
+    P.appendChild(h("label", { class: "aked-c" }, h("input", { type: "checkbox", class: "aked-follow", checked: E.follow, onChange: function () { E.follow = this.checked; if (E.follow) { E.maskAt = 0; toast("Follow me: the frame keeps you in it as you move."); } rr(); } }), "Follow me (keeps the performer in frame)"));
+    P.appendChild(h("p", { class: "hint" }, "Drag on the picture to choose what's in the clip (the yellow box)."));
+  } else if (k === "filt") {
+    P.appendChild(h("div", { class: "aked-g3" }, AKED_FILTERS.map(function (f) { return akEdB(f[1], function () { E.filt = f[0]; rr(); render(); }, { cls: E.filt === f[0] ? "on" : "" }); })));
+    P.appendChild(h("label", { class: "aked-f" }, "Strength", h("input", { type: "range", min: 0, max: 100, value: E.famt, onInput: function () { E.famt = +this.value; rr(); } })));
+    P.appendChild(h("p", { class: "hint" }, "The same filters as Graphics, so a flyer and a clip can match. Sharpen, Sketch, Halftone, Glitch, Light leak and Emboss are heavier: on older phones the clip may come out less smooth."));
+  } else if (k === "text") {
+    E.texts.forEach(function (tx, i) {
+      P.appendChild(h("div", { class: "aked-tx" },
+        h("div", { class: "aked-row" }, h("input", { type: "text", value: tx.w, placeholder: "Words", "aria-label": "Words " + (i + 1), class: "grow", onInput: function () { tx.w = this.value; rr(); } }), akEdB("🗑", function () { E.texts.splice(i, 1); rr(); render(); }, { aria: "Remove these words" })),
+        h("div", { class: "aked-g4" },
+          h("select", { "aria-label": "Look", onChange: function () { tx.fx = this.value; rr(); akEdReplay(); } }, AKED_TFX.map(function (o) { return h("option", { value: o[0], selected: tx.fx === o[0] ? "selected" : null }, o[1]); })),
+          h("select", { "aria-label": "Where", onChange: function () { tx.pos = this.value; rr(); } }, [["top", "Top"], ["mid", "Middle"], ["bot", "Bottom"]].map(function (o) { return h("option", { value: o[0], selected: tx.pos === o[0] ? "selected" : null }, o[1]); })),
+          h("select", { "aria-label": "Font", onChange: function () { tx.font = this.value; rr(); } }, AKED_FONTS.map(function (o) { return h("option", { value: o[0], selected: tx.font === o[0] ? "selected" : null }, o[1]); })),
+          h("select", { "aria-label": "When", onChange: function () { tx.when = this.value; rr(); } }, [["all", "Whole clip"], ["first", "First 3 s"], ["last", "Last 3 s"]].map(function (o) { return h("option", { value: o[0], selected: tx.when === o[0] ? "selected" : null }, o[1]); })))));
+    });
+    P.appendChild(h("div", { class: "aked-row" }, akEdB("＋ Words", function () { E.texts.push({ w: "", fx: "pop", pos: "mid", font: AKED_FONTS[0][0], when: "all" }); render(); }), akEdB("↻ Replay the look", akEdReplay)));
+  } else if (k === "blur") {
+    P.appendChild(h("label", { class: "aked-c" }, h("input", { type: "checkbox", checked: E.blur, onChange: function () { E.blur = this.checked; E.maskAt = 0; if (E.blur && typeof akSegPerson !== "function") toast("The person finder isn't in this version."); rr(); } }), "Blur the background, keep me sharp"));
+    P.appendChild(h("label", { class: "aked-f" }, "How much", h("input", { type: "range", min: 1, max: 20, value: E.bamt, onInput: function () { E.bamt = +this.value; rr(); } })));
+    P.appendChild(h("p", { class: "hint" }, "Uses the person finder from Remove background (about 5 times a second). Older phones may make the clip a little less smooth with this on; the preview shows you first."));
+  } else if (k === "sound") {
+    P.appendChild(h("label", { class: "aked-f" }, "Rumble and hiss down", h("input", { type: "range", min: 0, max: 100, value: E.noise, onInput: function () { E.noise = +this.value; akClDropOut(); } })));
+    P.appendChild(h("label", { class: "aked-f" }, "Voice up (clearer singing)", h("input", { type: "range", min: 0, max: 100, value: E.voice, onInput: function () { E.voice = +this.value; akClDropOut(); } })));
+    P.appendChild(h("label", { class: "aked-c" }, h("input", { type: "checkbox", checked: E.even, onChange: function () { E.even = this.checked; akClDropOut(); } }), "Even out the loudness"));
+    P.appendChild(h("label", { class: "aked-c" }, h("input", { type: "checkbox", checked: AKCL.fade, onChange: function () { AKCL.fade = this.checked; akClDropOut(); } }), "Fade in and out (½ second)"));
+    P.appendChild(h("p", { class: "hint" }, "Heard in the finished clip (the preview plays the sound as it is)."));
+  } else if (k === "speed") {
+    P.appendChild(h("div", { class: "aked-g3" }, [[0.25, "¼×"], [0.5, "½×"], [0.75, "¾×"], [1, "1×"], [1.5, "1½×"], [2, "2×"]].map(function (s) { return akEdB(s[1], function () { E.speed = s[0]; try { E.media.playbackRate = s[0]; } catch (e) {} akClDropOut(); render(); }, { cls: E.speed === s[0] ? "on" : "" }); })));
+    P.appendChild(h("p", { class: "hint" }, "Slow motion for a solo or a big ending. The sound keeps its pitch. A ½× clip takes twice as long to make."));
+  } else if (k === "extra") {
+    P.appendChild(h("div", { class: "aked-g2" },
+      akEdB("⭐ Find my best moments", function () { if (!E.R) { toast("Still reading the sound. Try again in a moment."); return; } E.best = akVxBest(E.R, 6); if (!E.best.length) { toast("No clear big moments found."); return; } var f = E.best[0]; E.a = f.a; E.b = f.b; akEdSeek(f.a); akEdZoom(Math.max(30, f.b - f.a + 20), (f.a + f.b) / 2); render(); toast("Marked " + E.best.length + " big moments in yellow. The first one is on your marks."); }),
+      akEdB("🥁 Cut to the beat", function () { E.trans = E.trans === "beat" ? "cut" : "beat"; if (E.trans === "beat" && E.snap === "off") E.snap = "beat"; render(); }, { pressed: E.trans === "beat" }),
+      akEdB("🎸 Chords on screen", function () { akEdPickSong(function (s) { E.chords = s ? akEdChordsOf(s) : ""; rr(); render(); }); }, { pressed: !!E.chords }),
+      akEdB("🎤 Lyrics as captions", function () { akEdPickSong(function (s) { E.lyrLines = s ? akEdLyricsOf(s) : []; rr(); render(); }); }, { pressed: !!E.lyrLines.length }),
+      akEdB("🏷 My name in the corner", function () { E.logo = !E.logo; rr(); render(); }, { pressed: E.logo }),
+      akEdB("🔚 End card (links, next show)", function () { E.endcard = !E.endcard; rr(); render(); }, { pressed: E.endcard }),
+      akEdB("▭ Song · venue · date", function () { E.lower = !E.lower; rr(); render(); }, { pressed: E.lower })));
+    if (E.lower) P.appendChild(h("input", { type: "text", value: akEdLowerText(), "aria-label": "Song, venue and date", onInput: function () { E.lowerText = this.value; rr(); } }));
+    if (E.best.length) P.appendChild(h("div", { class: "aked-parts" }, E.best.map(function (m, i) { return h("div", { class: "aked-part" }, h("span", { class: "aked-n" }, "⭐"), h("span", { class: "grow aked-tc" }, akEdTime(m.a) + " · " + (m.why || "")), akEdB("▶", function () { E.a = m.a; E.b = m.b; akEdPlay(m.a, m.b); }, { aria: "Hear it" }), akEdB("＋ Keep", function () { AKCL.parts.push({ a: m.a, b: m.b }); akClDropOut(); render(); toast("Added as clip " + AKCL.parts.length + "."); })); })));
+  } else if (k === "out") akEdOut(P);
+  return P;
+}
+function akEdReplay() { var E = akEd(); if (E.playing) return; var t0 = performance.now(), base = E.t; (function f() { var dt = (performance.now() - t0) / 1000; if (dt > 2.5) { akEdPaint(); return; } var cv = document.querySelector(".aked-cv"); if (!cv) return; var L = Math.max(0.1, E.b - E.a); akEdFrame(cv.getContext("2d"), cv.width, cv.height, E.media, akClBgImg(), 1, Math.max(0, base - E.a) * 0 + dt, L, false); requestAnimationFrame(f); })(); }
+function akEdPickSong(cb) {
+  var L = (lib().songs || []).slice().sort(function (a, b) { return String(a.title).localeCompare(String(b.title)); }), close;
+  var q = h("input", { type: "text", placeholder: "Find a song", "aria-label": "Find a song" }), list = h("div", { class: "list aked-sl" });
+  function fill() { var v = q.value.toLowerCase(); list.textContent = ""; L.filter(function (s) { return !v || String(s.title).toLowerCase().indexOf(v) >= 0; }).slice(0, 60).forEach(function (s) { list.appendChild(h("button", { class: "item main-btn", onClick: function () { close && close(); cb(s); } }, h("div", { class: "t" }, s.title), h("div", { class: "s" }, s.artist || ""))); }); }
+  q.addEventListener("input", fill); fill();
+  close = modal("Pick the song", h("div", null, q, list), [{ label: "Turn it off", onClick: function () { cb(null); } }, { label: "Cancel" }]);
+}
+function akEdChordsOf(s) { var txt = String(s.chart || s.body || s.text || ""), seen = [], m, re = /\[([A-G][^\]\s]{0,6})\]/g; while ((m = re.exec(txt)) && seen.length < 8) if (seen.indexOf(m[1]) < 0) seen.push(m[1]); return seen.join("   ") || (s.key ? "Key of " + s.key : ""); }
+function akEdLyricsOf(s) { var txt = String(s.chart || s.body || s.text || ""); return txt.split(/\n/).map(function (l) { return l.replace(/\[[^\]]*\]/g, "").replace(/^\s*\{.*\}\s*$/, "").trim(); }).filter(function (l) { return l && !/^(verse|chorus|bridge|intro|outro|tag|pre-chorus)\b/i.test(l) && !/^[A-G][#b]?(m|maj|min|sus|dim|add)?\d*(\s+[A-G][#b]?\S*)*$/.test(l); }).slice(0, 40); }
+function akEdOut(P) {
+  var E = akEd(), bar = h("div", { class: "akcl-bar" }, h("span", { style: "width:" + Math.round(AKCL.prog * 100) + "%" }));
+  P.appendChild(h("p", { class: "hint" }, "It plays through once while it's made (" + akClTime(akClLen() / (E.speed || 1)) + "). Keep this screen open. Made on the phone, nothing uploaded."));
+  if (AKCL.busy) P.appendChild(h("div", null, bar, akEdB("■ Stop", function () { if (AKCL.__stop) AKCL.__stop(); })));
+  else P.appendChild(h("div", { class: "aked-row" }, akEdB(AKCL.out ? "⬆ Make it again" : "⬆ Make the clip", function () {
+    if (!AKCL.parts.length) { if (E.b - E.a > 0.2) AKCL.parts.push({ a: E.a, b: E.b }); else { toast("Set a start and an end first."); return; } }
+    akEdPause(); AKCL.busy = true; AKCL.prog = 0; akClDropOut(); render();
+    akClMake(function (p) { AKCL.prog = p; var s = document.querySelector(".akcl-bar span"); if (s) s.style.width = Math.round(p * 100) + "%"; }).then(function (blob) { AKCL.busy = false; AKCL.out = blob; AKCL.outUrl = URL.createObjectURL(blob); render(); toast("🎬 Clip ready."); }, function (e) { AKCL.busy = false; render(); toast(e && e.message ? e.message : "Couldn't make the clip."); });
+  }, { cls: "on" }), !akClOk() ? h("span", { class: "hint" }, "This browser can't make video files.") : null));
+  if (AKCL.out) P.appendChild(h("div", { class: "akcl-out" }, h("video", { src: AKCL.outUrl, controls: true, playsinline: "", class: "akcl-res" }), h("div", { class: "aked-row" }, akEdB("📤 Save or share", akClSave, { cls: "on" }), h("span", { class: "hint" }, Math.max(1, Math.round(AKCL.out.size / 1048576 * 10) / 10) + " MB · " + (/mp4/.test(AKCL.out.type) ? "MP4" : "WebM")))));
+}
+function viewClips() {
+  var E = akEd(), body = h("div", { class: "akcl aked" });
+  body.appendChild(h("div", { class: "aked-row" },
+    akEdB("📂 Pick a video", function () { akClPick("video/*,audio/*", function (f) { akClSetSrc(f, f.name); }); }),
+    typeof akRecList === "function" ? akEdB("🎙 My show recordings", akClFromRecs) : null,
+    h("span", { class: "hint grow aked-src" }, AKCL.src ? AKCL.name + (AKCL.dur ? " · " + akEdShort(AKCL.dur) : " · loading…") : "")));
+  if (!AKCL.src) { body.appendChild(h("p", { class: "hint" }, "Cut a clip or a highlight reel from a show video or recording, shaped for Reels, TikTok, Shorts or a post. Everything happens on your phone. Tip: start with your strongest 3 seconds, keep it 15 to 45 seconds.")); return shell("🎬 Clips", body, { back: function () { navBack(); } }); }
+  akEdMedia();
+  if (!E.v1) { E.v1 = AKCL.dur || 30; }
+  var cv = h("canvas", { class: "aked-cv", width: 540, height: 304 }); akEdWireCrop(cv);
+  body.appendChild(h("div", { class: "aked-stage" }, cv, E.media));
+  if (AKCL.isAudio) body.appendChild(h("div", { class: "aked-row" }, akEdB(AKCL.bgUrl ? "🖼 Change the picture" : "🖼 Pick a picture to show", function () { akClPick("image/*", function (f) { if (AKCL.bgUrl) try { URL.revokeObjectURL(AKCL.bgUrl); } catch (e) {} AKCL.bgUrl = URL.createObjectURL(f); akClDropOut(); render(); }); })));
+  body.appendChild(h("div", { class: "aked-tp", role: "group", "aria-label": "Playback" },
+    akEdB("⇤", function () { akEdSeek(E.a); akEdZoom(akEdSpan(), E.a); }, { aria: "Jump to the start mark" }),
+    akEdB("◀︎", function () { akEdSeek(E.t - akEdStep()); }, { aria: "Step back" }),
+    h("button", { class: "aked-b aked-play", "aria-label": "Play", onClick: function () {
+      if (E.playing) { if (E.tapStop && !E.playAll && !E.loop) { E.b = akEdSnap(E.t); if (E.b <= E.a) E.a = Math.max(0, E.b - 5); akEdPause(); toast("End set at " + akEdTime(E.b) + ". Tap End ▶ to hear it."); } else akEdPause(); }
+      else akEdPlay(); } }, "▶"),
+    akEdB("▶︎|", function () { akEdSeek(E.t + akEdStep()); }, { aria: "Step forward" }),
+    akEdB("⇥", function () { akEdSeek(E.b); akEdZoom(akEdSpan(), E.b); }, { aria: "Jump to the end mark" }),
+    h("button", { class: "aked-b aked-loop", "aria-pressed": E.loop ? "true" : "false", "aria-label": "Loop between start and end", title: "Loop", onClick: function () { E.loop = !E.loop; akEdBtns(); if (E.loop && !E.playing) akEdPlay(E.a, E.b, "Looping between your marks. Drag a mark while it plays to fine-tune."); } }, "🔁"),
+    h("span", { class: "aked-now aked-tc" }, akEdTime(E.t))));
+  var ov = h("div", { class: "aked-ov", title: "The whole video: tap or drag to move around" }, h("canvas"), h("div", { class: "aked-win" })); akEdWireOver(ov); body.appendChild(ov);
+  var tl = h("div", { class: "aked-tl", "aria-label": "Timeline: drag to scrub, drag the marks, pinch or − ＋ to zoom" }, h("canvas")); akEdWireTL(tl); body.appendChild(tl);
+  body.appendChild(h("div", { class: "aked-row aked-nw" },
+    akEdB("−", function () { var sp = akEdSpan(), L = AKED_ZOOMS.filter(function (z) { return z > sp * 1.05; }); akEdZoom(L.length ? L[L.length - 1] : AKCL.dur); }, { aria: "Zoom out" }),
+    h("span", { class: "aked-zl grow" }, ""),
+    akEdB("＋", function () { var sp = akEdSpan(), nx = AKED_ZOOMS.filter(function (z) { return z < sp * 0.95; })[0]; akEdZoom(nx || sp / 2); }, { aria: "Zoom in" }),
+    h("select", { "aria-label": "Snap the marks to", onChange: function () { E.snap = this.value; akEdRedraw(); } }, [["off", "Snap: off"], ["beat", "Snap: beat"], ["phrase", "Snap: phrase"]].map(function (o) { return h("option", { value: o[0], selected: E.snap === o[0] ? "selected" : null }, o[1]); }))));
+  body.appendChild(h("div", { class: "aked-g4 aked-marks" },
+    akEdB("[ Set start", function () { E.a = akEdSnap(E.t); if (E.b <= E.a) E.b = Math.min(AKCL.dur, E.a + 10); akEdRedraw(); toast("Start set at " + akEdTime(E.a) + (E.snap !== "off" && E.R ? " (on the " + E.snap + ")" : "")); }, { cls: "aked-st" }),
+    akEdB("▶ Start", function () { akEdPlay(E.a, Math.min(E.b, E.a + 3)); }, { title: "Hear 3 seconds from the start mark" }),
+    akEdB("End ▶", function () { akEdPlay(Math.max(E.a, E.b - 3), E.b); }, { title: "Hear the 3 seconds before the end mark" }),
+    akEdB("Set end ]", function () { E.b = akEdSnap(E.t); if (E.b <= E.a) E.a = Math.max(0, E.b - 10); akEdRedraw(); toast("End set at " + akEdTime(E.b)); }, { cls: "aked-en" })));
+  body.appendChild(h("div", { class: "aked-row aked-nw" },
+    h("label", { class: "aked-c grow" }, h("input", { type: "checkbox", checked: E.tapStop, onChange: function () { E.tapStop = this.checked; akEdBtns(); } }), "Tap ■ while playing to set the end"),
+    akEdB("♪ Next song start", function () { if (!E.R) { toast("Still reading the sound."); return; } var s = akVxSongStart(E.R, E.t); if (!s) { toast("No more songs after this."); return; } E.a = s.t; E.b = Math.min(s.song.b, s.t + 30); akEdSeek(s.t); akEdZoom(60, s.t + 20); toast("Next song starts at " + akEdTime(s.t) + ". Start mark set on its first beat."); })));
+  body.appendChild(h("div", { class: "aked-row aked-nw" }, h("span", { class: "aked-range aked-tc grow" }, ""),
+    akEdB("✂ Make clip", function () { if (E.b - E.a < 0.2) { toast("Set a start and an end first."); return; } var a = E.a, b = E.b; if (E.trans === "beat" && E.R) { a = akVxSnap(E.R, a, "beat"); b = akVxSnap(E.R, b, "beat"); } AKCL.parts.push({ a: a, b: b }); akClDropOut(); S.akEdParts = true; render(); toast("Clip " + AKCL.parts.length + " added. Set new marks to add another for a reel."); }, { cls: "on" })));
+  var pl = h("details", { class: "aked-fold", open: S.akEdParts !== false ? "open" : null, onToggle: function () { S.akEdParts = this.open; } }, h("summary", null, "Clips in this video ", h("small", null, String(AKCL.parts.length) + (AKCL.parts.length ? " · " + akEdShort(akClLen()) : ""))),
+    h("div", { class: "aked-in" },
+      AKCL.parts.length ? h("div", { class: "aked-parts" }, AKCL.parts.map(function (p, i) { return h("div", { class: "aked-part" }, h("span", { class: "aked-n" }, String(i + 1)), h("span", { class: "grow aked-tc" }, akEdTime(p.a) + " → " + akEdTime(p.b) + " · " + akEdShort(p.b - p.a)),
+        akEdB("↑", function () { var x = AKCL.parts[i - 1]; AKCL.parts[i - 1] = p; AKCL.parts[i] = x; akClDropOut(); render(); }, { aria: "Move up" }),
+        akEdB("Edit", function () { E.a = p.a; E.b = p.b; AKCL.parts.splice(i, 1); akClDropOut(); akEdSeek(p.a); akEdZoom(Math.max(10, (p.b - p.a) * 1.5), (p.a + p.b) / 2); render(); toast("Clip " + (i + 1) + " is back on the timeline. ✂ Make clip when done."); }),
+        akEdB("🗑", function () { AKCL.parts.splice(i, 1); akClDropOut(); render(); }, { aria: "Remove clip " + (i + 1) })); })) : h("p", { class: "hint" }, "No clips yet. Set start and end, then ✂ Make clip."),
+      h("div", { class: "aked-row" }, akEdB("▶ Preview the finished clip", function () { if (!AKCL.parts.length) { toast("Make a clip first."); return; } E.playAll = { i: 0, done: 0 }; akEdPlay(AKCL.parts[0].a, null); }),
+        h("select", { "aria-label": "Between clips", onChange: function () { E.trans = this.value; akClDropOut(); } }, [["cut", "Straight cut"], ["fade", "Quick fade"], ["beat", "Cut on the beat"]].map(function (o) { return h("option", { value: o[0], selected: E.trans === o[0] ? "selected" : null }, o[1]); }))),
+      h("p", { class: "hint" }, "One clip = a single post. Two or more = a highlight reel, played in this order."))); pl.querySelector(".aked-in").setAttribute("data-x", "1"); body.appendChild(pl);
+  var tools = [["crop", "⬚ Crop"], ["filt", "🎞 Filters"], ["text", "T Text"], ["blur", "◐ Blur"], ["sound", "♪ Sound"], ["speed", "⏱ Speed"], ["extra", "✦ Extras"], ["out", "⬆ Make it"]];
+  body.appendChild(h("div", { class: "aked-g4 aked-tools", role: "tablist", "aria-label": "Tools" }, tools.map(function (t) { return h("button", { class: "aked-b" + (E.tool === t[0] ? " on" : ""), role: "tab", "aria-selected": E.tool === t[0] ? "true" : "false", onClick: function () { E.tool = E.tool === t[0] ? "" : t[0]; render(); } }, t[1]); })));
+  if (E.tool) body.appendChild(akEdPane(E.tool));
+  setTimeout(function () { akEdRedraw(); akEdBtns(); }, 0);
+  return shell("🎬 Clips", body, { back: function () { akEdPause(); navBack(); } });
+}
+AK_VIEWS.clips = viewClips;
+/* the maker: speed, sound clean-up, quick fades between clips */
+(function () {
+  var mk0 = akClMake;
+  akClMake = function (onProg) {
+    var E = akEd(), AC0 = window.AudioContext || window.webkitAudioContext;
+    /* make the old maker build our sound chain and speed: patch the pieces it creates, just for this run */
+    var AC = function () { var ac = new AC0(); var cg = ac.createGain.bind(ac); ac.createGain = function () { var g = cg(); if (ac.__chain) return g; ac.__chain = 1; return akEdChain(ac, g); }; return ac; };
+    var ce = document.createElement.bind(document), restore = function () { window.AudioContext = AC0; if (window.webkitAudioContext) window.webkitAudioContext = AC0; document.createElement = ce; };
+    window.AudioContext = AC; if (window.webkitAudioContext) window.webkitAudioContext = AC;
+    document.createElement = function (tag) { var el = ce(tag); if (/^(video|audio)$/i.test(tag)) { el.addEventListener("play", function () { try { el.playbackRate = E.speed || 1; el.preservesPitch = true; } catch (e) {} }); } return el; };
+    var p; try { p = mk0.apply(this, arguments); } finally { setTimeout(restore, 0); }
+    return p;
+  };
+})();
+/* gain → [rumble cut] → [voice lift] → [hiss cut] → [compressor] → (what the maker connects next) */
+function akEdChain(ac, g) {
+  var E = akEd(), first = ac.createBiquadFilter(), voice = ac.createBiquadFilter(), hiss = ac.createBiquadFilter(), comp = ac.createDynamicsCompressor();
+  first.type = "highpass"; first.frequency.value = 30 + E.noise * 1.2; voice.type = "peaking"; voice.frequency.value = 2500; voice.Q.value = 0.9; voice.gain.value = (E.voice - 50) / 50 * 6;
+  hiss.type = "lowpass"; hiss.frequency.value = 18000 - E.noise * 90; comp.threshold.value = E.even ? -24 : 0; comp.ratio.value = E.even ? 3 : 1; comp.knee.value = 12;
+  var mid = ac.createGain(); var conn = g.connect.bind(g);
+  conn(first); first.connect(voice); voice.connect(hiss); hiss.connect(comp); comp.connect(mid);
+  /* the maker sets g.gain (fades) and then connects g somewhere: route that through the chain */
+  g.connect = function (dst) { return mid.connect(dst); };
+  return g;
+}
+akCss("aked", [
+  ".aked{display:flex;flex-direction:column;gap:8px}",
+  ".aked-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.aked-row.aked-nw{flex-wrap:nowrap}.aked .grow{flex:1 1 auto;min-width:0}",
+  ".aked-b{border-radius:2px!important;border:1px solid rgba(127,127,127,.5);background:transparent;min-height:36px;padding:0 8px;white-space:nowrap}",
+  ".aked-b.on,.aked-b[aria-pressed=true]{background:var(--accent,#13877a);border-color:var(--accent,#13877a);color:var(--accentText,#fff)}",
+  ".aked select,.aked input[type=text]{border-radius:2px;min-height:36px;min-width:0}",
+  ".aked-stage{position:relative;background:#000;display:flex;justify-content:center;border-radius:2px;overflow:hidden}.aked-cv{max-width:100%;max-height:46vh;display:block;touch-action:none}.aked-media{display:none}",
+  ".aked-tp{display:flex;gap:4px;align-items:center}.aked-tp .aked-b{min-width:38px;padding:0 6px}.aked-now{margin-left:auto}",
+  ".aked-tc{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;font-size:13px}",
+  ".aked-ov{position:relative;height:22px;border:1px solid rgba(127,127,127,.4);border-radius:2px;touch-action:none;cursor:pointer}.aked-ov canvas,.aked-tl canvas{position:absolute;inset:0;width:100%;height:100%}",
+  ".aked-win{position:absolute;top:-1px;bottom:-1px;border:2px solid var(--accent,#4cc9b8);background:rgba(76,201,184,.15);min-width:4px;pointer-events:none}",
+  ".aked-tl{position:relative;height:96px;border:1px solid rgba(127,127,127,.4);border-radius:2px;touch-action:none;user-select:none;-webkit-user-select:none}",
+  ".aked-zl{font-size:12px;opacity:.75;text-align:center}",
+  ".aked-g2{display:grid;grid-template-columns:1fr 1fr;gap:6px}.aked-g3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.aked-g4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}",
+  ".aked-g2 .aked-b,.aked-g3 .aked-b,.aked-g4 .aked-b{white-space:normal;line-height:1.15;padding:2px 4px;font-size:13px}",
+  ".aked-st{border-color:#2fb36a!important;color:#2fb36a}.aked-en{border-color:#e2554b!important;color:#e2554b}",
+  ".aked-fold{border:1px solid rgba(127,127,127,.4);border-radius:2px}.aked-fold>summary{padding:8px 10px;font-weight:600;cursor:pointer}.aked-fold>summary small{opacity:.7;font-weight:400}.aked-in{padding:0 10px 10px;display:flex;flex-direction:column;gap:6px}",
+  ".aked-parts{display:flex;flex-direction:column;gap:4px}.aked-part{display:flex;gap:6px;align-items:center;border:1px solid rgba(127,127,127,.3);border-radius:2px;padding:4px 6px}.aked-n{font-weight:700;width:18px;color:var(--accent,#4cc9b8)}",
+  ".aked-pane{border:1px solid rgba(127,127,127,.4);border-radius:2px;padding:8px;display:flex;flex-direction:column;gap:8px}",
+  ".aked-f{display:flex;flex-direction:column;gap:2px;font-size:12.5px}.aked-f input[type=range]{width:100%}.aked-c{display:flex;gap:8px;align-items:center}",
+  ".aked-tx{display:flex;flex-direction:column;gap:4px;border-bottom:1px solid rgba(127,127,127,.25);padding-bottom:6px}.aked-g4 select{width:100%;font-size:13px}",
+  ".aked-sl{max-height:50vh;overflow:auto}"].join(""));
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Clip editor: pick exactly where a clip starts and ends", a: "⋯ More › 🎬 Clips › pick a video. Zoom the timeline with − ＋ or pinch (down to single frames), drag to scrub, [ Set start and Set end ], ▶ Start / End ▶ to hear them, 🔁 to loop, tap ■ while playing to set the end, Snap: beat. Then ✂ Make clip.", k: "clip editor trim cut timeline zoom scrub loop start end snap beat waveform reel" });
+  AK_HELP_WHERE.push({ t: "Video filters, text effects, crop, background blur, slow motion", a: "🎬 Clips › the tool buttons under the timeline: ⬚ Crop (shape, Follow me), 🎞 Filters, T Text (Pop, Typewriter, Slide, Glow, Word by word, Lower third), ◐ Blur, ♪ Sound, ⏱ Speed, ✦ Extras (best moments, chords, lyrics, end card).", k: "video filter text effect caption crop reframe vertical blur background depth slow motion speed end card lyrics chords" });
+}
+AK_WHATS_NEW = ["🎬 New clip editor: a zoomable timeline with the waveform and beats, set start and end, hear each, loop, snap to the beat, tap ■ to set the end, ♪ next song start. Tools: crop and Follow me, filters, text effects, background blur, sound clean-up, slow motion, best moments, chords or lyrics, end card."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("19.6", "Clips", [
+  ["ed-zoom", "Timeline zoom and scrub", "Pick a show video. − ＋ or pinch zooms down to frames; drag to scrub; the bar on top moves around.", ["clips", {}, ""]],
+  ["ed-marks", "Set start / end, hear them, loop", "[ Set start, ▶ Start, End ▶, Set end ], then 🔁 and drag a mark while it loops.", ["clips", {}, ""]],
+  ["ed-tapstop", "Tap ■ to set the end", "Play from the start, tap ■ where it should end.", ["clips", {}, ""]],
+  ["ed-snap", "Snap to beat and next song start", "Snap: beat, then Set start near a beat; ♪ Next song start.", ["clips", {}, ""]],
+  ["ed-reel", "Highlight reel", "✂ Make clip two or three times, ▶ Preview the finished clip, then ⬆ Make it.", ["clips", {}, ""]],
+  ["ed-crop", "Crop and Follow me", "⬚ Crop: 9:16, drag the box, try Follow me.", ["clips", {}, ""]],
+  ["ed-filt", "Video filters", "🎞 Filters: Warmth, Black & white, Sketch.", ["clips", {}, ""]],
+  ["ed-text", "Text and text effects", "T Text: Pop, Typewriter, Word by word, Lower third.", ["clips", {}, ""]],
+  ["ed-blur", "Background blur", "◐ Blur: you stay sharp.", ["clips", {}, ""]],
+  ["ed-extra", "Best moments, lyrics, end card", "✦ Extras: ⭐ Find my best moments, 🎤 Lyrics, 🔚 End card.", ["clips", {}, ""]],
+  ["ed-make", "Make and share the clip", "⬆ Make it, watch it, 📤 Save or share.", ["clips", {}, ""]]]);
+AK_VERSION = "19.6";
+
+/* ================= 19.6: 📍 Show me (his idea, 11-03). From any search result (Help › Where is…?, the 🔍 search in Files, the feature
+   guide) "📍 Show me" goes to the screen, unfolds every folded section on the way, shows the path at the top
+   (Settings › Data and extras › 🔐 Connections file), dims everything else and rings the control. The card under it has
+   "What it does" and "How to use it". Tap anywhere (or ✕) to close; the control itself still works while lit.
+   akShowMe({ title, where, what, how, go }) — where is a "A › B › C" path (or text holding one); go is optional (else the path's
+   first part picks the screen). akSpot(el, info) lights one element. ================= */
+function akSpotClean(s) { return String(s || "").replace(/[\u{1F000}-\u{1FAFF}☀-➿←-⇿⬀-⯿️]/gu, "").replace(/[…▾▸▴⋯“”"'()]/g, "").replace(/\s+/g, " ").trim(); }
+function akSpotPath(text) {
+  var t = String(text || ""), parts = t.split(/(?<=[.;:!?])\s+|\n/);
+  var p = parts.filter(function (x) { return x.indexOf("›") >= 0; })[0]; if (!p) return [];
+  p = p.replace(/^[^A-Za-z0-9←-⯿\u{1F000}-\u{1FAFF}]+/u, "").split(/[:;.](\s|$)/)[0];
+  return p.split("›").map(function (x) { return x.replace(/\s+(or|then)\s.*$/i, "").trim(); }).filter(Boolean).slice(0, 6);
+}
+/* the screen a path starts on */
+function akSpotRoot(segs) {
+  var a = akSpotClean(segs[0] || "").toLowerCase(), b = akSpotClean(segs[1] || "").toLowerCase(), all = (a + " " + b);
+  var M = [[/^settings/, "settings"], [/^more$|^more /, null], [/files/, "files"], [/clips/, "clips"], [/graphics|studio|flyer|poster/, "graphics"], [/^songs?$|song list/, "songs"], [/^shows?$/, "shows"], [/^write|songwriting/, "write"],
+    [/business|messages/, "msgs"], [/bookings/, "bookings"], [/money|taxes/, "money"], [/help/, "help"], [/artist info/, "artist"], [/test checklist/, "testlist"], [/recordings/, "recs"], [/playing screen|play/, "play"], [/song editor|the song/, "song"], [/show page|a show/, "gig"]];
+  for (var i = 0; i < M.length; i++) { if (M[i][0].test(a)) { if (M[i][1]) return M[i][1]; /* "⋯ More › X": look at X */ for (var j = 0; j < M.length; j++) if (M[j][1] && M[j][0].test(b)) return M[j][1]; return null; } }
+  for (var k = 0; k < M.length; k++) if (M[k][1] && M[k][0].test(all)) return M[k][1];
+  return null;
+}
+function akSpotGoRoot(r) {
+  if (!r) return false;
+  if (r === "song") { var s = (S.songId && findSong(S.songId)) || (lib().songs || [])[0]; if (s) go("song", { songId: s.id }); else go("songs"); return true; }
+  if (r === "play") { try { akHelpPlay(); } catch (e) { go("songs"); } return true; }
+  if (r === "gig") { var g = (typeof akGigs === "function" ? akGigs() : [])[0]; if (g) go("gig", { gigId: g.id }); else go("shows"); return true; }
+  if (r === "graphics") { go(AK_VIEWS.graphics ? "graphics" : "gfx", {}); return true; }
+  go(r, {}); return true;
+}
+/* find the control: try the last part of the path first, then the ones before it */
+function akSpotFind(segs) {
+  var cands = [].slice.call(document.querySelectorAll("#app summary, #app button, #app h2, #app h3, #app label, #app .st, #app [role=tab], #app input[placeholder], .modal summary, .modal button, .modal label"));
+  cands = cands.filter(function (c) { return !c.closest(".akspot-ui"); });
+  for (var i = segs.length - 1; i >= 0; i--) {
+    var want = akSpotClean(segs[i]).toLowerCase(); if (want.length < 2) continue;
+    var exact = null, part = null;
+    for (var j = 0; j < cands.length; j++) {
+      var c = cands[j], t = akSpotClean(c.tagName === "INPUT" ? c.placeholder : (c.querySelector && c.querySelector(".st") ? c.querySelector(".st").textContent : c.textContent)).toLowerCase();
+      if (!t) continue;
+      if (t === want) { exact = c; break; }
+      if (!part && (t.indexOf(want) === 0 || (want.length > 4 && t.indexOf(want) >= 0)) && t.length < want.length + 40) part = c;
+    }
+    var el = exact || part; if (el) return { el: el, i: i };
+  }
+  return null;
+}
+function akSpotOpen(el) {
+  for (var p = el; p; p = p.parentElement) {
+    if (p.tagName === "DETAILS" && !p.open) p.open = true;
+    if (p.classList && p.classList.contains("akfold") && p.classList.contains("shut")) { var hd = p.querySelector(".akfold-hd, :scope > h2, :scope > h3, :scope > b, :scope > strong"); if (hd) try { hd.click(); } catch (e) {} }
+  }
+  if (el.tagName === "SUMMARY" && el.parentElement && !el.parentElement.open) el.parentElement.open = true;
+}
+function akSpotClose() { var o = document.querySelector(".akspot-ui"); if (o) { o.remove(); } document.removeEventListener("pointerdown", akSpotAway, true); window.removeEventListener("resize", akSpotPlace); window.removeEventListener("scroll", akSpotPlace, true); AKSPOT.el = null; }
+function akSpotAway(e) { if (e.target.closest && e.target.closest(".akspot-card")) return; setTimeout(akSpotClose, 0); }
+var AKSPOT = { el: null };
+function akSpotPlace() {
+  var el = AKSPOT.el, ui = document.querySelector(".akspot-ui"); if (!el || !ui) return;
+  if (!el.isConnected) { akSpotClose(); return; }
+  var r = el.getBoundingClientRect(), pad = 6, ring = ui.querySelector(".akspot-ring"), card = ui.querySelector(".akspot-card"), arrow = ui.querySelector(".akspot-arrow"), W = window.innerWidth, H = window.innerHeight;
+  ring.style.left = (r.left - pad) + "px"; ring.style.top = (r.top - pad) + "px"; ring.style.width = (r.width + pad * 2) + "px"; ring.style.height = (r.height + pad * 2) + "px";
+  var below = r.bottom + 14 + 160 < H || r.top < H / 2, cw = Math.min(320, W - 16);
+  card.style.width = cw + "px"; card.style.left = Math.max(8, Math.min(W - cw - 8, r.left + r.width / 2 - cw / 2)) + "px";
+  if (below) { card.style.top = (r.bottom + pad + 16) + "px"; card.style.bottom = "auto"; arrow.textContent = "▲"; arrow.style.top = (r.bottom + pad - 2) + "px"; }
+  else { card.style.top = "auto"; card.style.bottom = (H - r.top + pad + 16) + "px"; arrow.textContent = "▼"; arrow.style.top = (r.top - pad - 18) + "px"; }
+  arrow.style.left = (r.left + r.width / 2 - 8) + "px";
+}
+function akSpot(el, info) {
+  akSpotClose(); info = info || {};
+  akSpotOpen(el);
+  try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+  var whatBox = h("div", { class: "akspot-more", hidden: true }), howBox = h("div", { class: "akspot-more", hidden: true });
+  if (info.what) whatBox.appendChild(h("p", null, info.what));
+  if (info.how) { var hw = Array.isArray(info.how) ? info.how : [info.how]; howBox.appendChild(hw.length > 1 ? h("ol", null, hw.map(function (x) { return h("li", null, x); })) : h("p", null, hw[0])); }
+  var path = (info.path || []).map(function (s, i, a) { return h("span", { class: "akspot-seg" + (i === a.length - 1 ? " last" : "") }, s); });
+  var card = h("div", { class: "akspot-card", role: "dialog", "aria-label": "Here it is: " + (info.title || "") },
+    h("div", { class: "akspot-top" }, h("b", { class: "grow" }, "📍 " + (info.title || "Here it is")), h("button", { class: "akspot-x", "aria-label": "Close", onClick: akSpotClose }, "✕")),
+    path.length ? h("div", { class: "akspot-path", "aria-label": "Where it is" }, path) : null,
+    h("div", { class: "akspot-acts" },
+      info.what ? h("button", { onClick: function () { whatBox.hidden = !whatBox.hidden; howBox.hidden = true; akSpotPlace(); } }, "ⓘ What it does") : null,
+      info.how ? h("button", { onClick: function () { howBox.hidden = !howBox.hidden; whatBox.hidden = true; akSpotPlace(); } }, "➜ How to use it") : null),
+    whatBox, howBox);
+  var ui = h("div", { class: "akspot-ui" }, h("div", { class: "akspot-ring" }), h("div", { class: "akspot-arrow", "aria-hidden": "true" }, "▲"), card);
+  document.body.appendChild(ui); AKSPOT.el = el;
+  setTimeout(function () { akSpotPlace(); document.addEventListener("pointerdown", akSpotAway, true); }, 350);
+  akSpotPlace(); window.addEventListener("resize", akSpotPlace); window.addEventListener("scroll", akSpotPlace, true);
+}
+/* go there, then light it */
+function akShowMe(it) {
+  akSpotClose();
+  var path = it.path || akSpotPath(it.where || "");
+  var went = false;
+  try { if (typeof it.go === "function") { it.go(); went = true; } } catch (e) {}
+  if (!went) went = akSpotGoRoot(akSpotRoot(path));
+  if (!went) { modal(it.title || "Where it is", h("div", null, it.where ? h("p", null, it.where) : null, it.what ? h("p", { class: "hint" }, it.what) : null), [{ label: "Got it", primary: true }]); return; }
+  var tries = 0;
+  (function look() {
+    var segs = path.slice(1), f = akSpotFind(segs.length ? segs : path);
+    if (f && f.i < segs.length - 1 && tries < 14) {
+      /* found a section on the way: open it, then look again for the rest */
+      akSpotOpen(f.el); if (f.el.tagName === "SUMMARY" || (f.el.tagName === "BUTTON" && /^(tab|menuitem)$/.test(f.el.getAttribute("role") || ""))) { if (f.el.tagName !== "SUMMARY") try { f.el.click(); } catch (e) {} }
+      var g = akSpotFind(segs.slice(f.i + 1)); if (g) f = { el: g.el, i: f.i + 1 + g.i };
+    }
+    if (!f && tries++ < 14) { setTimeout(look, 160); return; }
+    if (!f) { toast((it.where ? "It's here: " + path.join(" › ") : "This is the screen.") + (it.how ? " " + (Array.isArray(it.how) ? it.how[0] : it.how) : "")); return; }
+    akSpot(f.el, { title: it.title, path: path, what: it.what, how: it.how });
+  })();
+}
+/* the pieces each kind of search result knows */
+function akShowMeHelp(e) { var a = typeof e.a === "function" ? e.a() : e.a; return { title: e.t, where: a, what: e.d || e.t, how: a, go: e.go }; }
+/* ---- Help › Where is…? results: 📍 Show me + ⓘ ---- */
+akHelpResultsEl = function (q, max) {
+  var box = h("div", { class: "akhelp-res" }), list = akHelpSearch(q, max);
+  if (!list.length) { box.appendChild(h("p", { class: "hint" }, "Nothing found for “" + q.trim() + "”. Try one word, like capo, pedal, backup, setlist.")); return box; }
+  list.forEach(function (it) {
+    var sub = ""; try { sub = it.sub(); } catch (e) {}
+    var info = { title: it.title, where: sub, what: it.what || (it.kind === "✦" ? it.desc : "") || sub, how: it.how || sub, go: it.go, path: it.path };
+    box.appendChild(h("div", { class: "akhelp-hit" }, h("span", { class: "akhelp-k", "aria-hidden": "true" }, it.kind),
+      h("div", { class: "grow" }, h("b", null, it.title), sub ? h("div", { class: "muted" }, sub) : null),
+      h("div", { class: "akspot-rb" },
+        h("button", { class: "sm", onClick: function () { akShowMe(info); } }, "📍 Show me"),
+        h("button", { class: "sm", "aria-label": "What it does and how to use it", onClick: function () { modal(it.title, h("div", null, sub ? h("p", null, h("b", null, "Where: "), sub) : null, info.what && info.what !== sub ? h("p", null, info.what) : null), [{ label: "📍 Show me", onClick: function () { akShowMe(info); } }, { label: "Got it", primary: true }]); } }, "ⓘ"))));
+  });
+  return box;
+};
+/* features and Settings sections carry their own words */
+(function () {
+  var hi = akHelpItems;
+  akHelpItems = function () {
+    var out = hi.apply(this, arguments);
+    try {
+      var F = {}; akFeatAll().forEach(function (f) { F[f.name] = f; });
+      out.forEach(function (it) {
+        if (it.kind === "✦" && F[it.title]) { var f = F[it.title], ways = (typeof AK_FEAT_WAYS !== "undefined" && AK_FEAT_WAYS[f.id]) || []; it.what = f.desc; it.how = ways.length ? ways : f.where; it.path = akSpotPath(f.where).length ? akSpotPath(f.where) : null; }
+        if (it.kind === "⚙") { var sub = ""; try { sub = it.sub(); } catch (e) {} it.path = sub.split("›").map(function (x) { return x.trim(); }).filter(Boolean).concat([it.title]); }
+        if (it.kind === "❓") { var e = AK_HELP_WHERE.filter(function (x) { return x.t === it.title; })[0]; if (e) { var a = typeof e.a === "function" ? e.a() : e.a; it.how = a; it.what = e.d || ""; } }
+      });
+    } catch (e) {}
+    return out;
+  };
+})();
+/* ---- the 🔍 search in Files: Settings and where things are → Show me ---- */
+(function () {
+  var vf = AK_VIEWS.files;
+  if (!vf) return;
+  AK_VIEWS.files = function () {
+    var el = vf.apply(this, arguments);
+    try { akSpotFilesRows(el); } catch (e) {}
+    return el;
+  };
+})();
+function akSpotFilesRows(root) {
+  var rows = root.querySelectorAll(".akorg-res .akorg-row");
+  [].forEach.call(rows, function (r) {
+    var nm = r.querySelector(".akorg-nm"); if (!nm) return;
+    var e = AK_HELP_WHERE.filter(function (x) { return x.t === nm.textContent; })[0]; if (!e || r.querySelector(".akspot-rb")) return;
+    r.appendChild(h("div", { class: "akspot-rb" }, h("button", { class: "sm", onClick: function (ev) { ev.stopPropagation(); akShowMe(akShowMeHelp(e)); } }, "📍 Show me")));
+  });
+}
+/* the Files search redraws its results as you type: add the buttons each time */
+(function () {
+  var mo = null;
+  var r0 = render;
+  render = function () { var out = r0.apply(this, arguments); try { if (S.view === "files") { var box = document.querySelector("#app"); if (box && !mo && window.MutationObserver) { mo = new MutationObserver(function () { if (S.view === "files") akSpotFilesRows(document.querySelector("#app")); }); mo.observe(box, { childList: true, subtree: true }); } } } catch (e) {} return out; };
+})();
+/* the Test checklist and Settings jumps use the same light */
+(function () {
+  var sg = akHelpSetGo;
+  akHelpSetGo = function (x) { var r = sg.apply(this, arguments); try { if (x && x.bk) setTimeout(function () { var el = document.querySelector('[data-bk="' + x.bk + '"] > summary') || document.querySelector('[data-bk="' + x.bk + '"]'); if (el && !AKSPOT.el) akSpot(el, { title: x.title, path: ["Settings"].concat(x.group ? [x.group] : []).concat([x.title]) }); }, 450); } catch (e) {} return r; };
+})();
+akCss("akspot", [
+  ".akspot-ui{position:fixed;inset:0;z-index:9500;pointer-events:none}",
+  ".akspot-ring{position:fixed;border:3px solid #f2b33d;border-radius:2px;box-shadow:0 0 0 9999px rgba(0,0,0,.6),0 0 18px rgba(242,179,61,.8);transition:all .25s ease;pointer-events:none}",
+  "@media (prefers-reduced-motion:no-preference){.akspot-ring{animation:akspotp 1.4s ease-in-out infinite}}@keyframes akspotp{50%{box-shadow:0 0 0 9999px rgba(0,0,0,.6),0 0 30px rgba(242,179,61,1)}}",
+  ".akspot-arrow{position:fixed;color:#f2b33d;font-size:16px;line-height:1;pointer-events:none}",
+  ".akspot-card{position:fixed;pointer-events:auto;background:var(--bg,#111);color:var(--fg,#eee);border:2px solid #f2b33d;border-radius:2px;padding:8px 10px;box-shadow:0 6px 20px rgba(0,0,0,.5);max-height:45vh;overflow:auto}",
+  ".akspot-top{display:flex;gap:8px;align-items:center}.akspot-x{border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:32px;min-width:32px;padding:0}",
+  ".akspot-path{display:flex;flex-wrap:wrap;gap:2px;margin:6px 0;font-size:12.5px}.akspot-seg{opacity:.75}.akspot-seg:not(.last)::after{content:\" ›\";opacity:.6;margin-left:2px}.akspot-seg.last{opacity:1;font-weight:700;color:#f2b33d}",
+  ".akspot-acts{display:flex;gap:6px;flex-wrap:wrap}.akspot-acts button{border-radius:2px;background:transparent;border:1px solid rgba(127,127,127,.5);min-height:34px;padding:0 8px}",
+  ".akspot-more{font-size:13.5px;margin-top:6px}.akspot-more ol{margin:4px 0;padding-left:20px}",
+  ".akspot-rb{display:flex;gap:4px;flex:0 0 auto}.akspot-rb button{border-radius:2px}"].join(""));
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Show me where something is (search, then 📍 Show me)", a: "Help › Where is…? or ⋯ More › 🔍 Search everything: type what you want, then 📍 Show me. The app goes there, opens the folded sections, shows the path, and lights it up. The card has ⓘ What it does and ➜ How to use it.", k: "show me where find locate highlight spotlight point arrow path how to use what does" });
+AK_WHATS_NEW = ["📍 Show me: search for anything (Help › Where is…? or ⋯ More › 🔍 Search everything) and tap 📍 Show me. The app goes there, opens what's folded, shows the path, dims the rest and rings it, with ⓘ What it does and ➜ How to use it."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("19.6", "App", [
+  ["show-me", "📍 Show me from search", "Help › Where is…? type \"connections\" › 📍 Show me: it should open Settings, unfold, show the path and ring the button.", ["help", {}, "Where is"]],
+  ["show-me-files", "📍 Show me in Files search", "⋯ More › 🔍 Search everything, type \"trash\", tap 📍 Show me on a settings result.", ["files", {}, ""]]]);
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
