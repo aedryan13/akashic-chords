@@ -63257,6 +63257,490 @@ if (typeof akTcAdd === "function") akTcAdd("19.7", "App", [
   ["your-data-import", "⇩ Import inside Settings", "Settings › Your data › ⇩ Import and share: the Import tools open right there (paste a song, OnSong, PDF, send and receive).", ["settings", {}, "Import and share"]]]);
 AK_VERSION = "19.7";
 
+/* ================= 19.8: ✎ Edit this screen (his layout editor, 11-03; built from the mock-up he liked).
+   On any screen, with his real songs and shows: tap anything to pick it (☐ Pick several, or press and hold, for more), then
+   Size (− Smaller / + Bigger, W and H, ½ ¾ 1×, Skinnier, Taller, text size), Line up (left / mid / right, same width / height,
+   spread out), Move (drag the ✥ grip, Earlier / Later, To start / To end, nudge), More (hide, put back, note for Claude).
+   A / B / C are three versions to compare. ⋯ › Save as my default keeps it; ⋯ › Send my layout to Claude sends it.
+   ✋ Use the app lets him tap through the app (open a song, unfold a section, switch screens) while the editor stays open.
+   Stored in settings().akL2 = { slot, saved: {view: L}, slots: {A,B,C} } where L = { s: {key: {w,h,f,dx,dy,hide}}, o: {parentKey: [keys]}, j: {parentKey: css} }.
+   Keys come from what's on screen (the view, folded section names, and the control's own label), so they survive redraws.
+   Touch: picking is a tap (scrolling still works); moving and resizing use big grips with handlers on window, and a
+   pointercancel never leaves anything behind. ================= */
+var AKL2 = { on: false, use: false, multi: false, box: false, sel: [], undo: [], redo: [], pane: "size", ui: null, raf: 0 };
+function akL2S() {
+  var s = settings(); if (!s.akL2 || typeof s.akL2 !== "object") s.akL2 = {};
+  var c = s.akL2; c.slot = c.slot || "A"; c.saved = c.saved || {}; c.slots = c.slots || {}; c.notes = c.notes || {}; return c;
+}
+/* his saved layouts baked in for every install (paste "saved" from claude-my-layout.json here) */
+var AKL2_DEFAULTS = {};
+function akL2View() { return S.view === "song" ? "song" : S.view || "songs"; }
+function akL2Blank() { return { s: {}, o: {}, j: {} }; }
+/* the layout being shown: the draft slot while editing, the saved one otherwise */
+function akL2Lay(view, forEdit) {
+  var c = akL2S(); view = view || akL2View();
+  if (forEdit || AKL2.on) { var sl = c.slots[c.slot] = c.slots[c.slot] || {}; if (!sl[view]) sl[view] = JSON.parse(JSON.stringify(c.saved[view] || AKL2_DEFAULTS[view] || akL2Blank())); var L = sl[view]; L.s = L.s || {}; L.o = L.o || {}; L.j = L.j || {}; return L; }
+  return c.saved[view] || AKL2_DEFAULTS[view] || null;
+}
+function akL2BarLay(forEdit) { return akL2Lay("_bar", forEdit); }
+
+/* ---------------------------------------------------------------- stable keys */
+function akL2Txt(el) {
+  var t = el.getAttribute("aria-label") || "";
+  if (!t) { var st = el.querySelector && el.querySelector(":scope > summary .st, :scope > .st"); t = st ? st.textContent : (el.tagName === "INPUT" || el.tagName === "TEXTAREA" ? (el.placeholder || el.type) : el.tagName === "SELECT" ? "select" : (/^(BUTTON|A|LABEL|H1|H2|H3|H4|SUMMARY|LEGEND)$/.test(el.tagName) || !el.children.length ? el.textContent : "")); }
+  return String(t || "").replace(/\s+/g, " ").trim().slice(0, 28);
+}
+function akL2Sig(el) {
+  var bk = el.getAttribute("data-bk"); if (bk) return "bk:" + bk;
+  var t = akL2Txt(el), tag = el.tagName.toLowerCase(), cls = (el.className && typeof el.className === "string" ? el.className.split(/\s+/)[0] : "") || "";
+  if (t) return tag + ":" + t;
+  var p = el.parentElement, i = 0; if (p) { var sib = p.children; for (var k = 0; k < sib.length; k++) { if (sib[k] === el) break; if (sib[k].tagName === el.tagName) i++; } }
+  return tag + "." + cls + "#" + i;
+}
+function akL2Root(el) { return el.closest(".tabbar") || document.getElementById("app"); }
+function akL2Key(el) {
+  var root = akL2Root(el); if (!root || el === root) return "";
+  var bar = root.classList && root.classList.contains("tabbar"), chain = [];
+  for (var p = el.parentElement; p && p !== root; p = p.parentElement) { var b = p.getAttribute("data-bk"); if (b) chain.unshift(b); }
+  var par = el.parentElement && el.parentElement !== root ? akL2Sig(el.parentElement) : "root";
+  return (bar ? "_bar" : akL2View()) + "|" + chain.join("/") + "|" + par + ">" + akL2Sig(el);
+}
+function akL2Layer(key) { return key.indexOf("_bar|") === 0 ? "_bar" : akL2View(); }
+
+/* what can be picked: controls and blocks, not the editor itself */
+var AKL2_PICK = "button, select, input, textarea, summary, details, label.filebtn, .card, [data-bk], .tabbar > *, .row, .settools, .topbar, h2, h3, .songrow, .chip, a.btn";
+function akL2Pickable(t) {
+  if (!t || !t.closest) return null;
+  if (t.closest(".akl2-ui, .akspot-ui, .modal, .aktc-dock, .aktc-card")) return null;
+  var app = document.getElementById("app"), bar = t.closest(".tabbar");
+  if (!bar && !(app && app.contains(t))) return null;
+  var el = t.closest(AKL2_PICK); if (!el) return null;
+  if (el.tagName === "SUMMARY" && el.parentElement && el.parentElement.tagName === "DETAILS") el = el.parentElement;
+  if (el === app) return null;
+  return el;
+}
+
+/* ---------------------------------------------------------------- applying a layout to the screen */
+function akL2ApplyIn(root, L, editing) {
+  if (!root || !L) return;
+  var els = akL2All2(root), i;
+  /* order first: rows whose children were moved */
+  if (L.o && Object.keys(L.o).length) {
+    var parents = {};
+    for (i = 0; i < els.length; i++) { var e = els[i], pk = e.children.length > 1 ? akL2PKey(e) : ""; if (pk && L.o[pk]) parents[pk] = e; }
+    Object.keys(parents).forEach(function (pk) {
+      var par = parents[pk], want = L.o[pk], kids = Array.prototype.slice.call(par.children), m = {};
+      kids.forEach(function (k) { m[akL2Key(k)] = k; });
+      var placed = want.map(function (k) { return m[k]; }).filter(Boolean);
+      if (placed.length < 2) return;
+      var firstAt = kids.filter(function (k) { return placed.indexOf(k) >= 0; })[0], mark = document.createElement("i");
+      par.insertBefore(mark, firstAt); placed.forEach(function (k) { par.insertBefore(k, mark); }); mark.remove();
+    });
+    els = akL2All2(root);
+  }
+  for (i = 0; i < els.length; i++) {
+    var el = els[i]; if (el.closest(".akl2-ui")) continue;
+    var hasS = L.s && Object.keys(L.s).length, hasJ = L.j && Object.keys(L.j).length;
+    if (!hasS && !hasJ) break;
+    var k = akL2Key(el), s = L.s[k];
+    if (s) {
+      if (s.w) { el.style.width = s.w + "px"; el.style.maxWidth = "100%"; el.style.flex = "0 0 auto"; el.style.minWidth = "0"; }
+      if (s.h) { el.style.height = s.h + "px"; el.style.minHeight = "0"; if (el.children.length > 1 && el.tagName !== "BUTTON") el.style.overflow = "auto"; }
+      if (s.f) el.style.fontSize = s.f + "em";
+      if (s.dx || s.dy) el.style.transform = "translate(" + (s.dx || 0) + "px," + (s.dy || 0) + "px)";
+      if (s.hide) { if (editing) { el.style.opacity = ".3"; el.classList.add("akl2-hid"); } else el.style.display = "none"; }
+      el.setAttribute("data-akl2", "1");
+    }
+    if (hasJ) { var pk2 = el.children.length ? akL2PKey(el) : ""; if (pk2 && L.j[pk2]) { el.style.justifyContent = L.j[pk2]; if (getComputedStyle(el).display.indexOf("flex") < 0) el.style.textAlign = { "flex-start": "left", center: "center", "flex-end": "right", "space-between": "justify" }[L.j[pk2]] || ""; } }
+  }
+}
+/* the root itself counts too (the bottom bar's tabs are its own children) */
+function akL2All2(root) { return [root].concat(Array.prototype.slice.call(root.querySelectorAll("*"))); }
+/* a parent is named by its first child's key minus that child */
+function akL2PKey(par) { var c = par.firstElementChild; if (!c) return ""; var k = akL2Key(c); return k ? k.replace(/>[^>]*$/, "") : ""; }
+function akL2Clear(root) { if (!root) return; Array.prototype.forEach.call(root.querySelectorAll("[data-akl2]"), function (el) { ["width", "maxWidth", "flex", "minWidth", "height", "minHeight", "overflow", "fontSize", "transform", "display", "opacity"].forEach(function (p) { el.style[p] = ""; }); el.classList.remove("akl2-hid"); el.removeAttribute("data-akl2"); }); }
+function akL2Apply() {
+  try {
+    var app = document.getElementById("app"); if (!app) return;
+    var L = akL2Lay(null, AKL2.on), B = akL2BarLay(AKL2.on);
+    if (L) akL2ApplyIn(app, L, AKL2.on);
+    Array.prototype.forEach.call(document.querySelectorAll(".tabbar"), function (bar) { if (B) akL2ApplyIn(bar, B, AKL2.on); });
+    if (AKL2.on) akL2Draw();
+  } catch (e) { try { console.warn("layout", e); } catch (x) {} }
+}
+function akL2Reapply() { var app = document.getElementById("app"); akL2Clear(app); Array.prototype.forEach.call(document.querySelectorAll(".tabbar"), akL2Clear); akL2Apply(); }
+(function () {
+  var r0 = render;
+  render = function () { var out = r0.apply(this, arguments); akL2Apply(); return out; };
+})();
+
+/* ---------------------------------------------------------------- the editor */
+function akL2State() { var c = akL2S(); return JSON.stringify({ slots: c.slots, slot: c.slot }); }
+function akL2Put(j) { var c = akL2S(), o = JSON.parse(j); c.slots = o.slots || {}; c.slot = o.slot || "A"; c.dirty = 1; save(); Array.prototype.forEach.call(document.querySelectorAll(".akl2-slots [data-slot]"), function (b) { b.classList.toggle("on", b.getAttribute("data-slot") === c.slot); }); akL2Reapply(); }
+function akL2Snap() { var c = akL2S(); AKL2.undo.push(akL2State()); if (AKL2.undo.length > 500) AKL2.undo.shift(); AKL2.redo = []; c.dirty = 1; }
+function akL2El(key) {
+  var root = key.indexOf("_bar|") === 0 ? document.querySelector(".tabbar") : document.getElementById("app"); if (!root) return null;
+  var all = root.querySelectorAll(AKL2_PICK); for (var i = 0; i < all.length; i++) if (akL2Key(all[i]) === key) return all[i];
+  var any = root.querySelectorAll("*"); for (var j = 0; j < any.length; j++) if (akL2Key(any[j]) === key) return any[j];
+  return null;
+}
+function akL2Name(el) { if (!el) return ""; var t = akL2Txt(el); if (el.tagName === "DETAILS") return (t || "Section") + " section"; if (el.closest(".tabbar") && el.tagName === "BUTTON") return (t.replace(/^\S+\s/, "") || t) + " tab"; return t || ({ DIV: "Box", SELECT: "Dropdown", INPUT: "Box" })[el.tagName] || el.tagName.toLowerCase(); }
+function akL2Start() {
+  if (AKL2.on) return; AKL2.on = true; AKL2.use = false; AKL2.sel = []; AKL2.undo = []; AKL2.redo = [];
+  try { akSpotClose(); } catch (e) {}
+  if (S.arrange) { S.arrange = false; try { rerenderKeepScroll(); } catch (e) {} }
+  document.body.classList.add("akl2-on");
+  akL2Ui(); akL2Reapply();
+  document.addEventListener("pointerdown", akL2Down, true); document.addEventListener("click", akL2Click, true);
+  window.addEventListener("scroll", akL2Soon, true); window.addEventListener("resize", akL2Soon);
+  toast("Tap anything to pick it.");
+}
+function akL2Stop(how) {
+  var c = akL2S();
+  if (how === undefined && c.dirty) {
+    modal("Save these changes?", h("p", null, "Version " + c.slot + " has changes on this screen."), [
+      { label: "Keep editing" },
+      { label: "Don't save", onClick: function () { c.slots = {}; c.dirty = 0; save(); akL2Stop(false); } },
+      { label: "Save as my default", primary: true, onClick: function () { akL2SaveDefault(); akL2Stop(false); } }]);
+    return;
+  }
+  document.body.style.removeProperty("--akl2-dh"); document.body.style.removeProperty("--akl2-ih");
+  AKL2.on = false; AKL2.sel = []; AKL2.box = false; AKL2.multi = false; AKL2.use = false; document.body.classList.remove("akl2-on", "akl2-using");
+  if (AKL2.ui) { AKL2.ui.remove(); AKL2.ui = null; }
+  document.removeEventListener("pointerdown", akL2Down, true); document.removeEventListener("click", akL2Click, true);
+  window.removeEventListener("scroll", akL2Soon, true); window.removeEventListener("resize", akL2Soon);
+  akL2Reapply();
+}
+function akL2SaveDefault() {
+  var c = akL2S(), sl = c.slots[c.slot] || {};
+  Object.keys(sl).forEach(function (v) { c.saved[v] = JSON.parse(JSON.stringify(sl[v])); });
+  c.savedSlot = c.slot; c.dirty = 0; c.savedAt = Date.now(); save();
+  toast("Saved version " + c.slot + " as your default.");
+}
+function akL2Soon() { if (AKL2.raf) return; AKL2.raf = requestAnimationFrame(function () { AKL2.raf = 0; akL2Draw(); }); }
+function akL2Ui() {
+  var eb = function (label, fn, o) { o = o || {}; return h("button", Object.assign({ class: "akl2-b" + (o.cls ? " " + o.cls : ""), onClick: fn }, o.a || {}), label); };
+  var c = akL2S();
+  var slots = h("div", { class: "akl2-slots", role: "group", "aria-label": "Try different versions" }, ["A", "B", "C"].map(function (k) { return eb(k, function () { akL2Slot(k); }, { cls: c.slot === k ? "on" : "", a: { "data-slot": k } }); }));
+  var top = h("div", { class: "akl2-top" },
+    eb("✓ Done", function () { akL2Stop(); }, { cls: "done" }),
+    eb("☐ Pick several", function () { akL2Multi(!AKL2.multi); }, { cls: "multi", a: { "aria-pressed": "false" } }),
+    eb(h("span", null, "✋", h("span", { class: "akl2-t" }, " Use app")), function () { akL2Use(!AKL2.use); }, { cls: "use", a: { "aria-label": "Use the app while editing", title: "Tap through the app normally (open, unfold, switch screens), then tap ✎ Edit again" } }),
+    eb("↶", akL2Undo, { cls: "undo", a: { "aria-label": "Undo" } }), eb("↷", akL2Redo, { cls: "redo", a: { "aria-label": "Redo" } }),
+    slots,
+    eb("⋯", function () { akL2Menu(this); }, { a: { "aria-label": "Save and more", "aria-haspopup": "menu" } }));
+  var strip = h("div", { class: "akl2-strip", hidden: true }, h("span", { class: "akl2-cnt" }, "Tap things to add them"), eb("⬚ Box", function () { akL2Box(!AKL2.box); }, { cls: "boxb", a: { title: "Drag a box around things to pick them all" } }), eb("All", akL2All), eb("None", function () { AKL2.sel = []; akL2Draw(); }), eb("Stop", function () { akL2Box(false); akL2Multi(false); }));
+  var tabs = h("div", { class: "akl2-tabs", role: "tablist" }, [["size", "Size"], ["align", "Line up"], ["move", "Move"], ["more", "More"]].map(function (t) { return h("button", { class: t[0] === AKL2.pane ? "on" : "", "data-pane": t[0], onClick: function () { AKL2.pane = t[0]; akL2Draw(); } }, t[1]); }));
+  function act(label, a, title) { return h("button", { class: "akl2-b", "data-act": a, title: title || null, onClick: function () { akL2Act(a); } }, label); }
+  function grp() { return h("div", { class: "akl2-grp" }, [].slice.call(arguments)); }
+  var panes = {
+    size: [grp(act("− Smaller", "shrink"), act("+ Bigger", "grow")), grp(h("span", { class: "akl2-l" }, "W"), act("−", "w-"), h("span", { class: "akl2-v", "data-v": "w" }, "–"), act("+", "w+")),
+      grp(h("span", { class: "akl2-l" }, "H"), act("−", "h-"), h("span", { class: "akl2-v", "data-v": "h" }, "–"), act("+", "h+")), grp(act("½", "half"), act("¾", "tq"), act("1×", "full")),
+      grp(act("Skinnier", "skinny"), act("Taller", "tall")), grp(h("span", { class: "akl2-l" }, "Text"), act("A−", "f-"), act("A+", "f+"))],
+    align: [grp(act("⇤ Left", "al-l"), act("↔ Mid", "al-c"), act("Right ⇥", "al-r")), grp(act("Same width", "same-w", "Like the last one you picked"), act("Same height", "same-h")), grp(act("Spread out", "spread"), act("Pack tight", "tight"))],
+    move: [grp(act("◀ Earlier", "earlier"), act("Later ▶", "later")), grp(h("span", { class: "akl2-l" }, "Nudge"), act("←", "nl"), act("↑", "nu"), act("↓", "nd"), act("→", "nr")), grp(act("To start", "first"), act("To end", "last"))],
+    more: [grp(act("Hide", "hide")), grp(act("↺ Put back", "reset")), grp(act("✎ Note for Claude", "note"))]
+  };
+  var pbox = h("div", { class: "akl2-pane" });
+  var insp = h("div", { class: "akl2-insp" }, h("div", { class: "akl2-ih" }, h("span", { class: "akl2-nm" }, "Tap anything to pick it"), h("span", { class: "akl2-sz" }), tabs), pbox);
+  var ov = h("div", { class: "akl2-ov" });
+  AKL2.ui = h("div", { class: "akl2-ui" }, ov, h("div", { class: "akl2-dock" }, top, strip), insp);
+  AKL2.panes = panes; AKL2.pbox = pbox; AKL2.ov = ov; ov.addEventListener("pointerdown", akL2BoxDown);
+  document.body.appendChild(AKL2.ui);
+}
+function akL2Menu(anchor) {
+  menu(anchor, [
+    { label: "💾 Save this as my default", onClick: akL2SaveDefault },
+    { label: "📤 Send my layout to Claude", onClick: akL2Send },
+    { sep: true },
+    { label: "⧉ Copy this version to the next slot", onClick: function () { var c = akL2S(), nx = { A: "B", B: "C", C: "A" }[c.slot]; c.slots[nx] = JSON.parse(JSON.stringify(c.slots[c.slot] || {})); save(); toast("Copied " + c.slot + " to " + nx + "."); } },
+    { label: "☐ Pick everything on this screen", onClick: akL2All },
+    { label: "📺 Go to another screen…", onClick: akL2Screens },
+    { label: "⇅ Old Arrange (what starts folded, sections)", onClick: function () { akL2Stop(false); try { AKL2.oldArrange(); } catch (e) {} } },
+    { sep: true },
+    { label: "↺ Put this screen back", onClick: function () { akL2Snap(); var c = akL2S(), sl = c.slots[c.slot] = c.slots[c.slot] || {}; sl[akL2View()] = akL2Blank(); save(); AKL2.sel = []; akL2Reapply(); toast("This screen is back to normal (save to keep it)."); } },
+    { label: "↺ Put the bottom bar back", onClick: function () { akL2Snap(); var c = akL2S(), sl = c.slots[c.slot] = c.slots[c.slot] || {}; sl._bar = akL2Blank(); save(); akL2Reapply(); } }]);
+}
+function akL2Screens() {
+  var list = [["songs", "Songs"], ["shows", "Shows"], ["settings", "Settings"], ["write", "Write"], ["learn", "Learn"], ["graphics", "Graphics"], ["files", "Files"], ["clips", "Clips"], ["help", "Help"], ["tonight", "Tonight"]].filter(function (x) { return AK_VIEWS[x[0]] || /^(songs|shows|settings)$/.test(x[0]); });
+  var s0 = (lib().songs || [])[0]; if (s0) list.splice(1, 0, ["song:" + s0.id, "A song (" + (s0.title || "first song").slice(0, 24) + ")"]);
+  menu(document.querySelector(".akl2-top .akl2-b:last-child"), list.map(function (x) { return { label: x[1], onClick: function () { AKL2.sel = []; if (x[0].indexOf("song:") === 0) go("song", { songId: x[0].slice(5) }); else go(x[0]); } }; }));
+}
+function akL2Slot(k) {
+  var c = akL2S(); if (k === c.slot) return;
+  if (!c.slots[k]) { c.slots[k] = JSON.parse(JSON.stringify(c.slots[c.slot] || {})); toast("Version " + k + " starts as a copy of " + c.slot + "."); } else toast("Showing version " + k + ".");
+  AKL2.undo.push(akL2State()); AKL2.redo = [];
+  c.slot = k; save();
+  Array.prototype.forEach.call(document.querySelectorAll(".akl2-slots [data-slot]"), function (b) { b.classList.toggle("on", b.getAttribute("data-slot") === k); });
+  akL2Reapply();
+}
+function akL2Multi(on) { AKL2.multi = on; var b = document.querySelector(".akl2-top .multi"); if (b) { b.textContent = on ? "☑ Pick several" : "☐ Pick several"; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); } var st = document.querySelector(".akl2-strip"); if (st) st.hidden = !on; akL2Draw(); }
+function akL2Use(on) { AKL2.use = on; var b = document.querySelector(".akl2-top .use"); if (b) { b.textContent = ""; b.appendChild(on ? h("span", null, "✎", h("span", { class: "akl2-t" }, " Edit")) : h("span", null, "✋", h("span", { class: "akl2-t" }, " Use app"))); b.classList.toggle("on", on); } document.body.classList.toggle("akl2-using", on); if (on) { AKL2.sel = []; toast("Use the app normally. Tap ✎ Edit to go back to editing."); } akL2Draw(); }
+function akL2All() { var root = document.getElementById("app"), out = []; Array.prototype.forEach.call(root.querySelectorAll("button, select, input, summary"), function (e) { var p = akL2Pickable(e); if (p && p.offsetParent && out.indexOf(p) < 0) out.push(p); }); AKL2.sel = out.map(akL2Key); if (!AKL2.multi) akL2Multi(true); akL2Draw(); }
+function akL2Undo() { if (!AKL2.undo.length) { toast("Nothing more to undo."); return; } AKL2.redo.push(akL2State()); akL2Put(AKL2.undo.pop()); }
+function akL2Redo() { if (!AKL2.redo.length) return; AKL2.undo.push(akL2State()); akL2Put(AKL2.redo.pop()); }
+
+/* ---- picking: a tap picks; press and hold adds; scrolling still works ---- */
+var AKL2_P = null;
+function akL2Down(e) {
+  if (!AKL2.on || AKL2.use) return;
+  if (e.target.closest(".akl2-ui, .menu, .modal, .akmenu")) return;
+  var el = akL2Pickable(e.target); if (!el) return;
+  AKL2_P = { x: e.clientX, y: e.clientY, el: el, t: Date.now(), lp: false };
+  var p0 = AKL2_P;
+  clearTimeout(AKL2.lpT); AKL2.lpT = setTimeout(function () { if (AKL2_P === p0 && !p0.moved) { p0.lp = true; if (!AKL2.multi) akL2Multi(true); var k = akL2Key(p0.el); if (AKL2.sel.indexOf(k) < 0) AKL2.sel.push(k); akL2Draw(); try { navigator.vibrate && navigator.vibrate(15); } catch (x) {} } }, 550);
+  var mv = function (ev) { if (Math.hypot(ev.clientX - p0.x, ev.clientY - p0.y) > 8) { p0.moved = true; } };
+  var up = function () { window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); clearTimeout(AKL2.lpT); };
+  window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+}
+function akL2Click(e) {
+  if (!AKL2.on || AKL2.use) return;
+  if (e.target.closest(".akl2-ui, .menu, .modal, .akmenu, .aktc-dock, .aktc-card, .akspot-ui")) return;
+  var el = akL2Pickable(e.target); if (!el) { if (document.getElementById("app").contains(e.target)) { e.preventDefault(); e.stopPropagation(); } return; }
+  e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  var p = AKL2_P; AKL2_P = null;
+  if (p && (p.moved || p.lp)) return;
+  /* a tap on a summary that's already picked opens or closes it, so folded things can be reached */
+  var k = akL2Key(el);
+  if (el.tagName === "DETAILS" && e.target.closest("summary") && AKL2.sel.length === 1 && AKL2.sel[0] === k) { el.open = !el.open; akL2Soon(); return; }
+  if (AKL2.multi) { var i = AKL2.sel.indexOf(k); if (i >= 0) AKL2.sel.splice(i, 1); else AKL2.sel.push(k); }
+  else AKL2.sel = AKL2.sel.length === 1 && AKL2.sel[0] === k ? [] : [k];
+  akL2Draw();
+}
+
+/* ---- ⬚ Box: drag a box around things to pick them all (one box, then scrolling works again) ---- */
+function akL2Box(on) {
+  AKL2.box = on; if (on && !AKL2.multi) akL2Multi(true);
+  var b = document.querySelector(".akl2-strip .boxb"); if (b) b.classList.toggle("on", on);
+  if (AKL2.ov) AKL2.ov.classList.toggle("boxing", on);
+  akL2Draw();
+}
+function akL2BoxDown(e) {
+  if (!AKL2.box || e.target !== AKL2.ov) return;
+  e.preventDefault();
+  var x0 = e.clientX, y0 = e.clientY, r = h("div", { class: "akl2-rect" }); AKL2.ui.appendChild(r);
+  function at(ev) { var l = Math.min(x0, ev.clientX), t = Math.min(y0, ev.clientY); return { l: l, t: t, r: Math.max(x0, ev.clientX), b: Math.max(y0, ev.clientY) }; }
+  function mv(ev) { ev.preventDefault(); var q = at(ev); r.style.cssText = "left:" + q.l + "px;top:" + q.t + "px;width:" + (q.r - q.l) + "px;height:" + (q.b - q.t) + "px"; }
+  function end(ev, cancel) {
+    window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", cx, true); r.remove();
+    if (cancel) return;
+    var q = at(ev), got = [];
+    if (q.r - q.l < 8 && q.b - q.t < 8) {
+      /* a tap while boxing still picks the thing under the finger */
+      AKL2.ov.style.display = "none"; var under = document.elementFromPoint(ev.clientX, ev.clientY); AKL2.ov.style.display = "";
+      var p1 = akL2Pickable(under); if (p1) got.push(p1);
+    } else {
+      var roots = [document.getElementById("app")].concat(Array.prototype.slice.call(document.querySelectorAll(".tabbar")));
+      roots.forEach(function (root) { if (!root) return; Array.prototype.forEach.call(root.querySelectorAll("button, select, input, textarea, summary, label.filebtn, .chip, a.btn"), function (el) {
+        if (!el.offsetParent) return; var b = el.getBoundingClientRect(), cx2 = b.left + b.width / 2, cy = b.top + b.height / 2;
+        if (cx2 < q.l || cx2 > q.r || cy < q.t || cy > q.b) return; var p = akL2Pickable(el); if (p && got.indexOf(p) < 0) got.push(p); }); });
+    }
+    got.forEach(function (el) { var k = akL2Key(el); if (AKL2.sel.indexOf(k) < 0) AKL2.sel.push(k); });
+    if (got.length > 1 || q.r - q.l >= 8) akL2Box(false); else akL2Draw();
+  }
+  function up(ev) { end(ev); } function cx(ev) { end(ev, true); }
+  window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", cx, true);
+}
+
+/* ---- outlines, the size tag, the ✥ move grip and the resize grips ---- */
+function akL2Els() { return AKL2.sel.map(function (k) { return { k: k, el: akL2El(k) }; }).filter(function (x) { return x.el && x.el.offsetParent; }); }
+function akL2Draw() {
+  if (!AKL2.on || !AKL2.ov) return;
+  var ov = AKL2.ov; ov.textContent = "";
+  var E = AKL2.use ? [] : akL2Els();
+  E.forEach(function (x, i) {
+    var r = x.el.getBoundingClientRect();
+    ov.appendChild(h("div", { class: "akl2-box", style: "left:" + r.left + "px;top:" + r.top + "px;width:" + r.width + "px;height:" + r.height + "px" }));
+    if (i !== E.length - 1) return;
+    ov.appendChild(h("div", { class: "akl2-tag", style: "left:" + r.left + "px;top:" + Math.max(0, r.top - 18) + "px" }, Math.round(r.width) + " × " + Math.round(r.height)));
+    [["r", r.right, r.top + r.height / 2], ["b", r.left + r.width / 2, r.bottom], ["rb", r.right, r.bottom]].forEach(function (g) {
+      var d = h("div", { class: "akl2-grip " + g[0], "aria-label": "Drag to resize", style: "left:" + (g[1] - 22) + "px;top:" + (g[2] - 22) + "px" }, h("i"));
+      d.addEventListener("pointerdown", function (ev) { akL2Resize(ev, g[0]); }); ov.appendChild(d);
+    });
+    var mg = h("div", { class: "akl2-move", "aria-label": "Drag to move", style: "left:" + Math.max(40, r.left - 4) + "px;top:" + (r.top + r.height / 2 - 18) + "px" }, "✥");
+    mg.addEventListener("pointerdown", function (ev) { akL2Move(ev, x); }); ov.appendChild(mg);
+  });
+  /* inspector */
+  var ui = AKL2.ui, n = E.length, last = E[n - 1];
+  try { var dk = ui.querySelector(".akl2-dock"), ins = ui.querySelector(".akl2-insp"); document.body.style.setProperty("--akl2-dh", dk.offsetHeight + "px"); document.body.style.setProperty("--akl2-ih", ins.offsetHeight + "px"); } catch (e) {}
+  try { var tbar = document.querySelector(".tabbar"); ui.style.setProperty("--akl2-bot", tbar && tbar.offsetParent ? Math.max(0, window.innerHeight - tbar.getBoundingClientRect().top) + "px" : "0px"); } catch (e) {}
+  ui.querySelector(".akl2-nm").textContent = AKL2.use ? "Using the app" : n === 0 ? "Tap anything to pick it" : n === 1 ? akL2Name(last.el) : n + " selected";
+  ui.querySelector(".akl2-sz").textContent = last ? Math.round(last.el.getBoundingClientRect().width) + "×" + Math.round(last.el.getBoundingClientRect().height) : "";
+  var cnt = ui.querySelector(".akl2-cnt"); if (cnt) cnt.textContent = AKL2.box ? (n ? n + " selected · drag a box" : "Drag a box around things") : n ? n + " selected" : "Tap things to add them";
+  Array.prototype.forEach.call(ui.querySelectorAll(".akl2-tabs button"), function (b) { b.classList.toggle("on", b.getAttribute("data-pane") === AKL2.pane); });
+  var pb = AKL2.pbox; if (pb.getAttribute("data-p") !== AKL2.pane) { pb.textContent = ""; AKL2.panes[AKL2.pane].forEach(function (g) { pb.appendChild(g); }); pb.setAttribute("data-p", AKL2.pane); }
+  Array.prototype.forEach.call(pb.querySelectorAll("[data-act]"), function (b) { var a = b.getAttribute("data-act"); b.disabled = !n || (n < 2 && /^same-/.test(a)); if (a === "hide") b.textContent = n && E.every(function (x) { var s = akL2Lay(akL2Layer(x.k), true).s[x.k]; return s && s.hide; }) ? "Show it" : "Hide"; });
+  Array.prototype.forEach.call(pb.querySelectorAll("[data-v]"), function (v) { v.textContent = last ? Math.round(last.el.getBoundingClientRect()[v.getAttribute("data-v") === "w" ? "width" : "height"]) : "–"; });
+  var u = ui.querySelector(".akl2-top .undo"), rd = ui.querySelector(".akl2-top .redo"); if (u) u.disabled = !AKL2.undo.length; if (rd) rd.disabled = !AKL2.redo.length;
+}
+function akL2Set(k, prop, v) {
+  var L = akL2Lay(akL2Layer(k), true), s = L.s[k] = L.s[k] || {};
+  if (v === null || v === undefined || v === 0 && (prop === "dx" || prop === "dy")) delete s[prop]; else s[prop] = v;
+  if (!Object.keys(s).length) delete L.s[k];
+}
+function akL2Resize(ev, which) {
+  ev.preventDefault(); ev.stopPropagation();
+  var E = akL2Els(); if (!E.length) return;
+  akL2Snap();
+  var x0 = ev.clientX, y0 = ev.clientY, start = E.map(function (x) { var r = x.el.getBoundingClientRect(); return { k: x.k, w: r.width, h: r.height }; });
+  function mv(e) {
+    e.preventDefault();
+    var dx = e.clientX - x0, dy = e.clientY - y0;
+    start.forEach(function (s) { if (which !== "b") akL2Set(s.k, "w", Math.max(24, Math.round((s.w + dx) / 4) * 4)); if (which !== "r") akL2Set(s.k, "h", Math.max(20, Math.round((s.h + dy) / 2) * 2)); });
+    akL2Reapply();
+  }
+  function up() { window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); save(); akL2Reapply(); }
+  window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+}
+/* drag the ✥: a pink line shows where it lands among the things next to it */
+function akL2Move(ev, x) {
+  ev.preventDefault(); ev.stopPropagation();
+  var el = x.el, par = el.parentElement; if (!par) return;
+  var kids = Array.prototype.filter.call(par.children, function (k) { return k !== el && k.offsetParent; });
+  var col = (function () { var cs = getComputedStyle(par); return !(cs.display.indexOf("flex") >= 0 && cs.flexDirection.indexOf("row") === 0) && !(cs.display.indexOf("grid") >= 0); })();
+  var line = h("div", { class: "akl2-ins" }); AKL2.ui.appendChild(line); line.hidden = true;
+  var r0 = el.getBoundingClientRect(), ghost = h("div", { class: "akl2-ghost", style: "left:" + r0.left + "px;top:" + r0.top + "px;width:" + r0.width + "px;height:" + r0.height + "px" }); AKL2.ui.appendChild(ghost);
+  var best = null, gx = ev.clientX - r0.left, gy = ev.clientY - r0.top;
+  function mv(e) {
+    e.preventDefault();
+    ghost.style.left = (e.clientX - gx) + "px"; ghost.style.top = (e.clientY - gy) + "px";
+    best = null; var bd = 1e9;
+    kids.forEach(function (k) { var r = k.getBoundingClientRect();
+      [["b", r.left, r.top], ["a", r.right, r.bottom]].forEach(function (p) {
+        var d = col ? Math.abs(e.clientY - (p[0] === "b" ? r.top : r.bottom)) + (e.clientX < r.left || e.clientX > r.right ? 40 : 0) : Math.hypot(e.clientX - p[1], e.clientY - (r.top + r.height / 2));
+        if (d < bd) { bd = d; best = { k: k, pos: p[0], r: r }; } }); });
+    if (!best) { line.hidden = true; return; }
+    line.hidden = false; var r = best.r;
+    if (col) { line.style.cssText = "left:" + r.left + "px;top:" + ((best.pos === "b" ? r.top - 3 : r.bottom + 1)) + "px;width:" + r.width + "px;height:3px"; }
+    else { line.style.cssText = "left:" + ((best.pos === "b" ? r.left - 3 : r.right + 1)) + "px;top:" + r.top + "px;width:3px;height:" + r.height + "px"; }
+  }
+  function done() { window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", cancel, true); line.remove(); ghost.remove(); }
+  function cancel() { done(); akL2Draw(); }
+  function up() {
+    done(); if (!best) { akL2Draw(); return; }
+    akL2Snap();
+    var all = Array.prototype.slice.call(par.children), keys = all.map(akL2Key), me = akL2Key(el), ord = keys.filter(function (k) { return k !== me; }), at = ord.indexOf(akL2Key(best.k));
+    ord.splice(best.pos === "b" ? at : at + 1, 0, me);
+    akL2Lay(akL2Layer(me), true).o[akL2PKey(par)] = ord; save(); akL2Reapply(); toast(akL2Name(el) + " moved.");
+  }
+  window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", cancel, true);
+}
+function akL2Act(a) {
+  var E = akL2Els(); if (!E.length) return;
+  if (a === "note") {
+    var k0 = E[0].k, inp = h("textarea", { rows: 3, placeholder: "What you'd like here (for example: make this half as tall and put it next to Sort)", "aria-label": "Note for Claude" });
+    var c0 = akL2S(); inp.value = c0.notes[k0] || "";
+    modal("Note for Claude: " + akL2Name(E[0].el), inp, [{ label: "Cancel" }, { label: "Save note", primary: true, onClick: function () { var v = inp.value.trim(); if (v) c0.notes[k0] = v; else delete c0.notes[k0]; save(); toast("Note saved. It goes with Send my layout to Claude."); } }]);
+    return;
+  }
+  akL2Snap();
+  var R = E.map(function (x) { var r = x.el.getBoundingClientRect(); return { k: x.k, el: x.el, w: r.width, h: r.height, s: (akL2Lay(akL2Layer(x.k), true).s[x.k] || {}) }; }), last = R[R.length - 1];
+  R.forEach(function (x) {
+    var k = x.k, s = x.s, f = s.f || 1;
+    if (a === "shrink") { akL2Set(k, "w", Math.max(24, Math.round(x.w * 0.9))); akL2Set(k, "h", Math.max(20, Math.round(x.h * 0.9))); akL2Set(k, "f", Math.max(0.6, Math.round(f * 0.9 * 100) / 100)); }
+    if (a === "grow") { akL2Set(k, "w", Math.round(x.w * 1.1)); akL2Set(k, "h", Math.round(x.h * 1.1)); akL2Set(k, "f", Math.min(1.8, Math.round(f * 1.1 * 100) / 100)); }
+    if (a === "w-") akL2Set(k, "w", Math.max(24, Math.round(x.w - 8)));
+    if (a === "w+") akL2Set(k, "w", Math.round(x.w + 8));
+    if (a === "h-") akL2Set(k, "h", Math.max(20, Math.round(x.h - 4)));
+    if (a === "h+") akL2Set(k, "h", Math.round(x.h + 4));
+    if (a === "half") { akL2Set(k, "w", Math.round(x.w / 2)); akL2Set(k, "h", Math.max(22, Math.round(x.h * 0.75))); akL2Set(k, "f", 0.8); }
+    if (a === "tq") { akL2Set(k, "w", Math.round(x.w * 0.75)); akL2Set(k, "f", 0.9); }
+    if (a === "full") { akL2Set(k, "w", null); akL2Set(k, "h", null); akL2Set(k, "f", null); }
+    if (a === "skinny") akL2Set(k, "w", Math.max(24, Math.round(x.w * 0.8)));
+    if (a === "tall") akL2Set(k, "h", Math.round(x.h * 1.25));
+    if (a === "f-") akL2Set(k, "f", Math.max(0.6, Math.round((f - 0.1) * 10) / 10));
+    if (a === "f+") akL2Set(k, "f", Math.min(1.8, Math.round((f + 0.1) * 10) / 10));
+    if (a === "same-w") akL2Set(k, "w", Math.round(last.w));
+    if (a === "same-h") akL2Set(k, "h", Math.round(last.h));
+    if (a === "nl") akL2Set(k, "dx", (s.dx || 0) - 2); if (a === "nr") akL2Set(k, "dx", (s.dx || 0) + 2);
+    if (a === "nu") akL2Set(k, "dy", (s.dy || 0) - 2); if (a === "nd") akL2Set(k, "dy", (s.dy || 0) + 2);
+    if (a === "reset") { var L = akL2Lay(akL2Layer(k), true); delete L.s[k]; }
+  });
+  if (a === "hide") { var allH = R.every(function (x) { return x.s.hide; }); R.forEach(function (x) { akL2Set(x.k, "hide", allH ? null : 1); }); }
+  var J = { "al-l": "flex-start", "al-c": "center", "al-r": "flex-end", spread: "space-between", tight: null };
+  if (a in J) { var seen = {}; R.forEach(function (x) { var par = x.el.parentElement; if (!par) return; var pk = akL2PKey(par); if (seen[pk]) return; seen[pk] = 1; var L = akL2Lay(akL2Layer(x.k), true); if (J[a]) L.j[pk] = J[a]; else delete L.j[pk]; }); }
+  if (/^(earlier|later|first|last)$/.test(a)) {
+    R.forEach(function (x) {
+      var par = x.el.parentElement; if (!par) return; var keys = Array.prototype.map.call(par.children, akL2Key), i = keys.indexOf(x.k); if (i < 0) return;
+      keys.splice(i, 1); var j = a === "earlier" ? Math.max(0, i - 1) : a === "later" ? Math.min(keys.length, i + 1) : a === "first" ? 0 : keys.length; keys.splice(j, 0, x.k);
+      akL2Lay(akL2Layer(x.k), true).o[akL2PKey(par)] = keys;
+    });
+  }
+  save(); akL2Reapply();
+}
+
+/* ---------------------------------------------------------------- sending it to Claude */
+function akL2Export() {
+  var c = akL2S();
+  return { app: "akashic-my-layout", v: 1, ver: AK_VERSION, at: new Date().toISOString(), device: (typeof akTcLS === "function" && akTcLS("akdev:name")) || "", screen: window.innerWidth + "x" + window.innerHeight, saved: c.saved, savedSlot: c.savedSlot || c.slot, drafts: c.slots, notes: c.notes };
+}
+function akL2Send() {
+  var out = akL2Export(), txt = JSON.stringify(out, null, 1), c = ghCfg(), t = ghToken && ghToken();
+  var path = "claude-my-layout.json";
+  function local() { saveFile("akashic-my-layout.json", txt, "application/json"); try { navigator.clipboard.writeText(txt).then(function () {}, function () {}); } catch (e) {} toast("GitHub backup isn't set up here, so it was saved and copied. Attach or paste it to Claude."); }
+  if (!t || !/^[\w.-]+\/[\w.-]+$/.test(c.repo)) { local(); return Promise.resolve(false); }
+  var url = "https://api.github.com/repos/" + c.repo + "/contents/" + path, hd = { Authorization: "Bearer " + t, "X-GitHub-Api-Version": "2022-11-28", Accept: "application/vnd.github.object+json", "Content-Type": "application/json" };
+  return fetch(url, { cache: "no-store", headers: hd }).then(function (r) { return r.status === 404 ? null : r.ok ? r.json() : null; }).then(function (cur) {
+    return fetch(url, { method: "PUT", headers: hd, body: JSON.stringify({ message: "My layout for Claude", content: b64utf8(txt), sha: cur && cur.sha ? cur.sha : undefined }) });
+  }).then(function (r) { if (!r.ok) throw new Error(ghErr(r.status)); toast("Sent to Claude. Tell Claude: check my layout."); return true; }, function (e) { toast("Couldn't send: " + (e.message || e) + ". Saved a copy instead."); local(); return false; });
+}
+/* the older 📐 Send my layout file carries this too */
+(function () { if (typeof akDzExport !== "function") return; var d0 = akDzExport; akDzExport = function () { var out = d0.apply(this, arguments); try { out.editor = akL2Export(); } catch (e) {} return out; }; })();
+
+/* ---------------------------------------------------------------- ways in */
+/* the ⇅ Arrange button (and every "Arrange this page" link) now opens ✎ Edit this screen; the old one stays in its ⋯ */
+(function () { AKL2.oldArrange = layStart; layStart = function () { akL2Start(); }; })();
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function (o) { var bar = tb.apply(this, arguments); try { var m = bar && bar.querySelector(".ak8-more"); if (m) akMenuPlus(m, [{ label: "✎ Edit this screen", onClick: akL2Start }]); } catch (e) {} return bar; };
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("✎ Edit this screen", "Move, resize and line up anything on any screen, then save it as your default");
+      c.out.appendChild(h("div", { class: "akyd-row" },
+        h("button", { class: "sm akyd-b", onClick: function () { go("songs"); setTimeout(akL2Start, 200); } }, "✎ Start editing"),
+        h("button", { class: "sm akyd-b", onClick: akL2Send }, "📤 Send my layout to Claude"),
+        h("button", { class: "sm akyd-b", onClick: function () { confirmBox("This puts every screen back the way the app comes.", "Put it all back", function () { var s = settings(); s.akL2 = {}; save(); akL2Reapply(); toast("Every screen is back to normal."); }); } }, "↺ Put it all back")));
+      c.out.appendChild(h("p", { class: "hint" }, "Also in ⋯ More on any screen. ✋ Use app lets you open and unfold things while editing."));
+    } catch (e) {}
+  };
+})();
+akCss("akl2",
+  "body.akl2-on #app{padding-top:var(--akl2-dh,46px)}body.akl2-on #mainScroll{padding-bottom:calc(var(--akl2-ih,150px) + 24px)}" +
+  "body.akl2-on:not(.akl2-using) #app [data-akl2],body.akl2-on:not(.akl2-using) #app button,body.akl2-on:not(.akl2-using) #app summary{cursor:pointer}" +
+  "body.akl2-on:not(.akl2-using) #app *:hover{outline:1px dashed rgba(240,180,41,.45);outline-offset:1px}" +
+  ".akl2-ui{position:fixed;inset:0;pointer-events:none;z-index:9000;font-size:13px}" +
+  ".akl2-dock,.akl2-insp{pointer-events:auto;position:fixed;left:0;right:0;background:#0a1210;color:#e4ece9;padding-left:max(6px,env(safe-area-inset-left,0px));padding-right:max(6px,env(safe-area-inset-right,0px))}" +
+  ".akl2-dock{top:0;padding-top:max(6px,env(safe-area-inset-top,0px));border-bottom:1px solid #f0b429}" +
+  ".akl2-insp{bottom:var(--akl2-bot,62px);border-top:1px solid #f0b429;padding-bottom:6px}" +
+  ".akl2-top{display:flex;gap:4px;align-items:center;padding:0 0 6px;overflow-x:auto;scrollbar-width:none}.akl2-top>*{flex:none}" +
+  ".akl2-b{height:32px;min-height:0;min-width:30px;padding:0 7px;background:transparent;border:1px solid #2d433d;border-radius:2px;color:inherit;font:inherit;white-space:nowrap;cursor:pointer}" +
+  ".akl2-b:disabled{opacity:.35}.akl2-b.on{border-color:#f0b429;color:#f0b429;background:#2a220c}.akl2-b.done{background:#f0b429;border-color:#f0b429;color:#1b1404;font-weight:600}" +
+  ".akl2-slots{display:flex;margin-left:auto}.akl2-slots .akl2-b{border-radius:0;min-width:30px}.akl2-slots .akl2-b+.akl2-b{border-left:0}.akl2-slots .akl2-b.on{background:#f0b429;color:#1b1404}" +
+  ".akl2-strip{display:flex;gap:4px;align-items:center;background:#f0b429;color:#1b1404;font-weight:600;padding:4px 6px;margin:0 -6px}.akl2-strip[hidden]{display:none}.akl2-strip span{margin-right:auto}.akl2-strip .akl2-b{border-color:#1b1404;height:28px}" +
+  ".akl2-ih{display:flex;align-items:center;gap:6px;padding:6px 0 4px}.akl2-nm{font-weight:600;color:#f0b429;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}.akl2-sz{font-family:ui-monospace,monospace;opacity:.7;font-size:11px}" +
+  ".akl2-tabs{display:flex;border:1px solid #2d433d;border-radius:2px;flex:none}.akl2-tabs button{background:none;border:0;color:inherit;opacity:.75;padding:5px 8px;font:inherit;font-size:12px;border-radius:0}.akl2-tabs button+button{border-left:1px solid #2d433d}.akl2-tabs button.on{background:#f0b429;color:#1b1404;opacity:1}" +
+  ".akl2-pane{display:flex;flex-wrap:wrap;gap:4px}.akl2-pane .akl2-b{padding:0 6px;height:28px}.akl2-grp{display:flex;align-items:center;border:1px solid #2d433d;border-radius:2px}.akl2-grp .akl2-b{border:0;border-radius:0;height:30px}.akl2-grp>*+*{border-left:1px solid #2d433d!important}.akl2-l{padding:0 6px;opacity:.7;font-size:11px}.akl2-v{font-family:ui-monospace,monospace;min-width:34px;text-align:center;font-size:12px}" +
+  ".akl2-ov{position:fixed;inset:0;pointer-events:none}.akl2-box{position:fixed;border:2px solid #f0b429;background:rgba(240,180,41,.10)}" +
+  ".akl2-tag{position:fixed;background:#f0b429;color:#1b1404;font:600 10px/1 ui-monospace,monospace;padding:3px 4px;border-radius:1px}" +
+  ".akl2-grip{position:fixed;width:44px;height:44px;pointer-events:auto;touch-action:none;display:flex;align-items:center;justify-content:center}.akl2-grip i{width:14px;height:14px;background:#f0b429;border:2px solid #0a1210;border-radius:1px;display:block}.akl2-grip.r{cursor:ew-resize}.akl2-grip.b{cursor:ns-resize}.akl2-grip.rb{cursor:nwse-resize}" +
+  ".akl2-move{position:fixed;width:36px;height:36px;pointer-events:auto;touch-action:none;background:#f0b429;color:#1b1404;border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:grab;transform:translateX(-100%)}" +
+  ".akl2-ins{position:fixed;background:#e2557b;z-index:2}.akl2-ins[hidden]{display:none}.akl2-ghost{position:fixed;border:2px dashed #f0b429;background:rgba(240,180,41,.15)}" +
+  ".akl2-ov.boxing{pointer-events:auto;touch-action:none;cursor:crosshair;background:rgba(240,180,41,.04)}.akl2-rect{position:fixed;border:1px dashed #f0b429;background:rgba(240,180,41,.12)}" +
+  "body.akl2-on .menu{z-index:9600}body.akl2-on .modal{z-index:9500}body.akl2-on .toast{z-index:9700;bottom:auto;top:100px;pointer-events:none;opacity:.92}body.akl2-on .toast button{pointer-events:auto}" +
+  "@media (max-width:480px){.akl2-top .akl2-b{padding:0 5px;font-size:12px}.akl2-top .akl2-t{display:none}}" +
+  "body.akl2-using .akl2-insp{opacity:.6}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Move, resize or line up buttons and boxes on any screen (Edit this screen)", a: "⋯ More › ✎ Edit this screen (or Settings › Data and extras › ✎ Edit this screen). Tap to pick, ☐ Pick several for more, then Size, Line up, Move. ⋯ › Save this as my default, or Send my layout to Claude.", k: "edit this screen layout editor move resize smaller bigger align line up arrange drag button dropdown rearrange customize default" });
+AK_WHATS_NEW = ["✎ Edit this screen (⋯ More): on any screen, tap to pick anything (or several), then make it smaller, bigger, skinnier or taller, line things up, drag the ✥ to move it, try versions A, B and C, save as your default, and send your layout to Claude."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("19.8", "App", [
+  ["l2-pick", "✎ Edit this screen: pick and resize", "⋯ More › ✎ Edit this screen. Tap a button, then Size › − Smaller. Pull the yellow corner square too.", function () { go("songs"); setTimeout(akL2Start, 300); }],
+  ["l2-several", "✎ Pick several and change together", "☐ Pick several (or hold), tap three things, then Size › ½ or Line up › Same width.", function () { go("songs"); setTimeout(function () { akL2Start(); akL2Multi(true); }, 300); }],
+  ["l2-move", "✎ Move things and the bottom bar", "Pick a tab in the bottom bar, then drag the ✥ or Move › Earlier / Later.", function () { go("songs"); setTimeout(akL2Start, 300); }],
+  ["l2-save", "✎ Versions, save and send", "Try B, flip back to A, then ⋯ › Save this as my default and ⋯ › Send my layout to Claude.", function () { go("songs"); setTimeout(akL2Start, 300); }]]);
+AK_VERSION = "19.8";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
