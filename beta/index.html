@@ -65365,6 +65365,187 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
 }
 AK_VERSION = "20.4";
 
+/* ================= 20.4.1: no password prompts from search boxes =================
+   The phone's autofill saw a search box above a password-style box on the same page
+   (Settings has both) and offered to save a password. Every box that is not a password
+   now says "no autofill", and every password-style box says it is a new secret, not a login. */
+function akNoFill(root) {
+  try {
+    var list = (root || document).querySelectorAll ? (root || document).querySelectorAll("input,textarea") : [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i], t = (e.getAttribute("type") || "text").toLowerCase();
+      if (e.getAttribute("data-akfill")) continue;
+      e.setAttribute("data-akfill", "1");
+      if (t === "password") { e.setAttribute("autocomplete", "new-password"); e.setAttribute("data-lpignore", "true"); }
+      else if (t === "search" || t === "text" || t === "") {
+        if (e.getAttribute("autocomplete") !== "off") e.setAttribute("autocomplete", "off");
+        e.setAttribute("data-lpignore", "true"); e.setAttribute("data-form-type", "other"); e.setAttribute("data-1p-ignore", "true");
+        if (t === "search" && !e.getAttribute("name")) e.setAttribute("name", "aksearch" + Math.floor(Math.random() * 1e6));
+        if (t === "search") e.setAttribute("enterkeyhint", "search");
+      }
+    }
+  } catch (er) {}
+}
+(function () {
+  if (typeof document === "undefined" || window.__akNoFill) return; window.__akNoFill = true;
+  var t = null;
+  function soon() { clearTimeout(t); t = setTimeout(function () { akNoFill(document); }, 30); }
+  try { new MutationObserver(soon).observe(document.documentElement, { childList: true, subtree: true }); } catch (er) {}
+  soon();
+})();
+
+/* ================================================================ ak_v207: 20.7 Settings: everything in its right place (his ask 11-04).
+   Nothing is renamed and no setting is removed; only where things sit changes. Saved values are untouched (same settings keys).
+   Why things were in odd places: a Settings hook that calls c.again(group) without opening its own c.section() adds its controls to
+   whatever section was opened last, and some hooks add theirs after the next hooks ran. So:
+   1. 🎸 Strums (speed, ring, palm mute, chuck, recorder) sat inside Tools and extras › Graphics pop-up: now in Songs and shows › Chord sound.
+   2. Wheel tab, Chord pop-up (size, after Add, opens when you tap a square), Window background (Write) sat in Tips and pay reminder and in
+      Welcome notes: now in Songs and shows › Write screen (where the help already said they were).
+   3. "Also show the 🎙 Recorder button on the other screens" sat in About and privacy: now in Songs and shows › Recording (two-phone part).
+   4. "🎸 Build a chord on the fretboard" sat in Help and how-to: now in Tools and extras › Chord keyboard.
+   Sections moved to the group they belong to (and put next to their relatives):
+   - Look: Button shape and Songs page: how the list switch looks (after Layout style), Graphics tab (after Tabs and usage modes),
+     Simple mode: what it does (right after Simple mode).
+   - Songs and shows: Chords written as text (after Chord names and shapes), 🔔 Gig reminders (after Starting a show), Writing / Write screen /
+     Writing extras together, Recording / Recorder button / Song length from recordings together. Song list letters (was on the Playing
+     screen ⚙ options) is now on the Songs ⚙ options.
+   - Requests and tips: Tips and pay reminder.
+   - Tools and extras: Tips and descriptions and Welcome notes (was hidden in the Playing screen ⚙ options) next to the Help sections,
+     the two keyboards together. (📐 My defaults and ✎ Edit this screen are left for 20.8, which merges them.)
+   The moves run on every build of the Settings page (also the hidden one that the search and the ⚙ screen options use), so search,
+   📍 Show me and the 🧪 Go › find things where they now are. 20.3's Backups move now also runs there (search found the old spot). ======= */
+var AK207_MOVES = [
+  /* [section key, from group, to group] */
+  ["tips-and-pay-reminder", "songs-and-shows", "requests-and-tips"],
+  ["tips-and-descriptions", "songs-and-shows", "data-and-extras"],
+  ["welcome-notes", "playing-screen", "data-and-extras"],
+  ["button-shape", "songs-and-shows", "look"],
+  ["songs-page-how-the-list-switch-looks", "songs-and-shows", "look"],
+  ["graphics-tab", "songs-and-shows", "look"],
+  ["chords-written-as-text", "data-and-extras", "songs-and-shows"],
+  ["gig-reminders", "requests-and-tips", "songs-and-shows"],
+  ["song-list-letters", "playing-screen", "songs-and-shows"]
+];
+/* within a group: these stay together, in this order, where the first of them is */
+var AK207_ORDER = {
+  "look": [["layout-style", "button-shape", "songs-page-how-the-list-switch-looks"], ["tabs-and-usage-modes", "graphics-tab", "simple-mode", "simple-mode-what-it-does", "size-of-the-app"]],
+  "songs-and-shows": [["show-and-song-lists", "song-list-letters", "setlist-song-numbers"], ["instrument-and-tuning", "chord-names-and-shapes", "chords-written-as-text", "chord-sound"],
+    ["writing", "write-screen", "writing-extras"], ["record-my-show", "recorder-button", "song-length-from-recordings"], ["starting-a-show", "gig-reminders"]],
+  "requests-and-tips": [["live-requests", "tips-and-pay-reminder"]],
+  "data-and-extras": [["help-tour-and-tips", "help-and-how-to", "tips-and-descriptions", "welcome-notes"], ["on-screen-keyboard", "chord-keyboard"]] /* Arrange the pages, 📐 My defaults and ✎ Edit this screen are left alone: 20.8 merges them */
+};
+function ak207Body(root, g) { var d = root.querySelector('details.setsec[data-bk="' + g + '"]'); return d && d.querySelector(":scope > .secbody"); }
+function ak207Sec(body, k) { return body && body.querySelector(':scope > details.subsec[data-bk="' + k + '"]'); }
+/* the child of a section's body that holds el (a label, a row, a fold) */
+function ak207Top(el) { for (var p = el; p && p.parentElement; p = p.parentElement) if (p.parentElement.classList.contains("secbody")) return p; return null; }
+/* put n into a section's body, before its "↺ Reset this section" row so that stays last */
+function ak207Put(sec, n) {
+  var b = sec && sec.querySelector(":scope > .secbody"); if (!b || !n) return false;
+  var kids = b.children, rst = null;
+  for (var i = kids.length - 1; i >= 0; i--) { if (/↺ Reset this section/.test(kids[i].textContent) && kids[i].textContent.length < 40) { rst = kids[i]; break; } }
+  b.insertBefore(n, rst); return true;
+}
+function ak207Find(root, sel, re) { var l = root.querySelectorAll(sel); for (var i = 0; i < l.length; i++) if (re.test((l[i].textContent || "").replace(/\s+/g, " ").trim())) return l[i]; return null; }
+function ak207Fix(root) {
+  if (!root || !root.querySelector) return;
+  /* 1-4: controls that landed in the wrong section */
+  var ss = ak207Body(root, "songs-and-shows"), de = ak207Body(root, "data-and-extras");
+  var chordSound = ak207Sec(ss, "chord-sound"), writeScr = ak207Sec(ss, "write-screen"), recBtn = ak207Sec(ss, "record-my-show"), ckb = ak207Sec(de, "chord-keyboard");
+  var fold = root.querySelector("details.akmu-fold");
+  if (fold && chordSound && !chordSound.contains(fold)) ak207Put(chordSound, ak207Top(fold) || fold);
+  if (writeScr) [/^Wheel tab/, /^Chord pop-up: size/, /^Chord pop-up: after Add/, /^Chord pop-up: opens when you tap/, /^Window background \(Write\)/].forEach(function (re) {
+    var l = ak207Find(root, "details.subsec .secbody > label", re); if (l && !writeScr.contains(l)) ak207Put(writeScr, l);
+  });
+  if (recBtn) { var rl = ak207Find(root, "details.subsec .secbody > label", /^Also show the 🎙 Recorder button on the other screens/); if (rl && !recBtn.contains(rl)) ak207Put(recBtn, rl); }
+  if (ckb) {
+    var bt = ak207Find(root, "details.subsec .secbody button", /^🎸 Build a chord on the fretboard$/), row = bt && ak207Top(bt);
+    var hint = ak207Find(root, "details.subsec .secbody > p.hint", /^🎸 Build on the chord keyboard/);
+    [hint, row].forEach(function (n) { if (n && !ckb.contains(n)) ak207Put(ckb, n); });
+  }
+  /* sections to their own group */
+  AK207_MOVES.forEach(function (m) {
+    var from = ak207Body(root, m[1]), to = ak207Body(root, m[2]), d = ak207Sec(from, m[0]);
+    if (!d || !to || ak207Sec(to, m[0])) return;
+    var subs = to.querySelectorAll(":scope > details.subsec"), last = subs[subs.length - 1];
+    to.insertBefore(d, last ? last.nextSibling : null);
+  });
+  /* relatives side by side */
+  Object.keys(AK207_ORDER).forEach(function (g) {
+    var b = ak207Body(root, g); if (!b) return;
+    AK207_ORDER[g].forEach(function (list) {
+      var els = list.map(function (k) { return ak207Sec(b, k); }).filter(Boolean); if (els.length < 2) return;
+      var first = els[0]; els.forEach(function (e) { if (e.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING) first = e; });
+      var mark = document.createComment("ak207"); b.insertBefore(mark, first);
+      els.forEach(function (e) { b.insertBefore(e, mark); }); mark.remove();
+    });
+  });
+}
+(function () {
+  var vs = viewSettings;
+  viewSettings = function () {
+    var el = vs.apply(this, arguments);
+    try { if (typeof akTools203 === "function") akTools203(el); } catch (e) {}
+    try { ak207Fix(el); } catch (e) { try { console.warn("ak207", e); } catch (x) {} }
+    return el;
+  };
+})();
+/* the Settings page hides the sections that live on a screen's ⚙ options (ak8_settings, via akSetSubs) before the outer wrappers run:
+   tidy first, so a section that moved out of the Playing screen group (Welcome notes) stays in Settings */
+(function () {
+  var ss = akSetSubs;
+  akSetSubs = function (root) { try { ak207Fix(root); } catch (e) {} return ss.apply(this, arguments); };
+})();
+/* ⚙ screen options follow the new places: Song list letters on Songs; all the Write tab options also on Write; Gig reminders also on Shows */
+if (typeof AK_SCR_OPTS !== "undefined") {
+  AK_SCR_OPTS.songs.bks.push("songs-and-shows/song-list-letters");
+  ["songs-and-shows/writing", "songs-and-shows/write-screen", "songs-and-shows/writing-extras"].forEach(function (k) { AK_SCR_OPTS.write.bks.push(k); AK_SCR_KEEP.push(k); });
+  AK_SCR_OPTS.shows.bks.push("songs-and-shows/gig-reminders"); AK_SCR_KEEP.push("songs-and-shows/gig-reminders");
+}
+/* the help and the test list point at the new places */
+var AK207_PATHS = [
+  [/Settings › Requests and tips › (🔔 )?Gig reminders/g, "Settings › Songs and shows › 🔔 Gig reminders"],
+  [/Settings › Songs and shows › Tips and descriptions/g, "Settings › Tools and extras › Tips and descriptions"],
+  [/Settings › Songs and shows › Tips and pay reminder/g, "Settings › Requests and tips › Tips and pay reminder"],
+  [/Settings › Songs and shows › Graphics tab/g, "Settings › Look › Graphics tab"],
+  [/Settings › Tools and extras › Chords written as text/g, "Settings › Songs and shows › Chords written as text"]
+];
+function ak207Path(t) { if (typeof t !== "string") return t; AK207_PATHS.forEach(function (p) { t = t.replace(p[0], p[1]); }); return t; }
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.forEach(function (e) { if (typeof e.a === "string") e.a = ak207Path(e.a); });
+if (typeof AKTC_WHERE !== "undefined") {
+  AKTC_WHERE["tips-i"] = ["Settings › Tools and extras › Tips and descriptions", { p: ["Tools and extras", "Tips and descriptions"] }];
+  AKTC_WHERE["strums"] = ["Settings › Songs and shows › Chord sound › 🎸 Strums", { p: ["Songs and shows", "Chord sound", "🎸 Strums speed"] }];
+}
+if (typeof AKTC !== "undefined") AKTC.forEach(function (x) { x.how = ak207Path(x.how); if (AKTC_WHERE[x.id]) { x.where = AKTC_WHERE[x.id][0]; if (AKTC_WHERE[x.id][1]) x.find = AKTC_WHERE[x.id][1]; } });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Where did a setting go? (20.7 tidy-up)", a: "Settings › Songs and shows › Chord sound › 🎸 Strums (was under Graphics pop-up); Write screen has Wheel tab, Chord pop-up and Window background; Look has Button shape, the list switch and Graphics tab; Tools and extras has Tips and descriptions and Welcome notes; Requests and tips has Tips and pay reminder; Songs and shows has Gig reminders and Chords written as text.", k: "moved settings where is strums palm mute chuck wheel tab chord pop-up window background button shape graphics tab tips welcome notes gig reminders recorder fretboard" });
+
+AK_WHATS_NEW = ["⚙ Settings tidied: things now sit where they belong. 🎸 Strums (palm mute, chuck, strum recorder) moved from Graphics pop-up to Songs and shows › Chord sound. Write options (Wheel tab, Chord pop-up, Window background) are all in Write screen. Button shape, the Songs list switch and Graphics tab are in Look; Tips and descriptions and Welcome notes are in Tools and extras; Gig reminders and Chords written as text are in Songs and shows; Tips and pay reminder is in Requests and tips. Nothing was renamed or removed, and your choices are kept."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") {
+  var AK207_GO = ["settings", {}, ""];
+  akTcAdd("20.7", "Settings", [
+    ["s7-strums", "🎸 Strums under Chord sound", "Settings › Songs and shows › Chord sound: at the bottom, open 🎸 Strums. Speed, ring, palm mute, chuck and 🎙 Record my chuck and palm mutes are there. Tools and extras › Graphics pop-up has only picture options now.", AK207_GO],
+    ["s7-write", "Write screen holds all Write options", "Settings › Songs and shows › Write screen: Wheel tab, Chord pop-up (size, after Add, opens when you tap a square) and Window background (Write) are inside, next to the layout choices. Writing and Writing extras sit right beside it. The Write tab's ⚙ shows them too.", AK207_GO],
+    ["s7-look", "Button shape, list switch, Graphics tab in Look", "Settings › Look: Button shape and Songs page: how the list switch looks come right after Layout style; Graphics tab is after Tabs and usage modes; Simple mode: what it does is right under Simple mode.", AK207_GO],
+    ["s7-help", "Tips and Welcome notes with Help", "Settings › Tools and extras: Help, tour and tips, Help and how-to, Tips and descriptions and Welcome notes are together at the top.", AK207_GO],
+    ["s7-shows", "Gig reminders and Chords written as text", "Settings › Songs and shows: 🔔 Gig reminders is right after Starting a show, and Chords written as text is right after Chord names and shapes.", AK207_GO],
+    ["s7-tips", "Tips and pay reminder in Requests and tips", "Settings › Requests and tips: Tips and pay reminder is right after Live requests. Its choices are the same as before.", AK207_GO],
+    ["s7-rec", "Recorder button switch in Recording", "Settings › Songs and shows › Recording: “Also show the 🎙 Recorder button on the other screens” is there now (it was in About and privacy).", AK207_GO],
+    ["s7-fret", "Build a chord on the fretboard in Chord keyboard", "Settings › Tools and extras › Chord keyboard: the 🎸 Build a chord on the fretboard button is there now (not in Help and how-to).", AK207_GO]]);
+}
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK207_WHERE = {
+    "s7-strums": ["Settings › Songs and shows › Chord sound › 🎸 Strums", { p: ["Songs and shows", "Chord sound", "🎸 Strums speed"] }],
+    "s7-write": ["Settings › Songs and shows › Write screen › Wheel tab", { p: ["Songs and shows", "Write screen", "Wheel tab"] }],
+    "s7-look": ["Settings › Look › Button shape", { p: ["Look", "Button shape"] }],
+    "s7-help": ["Settings › Tools and extras › Tips and descriptions", { p: ["Tools and extras", "Tips and descriptions"] }],
+    "s7-shows": ["Settings › Songs and shows › 🔔 Gig reminders", { p: ["Songs and shows", "Gig reminders"] }],
+    "s7-tips": ["Settings › Requests and tips › Tips and pay reminder", { p: ["Requests and tips", "Tips and pay reminder"] }],
+    "s7-rec": ["Settings › Songs and shows › Recording › Also show the 🎙 Recorder button…", { p: ["Songs and shows", "Recording", "Also show the 🎙 Recorder button"] }],
+    "s7-fret": ["Settings › Tools and extras › Chord keyboard › 🎸 Build a chord on the fretboard", { p: ["Tools and extras", "Chord keyboard", "Build a chord on the fretboard"] }]
+  };
+  AKTC.forEach(function (x) { var w = AK207_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "20.7";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
