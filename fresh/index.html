@@ -64482,6 +64482,331 @@ akTcAdd("20.0", "Graphics", [
 })();
 AK_VERSION = "20.0";
 
+/* ================================================================ ak_v20k: 20.1 ♪ Convert chord on the song editor, fret shapes as real
+   chords, and a note on every test-checklist item.
+   1. Fret shapes are real chords now. A shape is one fret per string, low string first (x32010, 320003, xx0232, ukulele 0003,
+      dotted/dashed 3.2.0.0.0.3 or x-10-12-12-11-10; x = not played). It's the app's existing name for the format ("Fret shapes",
+      16.3 Show chords as, batch 11 Name a shape / Fix chords). Wrappers: isChordTok (a shape counts as a chord), parseChordName
+      (a shape is read as the chord it makes, akShapeNames best name, label keeps the shape), allVoicings (the written shape is the
+      default fingering, so the diagram and the sound are the exact voicing), chEl (Show chords as Both adds the name small).
+      A shape never transposes (the existing "Not changed when transposing" mark shows when transposed).
+   2. ♪ Convert row (replaces the ♪ Make all chords / ♪ Make chord row above Chord versions and the chord chart; the old buttons stay
+      hidden in the row and are still used): [♪ Convert] [One / All] [→ Names / → Shapes / → Shapes x-3-2] ⓘ.
+      settings().akCv {mode, to}. The box is whichever was used last (focus: Lyrics or Chord chart; Chord chart if neither), named in the preview and toast. One = the chord at the cursor or
+      every chord in the selection (no guessing rules). All = scans the whole box: [bracketed] chords always; bare tokens: shapes with an
+      x or separators always, plain-digit shapes and names only on lines that are mostly chords (a lone capital A, years and numbers stay
+      text); in the Chords box bare names also on mixed lines (except A), and get [brackets] there so they show. Lines of tab and {title:}
+      lines are skipped. Chords-above lines keep their columns. Preview first (N found, from → to), then one step, Undo on the toast and the
+      editor's ↶. All → Names in the Chords box also does what Make all chords did (spelling, custom chords). One → Names on something
+      that isn't a shape falls back to the old Make chord.
+   3. 🧪 Test checklist: ✎ Note on every item (list row and the 🧪 helper), works or not. Notes go with 📋 copy and 📤 Send (claude-fix-list.json
+      items get result works/not working/not tested; notes on ✓ items are kept, open: true).
+   Test ak_t610 (block ak_t610-619). */
+
+/* ---------------------------------------------------------------- 1. fret shapes as chords */
+var AKCV_SH = { k: "", m: Object.create(null) };
+function akCvIns() { var i = settings().instrument; return i === "guitar" || i === "ukulele" ? i : ""; }
+/* strict: is this text a fret shape on the current instrument? returns the frets or null. loose = also plain digits of any count. */
+function akCvShape(t, loose) {
+  var ins = akCvIns(); if (!ins || typeof akShapeParse !== "function") return null;
+  t = String(t || ""); if (!/^[xX\d][xX\d.\-\/,]*$/.test(t) || !/\d/.test(t)) return null;
+  var n = ins === "ukulele" ? 4 : 6, k = ins + "|" + n; if (AKCV_SH.k !== k) { AKCV_SH.k = k; AKCV_SH.m = Object.create(null); }
+  var ck = t + (loose ? "|l" : ""); if (ck in AKCV_SH.m) return AKCV_SH.m[ck];
+  var out = null, sep = /[.\-\/,]/.test(t), hasX = /x/i.test(t);
+  if (hasX || sep || loose || (t.length === n && !/^(19|20)\d\d$/.test(t))) {
+    var f = akShapeParse(t, ins);
+    if (f && f.filter(function (x) { return x >= 0; }).length >= 2) { try { if (akShapeNames(f).length) out = f; } catch (e) {} }
+  }
+  return (AKCV_SH.m[ck] = out);
+}
+function akCvShapeName(f) { try { var r = akShapeNames(f); return r && r[0] ? r[0].name : ""; } catch (e) { return ""; } }
+function akCvShapeText(f, dash) { return dash ? f.map(function (x) { return x < 0 ? "x" : String(x); }).join("-") : akShapeText(f); }
+(function () {
+  var ict = isChordTok;
+  isChordTok = function (t) { return ict(t) || (!AKCV_SH.off && !!akCvShape(t)); };
+  /* Fix chords (batch 11) turns shapes into names: there a shape must still read as "not a chord yet" */
+  if (typeof akFixLine === "function") { var fl = akFixLine; akFixLine = function () { var o = AKCV_SH.off; AKCV_SH.off = true; try { return fl.apply(this, arguments); } finally { AKCV_SH.off = o; } }; }
+  var pcn = parseChordName;
+  parseChordName = function (name) {
+    var p = pcn(name); if (p) return p;
+    var f = akCvShape(name); if (!f) return null;
+    var nm = akCvShapeName(f), q = nm ? pcn(nm) : null; if (q) q.label = name;
+    return q;
+  };
+  var av = allVoicings;
+  allVoicings = function (instr, chordName) {
+    var f = (instr === "guitar" || instr === "ukulele") && instr === akCvIns() ? akCvShape(chordName) : null;
+    var r = av.apply(this, arguments); if (!f) return r;
+    var key = f.join(","), list = r.list.filter(function (v) { return v.frets.join(",") !== key; });
+    list.unshift({ frets: f.slice(), custom: false, isDefault: true, written: true });
+    return Object.assign({}, r, { list: list });
+  };
+  var ce = chEl;
+  chEl = function (c, o) {
+    var el = ce.apply(this, arguments);
+    try {
+      var f = akCvShape(c);
+      if (f && typeof akFretMode === "function" && akFretMode() === "both") {
+        var sup = el.querySelector("sup.akfret"), nm = akCvShapeName(f);
+        if (sup) sup.textContent = nm; else if (nm) el.appendChild(h("sup", { class: "akfret" }, nm));
+      }
+    } catch (e) {}
+    return el;
+  };
+})();
+
+/* ---------------------------------------------------------------- 2. the converter */
+function akCvCfg() { var s = settings(), c = s.akCv = s.akCv || {}; if (c.mode !== "one") c.mode = "all"; if (!/^(names|shapes|dash)$/.test(c.to || "")) c.to = "shapes"; return c; }
+function akCvName(t) { return /^[A-G]/.test(t) && isChordTok(t) && !akCvShape(t) ? t : (typeof akCv17Fix === "function" ? akCv17Fix(t) : null); }
+/* name -> the shape you'd play (your default fingering first) */
+function akCvNameShape(name) {
+  var ins = akCvIns(); if (!ins) return null;
+  try { var v = allVoicings(ins, name), f = v && v.list[0] && v.list[0].frets; return f ? f.slice() : null; } catch (e) { return null; }
+}
+/* what one chord becomes: null = leave it */
+function akCvTo(tok, to, loose) {
+  var f = akCvShape(tok, loose);
+  if (f) {
+    if (to === "names") { var nm = akCvShapeName(f); return nm ? { to: nm, kind: "shape" } : null; }
+    var t2 = akCvShapeText(f, to === "dash"); return t2 !== tok ? { to: t2, kind: "shape" } : null;
+  }
+  var n = akCvName(tok); if (!n) return null;
+  if (to === "names") return n !== tok ? { to: n, kind: "name" } : null;
+  var g = akCvNameShape(n); if (!g) return null;
+  return { to: akCvShapeText(g, to === "dash"), kind: "name" };
+}
+function akCvSplit(t) { var m = /^([(\[{|]*)(.*?)([)\]}|,;:.!?]*)$/.exec(t); return m ? { lead: m[1], core: m[2], tail: m[3] } : { lead: "", core: t, tail: "" }; }
+function akCvRepeat(t) { return EXTRA_TOKENS[t] || /^\(?(x\d{1,2}|\d{1,2}x)\)?$/i.test(t) || /^[|:%\/\-]+$/.test(t); }
+function akCvLabel(t) { return /:$/.test(t) && /^[A-Za-z][\w ]*:$/.test(t); }
+/* text -> {text, items:[{from,to,at}]}; box "chords"|"lyrics"; sel = [start, end] for One (tokens touching it only) */
+function akCvScan(text, o) {
+  o = o || {}; var to = o.to || "names", box = o.box || "chords", sel = o.sel, items = [];
+  var src = String(text || "").replace(/\r\n?/g, "\n"), pos = 0;
+  var lines = src.split("\n").map(function (ln) {
+    var base = pos; pos += ln.length + 1;
+    if (!ln.trim() || /^\s*\{\w+\s*:/.test(ln) || (typeof isTabLine === "function" && isTabLine(ln))) return ln;
+    if (sel && (base + ln.length < sel[0] || base > sel[1])) return ln;
+    var touch = function (a, b) { return !sel || (sel[0] === sel[1] ? sel[0] >= a && sel[0] <= b : a < sel[1] && b > sel[0]); };
+    /* how chordy is the part outside brackets */
+    var bare = ln.replace(/\[[^\]]*\]/g, " "), toks = bare.split(/\s+/).filter(Boolean), chordy = 0, other = 0;
+    var words = 0;
+    toks.forEach(function (t) { if (!EXTRA_TOKENS[t] && !akCvShape(t, true) && !akCvName(t)) words++; var c = akCvSplit(t).core; if (akCvRepeat(t) || akCvLabel(t) || !c) return; if (akCvShape(c, true) || akCvName(c)) chordy++; else other++; });
+    var chordLine = chordy > 0 && chordy >= other * 2, onlyChords = chordy > 0 && words === 0 && !/\[/.test(ln);
+    var out = "", i = 0, re = /\[([^\]\n]*)\]|\S+/g, m, carry = 0;
+    while ((m = re.exec(ln))) {
+      var a = m.index, tok = m[0];
+      var gap = ln.slice(i, a);
+      if (carry > 0) { var cut = Math.min(carry, Math.max(0, gap.length - 1)); gap = gap.slice(cut); carry -= cut; }
+      else if (carry < 0) { gap = new Array(-carry + 1).join(" ") + gap; carry = 0; }
+      out += gap; i = a + tok.length;
+      if (m[1] !== undefined) {
+        var inner = m[1].trim(), r = inner && touch(base + a, base + i) ? akCvTo(inner, to, !!sel) : null;
+        if (r) { items.push({ from: inner, to: r.to, at: base + a }); out += "[" + r.to + "]"; } else out += tok;
+        continue;
+      }
+      var sp = akCvSplit(tok), core = sp.core, ok = false;
+      if (core && touch(base + a, base + i) && !akCvRepeat(tok)) {
+        if (sel) ok = true;
+        else if (akCvShape(core)) ok = !/^\d+$/.test(core) || chordLine;
+        else if (akCvName(core)) ok = chordLine || (box === "chords" && core !== "A" && !/^[a-z]/.test(ln.slice(i).trim()));
+      }
+      var r2 = ok ? akCvTo(core, to, !!sel || chordLine) : null;
+      if (!r2) { out += ok && !onlyChords && !sp.lead && !sp.tail && isChordTok(core) ? "[" + core + "]" : tok; continue; } /* already right, but needs [ ] to show on a line with words */
+      items.push({ from: core, to: r2.to, at: base + a });
+      var wrap = !onlyChords;
+      var nt = sp.lead + (wrap ? "[" + r2.to + "]" : r2.to) + sp.tail;
+      if (onlyChords) carry += nt.length - tok.length; /* keep the columns of a chords-above line */
+      out += nt;
+    }
+    return out + ln.slice(i).replace(/^\s+/, function (g) { return carry > 0 ? g.slice(Math.min(carry, g.length)) : g; });
+  });
+  return { text: lines.join("\n"), items: items };
+}
+/* the editor boxes */
+function akCvBoxes(row) {
+  var app = row.closest("#app") || document, lyr = app.querySelector("#edLyrics"), ch = null;
+  Array.prototype.forEach.call(app.querySelectorAll("label.fld"), function (l) { if (!ch && /^Chord chart/.test(l.textContent) && l.querySelector("textarea")) ch = l.querySelector("textarea"); });
+  return { lyrics: lyr, chords: ch };
+}
+function akCvRun(row) {
+  var c = akCvCfg(), B = akCvBoxes(row), which = S.akCvIn || "chords", ta = B[which] || B.chords || B.lyrics; if (!ta) return;
+  which = ta === B.lyrics ? "lyrics" : "chords";
+  if (c.to !== "names" && !akCvIns()) { toast("Fret shapes are for guitar and ukulele. Pick one in Settings › Instrument."); return; }
+  var sel = c.mode === "one" ? [ta.selectionStart || 0, ta.selectionEnd || 0] : null;
+  var r = akCvScan(ta.value, { to: c.to, box: which, sel: sel }), old = ta.value, odd = [], fixed = [];
+  var text = r.text;
+  if (!sel && c.to === "names" && which === "chords" && typeof akCv17Scan === "function") { var r2 = akCv17Scan(text); if (r2.text !== text || r2.odd.length) { odd = r2.odd || []; fixed = (r2.fixed || []).filter(function (x) { return !/→ \[/.test(x); }); text = r2.text; } }
+  var boxName = which === "lyrics" ? "Lyrics" : "Chords box";
+  if (!r.items.length && text === old) {
+    if (sel && c.to === "names") { var mk = akCvOldBtn(row, which, "♪ Make chord"); if (mk) { mk.click(); return; } }
+    toast(sel ? (sel[0] === sel[1] ? "Put the cursor on a chord (or select some), then tap ♪ Convert." : "No chord in what you selected to convert.") : "Nothing to convert in the " + boxName + ": every chord is already " + (c.to === "names" ? "a name." : "a fret shape.")); return;
+  }
+  function go() {
+    if (odd.length) { var l = settings().customChords = settings().customChords || []; odd.forEach(function (n) { if (l.indexOf(n) < 0) l.push(n); }); syncCustomChords(); }
+    akCvSet(ta, text);
+    toast("Converted " + (r.items.length || fixed.length + odd.length) + " in the " + boxName + ".", { label: "Undo", fn: function () { akCvSet(ta, old); } });
+  }
+  var n = r.items.length, list = r.items.slice(0, 14).map(function (x) { return x.from + " → " + x.to; }).join(",  ") + (n > 14 ? "  …" : "");
+  if (sel && n <= 1 && !odd.length) { go(); return; }
+  modal("♪ Convert " + n + (n === 1 ? " chord" : " chords") + " → " + (c.to === "names" ? "names" : "fret shapes"),
+    h("div", null, h("p", null, h("b", null, n + " found in the " + boxName + ". "), list),
+      fixed.length ? h("p", { class: "hint" }, "Spelling: " + fixed.slice(0, 10).join(",  ")) : null,
+      odd.length ? h("p", { class: "hint" }, "Also made chords (remembered for every song): " + odd.join("  ")) : null,
+      h("p", { class: "hint" }, "One undo step. Words, repeat marks (x2) and numbers stay as they are.")),
+    [{ label: "Cancel" }, { label: "Convert", primary: true, onClick: go }]);
+}
+function akCvSet(ta, v) { ta.value = v; try { ta.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {} }
+function akCvOldBtn(row, which, label) {
+  var hid = row.parentNode && row.parentNode.querySelector(".akcv-old"), btns = [];
+  if (which === "chords") { if (hid) btns = Array.prototype.slice.call(hid.querySelectorAll("button")); }
+  else { var lyr = document.getElementById("edLyrics"), card = lyr && lyr.closest(".card"); if (card) btns = Array.prototype.slice.call(card.querySelectorAll("button")).filter(function (b) { return !b.closest(".akcv-old"); }); }
+  return btns.filter(function (b) { return b.textContent.trim() === label; })[0] || null;
+}
+function akCvRow(old) {
+  var c = akCvCfg(), row = h("div", { class: "akcv-row", "data-bk": "akcv" });
+  function opt(v, t, on) { return h("option", { value: v, selected: on ? "selected" : null }, t); }
+  var mode = h("select", { "aria-label": "Convert one chord or all", title: "One = the chord at the cursor or what you select. All = the whole box.", onChange: function () { akCvCfg().mode = this.value; save(); } },
+    opt("one", "One", c.mode === "one"), opt("all", "All", c.mode === "all"));
+  var to = h("select", { "aria-label": "Convert to", title: "Names = G, Am7. Fret shapes = x32010 (low string first). Dashes = x-3-2-0-1-0", onChange: function () { akCvCfg().to = this.value; save(); } },
+    opt("names", "→ Names", c.to === "names"), opt("shapes", "→ Shapes", c.to === "shapes"), opt("dash", "→ Shapes x-3-2", c.to === "dash"));
+  var go = h("button", { class: "akcv-go", onMousedown: function (e) { e.preventDefault(); }, onClick: function () { akCvRun(row); } }, "♪ Convert");
+  go.addEventListener("pointerdown", function (e) { if (e.pointerType !== "mouse") e.preventDefault(); });
+  var tip = h("details", { class: "akcv-tip" }, h("summary", { "aria-label": "How Convert works" }, "ⓘ"),
+    h("p", { class: "hint" }, "Turns chords into names (G, Am7) or fret shapes (x32010: one fret per string, low string first, x = not played; frets of 10 or more get dashes, x-10-12-12-11-10). One converts the chord at the cursor or the ones you select; All scans the whole box you used last (Lyrics or Chord chart) and leaves words alone. Shapes written in a song are real chords: tap one for its diagram and sound. To only show chords as shapes without changing the text, use the Frets button or Chord options › Show chords as."));
+  row.appendChild(go); row.appendChild(mode); row.appendChild(to); row.appendChild(tip);
+  return row;
+}
+function akCvMount() {
+  var b = document.querySelector("#app .ak17-cvall:not([data-akcv])"); if (!b) return;
+  b.setAttribute("data-akcv", "1");
+  var old = b.parentNode; if (!old || !old.parentNode) return;
+  old.classList.add("akcv-old"); old.style.display = "none";
+  var row = akCvRow(); old.parentNode.insertBefore(row, old);
+  var B = akCvBoxes(row);
+  [["lyrics", B.lyrics], ["chords", B.chords]].forEach(function (p) { if (p[1]) p[1].addEventListener("focus", function () { S.akCvIn = p[0]; }); });
+}
+(function () {
+  if (typeof MutationObserver === "undefined") return;
+  var t = 0, mo = new MutationObserver(function () { if (t) return; t = setTimeout(function () { t = 0; akCvMount(); }, 30); });
+  function start() { var app = document.getElementById("app") || document.body; if (app) mo.observe(app, { childList: true, subtree: true }); akCvMount(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+})();
+(function () {
+  var st = h("style", null,
+    ".akcv-row{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:4px 0 6px}" +
+    ".akcv-row>button,.akcv-row>select{border-radius:2px;min-height:34px;padding:4px 6px;font-size:14px;max-width:100%}" +
+    ".akcv-row>select{background:transparent;border:1px solid var(--line,#555);color:inherit;width:auto!important;flex:0 0 auto;margin:0!important}" +
+    ".akcv-row>select option{color:initial}" +
+    ".akcv-row>select:nth-child(3){max-width:120px}.akcv-row{flex-wrap:nowrap}.akcv-row:has(.akcv-tip[open]){flex-wrap:wrap}.akcv-row>select{min-width:0;padding-right:22px!important;background-position:right 4px center!important}.akcv-row>button{margin:0!important}" +
+    ".akcv-go{font-weight:700;border:1px solid var(--accent,#4cc);background:transparent}" +
+    ".akcv-tip{flex:0 0 auto}.akcv-tip>summary{list-style:none;cursor:pointer;padding:6px 8px;border:1px solid var(--line,#555);border-radius:2px}.akcv-tip>summary::-webkit-details-marker{display:none}" +
+    ".akcv-tip[open]{flex-basis:100%}.akcv-tip[open]>summary{display:inline-block}" +
+    ".aktc-note{border-radius:2px;min-width:34px}.aktc-row small.aktc-n{display:block;opacity:.85}");
+  (document.head || document.documentElement).appendChild(st);
+})();
+
+/* ---------------------------------------------------------------- 3. test checklist: a note on every item, works or not */
+function akTcNoteOf(id) { var r = akTc()[id]; return r && r.note ? r.note : ""; }
+function akTcNoteEdit(id, done) {
+  var it = AKTC.filter(function (x) { return x.id === id; })[0], T = akTc(), cur = T[id] || null;
+  var ta = h("textarea", { rows: 3, placeholder: "Ideas to make it better, something odd nearby, move it somewhere… (works or not)", "aria-label": "Note" });
+  ta.value = cur && cur.note ? cur.note : "";
+  function put(v) {
+    var T2 = akTc(), r = T2[id];
+    if (!v && r && !r.r) delete T2[id];
+    else if (r) r.note = v;
+    else if (v) T2[id] = { r: "", at: new Date().toISOString().slice(0, 10), dev: akTcLS("akdev:name") || "", note: v };
+    save();
+    try { if (typeof akSyncReady === "function" && akSyncReady() && typeof akTcSend === "function") { clearTimeout(akTcNoteEdit._t); akTcNoteEdit._t = setTimeout(function () { akTcSend(true); }, 1500); } } catch (e) {}
+    done && done();
+  }
+  modal("✎ Note: " + (it ? it.t : ""), h("div", null, ta, h("p", { class: "hint" }, "Keeps your ✓ or ✗. Goes to Claude with 📤 Send (or 📋 copy).")),
+    [{ label: "Cancel" }, ta.value ? { label: "Delete note", danger: true, onClick: function () { put(""); } } : null, { label: "Save", primary: true, onClick: function () { put(ta.value.trim()); } }].filter(Boolean));
+  setTimeout(function () { try { ta.focus(); } catch (e) {} }, 40);
+}
+(function () {
+  /* a ✓ or ✗ keeps the note you wrote */
+  var mk = akTcMark;
+  akTcMark = function (id, r, note) { var keep = akTcNoteOf(id); var out = mk.call(this, id, r, note || (r ? keep : "")); if (!r && keep) { akTc()[id] = { r: "", at: new Date().toISOString().slice(0, 10), dev: akTcLS("akdev:name") || "", note: keep }; save(); } return out; };
+  /* a fresh ✗ asks "what went wrong" with the note already in it (akTcBad reads the old note) */
+  var vt = viewTestList;
+  viewTestList = function () {
+    var el = vt.apply(this, arguments);
+    try {
+      Array.prototype.forEach.call(el.querySelectorAll(".aktc-row"), function (row) {
+        var okb = row.querySelector(".aktc-box.ok"), lab = okb && okb.getAttribute("aria-label") || "", t = lab.replace(/^Works: /, "");
+        var it = AKTC.filter(function (x) { return x.t === t; })[0]; if (!it) return;
+        var note = akTcNoteOf(it.id), r = akTcState(it.id);
+        var sm = row.querySelector(".aktc-txt small");
+        if (sm && note) sm.textContent = (r === "bad" ? "✗ " : "✎ ") + note;
+        var b = h("button", { class: "aktc-box aktc-note" + (note ? " on" : ""), "aria-label": (note ? "Edit note: " : "Add a note: ") + it.t, title: "Note (works or not)", onClick: function () { akTcNoteEdit(it.id, render); } }, "✎");
+        var goB = row.querySelector(".aktc-go"); row.insertBefore(b, goB || null);
+      });
+      var info = el.querySelector(".aktc > p.hint:last-child"); if (info) info.textContent = info.textContent.replace("✗ = not working (add a note).", "✗ = not working, ✎ = a note either way (ideas, oddities, move it).");
+    } catch (e) {}
+    return el;
+  };
+  AK_VIEWS.testlist = viewTestList;
+  /* the 🧪 helper card gets ✎ Note */
+  var bar = akTcBar;
+  akTcBar = function () {
+    var r = bar.apply(this, arguments);
+    try {
+      var acts = document.querySelector(".aktc-dock .aktc-acts"), id = S.akTcCur;
+      if (acts && id && !acts.querySelector(".aktc-note")) { var no = acts.querySelector(".aktc-no"); acts.insertBefore(h("button", { class: "aktc-note", onClick: function () { akTcNoteEdit(id, function () { toast("Note saved."); }); } }, "✎ Note"), no ? no.nextSibling : null); }
+    } catch (e) {}
+    return r;
+  };
+  /* notes go to Claude too */
+  var fl = akTcFixList;
+  akTcFixList = function () {
+    var out = fl.apply(this, arguments), T = akTc(), dev = akTcLS("akdev:name") || "";
+    out.forEach(function (x) { x.result = "not working"; });
+    AKTC.forEach(function (x) { var r = T[x.id]; if (!r || r.r === "bad" || !r.note) return; out.push({ id: x.id, what: x.t, ver: x.v, note: r.note, at: r.at, dev: r.dev || dev, result: r.r === "ok" ? "works" : "not tested", kind: "note", open: true }); });
+    return out;
+  };
+  akTcCopyBad = function () {
+    var T = akTc(), bad = AKTC.filter(function (x) { return akTcState(x.id) === "bad"; }), notes = AKTC.filter(function (x) { var r = T[x.id]; return r && r.r !== "bad" && r.note; });
+    if (!bad.length && !notes.length) { toast("Nothing marked Not working and no notes yet."); return; }
+    var line = function (x) { var r = T[x.id]; return "- " + x.t + " [" + x.v + "]" + (r.note ? ": " + r.note : "") + (r.dev ? " (" + r.dev + ")" : ""); };
+    var txt = (bad.length ? "Not working (" + AK_VERSION + "):\n" + bad.map(line).join("\n") : "") + (notes.length ? (bad.length ? "\n\n" : "") + "Notes (works or not tested):\n" + notes.map(function (x) { return line(x) + (T[x.id].r === "ok" ? " ✓" : ""); }).join("\n") : "");
+    var box = function () { modal("List for Claude", h("textarea", { rows: 8, value: txt }), [{ label: "Done", primary: true }]); };
+    try { navigator.clipboard.writeText(txt).then(function () { toast("Copied. Paste it to Claude."); }, box); } catch (e) { box(); }
+  };
+})();
+
+/* ---------------------------------------------------------------- version, help, checklist */
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Convert chords: names (G, Am7) ⇄ fret shapes (x32010), one or all", a: "Song editor › ♪ Convert, right above Chord versions and the Chord chart box. Pick One or All, then → Names or → Shapes. It works in the box you used last (Lyrics or Chord chart)." });
+  AK_HELP_WHERE.push({ t: "Fret shapes (x32010, 320003, x-10-12-12-11-10) as chords", a: "Write them in [brackets] or on a chord line: they show as written, tap for the diagram and sound. Song editor › ♪ Convert changes them to names and back." });
+}
+if (typeof akTcAdd === "function") akTcAdd("20.1", "Songs", [
+  ["cv-all", "♪ Convert all chords", "Song editor: type G Am x32010 xx0232 in the Chord chart box. Pick All, → Shapes, tap ♪ Convert: the preview says how many, then the names become shapes. Switch to → Names and Convert again to get names back. ↶ Undo goes back in one step.", ["song", null, "♪ Convert"]],
+  ["cv-one", "♪ Convert one chord", "Put the cursor on one chord (or select a few) in the Lyrics or Chords box, pick One, then ♪ Convert. Only that chord changes. It works in whichever box you tapped last.", ["song", null, "♪ Convert"]],
+  ["cv-mixed", "♪ Convert with words on the line", "In the Chords box write: Intro: x02210 then G (x2). Convert all → Names: the shape and G become chords, Intro: and (x2) stay words.", ["song", null, "♪ Convert"]],
+  ["cv-play", "🎸 Fret shapes are real chords", "Convert a song to fret shapes, open it to play: shapes show as written; tap one for its diagram (the exact frets you wrote) and its sound.", ["song", null, "♪ Convert"]],
+  ["tc-notes", "✎ Notes on test items", "In this list tap ✎ on any item (works or not) and write an idea. 📋 copies it with the ✗ notes; 📤 Send puts it in Claude's fix list.", ["testlist", {}, ""]]]);
+/* Go › for the song items: open a song's editor, then 📍 ring ♪ Convert (with its path) */
+function akCvGoTest(it) {
+  var s = typeof akTcSong === "function" ? akTcSong() : null; if (!s) { toast("Add a song first."); return; }
+  go("song", { songId: s.id }); var n = 0;
+  (function look() {
+    var el = document.querySelector("#app .akcv-go"); if (!el) { if (n++ < 25) setTimeout(look, 150); return; }
+    for (var p = el; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+    if (typeof akSpot === "function") akSpot(el, { title: "♪ Convert", path: ["Songs", s.title || "Song", "Edit", "♪ Convert"], what: "Turns chords into names (G, Am7) or fret shapes (x32010), one or the whole box.", how: it ? it.how : "" });
+    else akTcFind("♪ Convert");
+  })();
+}
+var AKCV_WHERE = { "cv-all": "Songs › a song › ✎ Edit › ♪ Convert (right above Chord versions and the Chord chart)", "cv-one": "Songs › a song › ✎ Edit › ♪ Convert › One", "cv-mixed": "Songs › a song › ✎ Edit › Chord chart box, then ♪ Convert › All › → Names", "cv-play": "Songs › a song › ✎ Edit › ♪ Convert › → Shapes, then ▶ Play", "tc-notes": "⋯ More › 🧪 Test checklist › ✎ on each row (and ✎ Note on the 🧪 helper)" };
+if (typeof AKTC !== "undefined") AKTC.forEach(function (x) {
+  if (/^cv-/.test(x.id)) x.go = function () { akCvGoTest(x); };
+  var w = AKCV_WHERE[x.id]; if (!w) return;
+  if (typeof AKTC_WHERE !== "undefined") { AKTC_WHERE[x.id] = [w]; x.where = w; } else x.how = "Where: " + w + ". " + x.how;
+});
+AK_WHATS_NEW = ["♪ Convert chord in the song editor (right above the chord chart): turn chords into names (G, Am7) or fret shapes (x32010), one at a time or the whole box, lyrics or chords. Fret shapes written in a song are real chords now: tap for the diagram and sound.",
+  "🧪 Test checklist: ✎ leave a note on any item, works or not. Notes go to Claude with the fix list."].concat(AK_WHATS_NEW || []);
+AK_VERSION = "20.1";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
