@@ -67685,6 +67685,78 @@ AK_WHATS_NEW = ["🎛 Icons: the bottom bar and ⋯ More use the set from your m
   "🎨 Your notes: the Graphics pop-up list scrolls and Aa Words is in three folds, so Curve and 3D are reachable. 💧 Dropper has a magnifier and ✓ Use this color; 🎨 From design leaves out the blue box and handles."].concat(typeof AK_WHATS_NEW !== "undefined" ? AK_WHATS_NEW : []);
 AK_VERSION = "21.2";
 
+/* ================= 21.3: the Graphics pop-up list stays put while you hold a slider (his fix-list note i22-scroll, 11-04) =================
+   His note: "As soon as I touch one of the sliders for the curves or the Tilt the window disappears ... when I let go it reappears
+   scrolled all the way to the top ... I'd want the sliders to still work ... better for it not to disappear."
+   Cause: every slider step repaints the picture, and the repaint rebuilt the whole pop-up (its key holds the part's edits), so the slider
+   under his finger was thrown away mid-drag (the list fell back to the short bar, the drag stopped) and the new list started at the top.
+   Fix:
+   1. While a slider in the pop-up is held (or still sending input), the pop-up is frozen: the picture still redraws live, the list is
+      not rebuilt, so the same slider keeps working. One rebuild happens after you let go.
+   2. Any rebuild of the list (let go of a slider, B I U, steps, nudges) keeps the scroll spot when the same group is open.
+   3. Sliders in the list take the touch for themselves (touch-action:none), so a sideways drag never scrolls the list instead. */
+var AK21E = { hold: null, down: false, t: 0 };
+function ak21eSc(pop) { return pop && pop.querySelector ? pop.querySelector(".ak21d-sc") : null; }
+function ak21eIsSl(t) { return !!(t && t.closest && t.closest(".akg-pop.akpl-on") && (t.matches && t.matches('input[type="range"]') || t.closest(".akg-slider"))); }
+function ak21eLater() {
+  clearTimeout(AK21E.t);
+  AK21E.t = setTimeout(function () {
+    if (AK21E.down || !AK21E.hold) return;
+    AK21E.hold = null;
+    try { var st = akGfxState(); if (st && st.X) st.X.paint(); } catch (e) {}
+  }, 300);
+}
+document.addEventListener("pointerdown", function (e) {
+  if (!ak21eIsSl(e.target)) return;
+  AK21E.hold = e.target.closest(".akg-pop"); AK21E.down = true; clearTimeout(AK21E.t);
+}, true);
+document.addEventListener("input", function (e) {
+  if (!ak21eIsSl(e.target)) return;
+  AK21E.hold = e.target.closest(".akg-pop"); ak21eLater();
+}, true);
+function ak21eUp() { if (!AK21E.down) return; AK21E.down = false; ak21eLater(); }
+document.addEventListener("pointerup", ak21eUp, true);
+document.addEventListener("pointercancel", ak21eUp, true);
+
+(function () {
+  if (typeof akGfxPopSync !== "function") return;
+  var s0 = akGfxPopSync;
+  akGfxPopSync = function (wrap) {
+    var pop = wrap && wrap._pop;
+    /* frozen while a slider in it is held: nothing in the list is rebuilt or moved */
+    if (AK21E.hold && pop === AK21E.hold && pop.isConnected && !pop.hidden) {
+      try { var st = akGfxState(); if (st && st.sel) return; } catch (e) { return; }
+    }
+    var sc = ak21eSc(pop), top = sc ? sc.scrollTop : null, grp = typeof AKPL !== "undefined" ? AKPL.group : null, sel = akGfxState().sel;
+    var out = s0.apply(this, arguments);
+    try {
+      var sc2 = ak21eSc(pop);
+      if (sc2 && top && (typeof AKPL === "undefined" || AKPL.group === grp) && akGfxState().sel === sel) sc2.scrollTop = top;
+    } catch (e) {}
+    return out;
+  };
+  if (typeof akPlRender !== "function") return;
+  var r0 = akPlRender;
+  akPlRender = function (pop) {
+    var sc = ak21eSc(pop), top = sc ? sc.scrollTop : null, grp = AKPL.group;
+    var out = r0.apply(this, arguments);
+    try { var sc2 = ak21eSc(pop); if (sc2 && top && AKPL.group === grp) sc2.scrollTop = top; } catch (e) {}
+    return out;
+  };
+})();
+
+akCss("ak21e", ".akg-pop.akpl-on .akg-slider input[type=range]{touch-action:none}");
+
+if (typeof akTcAdd === "function") akTcAdd("21.3", "Your notes", [
+  ["i23-hold", "Sliders in the pop-up list keep working", "Graphics › tap words › Aa Words › Turn and curve (or 3D). Scroll the list a little, then hold Curve or a Tilt slider and move it: the list stays on screen, the words change as you move, and after you let go the list is still at the same scroll spot.", ["graphics", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK21E_WHERE = { "i23-hold": ["Graphics › tap words › Aa Words › Turn and curve"] };
+  AKTC.forEach(function (x) { var w = AK21E_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_WHATS_NEW = ["🎨 Your note: holding Curve, Turn or a 3D slider in the Graphics pop-up list no longer makes the list vanish. The slider keeps working and the list keeps its scroll spot."].concat(typeof AK_WHATS_NEW !== "undefined" ? AK_WHATS_NEW : []);
+AK_VERSION = "21.3";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
