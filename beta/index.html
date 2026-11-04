@@ -65365,6 +65365,371 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
 }
 AK_VERSION = "20.4";
 
+/* ================= 20.4.1: no password prompts from search boxes =================
+   The phone's autofill saw a search box above a password-style box on the same page
+   (Settings has both) and offered to save a password. Every box that is not a password
+   now says "no autofill", and every password-style box says it is a new secret, not a login. */
+function akNoFill(root) {
+  try {
+    var list = (root || document).querySelectorAll ? (root || document).querySelectorAll("input,textarea") : [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i], t = (e.getAttribute("type") || "text").toLowerCase();
+      if (e.getAttribute("data-akfill")) continue;
+      e.setAttribute("data-akfill", "1");
+      if (t === "password") { e.setAttribute("autocomplete", "new-password"); e.setAttribute("data-lpignore", "true"); }
+      else if (t === "search" || t === "text" || t === "") {
+        if (e.getAttribute("autocomplete") !== "off") e.setAttribute("autocomplete", "off");
+        e.setAttribute("data-lpignore", "true"); e.setAttribute("data-form-type", "other"); e.setAttribute("data-1p-ignore", "true");
+        if (t === "search" && !e.getAttribute("name")) e.setAttribute("name", "aksearch" + Math.floor(Math.random() * 1e6));
+        if (t === "search") e.setAttribute("enterkeyhint", "search");
+      }
+    }
+  } catch (er) {}
+}
+(function () {
+  if (typeof document === "undefined" || window.__akNoFill) return; window.__akNoFill = true;
+  var t = null;
+  function soon() { clearTimeout(t); t = setTimeout(function () { akNoFill(document); }, 30); }
+  try { new MutationObserver(soon).observe(document.documentElement, { childList: true, subtree: true }); } catch (er) {}
+  soon();
+})();
+
+/* ================================================================ ak_hurdlr: 20.6 Hurdlr importer (his GO 11-03/04). PERSONAL EDITION ONLY.
+   Reads the .xlsx reports Hurdlr exports (TaxSummary holds every list; ExpensesByCategory, IncomeByBusiness and MileageByBusiness
+   work too, one or several at once). Only the list sheets are read ("Business|Personal|Pending  Expense|Income|Mileage List"):
+   row 3 = UPPERCASE headers (matched by name, not position), rows 4+ = one item each, "Report Total" row skipped.
+   Dates are Excel serial numbers (time of day dropped), text is trimmed.
+   Stored in settings().money.hurdlr = { items: [...], at, files, use: { e, m, i } } (private: settings travel only in his own
+   backups/sync). Item: k = e|i|m (expense, income, mileage), s = b|p|q (business, personal, pending), d = YYYY-MM-DD, a = amount
+   (deduction for mileage), mi = miles, cat, tax, sch, biz, cl, mer, src, desc, car, from, to, dur.
+   Re-importing never doubles up: an item matches an earlier one by kind + date + amount + text + account (+ miles), counted as a
+   multiset so two real identical charges in one file both stay. A match that Hurdlr has since sorted (pending -> business) is updated.
+   Where: Settings › 💾 Your data › 💸 Hurdlr (import, status, remove) and 💼 Business › 💰 Money and taxes › 🧾 From Hurdlr
+   (year summary, Count in totals: business expenses / mileage / income, all off by default, list with filters, CSV).
+   Tests: ak_t630 (fixture tests/fixture_hurdlr.xlsx, made-up numbers; his real exports never go in a repo). ================= */
+var AKHD_SHEET = /^(business|personal|pending)\s+(expense|income|mileage)\s+list$/i;
+var AKHD_COLS = { "CATEGORY": "cat", "CATEGORY NAME": "cat", "TAX CATEGORY": "tax", "FORM 1040 SCHED C CATEGORY": "sch", "ACCOUNT": "acct", "BUSINESS": "biz", "CLIENT": "cl",
+  "MERCHANT": "mer", "SOURCE": "src", "DESCRIPTION": "desc", "RECEIPT": "rc", "DATE": "d", "AMOUNT": "a", "CAR NAME": "car", "START LOCATION": "from", "END LOCATION": "to",
+  "DURATION": "dur", "START": "t0", "END": "t1", "DISTANCE (MILES)": "mi", "DEDUCTION AMOUNT": "a" };
+var AKHD_KIND = { e: "Expenses", i: "Income", m: "Mileage" }, AKHD_ST = { b: "Business", p: "Personal", q: "Pending" };
+var AKHD_UI = { open: false, k: "e", s: "", q: "", n: 80 };
+
+function akHd() {
+  var M = akMoneyCfg(); if (!M.hurdlr || typeof M.hurdlr !== "object") M.hurdlr = {};
+  var H = M.hurdlr; if (!Array.isArray(H.items)) H.items = []; if (!H.use) H.use = { e: 0, m: 0, i: 0 }; if (!Array.isArray(H.files)) H.files = [];
+  return H;
+}
+function akHdOn() { return typeof akPersonal === "function" && akPersonal(); }
+
+/* ---- xlsx -> { sheetName: [[cell, …], …] } (inline strings and shared strings; numbers stay numbers) ---- */
+function akHdColIdx(ref) { var m = /^([A-Z]+)/.exec(ref || ""), n = 0; if (!m) return -1; for (var i = 0; i < m[1].length; i++) n = n * 26 + (m[1].charCodeAt(i) - 64); return n - 1; }
+function akHdXml(t) { return new DOMParser().parseFromString(t, "application/xml"); }
+function akHdTags(el, name) { return el.getElementsByTagNameNS ? el.getElementsByTagNameNS("*", name) : el.getElementsByTagName(name); }
+function akHdText(el) { var ts = akHdTags(el, "t"), s = ""; for (var i = 0; i < ts.length; i++) s += ts[i].textContent; return s; }
+function akHdReadXlsx(blob) {
+  return akUnzip(blob).then(function (files) {
+    var map = {}; files.forEach(function (f) { map[f.name.replace(/^\/+/, "")] = f.blob; });
+    if (!map["xl/workbook.xml"]) throw new Error("That isn't an Excel (.xlsx) file.");
+    function txt(n) { return map[n] ? map[n].text() : Promise.resolve(""); }
+    return Promise.all([txt("xl/workbook.xml"), txt("xl/_rels/workbook.xml.rels"), txt("xl/sharedStrings.xml")]).then(function (r) {
+      var wb = akHdXml(r[0]), rels = {}, ss = [];
+      if (r[1]) Array.prototype.forEach.call(akHdTags(akHdXml(r[1]), "Relationship"), function (x) { rels[x.getAttribute("Id")] = x.getAttribute("Target"); });
+      if (r[2]) Array.prototype.forEach.call(akHdTags(akHdXml(r[2]), "si"), function (x) { ss.push(akHdText(x)); });
+      var sheets = Array.prototype.map.call(akHdTags(wb, "sheet"), function (s) {
+        var id = s.getAttribute("r:id") || s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id"), tg = rels[id] || "";
+        tg = tg.charAt(0) === "/" ? tg.slice(1) : "xl/" + tg.replace(/^\.\//, "");
+        return { name: String(s.getAttribute("name") || "").trim(), path: tg };
+      });
+      var out = {};
+      return Promise.all(sheets.filter(function (s) { return AKHD_SHEET.test(s.name) && map[s.path]; }).map(function (s) {
+        return map[s.path].text().then(function (t) {
+          var rows = [];
+          Array.prototype.forEach.call(akHdTags(akHdXml(t), "row"), function (row) {
+            var a = [];
+            Array.prototype.forEach.call(akHdTags(row, "c"), function (c) {
+              var i = akHdColIdx(c.getAttribute("r")), ty = c.getAttribute("t"), v = akHdTags(c, "v")[0], val = "";
+              if (ty === "inlineStr") val = akHdText(c);
+              else if (ty === "s") val = v ? (ss[+v.textContent] || "") : "";
+              else if (ty === "str" || ty === "b" || ty === "e") val = v ? v.textContent : "";
+              else if (v) { var n = parseFloat(v.textContent); val = isNaN(n) ? v.textContent : n; }
+              if (i < 0) i = a.length; a[i] = typeof val === "string" ? val.trim() : val;
+            });
+            rows.push(a);
+          });
+          out[s.name] = rows;
+        });
+      })).then(function () { return out; });
+    });
+  });
+}
+/* Excel serial (or MM/DD/YYYY text) -> YYYY-MM-DD */
+function akHdDate(v) {
+  if (typeof v === "number" && v > 20000) { var d = new Date(Math.round((Math.floor(v) - 25569) * 86400000)); return d.toISOString().slice(0, 10); }
+  var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(String(v || "").trim());
+  if (m) return m[3] + "-" + ("0" + m[1]).slice(-2) + "-" + ("0" + m[2]).slice(-2);
+  m = /^(\d{4}-\d\d-\d\d)/.exec(String(v || "")); return m ? m[1] : "";
+}
+function akHdNum(v) { if (typeof v === "number") return v; var n = parseFloat(String(v || "").replace(/[$,\s]/g, "").replace(/^\((.*)\)$/, "-$1")); return isNaN(n) ? 0 : n; }
+/* one list sheet -> items */
+function akHdRows(name, rows) {
+  var m = AKHD_SHEET.exec(name); if (!m) return [];
+  var s = { business: "b", personal: "p", pending: "q" }[m[1].toLowerCase()], k = { expense: "e", income: "i", mileage: "m" }[m[2].toLowerCase()];
+  var hi = -1;
+  for (var r = 0; r < Math.min(rows.length, 8); r++) if ((rows[r] || []).some(function (c) { return c === "DATE"; })) { hi = r; break; }
+  if (hi < 0) return [];
+  var head = (rows[hi] || []).map(function (c) { return String(c == null ? "" : c).trim().toUpperCase(); }), out = [];
+  for (r = hi + 1; r < rows.length; r++) {
+    var row = rows[r] || [];
+    if (/^report total/i.test(String(row[0] || ""))) break;
+    if (!row.some(function (c) { return c !== "" && c != null; })) continue;
+    var it = { k: k, s: s };
+    head.forEach(function (hd, i) {
+      var f = AKHD_COLS[hd], v = row[i]; if (!f || v == null || v === "") return;
+      if (f === "d") it.d = akHdDate(v);
+      else if (f === "a" || f === "mi") it[f] = Math.round(akHdNum(v) * 100) / 100;
+      else if (f === "t0" || f === "t1") { if (typeof v === "number") { var t = Math.round((v - Math.floor(v)) * 1440); it[f] = ("0" + Math.floor(t / 60) % 24).slice(-2) + ":" + ("0" + t % 60).slice(-2); } else it[f] = String(v); }
+      else if (f !== "rc") it[f] = String(v);
+    });
+    if (!it.d) continue;
+    if (it.a == null) it.a = 0;
+    out.push(it);
+  }
+  return out;
+}
+function akHdKey(it) { return [it.k, it.d, (+it.a || 0).toFixed(2), String(it.desc || it.mer || "").toLowerCase().replace(/\s+/g, " "), String(it.src || "").toLowerCase(), it.k === "m" ? (+it.mi || 0).toFixed(2) + (it.t0 || "") : ""].join("|"); }
+/* merge one file's items into the store: -> { added, updated, same } */
+function akHdMerge(items) {
+  var H = akHd(), pool = {}, res = { added: 0, updated: 0, same: 0 };
+  H.items.forEach(function (x) { var k = akHdKey(x); (pool[k] = pool[k] || []).push(x); });
+  items.forEach(function (n) {
+    var k = akHdKey(n), l = pool[k];
+    if (l && l.length) {
+      var o = l.shift(), ch = false;
+      Object.keys(n).forEach(function (f) { if (o[f] !== n[f]) { o[f] = n[f]; ch = true; } });
+      if (ch) res.updated++; else res.same++;
+    } else { n.id = uid(); H.items.push(n); res.added++; }
+  });
+  return res;
+}
+/* files (a FileList or array) -> Promise<summary text> */
+function akHdImport(files) {
+  files = Array.prototype.slice.call(files || []);
+  if (!files.length) return Promise.resolve("");
+  var tot = { added: 0, updated: 0, same: 0, lists: 0 }, bad = [];
+  var chain = Promise.resolve();
+  files.forEach(function (f) {
+    chain = chain.then(function () {
+      return akHdReadXlsx(f).then(function (book) {
+        var items = [], n = 0;
+        Object.keys(book).forEach(function (nm) { n++; items = items.concat(akHdRows(nm, book[nm])); });
+        if (!n) { bad.push(f.name + " (no Hurdlr lists inside)"); return; }
+        tot.lists += n;
+        var r = akHdMerge(items); tot.added += r.added; tot.updated += r.updated; tot.same += r.same;
+        var H = akHd(); if (H.files.indexOf(f.name) < 0) H.files.push(f.name); if (H.files.length > 12) H.files = H.files.slice(-12);
+      }).catch(function (e) { bad.push(f.name + " (" + (e && e.message || "couldn't read it") + ")"); });
+    });
+  });
+  return chain.then(function () {
+    var H = akHd(); H.at = new Date().toISOString(); save();
+    var msg = "Hurdlr: " + tot.added + " new, " + tot.updated + " updated, " + tot.same + " already here.";
+    if (bad.length) msg += " Skipped: " + bad.join("; ") + ".";
+    return msg;
+  });
+}
+function akHdPick(after) {
+  var inp = h("input", { type: "file", accept: ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", multiple: true, style: "display:none" });
+  inp.addEventListener("change", function () {
+    var fl = inp.files; toast("Reading the Hurdlr file…");
+    akHdImport(fl).then(function (m) { if (m) toast(m); inp.remove(); if (after) after(m); else render(); });
+  });
+  document.body.appendChild(inp); inp.click();
+}
+/* ---- numbers for a year ---- */
+function akHdYear(y) {
+  var H = akHd(), R = { n: 0, b: { inc: 0, exp: 0, mi: 0, ded: 0 }, p: { inc: 0, exp: 0, mi: 0, ded: 0 }, q: { e: 0, eAmt: 0, i: 0, iAmt: 0, m: 0, mi: 0 }, byTax: {}, byCat: {} };
+  H.items.forEach(function (x) {
+    if (String(x.d).slice(0, 4) !== String(y)) return; R.n++;
+    var a = +x.a || 0;
+    if (x.s === "q") { if (x.k === "e") { R.q.e++; R.q.eAmt += a; } else if (x.k === "i") { R.q.i++; R.q.iAmt += a; } else { R.q.m++; R.q.mi += +x.mi || 0; } return; }
+    var T = R[x.s] || R.p;
+    if (x.k === "e") { T.exp += a; if (x.s === "b") { var t = x.tax || x.sch || x.cat || "Other"; R.byTax[t] = (R.byTax[t] || 0) + a; var c = x.cat || "Other"; R.byCat[c] = (R.byCat[c] || 0) + a; } }
+    else if (x.k === "i") T.inc += a; else { T.mi += +x.mi || 0; T.ded += a; }
+  });
+  return R;
+}
+function akHdYears() { var o = {}; akHd().items.forEach(function (x) { o[String(x.d).slice(0, 4)] = 1; }); return Object.keys(o).sort().reverse(); }
+
+/* ---- Money and taxes: optionally count Hurdlr business items in the totals (all off by default) ---- */
+(function () {
+  if (typeof akMoneyYear !== "function") return;
+  var y0 = akMoneyYear;
+  akMoneyYear = function (y) {
+    var o = y0.apply(this, arguments);
+    try {
+      if (!akHdOn()) return o;
+      var H = akHd(), u = H.use || {}; if (!(u.e || u.m || u.i) || !H.items.length) return o;
+      var M = akMoneyCfg(), pct = akShNum(M.setAside) / 100;
+      function qOf(d) { return Math.min(3, Math.floor((+String(d).slice(5, 7) - 1) / 3)); }
+      H.items.forEach(function (x) {
+        if (x.s !== "b" || String(x.d).slice(0, 4) !== String(y)) return;
+        var a = +x.a || 0, q = o.q[qOf(x.d)];
+        if (x.k === "e" && u.e) { o.exp += a; q.exp += a; var c = "Hurdlr: " + (x.cat || "Other"); o.byCat[c] = (o.byCat[c] || 0) + a; o.hdExp = (o.hdExp || 0) + a; }
+        else if (x.k === "m" && u.m) { o.miles += +x.mi || 0; o.mileDed += a; q.miles += +x.mi || 0; q.mileDed += a; o.hdDed = (o.hdDed || 0) + a; }
+        else if (x.k === "i" && u.i) { o.inc += a; q.inc += a; o.hdInc = (o.hdInc || 0) + a; }
+      });
+      o.expAll = o.exp + o.gigCosts; o.net = o.inc - o.expAll - o.mileDed;
+      o.seTax = Math.max(0, o.net) * 0.9235 * 0.153; o.setAside = Math.max(0, o.net) * pct;
+      o.q.forEach(function (q) { q.net = q.inc - q.exp - q.mileDed; q.setAside = Math.max(0, q.net) * pct; });
+    } catch (e) {}
+    return o;
+  };
+})();
+
+/* ---- the 🧾 From Hurdlr card in Money and taxes ---- */
+function akHdCard(y) {
+  var H = akHd(), R = akHdYear(y), $ = akHdMoney, u = H.use;
+  var det = h("details", { class: "card akhd", "data-akhd": "1", open: AKHD_UI.open });
+  det.addEventListener("toggle", function () { AKHD_UI.open = det.open; });
+  det.appendChild(h("summary", null, h("b", null, "🧾 From Hurdlr (" + (R.n ? R.n + " for " + y : "none for " + y) + ")")));
+  var head = h("div", { class: "row akhd-row" },
+    h("button", { class: "sm akhd-imp", onClick: function () { AKHD_UI.open = true; akHdPick(); } }, "⬆ Import Hurdlr file"),
+    h("span", { class: "grow hint" }, H.at ? "Last: " + akmDate(H.at.slice(0, 10)).replace(/^\w+, /, "") : "Tax Summary .xlsx has it all"),
+    h("button", { class: "sm", "aria-label": "More Hurdlr options", onClick: function () { menu(this, [
+      { label: "⬇ Save " + y + " as CSV", onClick: function () { akHdCsv(y); } },
+      { label: "ⓘ How to export from Hurdlr", onClick: function () { akHdHelp(); } },
+      { sep: true },
+      { label: "Remove all Hurdlr items…", danger: true, onClick: function () { confirmBox("Remove all " + H.items.length + " items imported from Hurdlr? (Your own expenses and shows stay.)", "Remove", function () { H.items = []; H.files = []; H.at = ""; save(); render(); }); } }]); } }, "⋯"));
+  det.appendChild(head);
+  if (!H.items.length) { det.appendChild(h("p", { class: "hint" }, "In Hurdlr, export the Tax Summary report for the year (an .xlsx file), then tap ⬆ Import. Expenses, Income or Mileage reports work too. Importing again never doubles anything up.")); return det; }
+  /* summary */
+  det.appendChild(h("div", { class: "akmy-sum" },
+    [["Business income", R.b.inc], ["Business expenses", R.b.exp], ["Business mileage: " + Math.round(R.b.mi) + " mi", R.b.ded],
+      ["Personal: expenses " + $(R.p.exp) + ", income " + $(R.p.inc) + ", " + Math.round(R.p.mi) + " mi", null],
+      ["Not sorted in Hurdlr yet: " + R.q.e + " expenses (" + $(R.q.eAmt) + "), " + R.q.i + " income (" + $(R.q.iAmt) + "), " + R.q.m + " trips (" + Math.round(R.q.mi) + " mi)", null]].map(function (x) {
+      return h("div", { class: "akmy-l" + (x[1] == null ? " akhd-dim" : "") }, h("span", null, x[0]), x[1] == null ? null : h("b", null, $(x[1])));
+    })));
+  /* count in totals */
+  function cb(key, label) {
+    return h("label", { class: "akhd-cb" }, h("input", { type: "checkbox", checked: !!u[key], onChange: function () { u[key] = this.checked ? 1 : 0; save(); render(); } }), label);
+  }
+  det.appendChild(h("div", { class: "row akhd-use" }, h("span", { class: "akhd-lab" }, "Count in totals:"), cb("e", "Expenses"), cb("m", "Mileage"), cb("i", "Income"),
+    h("button", { class: "akhd-i", "aria-label": "About counting", onClick: function () { akHdTip(this); } }, "ⓘ")));
+  /* by tax category */
+  var tk = Object.keys(R.byTax).sort(function (a, b) { return R.byTax[b] - R.byTax[a]; });
+  if (tk.length) det.appendChild(h("details", { class: "akhd-sub" }, h("summary", null, "Business expenses by tax category (" + tk.length + ")"),
+    tk.map(function (t) { return h("div", { class: "akmy-e" }, h("span", { class: "grow" }, t), h("b", null, $(R.byTax[t]))); })));
+  /* list with filters; the search box filters in place (no redraw, so the phone keyboard stays up) */
+  var list = h("div", { class: "akhd-list" });
+  var kSel = akGfxSelect("", [["e", "Expenses"], ["i", "Income"], ["m", "Mileage"]], AKHD_UI.k, function (v) { AKHD_UI.k = v; AKHD_UI.n = 80; draw(); });
+  var sSel = akGfxSelect("", [["", "All"], ["b", "Business"], ["p", "Personal"], ["q", "Pending"]], AKHD_UI.s, function (v) { AKHD_UI.s = v; AKHD_UI.n = 80; draw(); });
+  var qIn = h("input", { type: "search", placeholder: "Search", value: AKHD_UI.q, "aria-label": "Search Hurdlr items", class: "akhd-q" });
+  qIn.addEventListener("input", function () { AKHD_UI.q = qIn.value; AKHD_UI.n = 80; draw(); });
+  det.appendChild(h("div", { class: "row akhd-filt" }, kSel, sSel, qIn));
+  det.appendChild(list);
+  function draw() {
+    var q = AKHD_UI.q.trim().toLowerCase();
+    var l = H.items.filter(function (x) {
+      if (String(x.d).slice(0, 4) !== String(y) || x.k !== AKHD_UI.k || (AKHD_UI.s && x.s !== AKHD_UI.s)) return false;
+      return !q || [x.cat, x.tax, x.mer, x.desc, x.src, x.biz, x.cl, x.from, x.to, x.car, String(x.a)].join(" ").toLowerCase().indexOf(q) >= 0;
+    }).sort(function (a, b) { return b.d.localeCompare(a.d); });
+    var sum = l.reduce(function (t, x) { return t + (+x.a || 0); }, 0);
+    list.textContent = "";
+    list.appendChild(h("div", { class: "hint akhd-cnt" }, l.length + " items · " + $(sum)));
+    l.slice(0, AKHD_UI.n).forEach(function (x) {
+      var what = x.k === "m" ? ((x.from || "?") + " → " + (x.to || "?") + " · " + (+x.mi || 0) + " mi" + (x.desc ? " · " + x.desc : ""))
+        : ((x.mer || x.desc || x.biz || "") + (x.cat ? " · " + x.cat : "") + (x.src ? " · " + x.src : ""));
+      list.appendChild(h("div", { class: "akmy-e akhd-e", title: x.desc || "" }, h("span", null, x.d.slice(5)), h("b", null, $(+x.a || 0)),
+        h("span", { class: "grow" }, what), h("span", { class: "akhd-st akhd-" + x.s }, AKHD_ST[x.s])));
+    });
+    if (l.length > AKHD_UI.n) list.appendChild(h("button", { class: "sm", onClick: function () { AKHD_UI.n += 200; draw(); } }, "Show more (" + (l.length - AKHD_UI.n) + ")"));
+  }
+  draw();
+  return det;
+}
+function akHdMoney(n) { n = +n || 0; return (n < 0 ? "−" : "") + akmMoney(Math.abs(n)); }
+function akHdTip(btn) {
+  var t = "Off: Hurdlr items are shown here only. On: business items from Hurdlr are added to the totals, quarters and tax pack above. Income is off by default because show pay may already be counted from your shows. Pending items (not sorted in Hurdlr) are never counted.";
+  if (typeof akTipBubble === "function") { try { akTipBubble(btn, t); return; } catch (e) {} }
+  toast(t);
+}
+function akHdHelp() {
+  modal("Export from Hurdlr", h("p", null, "Hurdlr › Reports › pick the year › export the Tax Summary (it holds expenses, income and mileage). The Expenses by Category, Income by Business and Mileage by Business files work too; pick one or several. Then ⬆ Import here. Importing the same dates again only adds what's new, and updates items you've sorted in Hurdlr since."), [{ label: "OK" }]);
+}
+function akHdCsv(y) {
+  var rows = [["Kind", "Status", "Date", "Amount", "Miles", "Category", "Tax category", "Merchant", "Description", "Account", "Business", "Client", "Car", "From", "To"]];
+  akHd().items.filter(function (x) { return String(x.d).slice(0, 4) === String(y); }).sort(function (a, b) { return a.d.localeCompare(b.d); }).forEach(function (x) {
+    rows.push([AKHD_KIND[x.k], AKHD_ST[x.s], x.d, x.a, x.mi || "", x.cat || "", x.tax || "", x.mer || "", x.desc || "", x.src || "", x.biz || "", x.cl || "", x.car || "", x.from || "", x.to || ""]);
+  });
+  akShCsv("Hurdlr " + y, rows);
+}
+(function () {
+  if (!AK_VIEWS.money) return;
+  var v0 = AK_VIEWS.money;
+  AK_VIEWS.money = function () {
+    var el = v0.apply(this, arguments);
+    try {
+      if (!akHdOn()) return el;
+      var body = el.querySelector(".akmy"); if (!body) return el;
+      var set = Array.prototype.filter.call(body.querySelectorAll(":scope > details.card"), function (d) { return /Settings and export/.test((d.querySelector("summary") || {}).textContent || ""); })[0];
+      var card = akHdCard(AKMY.year);
+      if (set) body.insertBefore(card, set); else body.appendChild(card);
+      /* the totals say what came from Hurdlr */
+      var R = akMoneyYear(AKMY.year), bits = [];
+      if (R.hdExp) bits.push("expenses " + akmMoney(R.hdExp)); if (R.hdDed) bits.push("mileage " + akmMoney(R.hdDed)); if (R.hdInc) bits.push("income " + akmMoney(R.hdInc));
+      var sum = body.querySelector(".akmy-sum");
+      if (bits.length && sum) sum.parentNode.insertBefore(h("p", { class: "hint akhd-incl" }, "Includes from Hurdlr: " + bits.join(", ") + "."), sum.nextSibling);
+    } catch (e) { try { console.warn("hurdlr card", e); } catch (x) {} }
+    return el;
+  };
+})();
+
+/* ---- Settings › 💾 Your data › 💸 Hurdlr: import here too (next to Import and share) ---- */
+(function () {
+  if (typeof akYourData !== "function") return;
+  var y0 = akYourData;
+  akYourData = function (c) {
+    y0.apply(this, arguments);
+    if (!akHdOn()) return;
+    try {
+      var b = akYdBody(c, "💸 Hurdlr (money)", "expenses, income, mileage from Hurdlr"), H = akHd();
+      var st = h("p", { class: "hint akhd-ydst", "aria-live": "polite" }, H.items.length ? H.items.length + " items from Hurdlr" + (H.at ? ", last import " + H.at.slice(0, 10) : "") + "." : "Nothing imported yet.");
+      c.out.appendChild(akYdRow(
+        akYdBtn("⬆ Import Hurdlr file", function () { akHdPick(function (m) { st.textContent = (m || "") + " " + akHd().items.length + " items in all."; }); }),
+        akYdBtn("💰 See in Money and taxes", function () { AKHD_UI.open = true; go("money"); }),
+        akYdBtn("ⓘ How", akHdHelp)));
+      c.out.appendChild(st);
+      c.out.appendChild(h("p", { class: "hint" }, "Tax Summary .xlsx holds everything; pick one or several reports. Stays on this device and in your own backups."));
+      /* sit right after ⇩ Import and share */
+      var me = b && b.closest("details"), par = me && me.parentElement;
+      if (me && par) {
+        var imp = Array.prototype.filter.call(par.querySelectorAll(":scope > details"), function (d) { return /Import and share/.test((d.querySelector("summary") || {}).textContent || ""); })[0];
+        if (imp && imp !== me) par.insertBefore(me, imp.nextSibling);
+        me.setAttribute("data-akhd", "1");
+      }
+    } catch (e) { try { console.warn("hurdlr your data", e); } catch (x) {} }
+  };
+})();
+akCss("akhd", ".akhd-row,.akhd-use,.akhd-filt{gap:6px;flex-wrap:wrap;align-items:center}.akhd-cb{display:inline-flex;align-items:center;gap:4px;font-size:13px;min-height:32px}.akhd-cb input{margin:0}" +
+  ".akhd-filt select{max-width:9em}.akhd-q{flex:1 1 8em;min-width:6em}.akhd-sub>summary{cursor:pointer;font-size:13px;min-height:32px;display:flex;align-items:center}.akhd-cnt{margin:4px 0}" +
+  ".akhd-e span:first-child{font-variant-numeric:tabular-nums}.akhd-e .grow{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.akhd-st{font-size:11px;border:1px solid rgba(127,127,127,.4);border-radius:2px;padding:0 4px;opacity:.8}" +
+  ".akhd-q{border-radius:2px}.akhd-incl{margin:2px 0 0}.akhd-dim{font-size:13px;opacity:.75}.akhd-lab{font-size:13px;opacity:.8}" +
+  ".akhd-i{min-height:30px;min-width:30px;padding:0 6px;border:1px solid rgba(127,127,127,.4);border-radius:2px;background:transparent;color:inherit}.akhd .akhd-use{gap:2px 10px}.akhd-st{flex:none}" +
+  ".akhd-sub>summary{list-style:none;gap:6px}.akhd-sub>summary::-webkit-details-marker{display:none}.akhd-sub>summary::before{content:'▸';color:#C8962E;width:1em}.akhd-sub[open]>summary::before{content:'▾'}");
+
+if (akHdOn()) {
+  if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Import from Hurdlr (expenses, income, mileage)", a: "Settings › 💾 Your data › 💸 Hurdlr › ⬆ Import Hurdlr file (the Tax Summary .xlsx has everything). See it in 💼 Business › 💰 Money and taxes › 🧾 From Hurdlr: year summary, Count in the totals (expenses, mileage, income), the list with filters and search, CSV.", k: "hurdlr import xlsx excel expenses income mileage tax summary money taxes bank" });
+  AK_WHATS_NEW = ["💸 Hurdlr importer: Settings › Your data › 💸 Hurdlr › ⬆ Import Hurdlr file (the Tax Summary .xlsx has it all). Expenses, income and mileage show in Money and taxes › 🧾 From Hurdlr, with a switch to count them in your totals. Importing again never doubles up."].concat(AK_WHATS_NEW || []);
+  if (typeof akTcAdd === "function") akTcAdd("20.6", "Money", [
+    ["hd-import", "💸 Import from Hurdlr", "Settings › 💾 Your data › 💸 Hurdlr › ⬆ Import Hurdlr file: pick your Tax Summary .xlsx. A message says how many are new. Import it again: 0 new, nothing doubles.", ["settings", {}, "Hurdlr"]],
+    ["hd-money", "🧾 Hurdlr in Money and taxes", "💼 Business › 💰 Money and taxes › 🧾 From Hurdlr: totals for the year, the list (Expenses / Income / Mileage, Business / Personal / Pending, search). Tick Count in the totals: Expenses and the profit above changes.", ["money", {}, ""]]]);
+  if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+    var AKHD_WHERE = { "hd-import": ["Settings › 💾 Your data › 💸 Hurdlr › ⬆ Import Hurdlr file", { p: ["Your data", "Hurdlr", "Import Hurdlr file"] }],
+      "hd-money": ["💼 Business › 💰 Money and taxes › 🧾 From Hurdlr", { sel: "#app details.akhd > summary", re: "From Hurdlr" }] };
+    AKTC.forEach(function (x) { var w = AKHD_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+  }
+}
+AK_VERSION = "20.6";
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
