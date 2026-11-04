@@ -61309,21 +61309,32 @@ function akSegRemoveBg(X, id) {
   }
   function run(fn, msg) {
     info.textContent = msg;
-    return fn().then(function () { draw(); var a = mask ? akSegArea(mask) : 0; info.textContent = !mask ? "" : a < 0.01 ? (mode === "person" ? "No person found. Try ‘Tap to pick’ and tap the thing to keep." : "Nothing picked there. Tap right on the thing.") : "Kept " + Math.round(a * 100) + "% of the picture. Touch up with the brush, then Use it."; })
+    return fn().then(function () { draw(); var a = mask ? akSegArea(mask) : 0; info.textContent = !mask ? "" : a < 0.01 ? (mode === "person" ? "No person found. Pick 👆 Tap to keep and tap the thing to keep." : "Nothing kept yet. Tap right on the thing to keep.") : "Kept " + Math.round(a * 100) + "% of the picture. " + (mode === "person" ? "Wrong bits? 👆 Tap to keep or 👆 Tap to remove fixes them." : "Tap more to fix it, or touch up with the brush, then Use it."); })
       .catch(function (e) { info.textContent = "The cut-out tool couldn't run on this device: " + ((e && e.message) || e); });
   }
-  function doPerson() { mode = "person"; taps = []; return run(function () { return akSegPersonPlus(cv).then(function (m) { mask = m; }); }, "Finding the person…"); }
+  /* 19.9: ↶ / ↷ in the window: every Person run, tap and brush stroke is a step */
+  var UB = [], UF = [], strokes = 0, last = null;
+  function snap() {
+    if (!last || last.n !== strokes) last = { n: strokes, p: pc.getImageData(0, 0, w, hh), e: ec.getImageData(0, 0, w, hh) };
+    return { mask: mask, taps: taps.slice(), p: last.p, e: last.e, n: last.n, mode: mode };
+  }
+  function push() { UB.push(snap()); if (UB.length > 30) UB.shift(); UF = []; }
+  function put(o) { mask = o.mask; taps = o.taps.slice(); pc.putImageData(o.p, 0, 0); ec.putImageData(o.e, 0, 0); strokes++; last = { n: strokes, p: o.p, e: o.e }; mode = o.mode; draw(); var a = mask ? akSegArea(mask) : 0; info.textContent = mask ? "Kept " + Math.round(a * 100) + "% of the picture." : "Nothing kept yet."; refresh(); }
+  function undoStep() { if (!UB.length) return; UF.push(snap()); put(UB.pop()); }
+  function redoStep() { if (!UF.length) return; UB.push(snap()); put(UF.pop()); }
+  function doPerson() { if (mask || taps.length) push(); mode = "person"; taps = []; return run(function () { return akSegPersonPlus(cv).then(function (m) { mask = m; }); }, "Finding the person…"); }
+  /* 19.9: taps fix what's there (keep adds it, remove takes it away); 👤 Person starts over */
   function doTap(x, y, sub) {
-    taps.push({ x: x, y: y, sub: sub });
-    return run(function () { return akSegTap(cv, x, y).then(function (m) { hist.push(mask); mask = !mask || mode !== "tap" ? (sub ? null : m) : akSegUnion(mask, akSegResize(m, mask.w, mask.h), sub); mode = "tap"; }); }, "Picking it out…");
+    push(); taps.push({ x: x, y: y, sub: sub });
+    return run(function () { return akSegTap(cv, x, y).then(function (m) { mask = !mask ? (sub ? null : m) : akSegUnion(mask, akSegResize(m, mask.w, mask.h), sub); }); }, sub ? "Taking it away…" : "Picking it out…");
   }
   /* pointer: tap = pick (in Tap mode), drag = brush (when a brush is on) */
   var down = null;
   function pt(e) { var r = view.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; }
   function dab(p) { var c = brush === "keep" ? pc : ec, rr = size / 100 * 0.08 * Math.max(w, hh); c.beginPath(); c.arc(p.x * w, p.y * hh, rr, 0, 6.3); c.fillStyle = "#fff"; c.fill(); if (brush === "keep") { ec.save(); ec.globalCompositeOperation = "destination-out"; ec.beginPath(); ec.arc(p.x * w, p.y * hh, rr, 0, 6.3); ec.fill(); ec.restore(); } else { pc.save(); pc.globalCompositeOperation = "destination-out"; pc.beginPath(); pc.arc(p.x * w, p.y * hh, rr, 0, 6.3); pc.fill(); pc.restore(); } }
-  view.addEventListener("pointerdown", function (e) { e.preventDefault(); down = pt(e); if (brush) { dab(down); draw(); } try { view.setPointerCapture(e.pointerId); } catch (er) {} });
-  view.addEventListener("pointermove", function (e) { if (!down || !brush) return; dab(pt(e)); draw(); });
-  view.addEventListener("pointerup", function (e) { var p = pt(e); if (down && !brush && mode === "tap") doTap(p.x, p.y, AKSEG.sub); down = null; });
+  view.addEventListener("pointerdown", function (e) { e.preventDefault(); down = pt(e); if (brush) { push(); strokes++; dab(down); draw(); } try { view.setPointerCapture(e.pointerId); } catch (er) {} });
+  view.addEventListener("pointermove", function (e) { if (!down || !brush) return; dab(pt(e)); strokes++; draw(); });
+  view.addEventListener("pointerup", function (e) { var p = pt(e); if (down && !brush && (mode === "keep" || mode === "remove")) doTap(p.x, p.y, mode === "remove").then(refresh); else if (down && brush) refresh(); down = null; });
   function seg(items, cur, set, aria) {
     return h("div", { class: "akseg-seg", role: "group", "aria-label": aria }, items.map(function (it) {
       return h("button", { type: "button", class: "akseg-sb" + (cur() === it[0] ? " on" : ""), "aria-pressed": cur() === it[0] ? "true" : "false", onClick: function () { set(it[0]); refresh(); } }, it[1]);
@@ -61332,8 +61343,18 @@ function akSegRemoveBg(X, id) {
   var ctl = h("div", { class: "akseg-ctl" });
   function refresh() {
     ctl.textContent = "";
-    ctl.appendChild(seg([["person", "👤 Person"], ["tap", "👆 Tap to pick"]], function () { return mode; }, function (v) { brush = ""; if (v === "person") doPerson(); else { mode = "tap"; mask = null; taps = []; draw(); info.textContent = "Tap the thing you want to keep. Tap more spots to add to it."; } }, "How to find what to keep"));
-    if (mode === "tap") ctl.appendChild(seg([["add", "＋ Add"], ["sub", "－ Take away"]], function () { return AKSEG.sub ? "sub" : "add"; }, function (v) { AKSEG.sub = v === "sub"; brush = ""; }, "What a tap does"));
+    var how = seg([["person", "👤 Person"], ["keep", "👆 Tap to keep"], ["remove", "👆 Tap to remove"]], function () { return brush ? "" : mode; }, function (v) {
+      brush = "";
+      if (v === "person") { doPerson().then(refresh); return; }
+      mode = v; draw();
+      info.textContent = v === "keep" ? "Tap anything to keep it too (a guitar, a mic, a hat). Each tap adds to what's kept." : "Tap anything to take it out (a wall, a lamp, a stray bit). Each tap removes it.";
+    }, "How to choose what to keep");
+    [["person", "Finds the people by itself and keeps them (with their hat and what they hold). Tap again to start over."], ["keep", "Each tap keeps the thing you tap, added to what's kept"], ["remove", "Each tap takes the thing you tap out"]].forEach(function (t, i) { var b = how.children[i]; if (b) b.title = t[1]; });
+    var row = h("div", { class: "akseg-row" }, how,
+      h("button", { type: "button", class: "akseg-sb akseg-un", title: "Undo (Person, a tap or a brush stroke)", "aria-label": "Undo", disabled: !UB.length, onClick: undoStep }, "↶"),
+      h("button", { type: "button", class: "akseg-sb akseg-un akseg-re", title: "Redo", "aria-label": "Redo", disabled: !UF.length, onClick: redoStep }, "↷"));
+    ctl.appendChild(row);
+    ctl.appendChild(h("p", { class: "hint akseg-tip" }, "👤 Person makes the first try. Then tap things to keep or remove, or brush the edge."));
     ctl.appendChild(seg([["", "No brush"], ["keep", "🖌 Keep"], ["erase", "⌫ Erase"]], function () { return brush; }, function (v) { brush = v; }, "Touch-up brush"));
     if (brush) ctl.appendChild(X.slider("Brush size", size, 5, 100, 1, function (v) { size = v; }, null, true));
     ctl.appendChild(X.slider("Edge softness", soft, 0, 100, 1, function (v) { soft = v; draw(); }, null, true));
@@ -61482,6 +61503,7 @@ akCss("akseg", ".akseg-wrap{display:flex;justify-content:center;background:#111;
   ".akseg-cv{max-width:100%;max-height:52vh;touch-action:none;display:block}.akseg-info{margin:6px 0}" +
   ".akseg-ctl{display:flex;flex-direction:column;gap:6px}.akseg-seg{display:flex;border:1px solid rgba(127,127,127,.45);border-radius:2px;overflow:hidden}" +
   ".akseg-sb{flex:1 1 0;border:0;border-radius:0;background:transparent;padding:8px 4px;font-size:13px;min-height:38px}.akseg-sb+.akseg-sb{border-left:1px solid rgba(127,127,127,.45)}" +
+  ".akseg-row{display:flex;gap:4px;align-items:stretch}.akseg-row .akseg-seg{flex:1 1 auto}.akseg-un{flex:0 0 40px;border:1px solid rgba(127,127,127,.45)!important;border-radius:2px}.akseg-tip{margin:0;font-size:12px}" +
   ".akseg-sb.on{background:rgba(200,150,46,.22);font-weight:600}.akseg-chk{display:flex;gap:8px;align-items:center;margin:6px 0}");
 if (typeof AK_HELP_WHERE !== "undefined") [
   { t: "Graphics: remove a picture's background (cut out a person or thing)", a: "Graphics studio › tap a picture › ⋯ More › ✂ Remove background (also Layers › ⋯). 👤 Person finds people on its own; 👆 Tap to pick keeps whatever you tap (＋ Add / － Take away). 🖌 Keep and ⌫ Erase touch up the edge; Edge softness. Use it puts the cut-out in the same place and hides the original. Runs on this phone, no internet.", k: "remove background cut out cutout erase background bg remover subject person isolate transparent png" },
@@ -62165,7 +62187,7 @@ function viewTestList() {
           return h("div", { class: "aktc-row" + (r ? " is-" + r : "") },
             h("button", { class: "aktc-box ok" + (r === "ok" ? " on" : ""), "aria-label": "Works: " + x.t, "aria-pressed": r === "ok" ? "true" : "false", onClick: function () { akTcMark(x.id, r === "ok" ? "" : "ok"); render(); } }, "✓"),
             h("button", { class: "aktc-box bad" + (r === "bad" ? " on" : ""), "aria-label": "Not working: " + x.t, "aria-pressed": r === "bad" ? "true" : "false", onClick: function () { if (r === "bad") { akTcMark(x.id, ""); render(); } else akTcBad(x.id, render); } }, "✗"),
-            h("div", { class: "aktc-txt" }, h("b", null, x.t), h("small", null, note ? "✗ " + note : x.how)),
+            h("div", { class: "aktc-txt" }, h("b", null, x.t), h("small", null, note ? "✗ " + note : x.how), x.where ? h("small", { class: "aktc-where" }, "📍 Where: " + x.where) : null),
             h("button", { class: "aktc-go", onClick: function () { akTcGo(x); } }, "Go ›"));
         }));
     }),
@@ -63761,6 +63783,704 @@ if (typeof akTcAdd === "function") akTcAdd("19.9", "Sound", [
   ["seagull-soft", "🎸 Soft notes and Try it", "Settings › Songs and shows › Chord sound: check 🎸 My guitar (built into the app) is picked and tap ▶ Try it. Quiet parts use the soft takes.", function () { go("settings"); }]]);
 AK_WHATS_NEW = ["🎸 The built-in guitar is now Aedryan's Seagull steel-string, two takes of every note plus soft notes, so strums made from it sound more natural and never repeat exactly."].concat(AK_WHATS_NEW || []);
 AK_VERSION = "19.9";
+
+/* ================= 20.0: ✂ Remove background is easy to find.
+   - A picture's pop-up bar has ✂ Remove bg right on it (next to ✨ Effects), not hidden under ⋯ More. 🧩 Smart layers stays in ⋯ More.
+   - Test checklist Go › and search 📍 Show me: open a flyer, pick a real photo (never the logo or the name wordmark), and ring the
+     ✂ Remove bg button with a 📍 card. If the design has no photo, a small window asks for one (📷 Pick a photo) and adds it first.
+   - The "Tap to pick" test step opens the window and rings 👆 Tap to pick (the hand). Step wording names the real buttons. */
+
+/* a real photo on this design: the show photo first, then pictures you added; never logos, the wordmark or the built-in art */
+function akRbPhoto(P) {
+  if (!P) return null;
+  var ok = function (l) { return !l.hidden && !/logo|wordmark|name \(/i.test(l.name || ""); };
+  return P.layers.filter(function (l) { return l.type === "gphoto" && ok(l); })[0] ||
+    P.layers.filter(function (l) { return l.type === "gfree" && ok(l) && typeof akSegIsPic === "function" && akSegIsPic(l); })[0] || null;
+}
+/* open a flyer, pick a photo (asking for one if there is none), then then(X, id) */
+function akRbWithPhoto(then, any) {
+  var gig = (typeof akGigs === "function" ? akGigs() : [])[0];
+  if (S.view !== "gfx") go("gfx", { gfxKind: "flyer", gfxGig: gig ? gig.id : "" });
+  var tries = 0;
+  (function look() {
+    var st = typeof akGfxState === "function" ? akGfxState() : null, P = st && st.P, X = st && st.X;
+    if (!P || !X) { if (tries++ < 25) setTimeout(look, 200); return; }
+    var L = akRbPhoto(P) || (any ? P.layers.filter(function (l) { return l.type === "text" && !l.hidden; })[0] : null);
+    if (L) { st.sel = L.id; st.popMore = false; try { X.paint(); } catch (e) {} setTimeout(function () { then(X, L.id); }, 350); return; }
+    akRbAsk(X, then);
+  })();
+}
+function akRbAsk(X, then) {
+  var close;
+  var pick = h("input", { type: "file", accept: "image/*", hidden: true, onChange: function () {
+    var f = this.files && this.files[0]; this.value = ""; if (!f) return;
+    if (close) close();
+    toast("Adding the photo…");
+    akGfxPicIn(f).then(function (r) {
+      var st = akGfxState(), P = st.P, D = X.D, id = uid(), pw = P ? P.W : 1080, ph = P ? P.H : 1350, w = 0.6, hh = w * r.ar * pw / ph;
+      if (hh > 0.7) w = w * 0.7 / hh;
+      akGfxFree(D).push({ id: id, t: "pic", img: r.id, name: r.name || "Photo", x: 0.5, y: 0.5, w: w, ar: r.ar });
+      st.sel = "uf_" + id; st.popMore = false; X.ch(true);
+      setTimeout(function () { then(X, "uf_" + id); }, 700);
+    }, function (e) { toast((e && e.message) || "Couldn't add that photo."); });
+  } });
+  close = modal("✂ Remove background needs a photo", h("div", null,
+    h("p", null, "This design has no photo yet (it doesn't work on the logo, your name or the background art)."),
+    h("p", { class: "hint" }, "Pick a photo of a person, or anything with a clear subject. It's added to this design so you can try it."),
+    h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { pick.click(); } }, "📷 Pick a photo")), pick),
+    [{ label: "Cancel" }]);
+}
+/* the ✂ button on the pop-up bar, or null */
+function akRbBtn() { return document.querySelector(".akg-pop:not([hidden]) .akrb-pb"); }
+function akRbRing(el, info) {
+  if (el && typeof akSpot === "function") { akSpot(el, info); return true; }
+  return false;
+}
+/* Go ›: light the ✂ Remove bg button on the photo */
+function akRbShowBtn() {
+  akRbWithPhoto(function (X, id) {
+    var tries = 0;
+    (function look() {
+      var b = akRbBtn();
+      if (!b && tries++ < 10) { try { X.paint(); } catch (e) {} setTimeout(look, 150); return; }
+      if (!akRbRing(b, { title: "✂ Remove background", path: ["Graphics", "tap your photo", "✂ Remove bg"],
+        what: "Cuts the background out of a photo so just the person (or the thing you pick) is left. Runs on this phone, free, no internet.",
+        how: ["Tap your photo. A small bar shows up next to it.", "Tap ✂ Remove bg on that bar.", "👤 Person makes the first try. 👆 Tap to keep / 👆 Tap to remove fix it; ↶ ↷ in the window.", "🖌 Keep / ⌫ Erase touch up the edge, then Use it."] }))
+        akSegRemoveBg(X, id);
+    })();
+  });
+}
+/* Go › for Tap to pick: open the window and light the 👆 button */
+function akRbShowTap() {
+  akRbWithPhoto(function (X, id) {
+    akSegRemoveBg(X, id);
+    var tries = 0;
+    (function look() {
+      var b = [].slice.call(document.querySelectorAll(".modal .akseg-sb")).filter(function (x) { return /Tap to keep/.test(x.textContent); })[0];
+      if (!b && tries++ < 10) { setTimeout(look, 150); return; }
+      akRbRing(b, { title: "👆 Tap to keep", path: ["✂ Remove background", "👆 Tap to keep"],
+        how: ["Tap 👆 Tap to keep (or 👆 Tap to remove).", "Tap the thing to keep (a guitar, a hat) or to take out (a wall, a lamp).", "↶ ↷ undo and redo; 🖌 Keep / ⌫ Erase for the edge, then Use it."] });
+    })();
+  });
+}
+
+/* ---- the pop-up bar: ✂ Remove bg next to ✨ Effects (moved out of ⋯ More) ---- */
+(function () {
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) {
+    var r = p0.apply(this, arguments);
+    try {
+      var st = akGfxState(), pop = wrap._pop; if (!pop || pop.hidden || !st.sel) return r;
+      var L = st.P && st.P.layers.filter(function (l) { return l.id === st.sel; })[0];
+      if (!akSegIsPic(L)) return r;
+      [].forEach.call(pop.querySelectorAll(".akg-popmore .akseg-pb"), function (b) { if (/Remove background/.test(b.textContent)) b.remove(); });
+      var row = pop.querySelector(".akg-poprow:not(.akg-popmore)"); if (!row || row.querySelector(".akrb-pb")) return r;
+      var b = h("button", { class: "akg-popb akrb-pb", type: "button", "aria-label": "Remove background", title: "Remove background (cut out the person or thing)", onClick: function () { akSpotClose && akSpotClose(); akSegRemoveBg(X, st.sel); } }, h("i", null, "✂"), h("span", null, "Remove bg"));
+      var fx = [].slice.call(row.children).filter(function (x) { return /Effects/.test(x.textContent); })[0];
+      row.insertBefore(b, fx ? fx.nextSibling : row.firstChild);
+    } catch (e) {}
+    return r;
+  };
+})();
+
+
+/* ---- the test checklist: real steps, Go › that shows the way ---- */
+AKTC.forEach(function (x) {
+  if (x.id === "cut-person") { x.t = "Remove background (person)"; x.how = "Graphics › tap your photo › ✂ Remove bg (on the little bar next to the photo) › 👤 Person › Use it. The guitar should stay. Go › rings the ✂ button for you (and asks for a photo if the flyer has none)."; x.go = akRbShowBtn; }
+  if (x.id === "cut-tap") { x.t = "Remove background (👆 Tap to keep / remove + brush)"; x.how = "In the Remove background window: 👆 Tap to keep or 👆 Tap to remove (next to 👤 Person), tap a spot, then ↶ / ↷ to undo and redo. 🖌 Keep / ⌫ Erase touch up the edge. Go › opens the window and rings it."; x.go = akRbShowTap; }
+  if (x.id === "smart-layers") x.how = "Graphics › tap your photo › ⋯ More › 🧩 Smart layers. Then check Layers: background, person, words as text.";
+});
+akTcAdd("20.0", "Graphics", [
+  ["rb-bar", "✂ Remove bg on the photo's bar", "Graphics › tap your photo: the small bar shows ✂ Remove bg next to ✨ Effects. Tap it and the Remove background window opens.", akRbShowBtn]
+]);
+akTcAdd("20.0", "App", [
+  ["tc-ring", "🧪 Go › lights up the button", "Pick any row and tap Go ›: it opens the screen, unfolds the section and rings the button with a 📍 card. 📍 on the 🧪 square shows it again.", ["testlist", {}, ""]],
+  ["tc-where", "📍 Where: on every row", "Each row in this list says where the thing is (menu › button), in the app's real names.", ["testlist", {}, ""]]
+]);
+
+/* ---- search: the steps say where it really is, and 📍 Show me rings the button ---- */
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.forEach(function (e) {
+  if (/remove a picture's background/.test(e.t)) { e.a = "Graphics studio › tap your photo › ✂ Remove bg (on the small bar next to the photo; also Layers › ⋯). 👤 Person finds people on its own (first try); then 👆 Tap to keep or 👆 Tap to remove fixes it, tap by tap. ↶ ↷ undo and redo each step. 🖌 Keep and ⌫ Erase touch up the edge; Edge softness. Use it puts the cut-out in the same place and hides the original. Runs on this phone, no internet."; e.go = akRbShowBtn; e.ring = true; }
+});
+if (typeof akShowMe === "function") (function () {
+  var s0 = akShowMe, h0 = akShowMeHelp;
+  akShowMeHelp = function (e) { var r = h0.apply(this, arguments); if (e && e.ring) r.ring = true; return r; };
+  akShowMe = function (it) { if (it && it.ring && typeof it.go === "function") { akSpotClose(); it.go(); return; } return s0.apply(this, arguments); };
+})();
+
+AK_WHATS_NEW = ["✂ Remove background is now right on a photo's pop-up bar (✂ Remove bg, next to ✨ Effects). Test checklist Go › and search 📍 Show me ring it for you, and ask for a photo if the design has none."].concat(AK_WHATS_NEW || []);
+
+/* ================= 20.0: every 🧪 test item says where it is and Go › lands on it.
+   AKTC_WHERE[id] = [where (shown on the row and the helper), find]. find (optional) says what Go › rings with the 📍 Show me light:
+     p: [section, sub-section, control] (opens folded sections on the way), sel + re: a CSS selector and a text/label pattern,
+     up: ring the parent (a whole row), click: tap this button first (a menu), pic: pick a real photo first, pop: a button on its
+     pop-up bar (more: under ⋯ More), g: [view, args] to go somewhere else than the item's own Go. */
+function akTcB(re, o) { var f = { sel: "#app button", re: re }; for (var k in o || {}) f[k] = o[k]; return f; }
+var AKTC_CLIPW = "⋯ More › 🎬 Clips › 📂 Pick a video (or 🎙 My show recordings) › ";
+var AKTC_WHERE = {
+  "fi-filters": ["Graphics › 🎤 Show flyer › tap your photo › ✨ Effects › Filters", { pic: 1, pop: "Effects" }],
+  "cut-person": ["Graphics › 🎤 Show flyer › tap your photo › ✂ Remove bg"],
+  "cut-tap": ["Graphics › tap your photo › ✂ Remove bg › 👆 Tap to keep / 👆 Tap to remove (next to 👤 Person)"],
+  "smart-layers": ["Graphics › 🎤 Show flyer › tap your photo › ⋯ More › 🧩 Smart layers", { pic: 1, more: 1, pop: "Smart layers" }],
+  "files": ["⋯ More › 📁 Files", akTcB("Grid$")],
+  "files-search": ["⋯ More › 📁 Files › the 🔍 search box at the top", { sel: "#app input[type=search]" }],
+  "files-hold": ["⋯ More › 📁 Files › press and hold any row", { sel: "#app summary", re: "^All" }],
+  "trash": ["⋯ More › 📁 Files › 🗑 Trash (at the bottom; also Settings › 💾 Your data › 🗑 Trash and libraries)", { sel: "#app summary", re: "Trash" }],
+  "gig-strip": ["Shows › tap a show › the row at the top (Setlists, Designs, Reminders, Pay)", akTcB("Setlists$", { up: 1 })],
+  "conn-file": ["Settings › 💾 Your data › 🔐 Sign-ins and connections › ⬇ Save locked file / ⬆ Load file", { p: ["Your data", "Sign-ins and connections", "Save locked file"] }],
+  "pad-off": ["Settings › Songs and shows › Writing extras", { p: ["Songs and shows", "Writing extras"] }],
+  "ly-toolbar": ["Graphics › 🎤 Show flyer › 🗂 Layers (tab under the picture)", akTcB("^🗂 ?Layers$")],
+  "ly-stay": ["Graphics › 🎤 Show flyer › ➕ Add (tab under the picture) › an overlay, then a color screen", akTcB("^➕ ?Add$")],
+  "fill": ["Graphics › tap any part › ✨ Effects › 🎨 Fill", { pic: 2, pop: "Effects" }],
+  "dropper": ["Graphics › tap any part › ✨ Effects › 🎨 Fill › 💧 next to a color box", { pic: 2, pop: "Effects" }],
+  "setup-q": ["Settings › Look › Set up my app (questions)", { p: ["Look", "Set up my app"] }],
+  "web-cal": ["⋯ More › 🎨 Graphics › 🗓 Public calendar for my website", { g: ["graphics", {}], p: ["Public calendar for my website"] }],
+  "reminders": ["Shows › tap a show › Reminders (in the row at the top)", akTcB("Reminders$")],
+  "tips-i": ["Settings › Songs and shows › Tips and descriptions", { p: ["Songs and shows", "Tips and descriptions"] }],
+  "msg-tpl": ["⋯ More › 💼 Business › ✉️ Messages › the Template dropdown at the top", { sel: "#app select[aria-label=Template]" }],
+  "learn-hidden": ["Settings › Look › Tabs and usage modes", { p: ["Look", "Tabs and usage modes"] }],
+  "band-sync": ["Settings › Requests and tips › Band sync (a show's page has 🎸 Band too)", { p: ["Requests and tips", "Band sync"] }],
+  "phone-rec": ["Shows › 🎥 Recordings › Phone recorders…", akTcB("^Phone recorders")],
+  "merge-restore": ["Settings › 💾 Your data › Back up and restore › ⬆ From a file (pick Merge)", { p: ["Your data", "Back up and restore", "From a file"] }],
+  "storage-full": ["Nothing to find: the warning only shows up when the phone is nearly full"],
+  "clips": ["⋯ More › 🎬 Clips › 📂 Pick a video", akTcB("Pick a video")],
+  "notepad": ["Settings › Songs and shows › Writing extras (turn the 📝 bubble on)", { p: ["Songs and shows", "Writing extras"] }],
+  "undo-hist": ["Songs › ↶ in the top bar (Undo, and the list of recent changes)", { sel: "#app button.ak17-undo" }],
+  "group-by": ["Songs › ⋯ (top bar) › Group songs…", { click: "^⋯$", sel: ".menu button", re: "Group songs" }],
+  "autoscroll-wait": ["Play a song › ▶ in the Button bar (Start auto-scroll)", { sel: "button[aria-label='Start auto-scroll']" }],
+  "start-end": ["Playing screen, with phone recorders on › ● Start song (the same button turns into ■ End song)", { sel: ".akrr-tog, button[aria-label^='Start song']" }],
+  "sync-msg": ["The Sync button in the top bar of any screen", akTcB("Sync$")],
+  "send-show": ["Settings › 💾 Your data › ⇩ Import and share › Send a show", { p: ["Your data", "Import and share", "Send a show"] }],
+  "strums": ["Settings › Songs and shows › Chord sound › Strums", { p: ["Songs and shows", "Chord sound", "Strums"] }],
+  "libraries": ["Songs › the library name at the top left (My songs ▾)", akTcB("▾$")],
+  "testers": ["Open the /testers/ web address with the code › Settings › Testers copy › 💬 Send feedback…"],
+  "gfx-undo": ["Graphics › ↶ ↷ in the top bar", akTcB("^↶$")],
+  "gfx-dice": ["Graphics › 🎲 in the top bar; 💡 Ideas under the picture", akTcB("^🎲$")],
+  "gfx-zoom": ["Graphics › the picture: pinch, or the zoom row under it (− + Fit 200%)", { sel: "canvas.akg-cv" }],
+  "gfx-pdf": ["Graphics › 📁 (top bar) › PDF (real text)", { click: "^📁$", sel: ".menu button", re: "PDF" }],
+  "tipsign": ["⋯ More › 🎨 Graphics › 🎨 Make something › 🪧 Sign", { g: ["graphics", {}], sel: "#app button", re: "^🪧 ?Sign" }],
+  "look-folded": ["Settings › Look (should start folded)", { p: ["Look"] }],
+  "my-defaults": ["Settings › Data and extras › 📐 My defaults", { p: ["Data and extras", "My defaults"] }],
+  "test-list": ["⋯ More › 🧪 Test checklist (this list)"],
+  "tc-dock": ["The 🧪 square that rides along after Go ›"],
+  "tc-send": ["⋯ More › 🧪 Test checklist › 📤 Send (top of the list)", { g: ["testlist", {}], sel: "#app button", re: "📤 Send" }],
+  "conn-send": ["Settings › 💾 Your data › 🔐 Sign-ins and connections › 📲 Send to my other device", { p: ["Your data", "Sign-ins and connections", "Send to my other device"] }],
+  "ed-zoom": [AKTC_CLIPW + "− ＋ by the timeline", akTcB("Pick a video")],
+  "ed-marks": [AKTC_CLIPW + "[ Set start / Set end ] under the timeline", akTcB("Pick a video")],
+  "ed-tapstop": [AKTC_CLIPW + "▶ then ■", akTcB("Pick a video")],
+  "ed-snap": [AKTC_CLIPW + "Snap (beat) and ♪ Next song start", akTcB("Pick a video")],
+  "ed-reel": [AKTC_CLIPW + "✂ Make clip, ▶ Preview, ⬆ Make it", akTcB("Pick a video")],
+  "ed-crop": [AKTC_CLIPW + "⬚ Crop", akTcB("Pick a video")],
+  "ed-filt": [AKTC_CLIPW + "🎞 Filters", akTcB("Pick a video")],
+  "ed-text": [AKTC_CLIPW + "T Text", akTcB("Pick a video")],
+  "ed-blur": [AKTC_CLIPW + "◐ Blur", akTcB("Pick a video")],
+  "ed-extra": [AKTC_CLIPW + "✦ Extras", akTcB("Pick a video")],
+  "ed-make": [AKTC_CLIPW + "⬆ Make it, then 📤 Save or share", akTcB("Pick a video")],
+  "show-me": ["⋯ More › ❓ Help: Where is…? › type › 📍 Show me", { g: ["help", {}], sel: "#app input[placeholder^='Where is']" }],
+  "show-me-files": ["⋯ More › 🔍 Search everything › type › 📍 Show me", { sel: "#app input[type=search]" }],
+  "bar-order": ["The bar at the bottom of every screen", akTcB("^♫ ?Songs$", { up: 1 })],
+  "your-data": ["Settings › 💾 Your data (first section)", { p: ["Your data"] }],
+  "your-data-import": ["Settings › 💾 Your data › ⇩ Import and share", { p: ["Your data", "Import and share"] }],
+  "l2-pick": ["⋯ More › ✎ Edit this screen › tap a button › Size"],
+  "l2-several": ["⋯ More › ✎ Edit this screen › ☐ Pick several"],
+  "l2-move": ["⋯ More › ✎ Edit this screen › tap a bottom-bar tab › ✥ or Move"],
+  "l2-save": ["⋯ More › ✎ Edit this screen › A B C, then ⋯ › Save this as my default"],
+  "rb-bar": ["Graphics › 🎤 Show flyer › tap your photo › ✂ Remove bg"],
+  "seagull-strum": ["Songs › open a song › tap a chord, or ▶ a strum pattern"],
+  "seagull-updown": ["Songs › open a song › ▶ a strum pattern with ups in it"],
+  "seagull-soft": ["Settings › Songs and shows › Chord sound › ▶ Try it", { p: ["Songs and shows", "Chord sound", "Try it"] }],
+  "tc-ring": ["⋯ More › 🧪 Test checklist › Go › on any row"],
+  "tc-where": ["⋯ More › 🧪 Test checklist (the 📍 Where: line on each row)"]
+};
+AKTC.forEach(function (x) { var w = AKTC_WHERE[x.id]; if (w) { x.where = w[0]; if (w[1]) x.find = w[1]; } });
+
+function akTcVis(e) { return !!(e && (e.offsetParent || e.tagName === "SUMMARY" || (e.getClientRects && e.getClientRects().length))); }
+/* the element a find points at, or {open: el} for a folded section on the way */
+function akTcEl(f) {
+  if (f.sel) {
+    var re = f.re ? new RegExp(f.re) : null;
+    var el = [].slice.call(document.querySelectorAll(f.sel)).filter(function (e) {
+      if (!akTcVis(e) || (e.closest && e.closest(".akspot-ui, .aktc-dock"))) return false;
+      if (!re) return true;
+      var st = e.querySelector && e.querySelector(".st"), t = ((st ? st.textContent : e.textContent) || "").trim();
+      return re.test(t) || re.test(e.getAttribute("aria-label") || "");
+    })[0];
+    if (el && f.up) el = el.parentElement;
+    return el ? { el: el } : null;
+  }
+  if (f.p && typeof akSpotFind === "function") {
+    var r = akSpotFind(f.p); if (!r) return null;
+    if (r.i < f.p.length - 1) return { open: r.el };
+    return { el: r.el };
+  }
+  return null;
+}
+function akTcRing(it) {
+  var f = it.find; if (!f) return;
+  var path = String(it.where || "").split(" › ");
+  var info = { title: it.t, path: path, how: it.how };
+  if (f.pic) {
+    akRbWithPhoto(function (X) {
+      var st = akGfxState(); if (f.more && !st.popMore) { st.popMore = true; try { X.paint(); } catch (e) {} }
+      var tries = 0;
+      (function look() {
+        var b = [].slice.call(document.querySelectorAll(".akg-pop:not([hidden]) button")).filter(function (x) { return x.textContent.indexOf(f.pop) >= 0; })[0];
+        if (!b && tries++ < 12) { try { X.paint(); } catch (e) {} setTimeout(look, 150); return; }
+        if (b) akSpot(b, info); else toast("Where: " + it.where);
+      })();
+    }, f.pic === 2);
+    return;
+  }
+  var tries = 0, clicked = false;
+  (function look() {
+    if (f.click && !clicked) {
+      var cb = akTcEl({ sel: "#app button", re: f.click });
+      if (cb) { clicked = true; try { cb.el.click(); } catch (e) {} setTimeout(look, 250); return; }
+    }
+    var r = akTcEl(f);
+    if (r && r.open) {
+      var o = r.open; akSpotOpen(o);
+      if (o.tagName === "SUMMARY" && o.parentElement && !o.parentElement.open) o.parentElement.open = true;
+      else if (o.tagName === "BUTTON") try { o.click(); } catch (e) {}
+      r = null;
+    }
+    if (!r && tries++ < 25) { setTimeout(look, 200); return; }
+    if (r && r.el) akSpot(r.el, info); else if (it.where) toast("Where: " + it.where);
+  })();
+}
+/* Go ›: go to the screen (without the old flash), then ring the control */
+(function () {
+  var g0 = akTcGo;
+  akTcGo = function (it) {
+    if (!it || !it.find || typeof akSpot !== "function") return g0.apply(this, arguments);
+    S.akTcCur = it.id;
+    try { akSpotClose(); } catch (e) {}
+    var f = it.find;
+    try {
+      if (f.pic) { /* akTcRing goes to the flyer itself */ }
+      else if (f.g) go(f.g[0], f.g[1] || {});
+      else if (typeof it.go === "function") it.go();
+      else if (it.go) go(it.go[0], it.go[1] || {});
+    } catch (e) { toast("Couldn't open that screen: " + ((e && e.message) || e)); }
+    setTimeout(akTcBar, 60);
+    setTimeout(function () { akTcRing(it); }, f.pic ? 0 : 400);
+  };
+})();
+/* the helper square's card: Where: line and 📍 Show me again */
+(function () {
+  var b0 = akTcBar;
+  akTcBar = function () {
+    var r = b0.apply(this, arguments);
+    try {
+      var it = AKTC.filter(function (x) { return x.id === S.akTcCur; })[0], card = document.querySelector(".aktc-dock .aktc-card");
+      if (it && card && it.where && !card.querySelector(".aktc-where")) {
+        var how = card.querySelector(".aktc-how");
+        card.insertBefore(h("div", { class: "aktc-where" }, h("b", null, "Where: "), it.where), how);
+        var acts = card.querySelector(".aktc-acts");
+        if (acts && it.find) acts.insertBefore(h("button", { class: "aktc-x", "aria-label": "Show me where it is again", onClick: function () { akTcRing(it); } }, "📍"), acts.lastChild);
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+akCss("aktcw", ".aktc-where{font-size:13px;margin-bottom:4px}.aktc-txt .aktc-where{display:block;font-size:12px;margin:2px 0 0;opacity:.95}");
+AK_VERSION = "20.0";
+
+/* ================= 20.0: cleaner cut-outs (Remove background) and real Smart layers. All on the phone, no internet.
+   Remove background:
+   - Black (or white) bars around a photo are found and left out first, so the model only looks at the real picture.
+   - The model's rough mask (it works at 256 px) is snapped to the photo's real edges with a guided filter, small loose
+     bits are dropped and small holes inside the person are filled.
+   - "Person" adds what the person holds (guitar, mic) only where it touches them, so the wall or a candle can't come along.
+   Smart layers (his flyer test 11-04: words came out doubled, the person, guitar and mic weren't split):
+   - Words: found first, then taken out of the picture (the spots are filled in) before anything else is cut, so nothing
+     underneath shows them twice. Each line becomes its own layer: by default an exact copy of the lettering (same font and
+     look, just movable), or editable text if picked.
+   - Person and what they hold (guitar) are separate layers; you can tap more things to give them their own layer (a mic,
+     a logo, a stripe). Background last, with every cut spot filled in. */
+
+/* ---------------------------------------------------------------- mask helpers */
+function akSegGray(cv, w, hh) {
+  var s = akGfxCv(w, hh), c = s.getContext("2d"); c.drawImage(cv, 0, 0, w, hh);
+  var d = c.getImageData(0, 0, w, hh).data, g = new Float32Array(w * hh);
+  for (var i = 0; i < g.length; i++) g[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) / 255;
+  return g;
+}
+/* mean over a (2r+1) square, edges handled */
+function akSegBoxMean(a, w, hh, r) {
+  var W1 = w + 1, I = new Float64Array(W1 * (hh + 1)), x, y;
+  for (y = 0; y < hh; y++) { var row = 0; for (x = 0; x < w; x++) { row += a[y * w + x]; I[(y + 1) * W1 + x + 1] = I[y * W1 + x + 1] + row; } }
+  var o = new Float32Array(w * hh);
+  for (y = 0; y < hh; y++) { var y0 = Math.max(0, y - r), y1 = Math.min(hh - 1, y + r);
+    for (x = 0; x < w; x++) { var x0 = Math.max(0, x - r), x1 = Math.min(w - 1, x + r), n = (y1 - y0 + 1) * (x1 - x0 + 1);
+      o[y * w + x] = (I[(y1 + 1) * W1 + x1 + 1] - I[y0 * W1 + x1 + 1] - I[(y1 + 1) * W1 + x0] + I[y0 * W1 + x0]) / n; } }
+  return o;
+}
+function akSegUp(m, w, hh) {
+  if (m.w === w && m.h === hh) return Float32Array.from(m.a);
+  var o = new Float32Array(w * hh), sx = m.w / w, sy = m.h / hh;
+  for (var y = 0; y < hh; y++) { var fy = Math.max(0, (y + 0.5) * sy - 0.5), y0 = Math.floor(fy), y1 = Math.min(m.h - 1, y0 + 1), ty = fy - y0;
+    for (var x = 0; x < w; x++) { var fx = Math.max(0, (x + 0.5) * sx - 0.5), x0 = Math.floor(fx), x1 = Math.min(m.w - 1, x0 + 1), tx = fx - x0;
+      var a = m.a[y0 * m.w + x0] * (1 - tx) + m.a[y0 * m.w + x1] * tx, b = m.a[y1 * m.w + x0] * (1 - tx) + m.a[y1 * m.w + x1] * tx;
+      o[y * w + x] = a * (1 - ty) + b * ty; } }
+  return o;
+}
+/* guided filter: the mask follows the photo's own edges (He et al.), gray guide */
+function akSegGuided(I, p, w, hh, r, eps) {
+  var N = w * hh, Ip = new Float32Array(N), II = new Float32Array(N), i;
+  for (i = 0; i < N; i++) { Ip[i] = I[i] * p[i]; II[i] = I[i] * I[i]; }
+  var mI = akSegBoxMean(I, w, hh, r), mp = akSegBoxMean(p, w, hh, r), mIp = akSegBoxMean(Ip, w, hh, r), mII = akSegBoxMean(II, w, hh, r);
+  var A = new Float32Array(N), B = new Float32Array(N);
+  for (i = 0; i < N; i++) { var v = mII[i] - mI[i] * mI[i], c = mIp[i] - mI[i] * mp[i]; A[i] = c / (v + eps); B[i] = mp[i] - A[i] * mI[i]; }
+  var mA = akSegBoxMean(A, w, hh, r), mB = akSegBoxMean(B, w, hh, r), q = new Float32Array(N);
+  for (i = 0; i < N; i++) q[i] = Math.max(0, Math.min(1, mA[i] * I[i] + mB[i]));
+  return q;
+}
+/* tidy a mask: drop small loose bits (or any bit not touching "core"), fill small holes */
+function akSegClean(a, w, hh, o) {
+  o = o || {};
+  var N = w * hh, lab = new Int32Array(N).fill(-1), q = new Int32Array(N), comps = [], i;
+  function flood(start, fg, id) {
+    var h0 = 0, t = 0, area = 0, edge = false, core = false; q[t++] = start; lab[start] = id;
+    while (h0 < t) { var j = q[h0++], x = j % w, y = (j - x) / w; area++;
+      if (x === 0 || y === 0 || x === w - 1 || y === hh - 1) edge = true;
+      if (o.core && o.core[j] > 0.5) core = true;
+      var nb = [x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, y > 0 ? j - w : -1, y < hh - 1 ? j + w : -1];
+      for (var k = 0; k < 4; k++) { var n = nb[k]; if (n >= 0 && lab[n] < 0 && ((a[n] > 0.5) === fg)) { lab[n] = id; q[t++] = n; } } }
+    return { id: id, fg: fg, area: area, edge: edge, core: core };
+  }
+  for (i = 0; i < N; i++) if (lab[i] < 0) comps.push(flood(i, a[i] > 0.5, comps.length));
+  var big = 0; comps.forEach(function (c) { if (c.fg && c.area > big) big = c.area; });
+  var drop = {}, fill = {};
+  comps.forEach(function (c) {
+    if (c.fg && c.area < big && (o.core ? !c.core : c.area < (o.island || 0.004) * N)) drop[c.id] = 1;
+    if (!c.fg && !c.edge && c.area < (o.hole || 0.004) * N) fill[c.id] = 1;
+  });
+  var out = Float32Array.from(a);
+  for (i = 0; i < N; i++) { if (drop[lab[i]]) out[i] = 0; else if (fill[lab[i]]) out[i] = 1; }
+  return out;
+}
+/* bars: plain black (or white) strips at the edges, like a phone photo shown letterboxed */
+function akSegTrim(cv) {
+  var w = cv.width, hh = cv.height, s = akSegSmall(cv, 400), sw = s.width, sh = s.height, d = s.getContext("2d").getImageData(0, 0, sw, sh).data;
+  function flat(i0, step, n) { var k = 0, bl = 0, wh = 0; for (var j = 0; j < n; j++) { var p = (i0 + j * step) * 4, v = d[p] + d[p + 1] + d[p + 2]; if (v < 60) bl++; else if (v > 735) wh++; k++; } return bl >= k * 0.92 || wh >= k * 0.97; }
+  /* a thin line at the very edge (a frame, a border) may come before the bar */
+  function edge(start, dir, lim, isFlat) {
+    var i = start, k = 0; while (k < lim * 0.025 && !isFlat(i)) { i += dir; k++; }
+    if (!isFlat(i)) return start;
+    while (Math.abs(i - start) < lim * 0.4 && isFlat(i)) i += dir;
+    return Math.abs(i - start) > k + 1 ? i : start;
+  }
+  var row = function (y) { return flat(y * sw, 1, sw); }, col = function (x) { return flat(x, sw, sh); };
+  var t = edge(0, 1, sh, row), b = edge(sh - 1, -1, sh, row), l = edge(0, 1, sw, col), r = edge(sw - 1, -1, sw, col);
+  if (t < sh * 0.02) t = 0; if (sh - 1 - b < sh * 0.02) b = sh - 1; if (l < sw * 0.02) l = 0; if (sw - 1 - r < sw * 0.02) r = sw - 1;
+  var k = w / sw, kh = hh / sh;
+  var x0 = Math.round(l * k), y0 = Math.round(t * kh), x1 = Math.round((r + 1) * k), y1 = Math.round((b + 1) * kh);
+  return { x: x0, y: y0, w: Math.max(2, Math.min(w, x1) - x0), h: Math.max(2, Math.min(hh, y1) - y0), all: x0 === 0 && y0 === 0 && x1 >= w && y1 >= hh };
+}
+function akSegCrop(cv, r) { if (r.all) return cv; var c = akGfxCv(r.w, r.h); c.getContext("2d").drawImage(cv, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h); return c; }
+/* the model's mask on the cropped picture -> snapped to edges, tidied, placed back on the whole picture (0 in the bars) */
+function akSegFinish(m, crop, cv, r, o) {
+  var k = Math.min(1, 768 / Math.max(crop.width, crop.height)), W = Math.max(8, Math.round(crop.width * k)), H = Math.max(8, Math.round(crop.height * k));
+  var p = akSegUp(m, W, H), g = akSegGray(crop, W, H);
+  var q = akSegGuided(g, p, W, H, Math.max(2, Math.round(Math.max(W, H) * 0.008)), 0.0015);
+  /* where the guide is flat the filter can go soft: keep the model's answer there */
+  for (var i = 0; i < q.length; i++) if (Math.abs(p[i] - 0.5) > 0.45 && Math.abs(q[i] - p[i]) > 0.6) q[i] = p[i];
+  q = akSegClean(q, W, H, o);
+  if (r.all) return { w: W, h: H, a: q };
+  var fw = Math.round(cv.width * W / r.w), fh = Math.round(cv.height * H / r.h), ox = Math.round(r.x * W / r.w), oy = Math.round(r.y * H / r.h), a = new Float32Array(fw * fh);
+  for (var y = 0; y < H; y++) { var yy = y + oy; if (yy < 0 || yy >= fh) continue; for (var x = 0; x < W; x++) { var xx = x + ox; if (xx >= 0 && xx < fw) a[yy * fw + xx] = q[y * W + x]; } }
+  return { w: fw, h: fh, a: a };
+}
+function akSegNear(m, frac) {
+  var b = new Float32Array(m.a.length); for (var i = 0; i < b.length; i++) b[i] = m.a[i] > 0.5 ? 1 : 0;
+  var mm = akSegBoxMean(b, m.w, m.h, Math.max(2, Math.round(Math.max(m.w, m.h) * frac)));
+  for (i = 0; i < mm.length; i++) mm[i] = mm[i] > 0.002 ? 1 : 0;
+  return mm;
+}
+
+/* ---------------------------------------------------------------- the models, with the clean-up */
+var akSegPerson0 = akSegPerson, akSegTap0 = akSegTap;
+akSegPerson = function (cv) {
+  var r = akSegTrim(cv), c = akSegCrop(cv, r);
+  return akSegPerson0(c).then(function (m) { return akSegFinish(m, c, cv, r, { island: 0.006, hole: 0.003 }); });
+};
+akSegTap = function (cv, x, y) {
+  var r = akSegTrim(cv), c = akSegCrop(cv, r), px = x * cv.width, py = y * cv.height;
+  if (px < r.x || py < r.y || px > r.x + r.w || py > r.y + r.h) return Promise.resolve({ w: 8, h: 8, a: new Float32Array(64) });
+  return akSegTap0(c, (px - r.x) / r.w, (py - r.y) / r.h).then(function (m) { return akSegFinish(m, c, cv, r, { island: 0.01, hole: 0.003 }); });
+};
+/* add a tap's cut-out to a mask, only where it touches the mask (so a wall or a candle can't come along) */
+function akSegAddNear(cv, base, x, y, maxGrow) {
+  return akSegTap(cv, x, y).then(function (tm) {
+    tm = akSegResize(tm, base.w, base.h);
+    var near = akSegNear(base, 0.04), u = new Float32Array(base.a.length);
+    for (var i = 0; i < u.length; i++) u[i] = Math.max(base.a[i], tm.a[i] * near[i]);
+    u = akSegClean(u, base.w, base.h, { core: base.a, hole: 0.003 });
+    var o = { w: base.w, h: base.h, a: u };
+    return akSegArea(o) < akSegArea(base) * (maxGrow || 1.7) ? o : base;
+  }, function () { return base; });
+}
+/* the person with a hat on: the people model often leaves hats out, so tap just above the head */
+function akSegPersonHat(cv, pm) {
+  var top = -1, xs = 0, n = 0;
+  for (var y = 0; y < pm.h && top < 0; y++) for (var x = 0; x < pm.w; x++) if (pm.a[y * pm.w + x] > 0.5) { top = y; break; }
+  if (top < 0) return Promise.resolve(pm);
+  var band = Math.min(pm.h - 1, top + Math.round(pm.h * 0.03));
+  for (y = top; y <= band; y++) for (x = 0; x < pm.w; x++) if (pm.a[y * pm.w + x] > 0.5) { xs += x; n++; }
+  var hx = xs / n / pm.w, hy = Math.max(0, top / pm.h - 0.025);
+  return akSegAddNear(cv, pm, hx, hy, 1.35);
+}
+/* person + hat + what they hold */
+akSegPersonPlus = function (cv) {
+  return akSegPerson(cv).then(function (pm) {
+    if (akSegArea(pm) < 0.01) return pm;
+    return akSegPersonHat(cv, pm).then(function (ph) {
+      var sx = 0, sy = 0, n = 0; for (var y = 0; y < ph.h; y++) for (var x = 0; x < ph.w; x++) if (ph.a[y * ph.w + x] > 0.5) { sx += x; sy += y; n++; }
+      var cx = sx / n / ph.w, cy = sy / n / ph.h;
+      if (ph.a[Math.floor(cy * ph.h) * ph.w + Math.floor(cx * ph.w)] < 0.5) return ph;
+      return akSegAddNear(cv, ph, cx, cy, 1.7);
+    });
+  });
+};
+/* Smart layers: the person (with hat) and, apart, what they hold */
+function akSegPersonParts(cv) {
+  return akSegPerson(cv).then(function (pm) {
+    if (akSegArea(pm) < 0.01) return null;
+    return akSegPersonHat(cv, pm).then(function (ph) {
+      return akSegPersonPlus(cv).then(function (u) {
+        u = akSegResize(u, ph.w, ph.h);
+        var a = new Float32Array(ph.a.length); for (var i = 0; i < a.length; i++) a[i] = Math.max(0, u.a[i] - ph.a[i]) > 0.5 ? 1 : 0;
+        a = akSegClean(a, ph.w, ph.h, { island: 1, hole: 0.002 });
+        var hm = { w: ph.w, h: ph.h, a: a };
+        return { person: ph, held: akSegArea(hm) > 0.015 ? hm : null };
+      });
+    });
+  });
+}
+
+/* ---------------------------------------------------------------- words in the picture */
+/* lines of words with their box, colors and a mask of just the letters (alpha) */
+function akSegWordOk(x) {
+  var n = x.t.replace(/[^A-Za-z0-9]/g, "").length, bw = x.x1 - x.x0, bh = Math.max(1, x.y1 - x.y0);
+  /* sure words, or long word-shaped boxes (fancy fonts like his name read with a low score but a wide, flat box) */
+  return n >= 1 && (x.conf >= 60 || (n >= 5 && bw / bh >= 3 && x.conf >= 15));
+}
+/* light lettering made dark on white (and the other way) so the reader sees it clearly over a busy photo */
+function akSegInk(cv, light) {
+  var c = akFxCopy(cv), x = c.getContext("2d"), im = x.getImageData(0, 0, c.width, c.height), d = im.data;
+  for (var i = 0; i < d.length; i += 4) { var mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]), L = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    var ink = light ? (L > 205 && mx - mn < 60) : (L < 45); d[i] = d[i + 1] = d[i + 2] = ink ? 0 : 255; }
+  x.putImageData(im, 0, 0); return c;
+}
+function akSegWords(cv) {
+  if (typeof akOcrRead !== "function") return Promise.resolve([]);
+  var w = cv.width, hh = cv.height, raw = [];
+  function read(c, pass) { return akOcrRead(c).then(function (r) { (r.words || []).forEach(function (x) { if (akSegWordOk(x)) { x.key = pass + ":" + x.line; raw.push(x); } }); }, function () {}); }
+  return read(cv, "a").then(function () { return read(akSegInk(cv, true), "b"); }).then(function () { return read(akSegInk(cv, false), "c"); }).then(function () {
+    var lines = {}; raw.forEach(function (x) { (lines[x.key] = lines[x.key] || []).push(x); });
+    var sd = cv.getContext("2d").getImageData(0, 0, w, hh).data, got = [];
+    Object.keys(lines).map(function (k) {
+      var ws = lines[k].sort(function (a, b) { return a.x0 - b.x0; }), x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, conf = 0;
+      ws.forEach(function (q) { x0 = Math.min(x0, q.x0); y0 = Math.min(y0, q.y0); x1 = Math.max(x1, q.x1); y1 = Math.max(y1, q.y1); conf += q.conf; });
+      return { t: ws.map(function (q) { return q.t; }).join(" "), x0: Math.max(0, x0), y0: Math.max(0, y0), x1: Math.min(w, x1), y1: Math.min(hh, y1), conf: conf / ws.length };
+    }).filter(function (l) { var n = l.t.replace(/[^A-Za-z0-9]/g, "").length; return (n >= 3 || (n >= 2 && l.conf >= 85)) && l.x1 > l.x0 && l.y1 > l.y0 && (l.y1 - l.y0) < hh * 0.2; })
+      .sort(function (a, b) { return b.conf - a.conf; }).forEach(function (l) {
+        /* the same line read twice (by two passes): keep the surer one */
+        var a = (l.x1 - l.x0) * (l.y1 - l.y0);
+        if (got.some(function (g) { var ix = Math.max(0, Math.min(g.x1, l.x1) - Math.max(g.x0, l.x0)), iy = Math.max(0, Math.min(g.y1, l.y1) - Math.max(g.y0, l.y0)); return ix * iy > 0.3 * Math.min(a, (g.x1 - g.x0) * (g.y1 - g.y0)); })) return;
+        got.push(l);
+      });
+    got.sort(function (a, b) { return a.y0 - b.y0; });
+    return got.map(function (l) {
+      var pad = Math.max(2, Math.round((l.y1 - l.y0) * 0.15));
+      var bx = Math.max(0, l.x0 - pad), by = Math.max(0, l.y0 - pad), bw = Math.min(w, l.x1 + pad) - bx, bh = Math.min(hh, l.y1 + pad) - by;
+      var ring = [], x, y, p;
+      for (x = bx; x < bx + bw; x += 2) { ring.push((by * w + x) * 4); ring.push(((by + bh - 1) * w + x) * 4); }
+      for (y = by; y < by + bh; y += 2) { ring.push((y * w + bx) * 4); ring.push((y * w + bx + bw - 1) * 4); }
+      var bg = [0, 1, 2].map(function (c) { return akMedian(ring.map(function (q) { return sd[q + c]; })); });
+      /* letter color: the brightest or darkest tenth, whichever stands out more from the background */
+      var px = []; for (y = l.y0; y < l.y1; y += 2) for (x = l.x0; x < l.x1; x += 2) { p = (y * w + x) * 4; px.push([sd[p], sd[p + 1], sd[p + 2], 0.299 * sd[p] + 0.587 * sd[p + 1] + 0.114 * sd[p + 2]]); }
+      px.sort(function (a, b) { return a[3] - b[3]; });
+      var n10 = Math.max(1, Math.floor(px.length / 10)), lo = px.slice(0, n10), hi = px.slice(px.length - n10), bgL = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2];
+      var use = (hi[0][3] - bgL) > (bgL - lo[lo.length - 1][3]) ? hi : lo, col = [0, 1, 2].map(function (c) { return Math.round(akMedian(use.map(function (q) { return q[c]; }))); });
+      var al = new Float32Array(bw * bh);
+      for (y = 0; y < bh; y++) {
+        var yy = by + y, other = got.some(function (g) { return g !== l && yy >= g.y0 && yy < g.y1; }) && (yy < l.y0 || yy >= l.y1);
+        for (x = 0; x < bw; x++) { if (other) continue; p = (yy * w + bx + x) * 4;
+          var dc = Math.abs(sd[p] - col[0]) + Math.abs(sd[p + 1] - col[1]) + Math.abs(sd[p + 2] - col[2]), db = Math.abs(sd[p] - bg[0]) + Math.abs(sd[p + 1] - bg[1]) + Math.abs(sd[p + 2] - bg[2]);
+          var t = db / (db + dc + 1); al[y * bw + x] = Math.max(0, Math.min(1, (t - 0.45) / 0.3)) * Math.max(0, Math.min(1, (150 - dc) / 60)); } }
+      l.box = { x: bx, y: by, w: bw, h: bh }; l.al = al; l.bg = bg;
+      l.col = "#" + col.map(function (v) { return ("0" + v.toString(16)).slice(-2); }).join("");
+      return l;
+    });
+  });
+}
+/* the letters cut out exactly as they look (a picture of just the words) */
+function akSegWordPic(cv, l) {
+  var b = l.box, c = akGfxCv(b.w, b.h), x = c.getContext("2d"); x.drawImage(cv, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+  var im = x.getImageData(0, 0, b.w, b.h), d = im.data; for (var i = 0; i < l.al.length; i++) d[i * 4 + 3] = Math.round(d[i * 4 + 3] * l.al[i]); x.putImageData(im, 0, 0);
+  return c;
+}
+/* where the words were (grown a little for shadows and soft edges), as a hole to fill */
+function akSegWordHole(w, hh, lines) {
+  var c = akGfxCv(w, hh), x = c.getContext("2d");
+  lines.forEach(function (l) {
+    var b = l.box, s = akGfxCv(b.w, b.h), sx = s.getContext("2d"), im = sx.createImageData(b.w, b.h);
+    for (var i = 0; i < l.al.length; i++) { im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = 255; im.data[i * 4 + 3] = l.al[i] > 0.15 ? 255 : 0; }
+    sx.putImageData(im, 0, 0); x.drawImage(s, b.x, b.y);
+  });
+  var g = akGfxBlurCv(c, Math.max(1.5, 0.004 * Math.max(w, hh))), gc = g.getContext("2d"), gd = gc.getImageData(0, 0, w, hh);
+  for (var i = 3; i < gd.data.length; i += 4) gd.data[i] = gd.data[i] > 8 ? 255 : 0; gc.putImageData(gd, 0, 0);
+  return g;
+}
+
+
+/* ---------------------------------------------------------------- a picture bigger than the page is cut out whole
+   (11-04: the parts past the page edge were lost, so Remove background / Smart layers cropped it). The page only hides
+   what's outside; the cut-out keeps all of it so it can be moved or resized later. */
+var akSegPartCanvas0 = akSegPartCanvas;
+akSegPartCanvas = function (X, id) {
+  var st = akGfxState(), P = st.P || X.base(), L = P.layers.filter(function (l) { return l.id === id; })[0]; if (!L) return null;
+  var b = akLayerBox(L, P);
+  if ((b.x >= -0.5 && b.y >= -0.5 && b.x + b.w <= P.W + 0.5 && b.y + b.h <= P.H + 0.5) || typeof L.x !== "number" || typeof L.y !== "number") return akSegPartCanvas0(X, id);
+  var up = Math.max(1, Math.min(3, 1400 / Math.max(b.w, b.h)));
+  var one = Object.assign({}, L); one.rot = 0; delete one.fxs; delete one.fxo; delete one.op; one.x = L.x - b.x; one.y = L.y - b.y;
+  var full; try { full = akPosterCanvas({ W: b.w, H: b.h, size: P.size, gfx: P.gfx, accent: P.accent, accent2: P.accent2, layers: [one] }, null, up); } catch (e) { return akSegPartCanvas0(X, id); }
+  var w = Math.max(2, Math.round(b.w * up)), hh = Math.max(2, Math.round(b.h * up)), cv = akGfxCv(w, hh);
+  cv.getContext("2d").drawImage(full, 0, 0, w, hh);
+  return { cv: cv, box: b, L: L, P: P };
+};
+/* one ↶ undoes the whole Remove background or Smart layers (no half-done steps in between) */
+function akSegOneStep(i0) {
+  try {
+    if (typeof AKGU === "undefined" || i0 == null || i0 < 0) return;
+    akGfxUndoNote(true);
+    if (AKGU.i > i0 + 1) { AKGU.st.splice(i0 + 1, AKGU.i - i0 - 1); AKGU.i = i0 + 1; }
+    if (typeof akGfxUBtns === "function") akGfxUBtns();
+  } catch (e) {}
+}
+(function () {
+  var a0 = akSegAddPic;
+  akSegAddPic = function (X, cv, b, name, above, cb) {
+    var i0 = typeof AKGU !== "undefined" ? AKGU.i : null;
+    if (AKSEG.opI == null) AKSEG.opI = i0;
+    return a0.call(this, X, cv, b, name, above, function (lid) { var r = cb && cb(lid); setTimeout(function () { if (!AKSEG.busy) { akSegOneStep(AKSEG.opI); AKSEG.opI = null; } }, 0); return r; });
+  };
+})();
+
+/* ---------------------------------------------------------------- 🧩 Smart layers */
+function akSegCutCv(cv, m, soft) { var al = akSegAlphaCv(m, cv.width, cv.height, soft == null ? 15 : soft), c = akFxCopy(cv), cc = c.getContext("2d"); cc.globalCompositeOperation = "destination-in"; cc.drawImage(al, 0, 0); return { cv: c, al: al }; }
+akSegSmart = function (X, id) {
+  var st = akGfxState(); id = id || st.sel;
+  var src = akSegPartCanvas(X, id); if (!src) { toast("Pick a picture first."); return; }
+  var cv = src.cv, w = cv.width, hh = cv.height, taps = [], words = "pic", people = true;
+  var view = h("canvas", { class: "akseg-cv", "aria-label": "The picture. Tap things you want as their own layer" });
+  function draw() {
+    var k = Math.min(1, 900 / Math.max(w, hh)); view.width = Math.round(w * k); view.height = Math.round(hh * k);
+    var c = view.getContext("2d"); c.drawImage(cv, 0, 0, view.width, view.height);
+    taps.forEach(function (t, i) { var x = t.x * view.width, y = t.y * view.height; c.beginPath(); c.arc(x, y, 11, 0, 6.3); c.fillStyle = "#c8962e"; c.fill(); c.lineWidth = 2; c.strokeStyle = "#fff"; c.stroke(); c.fillStyle = "#000"; c.font = "bold 12px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(String(i + 1), x, y); });
+  }
+  var tapInfo = h("p", { class: "hint akseg-info" });
+  function tapTxt() { tapInfo.textContent = taps.length ? taps.length + " extra layer" + (taps.length > 1 ? "s" : "") + " picked. Tap a dot again to take it off." : "Optional: tap things you want as their own layer (the guitar, a mic, a logo, a stripe)."; }
+  view.addEventListener("pointerup", function (e) {
+    var r = view.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    var hit = -1; taps.forEach(function (t, i) { if (Math.abs(t.x - x) * r.width < 14 && Math.abs(t.y - y) * r.height < 14) hit = i; });
+    if (hit >= 0) taps.splice(hit, 1); else taps.push({ x: x, y: y });
+    draw(); tapTxt();
+  });
+  var wsel = h("select", { "aria-label": "Words in the picture", onChange: function () { words = this.value; } },
+    h("option", { value: "pic" }, "Words: own layers, exact same look"), h("option", { value: "text" }, "Words: editable text (font may differ)"), h("option", { value: "" }, "Words: leave them in the picture"));
+  var pchk = h("label", { class: "akseg-chk" }, h("input", { type: "checkbox", checked: true, onChange: function () { people = this.checked; } }), " People, and what they hold (guitar), as their own layers");
+  var box = h("div", { class: "akseg" }, h("div", { class: "akseg-wrap" }, view), tapInfo, h("div", { class: "akseg-ctl" }, wsel, pchk));
+  var close = modal("🧩 Smart layers", box, [{ label: "Cancel" }, { label: "Split it", primary: true, onClick: function () { run(); return false; } }], { wide: true });
+  draw(); tapTxt();
+
+  function run() {
+    AKSEG.busy = true; AKSEG.opI = typeof AKGU !== "undefined" ? AKGU.i : null;
+    var busy = akSegBusy(words ? "Finding the words…" : "Looking at the picture…"), lines = [], clean = cv, parts = [], cut = new Float32Array(0), mw = 0, mh = 0;
+    function claim(m, name) {
+      /* each pixel belongs to one layer: what an earlier layer took is taken off this one */
+      if (!mw) { mw = m.w; mh = m.h; cut = new Float32Array(mw * mh); }
+      m = akSegResize(m, mw, mh); var a = new Float32Array(m.a.length);
+      for (var i = 0; i < a.length; i++) { a[i] = Math.max(0, Math.min(m.a[i], 1 - cut[i])); }
+      var mm = { w: mw, h: mh, a: a }, ka = akSegArea(mm);
+      /* mostly taken already (scraps left): leave those few spots in the background */
+      if (ka < 0.004 || ka < akSegArea(m) * 0.35) return;
+      for (i = 0; i < a.length; i++) cut[i] = Math.max(cut[i], a[i]);
+      parts.push({ m: mm, name: name });
+    }
+    (words ? akSegWords(cv) : Promise.resolve([])).then(function (L) {
+      lines = L;
+      if (lines.length) { busy.set("Taking the words out of the picture…"); clean = akSegFill(cv, akSegWordHole(w, hh, lines)); }
+      busy.set("Finding people and things…");
+      var q = Promise.resolve();
+      taps.forEach(function (t, i) { q = q.then(function () { busy.set("Cutting out your tap " + (i + 1) + "…"); return akSegTap(clean, t.x, t.y).then(function (m) { claim(m, "Part " + (i + 1)); }); }); });
+      if (people) q = q.then(function () { return akSegPersonParts(clean).then(function (pp) {
+        if (!pp) return;
+        if (pp.held) claim(pp.held, "What they hold (guitar)"); claim(pp.person, "Person");
+      }); });
+      q = q.then(function () { return akSegThings(clean).then(function (T) {
+        var counts = {}; for (var i = 0; i < T.c.length; i++) counts[T.c[i]] = (counts[T.c[i]] || 0) + 1;
+        Object.keys(counts).map(Number).filter(function (k) { return k > 0 && AKSEG_DEEPLAB[k] !== "person" && counts[k] / T.c.length > 0.15; }).slice(0, 2).forEach(function (k) {
+          var m = { w: T.w, h: T.h, a: new Float32Array(T.c.length) }; for (var i = 0; i < T.c.length; i++) m.a[i] = T.c[i] === k ? 1 : 0;
+          var nm = AKSEG_DEEPLAB[k] || "Thing"; claim(m, nm.charAt(0).toUpperCase() + nm.slice(1));
+        });
+      }, function () {}); });
+      return q;
+    }).then(function () {
+      busy.set("Filling in the background…");
+      var steps = [];
+      if (parts.length) {
+        var hole = akGfxCv(w, hh), hc = hole.getContext("2d");
+        parts.forEach(function (p) { p.c = akSegCutCv(clean, p.m); hc.drawImage(p.c.al, 0, 0); });
+        var grow = akGfxBlurCv(hole, Math.max(1, 0.008 * Math.max(w, hh))), gc = grow.getContext("2d"), gd = gc.getImageData(0, 0, w, hh);
+        for (var i = 3; i < gd.data.length; i += 4) gd.data[i] = gd.data[i] > 20 ? 255 : 0; gc.putImageData(gd, 0, 0);
+        steps.push({ cv: akSegFill(clean, grow), name: "Background (filled in)" });
+      } else steps.push({ cv: clean, name: lines.length ? "Picture without the words" : "Background" });
+      /* back to front: things, person, what they hold, your taps */
+      var order = parts.slice().sort(function (a, b) { function r(p) { return /^Part/.test(p.name) ? 3 : /hold/.test(p.name) ? 2 : p.name === "Person" ? 1 : 0; } return r(a) - r(b); });
+      order.forEach(function (p) { steps.push({ cv: p.c.cv, name: p.name }); });
+      if (words === "pic") lines.forEach(function (l) { steps.push({ cv: akSegWordPic(cv, l), name: "Words: " + l.t, box: l.box }); });
+      var D = X.D, prev = id, made = [], b = src.box, kx = b.w / w, ky = b.h / hh;
+      function next(i) {
+        if (i >= steps.length) {
+          var P = akGfxState().P || X.base();
+          if (words === "text") lines.forEach(function (l) {
+            var tid = uid(), hgt = (l.y1 - l.y0) * ky;
+            akGfxFree(D).push({ id: tid, t: "text", text: l.t, x: (b.x + (l.x0 + l.x1) / 2 * kx) / P.W, y: (b.y + (l.y0 + l.y1) / 2 * ky) / P.H, size: hgt * 1.15 / Math.min(P.W, P.H), w: Math.min(1, ((l.x1 - l.x0) * kx * 1.3) / P.W), weight: 700, color: l.col });
+            made.push("uf_" + tid);
+          });
+          var e = D.edit[id] = D.edit[id] || {}; e.hide = true;
+          if (made.length > 1 && typeof akLyGroup === "function") D.groups = (D.groups || []).concat([made.slice()]);
+          st.sel = made[made.length - 1] || ""; X.ch(true); AKSEG.busy = false; akSegOneStep(AKSEG.opI); AKSEG.opI = null; busy.close(); close();
+          toast("Split into " + made.length + " layers" + (lines.length ? " (" + lines.length + " of words)" : "") + ". They're grouped: Layers › ⋯ › 🔗 Ungroup to move them one by one. The original is hidden.");
+          return;
+        }
+        var s = steps[i], bb = s.box ? { x: b.x + s.box.x * kx, y: b.y + s.box.y * ky, w: s.box.w * kx, h: s.box.h * ky } : b;
+        akSegAddPic(X, s.cv, bb, s.name, prev, function (lid) { made.push(lid); prev = lid; next(i + 1); });
+      }
+      next(0);
+    }).catch(function (e) { AKSEG.busy = false; AKSEG.opI = null; busy.close(); toast("Smart layers couldn't run on this device: " + ((e && e.message) || e)); });
+  }
+  return close;
+};
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.forEach(function (e) {
+  if (/Smart layers \(split a photo/.test(e.t)) e.a = "Graphics studio › tap your photo › ⋯ More › 🧩 Smart layers. The words come out first (as exact copies, or editable text) and are filled in underneath, so nothing shows twice. The person and what they hold (guitar) become their own layers; tap anything else you want split (a mic, a logo). The background gets every spot filled in. Layers › ⋯ › Ungroup to move them one by one.";
+});
+AK_WHATS_NEW = ["🧩 Smart layers: the words come out cleanly (no doubled letters), as exact copies or editable text; the person and the guitar are their own layers; tap anything else to split it too. ✂ Remove background: cleaner edges, black bars around a photo are skipped, and stray bits (wall, candle) are left out. In its window: 👤 Person, then 👆 Tap to keep / 👆 Tap to remove, and ↶ ↷ for every step. Pictures bigger than the page keep the part past the edge. Each of these is one ↶ in the studio."].concat(AK_WHATS_NEW || []);
+akTcAdd("20.0", "Graphics", [
+  ["sl-words", "🧩 Smart layers: clean words", "Run Smart layers on a flyer photo with words on it: each line is its own layer and nothing shows twice underneath.", null],
+  ["sl-parts", "🧩 Smart layers: person, guitar, your taps", "In the Smart layers window, tap the mic (a dot shows), then Split it: Person, What they hold, Part 1, Background.", null],
+  ["rb-clean", "✂ Remove background: cleaner edge", "Try a photo with black bars or a busy wall: bars and loose bits are left out, the edge follows the person.", null]
+]);
+(function () {
+  var it = function (id) { return AKTC.filter(function (x) { return x.id === id; })[0]; };
+  [["sl-words", "Graphics › tap your photo › ⋯ More › 🧩 Smart layers › Split it", { pic: 1, more: 1, pop: "Smart layers" }],
+   ["sl-parts", "Graphics › tap your photo › ⋯ More › 🧩 Smart layers › tap things › Split it", { pic: 1, more: 1, pop: "Smart layers" }],
+   ["rb-clean", "Graphics › tap your photo › ✂ Remove bg", null]].forEach(function (r) { var x = it(r[0]); if (!x) return; x.where = r[1]; if (r[2]) x.find = r[2]; else x.go = akRbShowBtn; });
+})();
+AK_VERSION = "20.0";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
