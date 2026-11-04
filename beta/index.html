@@ -19096,7 +19096,7 @@ function akStrumDecorate(song, host, ctx) {
       var el = sc.querySelector('.akm-bar[data-si="' + si + '"][data-bi="' + bi + '"]'), toks = akStrumFor(m, secn, b); if (!el || !toks) return;
       var row = h("div", { class: "akm-strum" + (b.st ? " own" : ""), style: "grid-template-columns:repeat(" + toks.length + ",minmax(0,1fr))", "aria-label": "Strum: " + toks.join(" ") });
       toks.forEach(function (t, k) {
-        var g = akStrumGlyph(t), cell = h(edit ? "button" : "span", { class: "akm-st" + (g.acc ? " acc" : "") + (g.c === "-" ? " rest" : "") + (g.c === "M" ? " mute" : ""), "data-k": k, "aria-label": { D: "down", U: "up", M: "muted", P: "palm mute", "-": "rest" }[g.c] + (g.acc ? ", accent" : "") }, g.g);
+        var g = akStrumGlyph(t), cell = h(edit ? "button" : "span", { class: "akm-st" + (g.acc ? " acc" : "") + (g.c === "-" ? " rest" : "") + (g.c === "M" ? " mute" : ""), "data-k": k, "aria-label": { D: "down", U: "up", M: "chuck", P: "palm mute", "-": "rest" }[g.c] + (g.acc ? ", accent" : "") }, g.g);
         if (edit) cell.onclick = function () { var cur = toks.slice(), i = AK_STRUM_CYCLE.indexOf(cur[k]); cur[k] = AK_STRUM_CYCLE[(i + 1) % AK_STRUM_CYCLE.length]; b.st = cur.join(" "); akMKeep(song, m, "strum"); ctx.redraw(); };
         row.appendChild(cell);
       });
@@ -44250,7 +44250,7 @@ function akPatWizard(set, list) {
   function paint() {
     paintChips(); paintPat(-1);
     big.textContent = R ? "Play " + cur + " with the click" : take ? "Check the strokes on " + cur : "Strum pattern on " + cur;
-    if (!R && !take) status.textContent = "↓ down, ↑ up, ⤓ palm mute (side of the hand on the strings at the bridge), ✕ chuck (fretting hand flat across the strings). One bar of clicks first, then play along. " + (have[cur] ? "Recorded already: record again to replace it." : "");
+    if (!R && !take) status.textContent = "↓ down, ↑ up, ⤓ palm mute (strumming hand rests on the strings at the bridge: short, dull chord), ✕ chuck (fretting hand goes slack on the strings: just a “chk”, no chord). One bar of clicks first, then play along. " + (have[cur] ? "Recorded already: record again to replace it." : "");
     btns.innerHTML = "";
     if (!R) btns.appendChild(h("button", { class: "primary", onClick: record }, take ? "↺ Record again" : "● Record " + cur));
     else btns.appendChild(h("button", { onClick: function () { stop(); status.textContent = "Stopped."; paint(); } }, "■ Stop"));
@@ -63753,6 +63753,263 @@ if (typeof akTcAdd === "function") akTcAdd("19.9", "Sound", [
   ["seagull-soft", "🎸 Soft notes and Try it", "Settings › Songs and shows › Chord sound: check 🎸 My guitar (built into the app) is picked and tap ▶ Try it. Quiet parts use the soft takes.", function () { go("settings"); }]]);
 AK_WHATS_NEW = ["🎸 The built-in guitar is now Aedryan's Seagull steel-string, two takes of every note plus soft notes, so strums made from it sound more natural and never repeat exactly."].concat(AK_WHATS_NEW || []);
 AK_VERSION = "19.9";
+
+/* ================================================================ ak_v20m: 20.2 natural chuck and palm mute (his note 11-04: "the chuck
+   / palm mute sounds kind of weird, maybe because it's made from the strings"; he wasn't sure what the difference is).
+   - Palm mute (⤓) built from his notes the way a real palm mute sounds: the pick attack stays, then the highs die within a few
+     hundredths of a second (a filter that closes as the note goes on, not one fixed dull filter), a quick drop then a short low
+     "thump" ring. Low 4 strings, the upper ones a little quieter.
+   - Chuck (✕) is now mostly the strum noise itself: a quick scrape across the deadened strings (one little click per string),
+     a very short low thud of the muted strings (almost no pitch) and the guitar body knock. Built from the open strings, so it
+     no longer sounds like a tiny chord.
+   - Both kinds: "Use my recording if I made one" is the default (settings().hear.strb.chick / .palm = "auto" | "notes"). The
+     quick recorder 🎙 Record my chuck and palm mutes (3 chucks + one palm-muted strum of 5 shapes, about 2 minutes) lives next to
+     the Strums settings; it records into the chosen "Strum patterns play with" set, or a new one it picks for you.
+   - Plain-words ⓘ "Palm mute or chuck?" in Settings › Chord sound › 🎸 Strums; clearer recorder words; strum cells say "chuck".
+   Test ak_t610 (block ak_t610-619). */
+var AKMU = { force: false, mute: false };
+var AK_MU_SHAPES = ["G", "C", "D", "Em", "Am"];
+var AK_MU_WHAT = {
+  palm: "Palm mute (⤓): the side of your strumming hand rests on the strings right by the bridge while you strum. You still hear the chord, but short and dull: a chunky “thum”.",
+  chuck: "Chuck (✕): your fretting hand goes slack, just touching the strings so they can't ring, as you strum. No chord at all, only a percussive “chk”, like a snare on the backbeat."
+};
+
+/* one-pole step coefficient for a cutoff */
+function akMuK(fc, sr) { return 1 - Math.exp(-2 * Math.PI * Math.max(20, fc) / sr); }
+/* one string of a palm mute: sd = the take, step = how fast to read it (moves it to the note). The filter starts open (the pick
+   attack) and closes to a low, dull ring; a quick drop then a short ring. */
+function akMuPalmStr(sd, step, sr, len, g) {
+  var n = Math.max(0, Math.min(Math.round(len * sr), Math.floor((sd.length - 2) / step))), out = new Float32Array(n);
+  var a = 0, b = 0, k = akMuK(g.hi, sr), lo = g.lo, hi = g.hi, fct = g.fct;
+  for (var j = 0; j < n; j++) {
+    var t = j / sr;
+    if ((j & 31) === 0) k = akMuK(lo + (hi - lo) * Math.exp(-t / fct), sr);
+    var p = j * step, i = p | 0, x = sd[i] + (sd[i + 1] - sd[i]) * (p - i);
+    a += k * (x - a); b += k * (a - b);
+    var env = 0.5 * Math.exp(-t / 0.04) + 0.5 * Math.exp(-t / 0.15);
+    out[j] = (b + x * Math.exp(-t / 0.0025) * 0.35) * env;
+  }
+  return out;
+}
+/* one string of a chuck: the deadened string's short dull thud (very little pitch) plus a click of string noise */
+function akMuChuckStr(sd, step, sr, rnd, g) {
+  var n = Math.min(Math.round(0.06 * sr), Math.floor((sd.length - 2) / step)), out = new Float32Array(Math.round(0.06 * sr));
+  var a = 0, b = 0, k = akMuK(620, sr), h1 = 0, h2 = 0, l1 = 0, l2 = 0, kh = akMuK(700, sr), kl = akMuK(3200, sr), j;
+  for (j = 0; j < n; j++) {
+    var p = j * step, i = p | 0, x = sd[i] + (sd[i + 1] - sd[i]) * (p - i);
+    a += k * (x - a); b += k * (a - b);
+    out[j] = b * Math.exp(-j / (sr * 0.009)) * g.tone;
+  }
+  var nn = Math.round(sr * 0.014);
+  for (j = 0; j < nn && j < out.length; j++) {
+    /* string noise: white noise, two-pole high-pass at 700 Hz and two-pole low-pass at 3.2 kHz (the "chk" sits around 1-3 kHz) */
+    var w = rnd() * 2 - 1; h1 += kh * (w - h1); var y = w - h1; h2 += kh * (y - h2); y -= h2; l1 += kl * (y - l1); l2 += kl * (l1 - l2);
+    var e = Math.min(1, j / (sr * 0.0004)) * Math.exp(-j / (sr * 0.0028));
+    out[j] += l2 * e * g.noise * 3;
+  }
+  return out;
+}
+/* palm | chick, the same shape as akStrbBuild (akstr_a) so the cache, loudness and playing all stay the same */
+function akMuBuild(L, notes, kind, o) {
+  var ac = L.ac, sr = ac.sampleRate, v = o.v || 0, list;
+  var seed = 7 + v * 7919 + notes.length * 131; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+  if (kind === "palm") {
+    list = notes.slice(0, Math.min(4, notes.length)); var n = list.length; if (!n) return null;
+    var len = 0.5, gap = (o.gap || 0.012) * 0.85, N = Math.round((len + (n - 1) * gap * 1.15) * sr), out = new Float32Array(N), t = 0;
+    list.forEach(function (x, k) {
+      var take = akStrbTake(L, x.m, x.s == null ? k : x.s, v, o.soft); if (!take) return;
+      var sd = take.buf.getChannelData(0), step = akSmpRate(take, x.m, L.set.fix) * take.buf.sampleRate / sr;
+      var s = akMuPalmStr(sd, step, sr, len, { hi: 3200, lo: 640 + 40 * k, fct: 0.03 });
+      var gain = (1 - 0.12 * k) * (0.92 + rnd() * 0.16), off = Math.round(t * sr);
+      for (var j = 0; j < s.length && off + j < N; j++) out[off + j] += gain * s[j];
+      t += gap * (0.85 + rnd() * 0.3);
+    });
+    return akMuFinish(ac, out, sr, 0.11, 0.3, 0.08);
+  }
+  /* the chuck: the open strings (the hand lifts off the chord), a quick scrape low to high, and the body knock */
+  var tu = akTuning(akHearIns()).notes.map(function (m, i) { return { m: m, s: i }; });
+  var m = tu.length, cg = 0.0045, N2 = Math.round((0.11 + m * cg) * sr), o2 = new Float32Array(N2), t2 = 0;
+  tu.forEach(function (x, k) {
+    var take = akStrbTake(L, x.m, x.s == null ? k : x.s, v, false); if (!take) return;
+    var sd = take.buf.getChannelData(0), step = akSmpRate(take, x.m, L.set.fix) * take.buf.sampleRate / sr;
+    var s = akMuChuckStr(sd, step, sr, rnd, { tone: 0.55 * (1 - 0.07 * k), noise: 0.5 + 0.25 * (k / Math.max(1, m - 1)) }), off = Math.round(t2 * sr), gain = 0.9 + rnd() * 0.2;
+    for (var j = 0; j < s.length && off + j < N2; j++) o2[off + j] += gain * s[j];
+    t2 += cg * (0.8 + rnd() * 0.4);
+  });
+  /* the body knock: the top of the guitar (about 100 Hz) hit by the hand */
+  var f1 = 96 + rnd() * 14, f2 = 205 + rnd() * 20, ph = rnd() * 0.3;
+  for (var q = 0; q < N2; q++) { var tt = q / sr; o2[q] += (0.2 * Math.sin(2 * Math.PI * f1 * tt + ph) * Math.exp(-tt / 0.028) + 0.06 * Math.sin(2 * Math.PI * f2 * tt) * Math.exp(-tt / 0.01)) * Math.min(1, q / (sr * 0.0015)); }
+  return akMuFinish(ac, o2, sr, 0.085, 0.06, 0.03);
+}
+/* even loudness (rms over the first part), never past full scale, a smooth end */
+function akMuFinish(ac, out, sr, rmsTo, win, fade) {
+  var N = out.length, a = Math.round(sr * 0.002), z = Math.min(N, Math.round(sr * win)), en = 0, i;
+  for (i = a; i < z; i++) en += out[i] * out[i];
+  var rms = Math.sqrt(en / Math.max(1, z - a)); if (rms > 1e-6) { var gk = rmsTo / rms; for (i = 0; i < N; i++) out[i] *= gk; }
+  var pk = 0; for (i = 0; i < N; i++) pk = Math.max(pk, Math.abs(out[i])); if (pk > 0.95) { var gp = 0.95 / pk; for (i = 0; i < N; i++) out[i] *= gp; }
+  var fd = Math.min(N, Math.round(sr * fade)); for (i = 0; i < fd; i++) out[N - 1 - i] *= i / fd;
+  for (i = 0; i < 12 && i < N; i++) out[i] *= i / 12;
+  if (!ac) return out;
+  var buf = ac.createBuffer(1, N, sr); buf.getChannelData(0).set(out); return buf;
+}
+
+/* ---------------------------------------------------------------- hooking it in */
+(function () {
+  if (typeof akStrbBuild !== "function") return;
+  var build0 = akStrbBuild; AKMU.build0 = build0;
+  akStrbBuild = function (L, notes, kind, o) {
+    if (kind === "palm" || kind === "chick") { try { var b = akMuBuild(L, notes, kind, o || {}); if (b) return b; } catch (e) {} }
+    return build0(L, notes, kind, o);
+  };
+  /* one time: the old choices become "my recording if I made one, else from my notes" */
+  var cfg0 = akStrbCfg;
+  akStrbCfg = function () {
+    var s = cfg0();
+    if (!s.muMig) { s.muMig = 1; if (s.chick === "notes" || s.chick === "rec" || !s.chick) s.chick = "auto"; if (!s.palm) s.palm = "auto"; }
+    if (!s.palm) s.palm = "auto";
+    return s;
+  };
+  /* a palm mute: a recorded one that fits the chord (moved up to 2 frets), else built from the notes */
+  var hs0 = akHearStrum;
+  akHearStrum = function (notes, o) {
+    o = o || {};
+    try {
+      var c = akStrbCfg(), dir = o.dir || akHearCfg().dir;
+      if (o.palm && dir !== "arp" && c.palm !== "notes" && !(typeof akPiano === "function" && akPiano()) && notes && notes.length) {
+        var ks = akSmpKits();
+        for (var i = 0; i < ks.length; i++) {
+          var f = akSmpStrumFor(ks[i], notes, "palm"); if (!f || !f.st.kit) continue;
+          var ac = akAudio(), t = akSndAt(ac, o.when); akSmpBus(); akStrbDamp(t, "palm");
+          var vol = (o.vol == null ? 0.75 : o.vol) * (akHearCfg().vol / 100) * 1.25 * (0.94 + Math.random() * 0.12);
+          akSmpStart(f.st.buf, Math.pow(2, f.k / 12), vol, t, "strum", { len: o.len || 0.6 });
+          return;
+        }
+      }
+    } catch (e) {}
+    return hs0(notes, o);
+  };
+  /* the chuck: a recorded one when there is one (unless "always from my notes"), and it stops what was ringing */
+  if (typeof akRChuck === "function") {
+    var ch0 = akRChuck;
+    akRChuck = function (when, vol) {
+      try {
+        var c = akStrbCfg();
+        if (c.chick !== "notes" && akMuHasChuck()) { var ac = akAudio(), t = akSndAt(ac, when || 0); try { akStrbDamp(t, "chick"); } catch (e) {} if (akSmpChuck(when, vol)) return; }
+      } catch (e) {}
+      return ch0(when, vol);
+    };
+  }
+  /* the quick recorder: only 3 chucks and the palm-muted strums */
+  var plan0 = akSmpPlan;
+  akSmpPlan = function (ins, o) {
+    if (o && o.kit && AKMU.mute) {
+      var ks = [{ k: "x", chuck: true, take: 1 }, { k: "x_2", chuck: true, take: 2 }, { k: "x_3", chuck: true, take: 3 }];
+      (o.chords && o.chords.length ? o.chords : AK_MU_SHAPES).forEach(function (c) { ks.push({ k: "p" + c, chord: c, dir: "palm" }); });
+      return ks;
+    }
+    return plan0(ins, o);
+  };
+  var wiz0 = akSmpWizard;
+  akSmpWizard = function (set, list) { AKMU.mute = !!(set && (set.mute || AKMU.force)); AKMU.force = false; try { return wiz0(set, list); } finally { AKMU.mute = false; } };
+  var txt0 = akSmpKitText;
+  akSmpKitText = function (s) {
+    if (s && s.chuck) return ["Chuck" + (s.take ? " (" + s.take + " of 3)" : ""), "Keep a chord shape but let your fretting hand go slack, just touching the strings so nothing rings. Strum down once, firmly, like you do in a song. You should hear only the “chk”."];
+    if (s && s.dir === "palm") return ["Palm-mute " + s.chord, "Rest the side of your strumming hand on the strings right where they meet the bridge, then strum down once. Short and dull, but you can still hear the chord."];
+    return txt0(s);
+  };
+})();
+function akMuHasChuck() { try { return akSmpKits().some(function (k) { return k && (k.chuck || (k.chucks && k.chucks.length)); }); } catch (e) { return false; } }
+
+/* open the quick recorder: into the chosen strum set when there is one, else a new "My chuck and palm mutes" set */
+function akMuRecorder() {
+  var ins = akHearIns(), kc = typeof akSmpKitCfg === "function" ? akSmpKitCfg()[ins] : "";
+  function fresh() {
+    var tu = akTuning(ins), cs = AK_MU_SHAPES.slice();
+    try { var top = akSmpTopChords(5); if (top.length >= 3) cs = top; } catch (e) {}
+    var set = { id: "gk" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: "My chuck and palm mutes", kind: "steel", ins: ins, notes: tu.notes, tname: tu.name, fix: false, kit: true, mute: true, chords: cs, created: Date.now() };
+    akSmpPutSet(set, function () { akSmpKitCfg()[ins] = set.id; save(); akSmpWizard(set, []); });
+  }
+  if (!kc) { fresh(); return; }
+  akSmpGetSet(kc, function (set, list) { if (!set || !set.kit) { fresh(); return; } AKMU.force = true; akSmpWizard(set, list || []); });
+}
+
+/* ---------------------------------------------------------------- settings: Chord sound › 🎸 Strums */
+(function () {
+  if (typeof akStrbSettings !== "function") return;
+  var set0 = akStrbSettings;
+  akStrbSettings = function (out) {
+    var box = set0(out), cfg = akStrbCfg();
+    try {
+      var old = null; box.querySelectorAll("label.field").forEach(function (l) { if (!old && /^Chuck \(✕\)/.test(l.textContent)) old = l; });
+      function sel(label, key, opts) {
+        return h("label", { class: "field" }, label, h("select", { onChange: function () { cfg[key] = this.value; save(); AKN.cache = {}; AKN.order = []; } },
+          opts.map(function (x) { return h("option", { value: x[0], selected: x[0] === cfg[key] }, x[1]); })));
+      }
+      var rec = akMuHasChuck();
+      var grp = h("div", { class: "akmu" },
+        h("div", { class: "akmu-row" },
+          sel("Palm mute (⤓)", "palm", [["auto", "My recording (if I made one)"], ["notes", "Built from my notes"]]),
+          sel("Chuck (✕)", "chick", [["auto", "My recording (if I made one)"], ["notes", "Built from my notes"]])),
+        h("details", { class: "akmu-what" }, h("summary", null, "ⓘ Palm mute or chuck?"),
+          h("p", null, AK_MU_WHAT.palm), h("p", null, AK_MU_WHAT.chuck),
+          h("p", { class: "hint" }, "In strum rows: ↓ down, ↑ up, ⤓ palm mute, ✕ chuck, · rest.")),
+        h("div", { class: "akmu-row" },
+          h("button", { class: "sm", onClick: function () { akMuHear("P"); } }, "▶ Palm mutes"),
+          h("button", { class: "sm", onClick: function () { akMuHear("M"); } }, "▶ Chucks"),
+          h("button", { class: "sm", onClick: function () { akMuRecorder(); } }, "🎙 Record my chuck and palm mutes"),
+          h("span", { class: "muted akmu-st" }, rec ? "Using your recorded chuck." : "No recorded chuck yet: built from your notes.")));
+      if (old && old.parentNode) old.parentNode.replaceChild(grp, old); else box.appendChild(grp);
+    } catch (e) {}
+    AKMU.box = box;
+    return box;
+  };
+  /* the 🎸 Strums settings never showed: akstr_a put them in with c.out.querySelector, but Settings hands out a plain
+     { appendChild } since the settings rework, so it threw (quietly). Put them in here, folded, under the recorded sound. */
+  var x15 = typeof akSettingsExtra15 === "function" ? akSettingsExtra15 : null;
+  akSettingsExtra15 = function (c) {
+    AKMU.box = null;
+    if (x15) x15(c);
+    try {
+      var bx = AKMU.box; if (!bx) bx = akStrbSettings(c.out);
+      if (bx && !bx.parentNode) {
+        var hd = bx.querySelector("h4.aks-h"); if (hd) hd.remove();
+        c.out.appendChild(h("details", { class: "akmu-fold" }, h("summary", null, h("b", null, "🎸 Strums"), h("span", { class: "muted" }, "  speed, ring, palm mute (⤓), chuck (✕)")), bx));
+      }
+    } catch (e) {}
+  };
+})();
+/* a bar to hear: down strums with palm mutes, or a chuck pattern */
+function akMuHear(kind) {
+  try { akGtrHush(); } catch (e) {}
+  var notes = akHearNotes("G", { capo: 0 }), e8 = 60 / 96 / 2;
+  var seq = kind === "P" ? "P P P P P P D - P P P P P P D -" : "D - M U - U M U D - M U - U M U";
+  seq.split(" ").forEach(function (t, i) {
+    if (t === "-") return; var when = 0.15 + i * e8;
+    if (t === "M") akRChuck(when, 0.55); else akHearStrum(notes, { when: when, dir: t === "U" ? "up" : "down", palm: t === "P", vol: t === "U" ? 0.55 : 0.72 });
+  });
+}
+akCss("ak-v20m", [
+  ".akmu{margin:4px 0;border:1px solid var(--line);border-radius:2px;padding:4px 6px}",
+  ".akmu-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.akmu-row>label.field{flex:1 1 200px;margin:0}",
+  ".akmu-what>summary{cursor:pointer;font-size:.9rem;padding:3px 0}.akmu-what p{margin:3px 0;font-size:.9rem}",
+  ".akmu-st{font-size:.8rem}",
+  ".akmu-fold{margin:6px 0;border:1px solid var(--line);border-radius:2px;padding:2px 6px}.akmu-fold>summary{cursor:pointer;padding:4px 0}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Palm mute and chuck: what they are, how they sound, record your own", a: "Settings › Songs and shows › Chord sound › 🎸 Strums › ⓘ Palm mute or chuck? (▶ Palm mutes, ▶ Chucks, 🎙 Record my chuck and palm mutes).", k: "palm mute chuck chunk chick muted strum dead strings percussive record chuck sound" });
+if (typeof akTcAdd === "function") akTcAdd("20.2", "Sound", [
+  ["mu-chuck", "✕ Chuck sounds natural", "Settings › Chord sound › 🎸 Strums: tap ▶ Chucks. Each ✕ should be a short percussive “chk” with almost no chord in it, not a tiny chord.", function () { akMuGo(); }],
+  ["mu-palm", "⤓ Palm mute sounds natural", "Same place: tap ▶ Palm mutes. You should hear the chord, short and dull (“thum”), not muffled or buzzy.", function () { akMuGo(); }],
+  ["mu-what", "ⓘ Palm mute or chuck? words", "Same place: open ⓘ Palm mute or chuck? and check the two lines are clear.", function () { akMuGo(); }],
+  ["mu-rec", "🎙 Record my chuck and palm mutes", "Same place: tap 🎙 Record my chuck and palm mutes, record 3 chucks and the palm mutes, then ▶ Chucks. It should now play your real chuck (the line says Using your recorded chuck).", function () { akMuGo(); }]]);
+function akMuGo() {
+  var it = { title: "Palm mute and chuck", where: "Settings › Songs and shows › Chord sound › 🎸 Strums", what: AK_MU_WHAT.chuck, how: "▶ Palm mutes and ▶ Chucks to hear them; 🎙 Record my chuck and palm mutes for your own." };
+  if (typeof akShowMe === "function") { try { akShowMe(it); setTimeout(function () { var el = document.querySelector(".akmu"); if (el && typeof akSpot === "function") { var d = el.closest("details"); while (d) { d.open = true; d = d.parentElement && d.parentElement.closest("details"); } akSpot(el, it); } }, 700); return; } catch (e) {} }
+  go("settings");
+}
+AK_WHATS_NEW = ["✕ Chuck and ⤓ palm mute sound more natural: the chuck is now a percussive “chk” (almost no chord), the palm mute a short, dull “thum”.",
+  "Settings › Chord sound › 🎸 Strums: ⓘ Palm mute or chuck? says what each one is; ▶ Palm mutes / ▶ Chucks to hear them; 🎙 Record my chuck and palm mutes (about 2 minutes) to use your real ones."].concat(AK_WHATS_NEW || []);
+AK_VERSION = "20.2";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
