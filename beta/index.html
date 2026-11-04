@@ -39124,6 +39124,7 @@ function akGfxGrad(ctx, b, stops, horiz) {
 }
 function akGfxText(ctx, l, P) {
   if (!l.text && l.text !== 0) return;
+  if ((l.tiltX || l.tiltY || l.depth) && typeof akGfxText3D === "function" && !ctx.__ak3d) return akGfxText3D(ctx, l, P);
   var B = akGfxTextBox(l), f = B.f, z = f.size, n = f.lines.length, top = l.valign === "top";
   ctx.save();
   if (l.rot) { var ax = B.x + B.w / 2, ay = B.y + B.h / 2; ctx.translate(ax, ay); ctx.rotate(l.rot * Math.PI / 180); ctx.translate(-ax, -ay); }
@@ -39131,7 +39132,21 @@ function akGfxText(ctx, l, P) {
   ctx.font = akGfxFontStr(l, z); ctx.textAlign = l.align || "left"; ctx.textBaseline = top ? "top" : "middle"; ctx.lineJoin = "round";
   try { ctx.letterSpacing = f.sp + "px"; } catch (e) {}
   var y0 = top ? l.y : l.y - (n - 1) * f.lh / 2;
-  function each(fn) { f.lines.forEach(function (t, i) { fn(t, l.x, y0 + i * f.lh); }); }
+  /* 21.1: Curve bends each line along an arc (l.curve -100..100: up = arch, down = smile); letters turn with the arc */
+  function each(fn) {
+    if (!l.curve) { f.lines.forEach(function (t, i) { fn(t, l.x, y0 + i * f.lh); }); return; }
+    var theta = Math.abs(l.curve) / 100 * Math.PI * 0.9, sg = l.curve > 0 ? 1 : -1, al = ctx.textAlign;
+    f.lines.forEach(function (t, i) {
+      var yi = y0 + i * f.lh, tw = ctx.measureText(t).width + (f.sp || 0) * t.length, R = tw / Math.max(0.05, theta), pos = 0;
+      var x0 = al === "center" ? l.x - tw / 2 : al === "right" ? l.x - tw : l.x, cxm = x0 + tw / 2;
+      for (var q = 0; q < t.length; q++) {
+        var ch = t.charAt(q), w = ctx.measureText(ch).width + (f.sp || 0), mid = pos + w / 2 - tw / 2, a = mid / R;
+        ctx.save(); ctx.textAlign = "center";
+        ctx.translate(cxm + R * Math.sin(a), yi + sg * R * (1 - Math.cos(a))); ctx.rotate(sg * a);
+        fn(ch, 0, 0); ctx.restore(); pos += w;
+      }
+    });
+  }
   function fill(style, dx, dy) { ctx.fillStyle = style; each(function (t, x, y) { ctx.fillText(t, x + (dx || 0), y + (dy || 0)); }); }
   function stroke(style, lw, dx, dy) { ctx.strokeStyle = style; ctx.lineWidth = lw; each(function (t, x, y) { ctx.strokeText(t, x + (dx || 0), y + (dy || 0)); }); }
   function shadow(c, b, x, y) { ctx.shadowColor = c; ctx.shadowBlur = b || 0; ctx.shadowOffsetX = x || 0; ctx.shadowOffsetY = y || 0; }
@@ -39171,6 +39186,8 @@ function akGfxText(ctx, l, P) {
     ctx.globalAlpha = 0.92; ctx.drawImage(cv, B.x - pad, B.y - pad);
   }
   else base();
+  if (l.under && !l.curve) { try { ctx.letterSpacing = "0px"; } catch (e) {} ctx.shadowColor = "transparent"; ctx.fillStyle = (fx === "none" || !fx) ? (l.color || "#fff") : (l.color || "#fff");
+    f.lines.forEach(function (t, i) { var tw = ctx.measureText(t).width, x0 = ctx.textAlign === "center" ? l.x - tw / 2 : ctx.textAlign === "right" ? l.x - tw : l.x, yy = (top ? l.y + i * f.lh + z * 1.0 : y0 + i * f.lh + z * 0.5); ctx.fillRect(x0, yy + z * 0.04, tw, Math.max(1.5, z * 0.06)); }); }
   try { ctx.letterSpacing = "0px"; } catch (e) {}
   ctx.restore();
 }
@@ -61324,9 +61341,38 @@ function akSegRemoveBg(X, id) {
   var down = null;
   function pt(e) { var r = view.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) }; }
   function dab(p) { var c = brush === "keep" ? pc : ec, rr = size / 100 * 0.08 * Math.max(w, hh); c.beginPath(); c.arc(p.x * w, p.y * hh, rr, 0, 6.3); c.fillStyle = "#fff"; c.fill(); if (brush === "keep") { ec.save(); ec.globalCompositeOperation = "destination-out"; ec.beginPath(); ec.arc(p.x * w, p.y * hh, rr, 0, 6.3); ec.fill(); ec.restore(); } else { pc.save(); pc.globalCompositeOperation = "destination-out"; pc.beginPath(); pc.arc(p.x * w, p.y * hh, rr, 0, 6.3); pc.fill(); pc.restore(); } }
-  view.addEventListener("pointerdown", function (e) { e.preventDefault(); down = pt(e); if (brush) { push(); strokes++; dab(down); draw(); } try { view.setPointerCapture(e.pointerId); } catch (er) {} });
-  view.addEventListener("pointermove", function (e) { if (!down || !brush) return; dab(pt(e)); strokes++; draw(); });
-  view.addEventListener("pointerup", function (e) { var p = pt(e); if (down && !brush && (mode === "keep" || mode === "remove")) doTap(p.x, p.y, mode === "remove").then(refresh); else if (down && brush) refresh(); down = null; });
+  /* 20.9: zoom in to fine-tune (− slider + under the picture, or pinch with two fingers) and pan without erasing: ✋ Pan (same as the
+     studio's ✋ Pan), or drag with two fingers. Taps and the brush work the same when zoomed. */
+  var Z = { z: 1, x: 0, y: 0, hand: false, ptrs: {}, two: null, stroked: false };
+  function zClamp() { var W = view.clientWidth || 1, H = view.clientHeight || 1; Z.x = Math.min(0, Math.max(W - W * Z.z, Z.x)); Z.y = Math.min(0, Math.max(H - H * Z.z, Z.y)); view.style.transform = Z.z === 1 ? "" : "translate(" + Z.x + "px," + Z.y + "px) scale(" + Z.z + ")"; }
+  function zSet(z, cx, cy) { var W = view.clientWidth || 1, H = view.clientHeight || 1; if (cx == null) { cx = W / 2; cy = H / 2; } z = Math.max(1, Math.min(8, z)); var px = (cx - Z.x) / Z.z, py = (cy - Z.y) / Z.z; Z.z = z; Z.x = cx - px * z; Z.y = cy - py * z; zClamp(); var zs = ctl.querySelector(".akseg-zs"); if (zs) zs.value = Math.round(Z.z * 100); var zl = ctl.querySelector(".akseg-zl"); if (zl) zl.textContent = Math.round(Z.z * 100) + "%"; }
+  view.addEventListener("pointerdown", function (e) {
+    e.preventDefault(); Z.ptrs[e.pointerId] = { x: e.clientX, y: e.clientY }; try { view.setPointerCapture(e.pointerId); } catch (er) {}
+    var ids = Object.keys(Z.ptrs);
+    if (ids.length >= 2) { /* two fingers: pinch and pan; a stroke the first finger started is taken back */
+      if (Z.stroked && down) { try { undoStep(); UF = []; } catch (er) {} }
+      down = null; Z.stroked = false; var a = Z.ptrs[ids[0]], b = Z.ptrs[ids[1]], r = view.parentNode.getBoundingClientRect();
+      Z.two = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: Z.z, mx: (a.x + b.x) / 2 - r.left - view.offsetLeft, my: (a.y + b.y) / 2 - r.top - view.offsetTop, ox: Z.x, oy: Z.y }; return;
+    }
+    if (Z.hand) { Z.pan = { sx: e.clientX, sy: e.clientY, ox: Z.x, oy: Z.y }; return; }
+    down = pt(e); Z.stroked = false; if (brush) { push(); strokes++; Z.stroked = true; dab(down); draw(); }
+  });
+  view.addEventListener("pointermove", function (e) {
+    if (Z.ptrs[e.pointerId]) Z.ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (Z.two) { var ids = Object.keys(Z.ptrs); if (ids.length < 2) return; var a = Z.ptrs[ids[0]], b = Z.ptrs[ids[1]], r = view.parentNode.getBoundingClientRect(), mx = (a.x + b.x) / 2 - r.left - view.offsetLeft, my = (a.y + b.y) / 2 - r.top - view.offsetTop;
+      var z = Math.max(1, Math.min(8, Z.two.z * (Math.hypot(a.x - b.x, a.y - b.y) || 1) / Z.two.d)), px = (Z.two.mx - Z.two.ox) / Z.two.z, py = (Z.two.my - Z.two.oy) / Z.two.z;
+      Z.z = z; Z.x = mx - px * z; Z.y = my - py * z; zClamp(); var zs2 = ctl.querySelector(".akseg-zs"); if (zs2) zs2.value = Math.round(Z.z * 100); var zl2 = ctl.querySelector(".akseg-zl"); if (zl2) zl2.textContent = Math.round(Z.z * 100) + "%"; return; }
+    if (Z.pan) { Z.x = Z.pan.ox + e.clientX - Z.pan.sx; Z.y = Z.pan.oy + e.clientY - Z.pan.sy; zClamp(); return; }
+    if (!down || !brush) return; dab(pt(e)); strokes++; draw();
+  });
+  function zUp(e) {
+    delete Z.ptrs[e.pointerId];
+    if (Z.two) { if (!Object.keys(Z.ptrs).length) Z.two = null; down = null; return; }
+    if (Z.pan) { Z.pan = null; return; }
+    if (e.type === "pointercancel") { down = null; return; }
+    var p = pt(e); if (down && !brush && (mode === "keep" || mode === "remove")) doTap(p.x, p.y, mode === "remove").then(refresh); else if (down && brush) refresh(); down = null;
+  }
+  view.addEventListener("pointerup", zUp); view.addEventListener("pointercancel", zUp);
   function seg(items, cur, set, aria) {
     return h("div", { class: "akseg-seg", role: "group", "aria-label": aria }, items.map(function (it) {
       return h("button", { type: "button", class: "akseg-sb" + (cur() === it[0] ? " on" : ""), "aria-pressed": cur() === it[0] ? "true" : "false", onClick: function () { set(it[0]); refresh(); } }, it[1]);
@@ -61346,6 +61392,13 @@ function akSegRemoveBg(X, id) {
       h("button", { type: "button", class: "akseg-sb akseg-un", title: "Undo (Person, a tap or a brush stroke)", "aria-label": "Undo", disabled: !UB.length, onClick: undoStep }, "↶"),
       h("button", { type: "button", class: "akseg-sb akseg-un akseg-re", title: "Redo", "aria-label": "Redo", disabled: !UF.length, onClick: redoStep }, "↷"));
     ctl.appendChild(row);
+    var zs = h("input", { type: "range", class: "akseg-zs", min: 100, max: 800, step: 10, value: Math.round(Z.z * 100), "aria-label": "Zoom", onInput: function () { zSet(Number(this.value) / 100); } });
+    ctl.appendChild(h("div", { class: "akseg-zoom" },
+      h("button", { type: "button", class: "akseg-sb", "aria-label": "Zoom out", onClick: function () { zSet(Z.z / 1.5); } }, "−"), zs,
+      h("button", { type: "button", class: "akseg-sb", "aria-label": "Zoom in", onClick: function () { zSet(Z.z * 1.5); } }, "+"),
+      h("span", { class: "akseg-zl" }, Math.round(Z.z * 100) + "%"),
+      h("button", { type: "button", class: "akseg-sb akseg-hand" + (Z.hand ? " on" : ""), "aria-pressed": Z.hand ? "true" : "false", "aria-label": "Pan tool", title: "Pan: drag to move the view (two fingers always pan)", onClick: function () { Z.hand = !Z.hand; refresh(); } }, "✋ Pan"),
+      h("button", { type: "button", class: "akseg-sb", title: "Fit the whole picture", "aria-label": "Fit", onClick: function () { Z.z = 1; Z.x = 0; Z.y = 0; zClamp(); refresh(); } }, "⤢")));
     ctl.appendChild(h("p", { class: "hint akseg-tip" }, "👤 Person makes the first try. Then tap things to keep or remove, or brush the edge."));
     ctl.appendChild(seg([["", "No brush"], ["keep", "🖌 Keep"], ["erase", "⌫ Erase"]], function () { return brush; }, function (v) { brush = v; }, "Touch-up brush"));
     if (brush) ctl.appendChild(X.slider("Brush size", size, 5, 100, 1, function (v) { size = v; }, null, true));
@@ -61492,7 +61545,9 @@ function akSegIsPic(L) { return L && /^(gfree|gpic|gphoto)$/.test(L.type); }
   }
 })();
 akCss("akseg", ".akseg-wrap{display:flex;justify-content:center;background:#111;border:1px solid rgba(127,127,127,.35);border-radius:2px;padding:4px}" +
-  ".akseg-cv{max-width:100%;max-height:52vh;touch-action:none;display:block}.akseg-info{margin:6px 0}" +
+  ".akseg-cv{max-width:100%;max-height:52vh;touch-action:none;display:block;transform-origin:0 0}.akseg-wrap{overflow:hidden;touch-action:none;position:relative}" +
+  ".akseg-zoom{display:flex;align-items:center;gap:4px;margin:6px 0}.akseg-zoom input{flex:1 1 auto;min-width:60px}.akseg-zl{font-size:12px;min-width:3.2em;text-align:right;opacity:.8}.akseg-hand.on{font-weight:700}" +
+  ".akseg-info{margin:6px 0}" +
   ".akseg-ctl{display:flex;flex-direction:column;gap:6px}.akseg-seg{display:flex;border:1px solid rgba(127,127,127,.45);border-radius:2px;overflow:hidden}" +
   ".akseg-sb{flex:1 1 0;border:0;border-radius:0;background:transparent;padding:8px 4px;font-size:13px;min-height:38px}.akseg-sb+.akseg-sb{border-left:1px solid rgba(127,127,127,.45)}" +
   ".akseg-row{display:flex;gap:4px;align-items:stretch}.akseg-row .akseg-seg{flex:1 1 auto}.akseg-un{flex:0 0 40px;border:1px solid rgba(127,127,127,.45)!important;border-radius:2px}.akseg-tip{margin:0;font-size:12px}" +
@@ -61698,13 +61753,16 @@ function viewFiles() {
     return d;
   }
   function row(it) {
-    var picked = AKORG.pick && AKORG.pick[it.key], tm = null, moved = false;
+    var picked = AKORG.pick && AKORG.pick[it.key], tm = null, moved = false, x0 = 0, y0 = 0;
     var main = h("button", { class: "akorg-main", onClick: function () { if (AKORG.hold) { AKORG.hold = 0; return; } if (pickOn()) { if (AKORG.pick[it.key]) delete AKORG.pick[it.key]; else AKORG.pick[it.key] = it; if (!Object.keys(AKORG.pick).length) AKORG.pick = null; fill(); } else akOrgOpen(it); } },
       F.view === "grid" ? (it.thumb ? h("img", { class: "akorg-th", src: it.thumb, alt: "" }) : h("span", { class: "akorg-big" }, it.icon)) : h("span", { class: "akorg-ic" }, pickOn() ? (picked ? "☑" : "☐") : it.icon),
       h("span", { class: "akorg-tx" }, h("span", { class: "akorg-nm" }, it.name), h("span", { class: "akorg-sub" }, it.sub || " ")));
-    main.addEventListener("pointerdown", function () { moved = false; tm = setTimeout(function () { if (moved) return; AKORG.hold = 1; AKORG.pick = AKORG.pick || {}; AKORG.pick[it.key] = it; try { navigator.vibrate && navigator.vibrate(15); } catch (e) {} fill(); }, 520); });
-    ["pointerup", "pointerleave", "pointercancel"].forEach(function (ev) { main.addEventListener(ev, function () { clearTimeout(tm); }); });
-    main.addEventListener("pointermove", function () { moved = true; });
+    /* 20.9: hold to pick. A finger always wiggles a little, so only a real drag (over 12 px) cancels the hold; the phone's own
+       long-press menu is blocked; the row stays picked after the finger lifts (the next tap is not eaten for long). */
+    main.addEventListener("pointerdown", function (e) { moved = false; x0 = e.clientX; y0 = e.clientY; clearTimeout(tm); tm = setTimeout(function () { if (moved) return; AKORG.hold = 1; setTimeout(function () { AKORG.hold = 0; }, 900); AKORG.pick = AKORG.pick || {}; AKORG.pick[it.key] = it; try { navigator.vibrate && navigator.vibrate(25); } catch (er) {} fill(); toast("Picked. Tap more rows, then use the bar on top."); }, 480); });
+    ["pointerup", "pointercancel"].forEach(function (ev) { main.addEventListener(ev, function () { clearTimeout(tm); }); });
+    main.addEventListener("pointermove", function (e) { if (Math.abs(e.clientX - x0) > 12 || Math.abs(e.clientY - y0) > 12) { moved = true; clearTimeout(tm); } });
+    main.addEventListener("contextmenu", function (e) { e.preventDefault(); });
     return h("div", { class: "akorg-row" + (picked ? " on" : ""), style: it.color ? "border-left-color:" + it.color : "" }, main,
       pickOn() ? null : h("button", { class: "akorg-dots", "aria-label": "More for " + it.name, title: "More", onClick: function () { akOrgMenu(this, it, fill); } }, "⋯"));
   }
@@ -61733,18 +61791,22 @@ function viewFiles() {
       h("button", { class: "sm akorg-line", onClick: function () { akOrgPin(items, done); } }, "Pin"),
       h("button", { class: "sm akorg-line danger", onClick: function () { akOrgTrash(items); done(); } }, "Trash"));
   }
+  /* 20.9: the search box is made once and never taken out of the page, so the keyboard stays up while the results redraw below it */
+  var pbSlot = h("div"), topRow = h("div", { class: "akorg-top" }, q), res = h("div");
+  body.appendChild(pbSlot); body.appendChild(topRow); body.appendChild(res);
   function fill() {
-    var sc = $("mainScroll"), keep = sc ? sc.scrollTop : 0;
-    body.textContent = ""; all = akOrgAll();
+    var sc = $("mainScroll"), keep = sc ? sc.scrollTop : 0, outer = body;
+    pbSlot.textContent = ""; res.textContent = ""; all = akOrgAll();
+    body = res;
     var byKey = {}; all.forEach(function (it) { byKey[it.key] = it; });
     if (AKORG.pick) Object.keys(AKORG.pick).forEach(function (k) { if (!byKey[k]) delete AKORG.pick[k]; else AKORG.pick[k] = byKey[k]; });
-    var pb = bar(); if (pb) body.appendChild(pb);
-    /* top row: search, then kind / sort / view in one row */
-    body.appendChild(h("div", { class: "akorg-top" }, q));
+    var pb = bar(); if (pb) pbSlot.appendChild(pb);
+    /* top row: search (kept), then kind / sort / view in one row */
     var kindSel = h("select", { "aria-label": "Show", onChange: function () { F.kind = this.value; save(); fill(); } }, AKORG_KINDS.map(function (k) { return h("option", { value: k[0], selected: (F.kind || "") === k[0] }, k[1]); }));
     var sortSel = h("select", { "aria-label": "Sort by", onChange: function () { F.sort = this.value; save(); fill(); } }, [["name", "A to Z"], ["kind", "By kind"], ["date", "Newest date"]].map(function (k) { return h("option", { value: k[0], selected: (F.sort || "name") === k[0] }, k[1]); }));
     var vw = h("div", { class: "akorg-seg", role: "group", "aria-label": "List or grid" }, [["list", "☰ List"], ["grid", "▦ Grid"]].map(function (v) { return h("button", { type: "button", class: "akorg-sb" + (F.view === v[0] ? " on" : ""), "aria-pressed": F.view === v[0] ? "true" : "false", onClick: function () { F.view = v[0]; save(); fill(); } }, v[1]); }));
-    body.appendChild(h("div", { class: "akorg-opts" }, kindSel, sortSel, vw));
+    var pk = h("button", { type: "button", class: "akorg-sb akorg-pk" + (pickOn() ? " on" : ""), title: "Pick several", "aria-pressed": pickOn() ? "true" : "false", onClick: function () { if (pickOn()) AKORG.pick = null; else { AKORG.pick = {}; toast("Tap the rows to pick them."); } fill(); } }, "☐ Pick");
+    body.appendChild(h("div", { class: "akorg-opts" }, kindSel, sortSel, vw, pk));
     var Q = (S.orgQ || "").trim(), kindOk = function (it) { return !F.kind || it.kind === F.kind; };
     if (Q) {
       /* D: one search for everything */
@@ -61786,6 +61848,7 @@ function viewFiles() {
       body.appendChild(h("p", { class: "hint" }, "Press and hold a row to pick several. ⋯ on any row: open, rename, copy, folder, color, pin, Trash."));
     }
     if (sc) sc.scrollTop = keep;
+    body = outer;
   }
   fill();
   setTimeout(function () { if (S.orgFocus) { S.orgFocus = false; try { q.focus(); } catch (e) {} } }, 60);
@@ -61852,6 +61915,10 @@ akCss("akorg", ".akorg-top{margin:4px 0 6px}.akorg-q{width:100%;box-sizing:borde
   ".akorg-sb+.akorg-sb{border-left:1px solid rgba(127,127,127,.45)}.akorg-sb.on{background:rgba(200,150,46,.22);font-weight:600}" +
   ".akorg-sec,.akorg-fold{border:1px solid rgba(127,127,127,.3);border-radius:2px;margin:6px 0;padding:0 8px}.akorg-sec>summary,.akorg-fold>summary{display:flex;align-items:center;gap:6px;min-height:40px;cursor:pointer;font-weight:600}" +
   ".akorg-fold{margin:4px 0 6px}.akorg-fold>summary{font-weight:500;min-height:36px}" +
+  /* 20.9: a ▸ / ▾ arrow on every heading that folds */
+  ".akorg-sec>summary,.akorg-fold>summary{list-style:none}.akorg-sec>summary::-webkit-details-marker,.akorg-fold>summary::-webkit-details-marker{display:none}" +
+  ".akorg-sec>summary::before,.akorg-fold>summary::before{content:'▸';display:inline-block;width:1em;flex:0 0 1em;opacity:.75;transition:transform .12s}.akorg-sec[open]>summary::before,.akorg-fold[open]>summary::before{transform:rotate(90deg)}" +
+  ".akorg-main{-webkit-touch-callout:none;touch-action:pan-y}.akorg-pk{border:1px solid rgba(127,127,127,.45)!important;border-radius:2px!important;flex:0 0 auto}" +
   ".akorg-list{display:flex;flex-direction:column;gap:3px;margin:2px 0 8px}.akorg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;margin:2px 0 8px}" +
   ".akorg-row{display:flex;align-items:stretch;border:1px solid rgba(127,127,127,.25);border-left:3px solid transparent;border-radius:2px;background:rgba(127,127,127,.06)}.akorg-row.on{background:rgba(200,150,46,.18);border-color:rgba(200,150,46,.6)}" +
   ".akorg-main{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:0;text-align:left;padding:8px 10px;min-height:46px;color:inherit;-webkit-user-select:none;user-select:none}" +
@@ -65228,6 +65295,29 @@ function akPlRender(pop) {
       g.appendChild(h("div", { class: "akpl-mv" }, pad, steps));
       g.appendChild(h("div", { class: "akpl-cr" }, akPlKid("↔ Across", function () { center("x"); }), akPlKid("↕ Up/down", function () { center("y"); })));
     });
+    if (isText) group("words", "Aa", "Words: size, style, turn, curve, 3D", function (g) {
+      var e0 = function () { return D.edit[id] = D.edit[id] || {}; }, cur = D.edit[id] || {};
+      function setE(k, v) { var e = e0(); if (v == null || v === "") delete e[k]; else e[k] = v; X.ch(); try { X.refill("parts", true); } catch (er) {} }
+      var kNow = Number(cur.k) || 1;
+      g.appendChild(h("div", { class: "akpl-wr", role: "group", "aria-label": "Size" },
+        h("button", { class: "akpl-pb", type: "button", "aria-label": "Smaller", onClick: function (e) { e.stopPropagation(); setE("k", Math.max(0.2, Math.round((kNow - (kNow > 2 ? 0.2 : 0.1)) * 100) / 100)); } }, "A−"),
+        h("span", { class: "akpl-wv" }, Math.round(kNow * 100) + "%"),
+        h("button", { class: "akpl-pb", type: "button", "aria-label": "Bigger", onClick: function (e) { e.stopPropagation(); setE("k", Math.min(5, Math.round((kNow + (kNow >= 2 ? 0.2 : 0.1)) * 100) / 100)); } }, "A+"),
+        akPlKid("Font", function () { akCwOpen("text", X); })));
+      function tog(txt, aria, on, fn) { return h("button", { class: "akpl-pb" + (on ? " on" : ""), type: "button", "aria-pressed": on ? "true" : "false", "aria-label": aria, onClick: function (e) { e.stopPropagation(); fn(); } }, txt); }
+      var bold = cur.bold != null ? !!cur.bold : (L.weight || 400) >= 700, ital = cur.italic != null ? !!cur.italic : !!L.italic, und = cur.under != null ? !!cur.under : !!L.under, al = cur.align || L.align || "left";
+      g.appendChild(h("div", { class: "akpl-wr" },
+        tog("B", "Bold", bold, function () { setE("bold", !bold); }), tog("I", "Italic", ital, function () { setE("italic", !ital); }), tog("U", "Underline", und, function () { setE("under", !und); }),
+        tog("⇤", "Line up left", al === "left", function () { setE("align", "left"); }), tog("≡", "Line up center", al === "center", function () { setE("align", "center"); }), tog("⇥", "Line up right", al === "right", function () { setE("align", "right"); })));
+      function sl(lab, key, mn, mx, def, fmt) { return X.slider(lab, cur[key] == null ? (L[key] == null ? def : L[key]) : cur[key], mn, mx, 1, function (v) { var e = e0(); if (v === def) delete e[key]; else e[key] = v; }, fmt || function (v) { return v + "°"; }, true); }
+      g.appendChild(sl("Turn", "rot", -180, 180, 0));
+      g.appendChild(sl("Curve (up: arch, down: smile)", "curve", -100, 100, 0, function (v) { return v + "%"; }));
+      g.appendChild(h("small", { class: "akpl-sub" }, "3D"));
+      g.appendChild(sl("Tilt side to side", "tiltY", -60, 60, 0));
+      g.appendChild(sl("Tilt up and down", "tiltX", -60, 60, 0));
+      g.appendChild(sl("Depth", "depth", 0, 100, 0, function (v) { return v + "%"; }));
+      g.appendChild(h("div", { class: "akpl-cr" }, akPlKid("Flat again", function () { var e = e0(); ["curve", "tiltX", "tiltY", "depth"].forEach(function (k) { delete e[k]; }); X.ch(); try { X.refill("parts", true); } catch (er) {} })));
+    });
     if (pic) group("photo", "▣", "Photo tools", function (g) {
       g.appendChild(akPlKid("Replace", function () { if (typeof akGfxReplacePop === "function") akGfxReplacePop(X); else { X.cat("pics"); toast("Tap a picture to put it in its place."); } }));
       g.appendChild(akPlKid("Smart layers", function () { akSegSmart(X, id); }));
@@ -65256,7 +65346,7 @@ function akPlDrag(handle, pop) {
     if (!d) return; var w = pop.parentElement, W = w ? w.clientWidth : 9999, H = w ? w.clientHeight : 9999;
     pop.style.left = Math.max(0, Math.min(W - pop.offsetWidth, d.ox + e.clientX - d.sx)) + "px"; pop.style.top = Math.max(0, Math.min(H - 40, d.oy + e.clientY - d.sy)) + "px";
   });
-  function up() { if (!d) return; d = null; var c = akGfxCfg(); c.plx = pop.offsetLeft; c.ply = pop.offsetTop; save(); }
+  function up() { if (!d) return; d = null; pop._away = null; var c = akGfxCfg(); c.plx = pop.offsetLeft; c.ply = pop.offsetTop; save(); }
   handle.addEventListener("pointerup", up); handle.addEventListener("pointercancel", up);
 }
 function akPlPlace(pop, wrap) {
@@ -65729,6 +65819,1604 @@ if (akHdOn()) {
   }
 }
 AK_VERSION = "20.6";
+
+/* ================================================================ ak_v207: 20.7 Settings: everything in its right place (his ask 11-04).
+   Nothing is renamed and no setting is removed; only where things sit changes. Saved values are untouched (same settings keys).
+   Why things were in odd places: a Settings hook that calls c.again(group) without opening its own c.section() adds its controls to
+   whatever section was opened last, and some hooks add theirs after the next hooks ran. So:
+   1. 🎸 Strums (speed, ring, palm mute, chuck, recorder) sat inside Tools and extras › Graphics pop-up: now in Songs and shows › Chord sound.
+   2. Wheel tab, Chord pop-up (size, after Add, opens when you tap a square), Window background (Write) sat in Tips and pay reminder and in
+      Welcome notes: now in Songs and shows › Write screen (where the help already said they were).
+   3. "Also show the 🎙 Recorder button on the other screens" sat in About and privacy: now in Songs and shows › Recording (two-phone part).
+   4. "🎸 Build a chord on the fretboard" sat in Help and how-to: now in Tools and extras › Chord keyboard.
+   Sections moved to the group they belong to (and put next to their relatives):
+   - Look: Button shape and Songs page: how the list switch looks (after Layout style), Graphics tab (after Tabs and usage modes),
+     Simple mode: what it does (right after Simple mode).
+   - Songs and shows: Chords written as text (after Chord names and shapes), 🔔 Gig reminders (after Starting a show), Writing / Write screen /
+     Writing extras together, Recording / Recorder button / Song length from recordings together. Song list letters (was on the Playing
+     screen ⚙ options) is now on the Songs ⚙ options.
+   - Requests and tips: Tips and pay reminder.
+   - Tools and extras: Tips and descriptions and Welcome notes (was hidden in the Playing screen ⚙ options) next to the Help sections,
+     the two keyboards together. (📐 My defaults and ✎ Edit this screen are left for 20.8, which merges them.)
+   The moves run on every build of the Settings page (also the hidden one that the search and the ⚙ screen options use), so search,
+   📍 Show me and the 🧪 Go › find things where they now are. 20.3's Backups move now also runs there (search found the old spot). ======= */
+var AK207_MOVES = [
+  /* [section key, from group, to group] */
+  ["tips-and-pay-reminder", "songs-and-shows", "requests-and-tips"],
+  ["tips-and-descriptions", "songs-and-shows", "data-and-extras"],
+  ["welcome-notes", "playing-screen", "data-and-extras"],
+  ["button-shape", "songs-and-shows", "look"],
+  ["songs-page-how-the-list-switch-looks", "songs-and-shows", "look"],
+  ["graphics-tab", "songs-and-shows", "look"],
+  ["chords-written-as-text", "data-and-extras", "songs-and-shows"],
+  ["gig-reminders", "requests-and-tips", "songs-and-shows"],
+  ["song-list-letters", "playing-screen", "songs-and-shows"]
+];
+/* within a group: these stay together, in this order, where the first of them is */
+var AK207_ORDER = {
+  "look": [["layout-style", "button-shape", "songs-page-how-the-list-switch-looks"], ["tabs-and-usage-modes", "graphics-tab", "simple-mode", "simple-mode-what-it-does", "size-of-the-app"]],
+  "songs-and-shows": [["show-and-song-lists", "song-list-letters", "setlist-song-numbers"], ["instrument-and-tuning", "chord-names-and-shapes", "chords-written-as-text", "chord-sound"],
+    ["writing", "write-screen", "writing-extras"], ["record-my-show", "recorder-button", "song-length-from-recordings"], ["starting-a-show", "gig-reminders"]],
+  "requests-and-tips": [["live-requests", "tips-and-pay-reminder"]],
+  "data-and-extras": [["help-tour-and-tips", "help-and-how-to", "tips-and-descriptions", "welcome-notes"], ["on-screen-keyboard", "chord-keyboard"]] /* Arrange the pages, 📐 My defaults and ✎ Edit this screen are left alone: 20.8 merges them */
+};
+function ak207Body(root, g) { var d = root.querySelector('details.setsec[data-bk="' + g + '"]'); return d && d.querySelector(":scope > .secbody"); }
+function ak207Sec(body, k) { return body && body.querySelector(':scope > details.subsec[data-bk="' + k + '"]'); }
+/* the child of a section's body that holds el (a label, a row, a fold) */
+function ak207Top(el) { for (var p = el; p && p.parentElement; p = p.parentElement) if (p.parentElement.classList.contains("secbody")) return p; return null; }
+/* put n into a section's body, before its "↺ Reset this section" row so that stays last */
+function ak207Put(sec, n) {
+  var b = sec && sec.querySelector(":scope > .secbody"); if (!b || !n) return false;
+  var kids = b.children, rst = null;
+  for (var i = kids.length - 1; i >= 0; i--) { if (/↺ Reset this section/.test(kids[i].textContent) && kids[i].textContent.length < 40) { rst = kids[i]; break; } }
+  b.insertBefore(n, rst); return true;
+}
+function ak207Find(root, sel, re) { var l = root.querySelectorAll(sel); for (var i = 0; i < l.length; i++) if (re.test((l[i].textContent || "").replace(/\s+/g, " ").trim())) return l[i]; return null; }
+function ak207Fix(root) {
+  if (!root || !root.querySelector) return;
+  /* 1-4: controls that landed in the wrong section */
+  var ss = ak207Body(root, "songs-and-shows"), de = ak207Body(root, "data-and-extras");
+  var chordSound = ak207Sec(ss, "chord-sound"), writeScr = ak207Sec(ss, "write-screen"), recBtn = ak207Sec(ss, "record-my-show"), ckb = ak207Sec(de, "chord-keyboard");
+  var fold = root.querySelector("details.akmu-fold");
+  if (fold && chordSound && !chordSound.contains(fold)) ak207Put(chordSound, ak207Top(fold) || fold);
+  if (writeScr) [/^Wheel tab/, /^Chord pop-up: size/, /^Chord pop-up: after Add/, /^Chord pop-up: opens when you tap/, /^Window background \(Write\)/].forEach(function (re) {
+    var l = ak207Find(root, "details.subsec .secbody > label", re); if (l && !writeScr.contains(l)) ak207Put(writeScr, l);
+  });
+  if (recBtn) { var rl = ak207Find(root, "details.subsec .secbody > label", /^Also show the 🎙 Recorder button on the other screens/); if (rl && !recBtn.contains(rl)) ak207Put(recBtn, rl); }
+  if (ckb) {
+    var bt = ak207Find(root, "details.subsec .secbody button", /^🎸 Build a chord on the fretboard$/), row = bt && ak207Top(bt);
+    var hint = ak207Find(root, "details.subsec .secbody > p.hint", /^🎸 Build on the chord keyboard/);
+    [hint, row].forEach(function (n) { if (n && !ckb.contains(n)) ak207Put(ckb, n); });
+  }
+  /* sections to their own group */
+  AK207_MOVES.forEach(function (m) {
+    var from = ak207Body(root, m[1]), to = ak207Body(root, m[2]), d = ak207Sec(from, m[0]);
+    if (!d || !to || ak207Sec(to, m[0])) return;
+    var subs = to.querySelectorAll(":scope > details.subsec"), last = subs[subs.length - 1];
+    to.insertBefore(d, last ? last.nextSibling : null);
+  });
+  /* relatives side by side */
+  Object.keys(AK207_ORDER).forEach(function (g) {
+    var b = ak207Body(root, g); if (!b) return;
+    AK207_ORDER[g].forEach(function (list) {
+      var els = list.map(function (k) { return ak207Sec(b, k); }).filter(Boolean); if (els.length < 2) return;
+      var first = els[0]; els.forEach(function (e) { if (e.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING) first = e; });
+      var mark = document.createComment("ak207"); b.insertBefore(mark, first);
+      els.forEach(function (e) { b.insertBefore(e, mark); }); mark.remove();
+    });
+  });
+}
+(function () {
+  var vs = viewSettings;
+  viewSettings = function () {
+    var el = vs.apply(this, arguments);
+    try { if (typeof akTools203 === "function") akTools203(el); } catch (e) {}
+    try { ak207Fix(el); } catch (e) { try { console.warn("ak207", e); } catch (x) {} }
+    return el;
+  };
+})();
+/* the Settings page hides the sections that live on a screen's ⚙ options (ak8_settings, via akSetSubs) before the outer wrappers run:
+   tidy first, so a section that moved out of the Playing screen group (Welcome notes) stays in Settings */
+(function () {
+  var ss = akSetSubs;
+  akSetSubs = function (root) { try { ak207Fix(root); } catch (e) {} return ss.apply(this, arguments); };
+})();
+/* ⚙ screen options follow the new places: Song list letters on Songs; all the Write tab options also on Write; Gig reminders also on Shows */
+if (typeof AK_SCR_OPTS !== "undefined") {
+  AK_SCR_OPTS.songs.bks.push("songs-and-shows/song-list-letters");
+  ["songs-and-shows/writing", "songs-and-shows/write-screen", "songs-and-shows/writing-extras"].forEach(function (k) { AK_SCR_OPTS.write.bks.push(k); AK_SCR_KEEP.push(k); });
+  AK_SCR_OPTS.shows.bks.push("songs-and-shows/gig-reminders"); AK_SCR_KEEP.push("songs-and-shows/gig-reminders");
+}
+/* the help and the test list point at the new places */
+var AK207_PATHS = [
+  [/Settings › Requests and tips › (🔔 )?Gig reminders/g, "Settings › Songs and shows › 🔔 Gig reminders"],
+  [/Settings › Songs and shows › Tips and descriptions/g, "Settings › Tools and extras › Tips and descriptions"],
+  [/Settings › Songs and shows › Tips and pay reminder/g, "Settings › Requests and tips › Tips and pay reminder"],
+  [/Settings › Songs and shows › Graphics tab/g, "Settings › Look › Graphics tab"],
+  [/Settings › Tools and extras › Chords written as text/g, "Settings › Songs and shows › Chords written as text"]
+];
+function ak207Path(t) { if (typeof t !== "string") return t; AK207_PATHS.forEach(function (p) { t = t.replace(p[0], p[1]); }); return t; }
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.forEach(function (e) { if (typeof e.a === "string") e.a = ak207Path(e.a); });
+if (typeof AKTC_WHERE !== "undefined") {
+  AKTC_WHERE["tips-i"] = ["Settings › Tools and extras › Tips and descriptions", { p: ["Tools and extras", "Tips and descriptions"] }];
+  AKTC_WHERE["strums"] = ["Settings › Songs and shows › Chord sound › 🎸 Strums", { p: ["Songs and shows", "Chord sound", "🎸 Strums speed"] }];
+}
+if (typeof AKTC !== "undefined") AKTC.forEach(function (x) { x.how = ak207Path(x.how); if (AKTC_WHERE[x.id]) { x.where = AKTC_WHERE[x.id][0]; if (AKTC_WHERE[x.id][1]) x.find = AKTC_WHERE[x.id][1]; } });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Where did a setting go? (20.7 tidy-up)", a: "Settings › Songs and shows › Chord sound › 🎸 Strums (was under Graphics pop-up); Write screen has Wheel tab, Chord pop-up and Window background; Look has Button shape, the list switch and Graphics tab; Tools and extras has Tips and descriptions and Welcome notes; Requests and tips has Tips and pay reminder; Songs and shows has Gig reminders and Chords written as text.", k: "moved settings where is strums palm mute chuck wheel tab chord pop-up window background button shape graphics tab tips welcome notes gig reminders recorder fretboard" });
+
+AK_WHATS_NEW = ["⚙ Settings tidied: things now sit where they belong. 🎸 Strums (palm mute, chuck, strum recorder) moved from Graphics pop-up to Songs and shows › Chord sound. Write options (Wheel tab, Chord pop-up, Window background) are all in Write screen. Button shape, the Songs list switch and Graphics tab are in Look; Tips and descriptions and Welcome notes are in Tools and extras; Gig reminders and Chords written as text are in Songs and shows; Tips and pay reminder is in Requests and tips. Nothing was renamed or removed, and your choices are kept."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") {
+  var AK207_GO = ["settings", {}, ""];
+  akTcAdd("20.7", "Settings", [
+    ["s7-strums", "🎸 Strums under Chord sound", "Settings › Songs and shows › Chord sound: at the bottom, open 🎸 Strums. Speed, ring, palm mute, chuck and 🎙 Record my chuck and palm mutes are there. Tools and extras › Graphics pop-up has only picture options now.", AK207_GO],
+    ["s7-write", "Write screen holds all Write options", "Settings › Songs and shows › Write screen: Wheel tab, Chord pop-up (size, after Add, opens when you tap a square) and Window background (Write) are inside, next to the layout choices. Writing and Writing extras sit right beside it. The Write tab's ⚙ shows them too.", AK207_GO],
+    ["s7-look", "Button shape, list switch, Graphics tab in Look", "Settings › Look: Button shape and Songs page: how the list switch looks come right after Layout style; Graphics tab is after Tabs and usage modes; Simple mode: what it does is right under Simple mode.", AK207_GO],
+    ["s7-help", "Tips and Welcome notes with Help", "Settings › Tools and extras: Help, tour and tips, Help and how-to, Tips and descriptions and Welcome notes are together at the top.", AK207_GO],
+    ["s7-shows", "Gig reminders and Chords written as text", "Settings › Songs and shows: 🔔 Gig reminders is right after Starting a show, and Chords written as text is right after Chord names and shapes.", AK207_GO],
+    ["s7-tips", "Tips and pay reminder in Requests and tips", "Settings › Requests and tips: Tips and pay reminder is right after Live requests. Its choices are the same as before.", AK207_GO],
+    ["s7-rec", "Recorder button switch in Recording", "Settings › Songs and shows › Recording: “Also show the 🎙 Recorder button on the other screens” is there now (it was in About and privacy).", AK207_GO],
+    ["s7-fret", "Build a chord on the fretboard in Chord keyboard", "Settings › Tools and extras › Chord keyboard: the 🎸 Build a chord on the fretboard button is there now (not in Help and how-to).", AK207_GO]]);
+}
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK207_WHERE = {
+    "s7-strums": ["Settings › Songs and shows › Chord sound › 🎸 Strums", { p: ["Songs and shows", "Chord sound", "🎸 Strums speed"] }],
+    "s7-write": ["Settings › Songs and shows › Write screen › Wheel tab", { p: ["Songs and shows", "Write screen", "Wheel tab"] }],
+    "s7-look": ["Settings › Look › Button shape", { p: ["Look", "Button shape"] }],
+    "s7-help": ["Settings › Tools and extras › Tips and descriptions", { p: ["Tools and extras", "Tips and descriptions"] }],
+    "s7-shows": ["Settings › Songs and shows › 🔔 Gig reminders", { p: ["Songs and shows", "Gig reminders"] }],
+    "s7-tips": ["Settings › Requests and tips › Tips and pay reminder", { p: ["Requests and tips", "Tips and pay reminder"] }],
+    "s7-rec": ["Settings › Songs and shows › Recording › Also show the 🎙 Recorder button…", { p: ["Songs and shows", "Recording", "Also show the 🎙 Recorder button"] }],
+    "s7-fret": ["Settings › Tools and extras › Chord keyboard › 🎸 Build a chord on the fretboard", { p: ["Tools and extras", "Chord keyboard", "Build a chord on the fretboard"] }]
+  };
+  AKTC.forEach(function (x) { var w = AK207_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "20.7";
+
+/* 20.8: ✎ Edit this screen can size EVERY element (his report: the "Songs (499)" words and the editor's ↶ ↷ wouldn't resize).
+   - Words pick on their own: headings (h1-h6), labels, tips, song titles, any bit of text that isn't inside a button. A tap picks the
+     smallest thing; ⬑ (next to the name in the editor) picks what it sits in, again and again up to the whole box.
+   - Counts don't break the saved size: "Songs (499)" and "Library 463" are remembered without the number (old "(N)" keys are moved over).
+   - Text A− / A+ (and Bigger / Smaller) also grow icons and pictures inside the thing (♫ in the bottom bar, the backup and sync icons).
+   - W + on a bottom bar tab really widens it (the bar is a grid with fixed columns; that one column follows).
+   - Greyed-out (disabled) buttons can be picked too.
+   - The editor's own buttons (✓ Done, ↶, ↷, A B C, Size, Line up …): press and hold one to pick it, then size it like anything else.
+   All of it lives in the same layout (versions A/B/C, undo, Save as my default, Send my layout to Claude). */
+
+/* ---------------------------------------------------------------- names without counts */
+var AKL2W_TXT0 = akL2Txt;
+function akL2CountFree(el) {
+  var out = "";
+  (function walk(n) {
+    for (var c = n.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) out += c.textContent;
+      else if (c.nodeType === 1) { var t = (c.textContent || "").trim(); if (/^\(?\d+\)?$/.test(t)) continue; walk(c); }
+    }
+  })(el);
+  return out;
+}
+function akL2NoCount(t) { return String(t || "").replace(/\(\s*\d+\s*\)/g, "(#)"); }
+akL2Txt = function (el) {
+  var a = el.getAttribute("aria-label");
+  if (!a && (/^(BUTTON|A|LABEL|H1|H2|H3|H4|H5|H6|SUMMARY|LEGEND)$/.test(el.tagName) || !el.children.length) && !(el.querySelector && el.querySelector(":scope > summary .st, :scope > .st")))
+    return akL2NoCount(akL2CountFree(el)).replace(/\s+/g, " ").trim().slice(0, 28);
+  return akL2NoCount(AKL2W_TXT0(el));
+};
+/* move keys saved before 20.8 that had a count in brackets, so his sizes still match */
+function akL2MigKey(k) { return typeof k === "string" ? k.replace(/\(\s*\d+\s*\)/g, "(#)") : k; }
+function akL2MigLay(L) {
+  if (!L || typeof L !== "object") return;
+  ["s", "j", "o"].forEach(function (p) {
+    var m = L[p]; if (!m) return; var n = {};
+    Object.keys(m).forEach(function (k) { var v = m[k]; if (p === "o" && Array.isArray(v)) v = v.map(akL2MigKey); n[akL2MigKey(k)] = v; });
+    L[p] = n;
+  });
+}
+(function () {
+  var s0 = akL2S;
+  akL2S = function () {
+    var c = s0.apply(this, arguments);
+    if (c && !c.kv208) {
+      try {
+        [c.slots || {}].forEach(function (slots) { Object.keys(slots).forEach(function (sl) { var V = slots[sl] || {}; Object.keys(V).forEach(function (v) { akL2MigLay(V[v]); }); }); });
+        Object.keys(c.saved || {}).forEach(function (v) { akL2MigLay(c.saved[v]); });
+        if (c.notes) { var n = {}; Object.keys(c.notes).forEach(function (k) { n[akL2MigKey(k)] = c.notes[k]; }); c.notes = n; }
+      } catch (e) {}
+      c.kv208 = 1;
+    }
+    return c;
+  };
+})();
+
+try { Object.keys(AKL2_DEFAULTS).forEach(function (v) { akL2MigLay(AKL2_DEFAULTS[v]); }); } catch (e) {}
+
+/* ---------------------------------------------------------------- what can be picked: every element */
+var AKL2W_CTRL = "button, select, input, textarea, summary, label.filebtn, .chip, a.btn, a, .tabbar > *";
+AKL2_PICK += ", h1, h4, h5, h6, label, legend, p, img, svg, canvas, video, .tipbar, .akst-row, .ttl";
+function akL2OwnText(el) { for (var c = el.firstChild; c; c = c.nextSibling) if (c.nodeType === 3 && c.textContent.trim()) return true; return false; }
+var AKL2W_PICK0 = akL2Pickable;
+akL2Pickable = function (t) {
+  if (t && t.nodeType === 3) t = t.parentElement;
+  if (AKL2.hit && t === AKL2.hitT) t = AKL2.hit;
+  if (!t || !t.closest || t.closest(".akl2-ui")) return null;
+  var base = AKL2W_PICK0(t);
+  if (!base) {
+    /* words in a plain box (a banner, a note): the words themselves */
+    if (t.closest(".akspot-ui, .modal, .aktc-dock, .aktc-card")) return null;
+    var app = document.getElementById("app"); if (!(app && app.contains(t) && t !== app) && !t.closest(".tabbar")) return null;
+    for (var q = t; q && q !== app; q = q.parentElement) if (akL2OwnText(q) || /^(IMG|CANVAS|VIDEO)$/.test(q.tagName) || q.tagName.toLowerCase() === "svg") return q.closest("svg") || q;
+    return null;
+  }
+  /* inside a button or other control: the control (its words and icon grow with it) */
+  var ctl = t.closest(AKL2W_CTRL);
+  if (ctl && ctl.tagName === "SUMMARY") return base;
+  if (ctl) return ctl;
+  /* plain words or a picture: the smallest element that holds them, if it sits inside what the old rule picked */
+  for (var e = t; e && e !== base && e.id !== "app"; e = e.parentElement) {
+    if (/^(svg|IMG|CANVAS|VIDEO)$/.test(e.tagName) || e.tagName && e.tagName.toLowerCase() === "svg") return e.closest("svg") || e;
+    if (akL2OwnText(e) && e.getBoundingClientRect().width > 0) return e;
+  }
+  return base;
+};
+/* svg children (path, circle) pick their svg */
+(function () { var k0 = akL2Key; akL2Key = function (el) { if (el && el.ownerSVGElement) el = el.closest("svg"); return k0(el); }; })();
+
+/* ⬑ pick what it's in */
+function akL2Up() {
+  var E = akL2Els(); if (!E.length) { toast("Pick something first."); return; }
+  var x = E[E.length - 1], p = x.el.parentElement, root = akL2Root(x.el);
+  while (p && p !== root && !(p.getBoundingClientRect().width > 0 && akL2Key(p) && p.getBoundingClientRect().height > 0 && !(Math.abs(p.getBoundingClientRect().width - x.el.getBoundingClientRect().width) < 1 && Math.abs(p.getBoundingClientRect().height - x.el.getBoundingClientRect().height) < 1))) p = p.parentElement;
+  if (!p || p === root || p.closest(".akl2-ui") && !x.el.closest(".akl2-ui")) { toast("That's the whole screen."); return; }
+  var k = akL2Key(p); if (!k) return;
+  AKL2.sel[AKL2.sel.length - 1] = k; akL2Draw();
+}
+
+/* ---------------------------------------------------------------- greyed-out buttons can be picked */
+function akL2DisAt(x, y, inEd) {
+  var q = inEd ? ".akl2-dock :disabled, .akl2-insp :disabled" : "#app :disabled, .tabbar :disabled", all = document.querySelectorAll(q);
+  for (var i = 0; i < all.length; i++) { var r = all[i].getBoundingClientRect(); if (r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return all[i]; }
+  return null;
+}
+(function () {
+  var d0 = akL2Down, c0 = akL2Click;
+  function withHit(e, fn) {
+    var d = AKL2.on && !AKL2.use && e.target && e.target.closest && !e.target.closest(".akl2-ui") ? akL2DisAt(e.clientX, e.clientY) : null;
+    AKL2.hit = d; AKL2.hitT = e.target;
+    try { return fn(e); } finally { AKL2.hit = null; AKL2.hitT = null; }
+  }
+  akL2Down = function (e) { return withHit(e, d0); };
+  akL2Click = function (e) { return withHit(e, c0); };
+})();
+
+/* ---------------------------------------------------------------- the editor's own buttons (press and hold to pick) */
+function akL2EdSig(el) {
+  var a = el.getAttribute("data-act"); if (a) return "act:" + a;
+  a = el.getAttribute("data-pane"); if (a) return "pane:" + a;
+  a = el.getAttribute("data-slot"); if (a) return "slot:" + a;
+  var c = String(el.className || "").split(/\s+/).filter(function (x) { return x && x !== "akl2-b" && x !== "on"; })[0];
+  if (c) return el.tagName.toLowerCase() + "." + c;
+  return el.tagName.toLowerCase() + ":" + (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 20);
+}
+function akL2EdKey(el) {
+  var p = el.parentElement, ps = p ? akL2EdSig(p) : "root";
+  return "_ed||" + ps + ">" + akL2EdSig(el);
+}
+(function () {
+  var k0 = akL2Key;
+  akL2Key = function (el) { if (el && el.closest && el.closest(".akl2-ui") && !el.closest(".akl2-ov")) return el.classList.contains("akl2-ui") ? "" : akL2EdKey(el); return k0(el); };
+  var l0 = akL2Layer; akL2Layer = function (key) { return key.indexOf("_ed|") === 0 ? "_ed" : l0(key); };
+  var e0 = akL2El;
+  akL2El = function (key) {
+    if (key && key.indexOf("_ed|") === 0) { var ui = AKL2.ui; if (!ui) return null; var all = ui.querySelectorAll(".akl2-dock *, .akl2-insp *"); for (var i = 0; i < all.length; i++) if (akL2EdKey(all[i]) === key) return all[i]; return null; }
+    return e0(key);
+  };
+  var n0 = akL2Name; akL2Name = function (el) { var n = n0(el); if (el && /\(#\)/.test(n)) n = String(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 28) || n; return el && el.closest && el.closest(".akl2-ui") ? "Editor: " + n : n; };
+})();
+function akL2EdApply() {
+  var ui = AKL2.ui; if (!ui) return;
+  Array.prototype.forEach.call(ui.querySelectorAll("[data-akl2]"), function (el) { ["width", "maxWidth", "flex", "minWidth", "height", "minHeight", "fontSize", "transform"].forEach(function (p) { el.style[p] = ""; }); el.removeAttribute("data-akl2"); });
+  var L = akL2Lay("_ed", AKL2.on); if (!L || !L.s) return;
+  Object.keys(L.s).forEach(function (k) {
+    var el = akL2El(k), s = L.s[k]; if (!el || !s) return;
+    if (s.w) { el.style.width = s.w + "px"; el.style.minWidth = "0"; el.style.flex = "0 0 auto"; }
+    if (s.h) { el.style.height = s.h + "px"; el.style.minHeight = "0"; }
+    if (s.f) el.style.fontSize = s.f + "em";
+    if (s.dx || s.dy) el.style.transform = "translate(" + (s.dx || 0) + "px," + (s.dy || 0) + "px)";
+    el.setAttribute("data-akl2", "1");
+  });
+}
+function akL2EdHold(e) {
+  if (!AKL2.on) return;
+  var t = e.target; if (!t.closest || !t.closest(".akl2-dock, .akl2-insp")) return;
+  var b = t.closest(".akl2-dock button, .akl2-insp button, .akl2-insp .akl2-l, .akl2-insp .akl2-v, .akl2-nm");
+  if (!b) b = akL2DisAt(e.clientX, e.clientY, true);
+  if (!b || b.classList.contains("akl2-up") || b.classList.contains("akl2-hdl")) return;
+  var x0 = e.clientX, y0 = e.clientY, moved = false;
+  function mv(ev) { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 8) moved = true; }
+  function up() { clearTimeout(tm); window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); }
+  var tm = setTimeout(function () {
+    up(); if (moved) return;
+    AKL2.edEat = Date.now();
+    var k = akL2EdKey(b);
+    if (AKL2.multi) { if (AKL2.sel.indexOf(k) < 0) AKL2.sel.push(k); } else AKL2.sel = [k];
+    AKL2.pane = "size"; akL2Draw();
+    try { navigator.vibrate && navigator.vibrate(15); } catch (x) {}
+    toast("Picked the editor's " + (akL2EdSig(b).replace(/^[a-z]+[.:]/, "")) + " button. Size it below.");
+  }, 550);
+  window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+}
+/* the tap that ends a hold doesn't also press the button */
+function akL2EdEat(e) { if (AKL2.edEat && Date.now() - AKL2.edEat < 900 && e.target.closest && e.target.closest(".akl2-ui")) { AKL2.edEat = 0; e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation(); } }
+(function () {
+  var u0 = akL2Ui;
+  akL2Ui = function () {
+    var out = u0.apply(this, arguments);
+    try {
+      var ih = AKL2.ui.querySelector(".akl2-ih"), nm = ih && ih.querySelector(".akl2-nm");
+      if (nm) nm.parentNode.insertBefore(h("button", { class: "akl2-b akl2-up", "aria-label": "Pick what it's in", title: "Pick what it's in (tap again for the next box out)", onClick: akL2Up }, "⬑"), nm);
+      AKL2.ui.addEventListener("pointerdown", akL2EdHold, true);
+      AKL2.ui.addEventListener("click", akL2EdEat, true);
+      akL2InspBits();
+      setTimeout(akL2EdApply, 0);
+      if (AKL2.panes && AKL2.panes.more) AKL2.panes.more.push(h("span", { class: "akl2-l akl2-hint" }, "Hold any editor button to size it"));
+    } catch (e) {}
+    return out;
+  };
+  var dr0 = akL2Draw;
+  akL2Draw = function () { var r = dr0.apply(this, arguments); try { akL2EdApply(); akL2InspPut(); if (AKL2.ui) AKL2.ui.classList.toggle("akl2-edpick", AKL2.sel.some(function (k) { return k.indexOf("_ed|") === 0; })); var u = AKL2.ui && AKL2.ui.querySelector(".akl2-up"); if (u) u.disabled = !akL2Els().length; } catch (e) {} return r; };
+})();
+
+/* ---------------------------------------------------------------- the tool panel folds (▾) and moves (⋮⋮ drag) out of the way */
+function akL2InspSt() { var c = akL2S(); c.insp = c.insp || {}; return c.insp; }
+function akL2InspPut() {
+  var ins = AKL2.ui && AKL2.ui.querySelector(".akl2-insp"); if (!ins) return;
+  var st = akL2InspSt(), f = ins.querySelector(".akl2-fold");
+  ins.classList.toggle("akl2-folded", !!st.fold);
+  if (f) { f.textContent = st.fold ? "▴" : "▾"; f.setAttribute("aria-label", st.fold ? "Open the tools" : "Fold the tools away"); f.setAttribute("aria-expanded", st.fold ? "false" : "true"); }
+  if (typeof st.y === "number") { var mx = Math.max(0, window.innerHeight - ins.offsetHeight); ins.style.top = Math.max(0, Math.min(mx, st.y)) + "px"; ins.style.bottom = "auto"; }
+  else { ins.style.top = ""; ins.style.bottom = ""; }
+  try { document.body.style.setProperty("--akl2-ih", (typeof st.y === "number" ? 0 : ins.offsetHeight) + "px"); } catch (e) {}
+}
+function akL2InspBits() {
+  var ih = AKL2.ui.querySelector(".akl2-ih"); if (!ih) return;
+  var grip = h("button", { class: "akl2-b akl2-hdl", "aria-label": "Drag to move the tools", title: "Drag to move the tools up or down. Double-tap puts them back at the bottom" }, "⋮⋮");
+  var fold = h("button", { class: "akl2-b akl2-fold", onClick: function () { var st = akL2InspSt(); st.fold = !st.fold; save(); akL2InspPut(); akL2Soon(); } }, "▾");
+  ih.insertBefore(grip, ih.firstChild); ih.appendChild(fold);
+  grip.addEventListener("dblclick", function () { var st = akL2InspSt(); delete st.y; save(); akL2InspPut(); akL2Soon(); });
+  grip.addEventListener("pointerdown", function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var ins = AKL2.ui.querySelector(".akl2-insp"), r = ins.getBoundingClientRect(), y0 = e.clientY, t0 = r.top, moved = false;
+    function mv(ev) { ev.preventDefault(); if (Math.abs(ev.clientY - y0) > 4) moved = true; if (!moved) return; var st = akL2InspSt(); st.y = Math.round(t0 + ev.clientY - y0); akL2InspPut(); akL2Soon(); }
+    function up() { window.removeEventListener("pointermove", mv, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); if (moved) { AKL2.edEat = Date.now(); save(); } }
+    window.addEventListener("pointermove", mv, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+  });
+  setTimeout(akL2InspPut, 0);
+}
+window.addEventListener("resize", function () { if (AKL2.on) akL2InspPut(); });
+
+/* ---------------------------------------------------------------- Text size grows icons and pictures inside; grid tabs widen */
+function akL2Kids(el) { return Array.prototype.slice.call(el.querySelectorAll("*"), 0, 80); }
+function akL2ScaleIn(el, f) {
+  if (!f || f === 1 || !el.children.length) return;
+  var kids = akL2Kids(el).filter(function (d) { return !d.hasAttribute("data-akl2") && !d.closest(".akl2-ui"); }); if (!kids.length) return;
+  kids.forEach(function (d) { if (d.hasAttribute("data-akl2f")) { d.style.fontSize = ""; d.style.width = ""; d.style.height = ""; d.removeAttribute("data-akl2f"); } });
+  var keep = el.style.getPropertyValue("font-size"), kp = el.style.getPropertyPriority("font-size"); el.style.removeProperty("font-size");
+  var before = kids.map(function (d) { var r = d.getBoundingClientRect(); return { fs: parseFloat(getComputedStyle(d).fontSize) || 0, w: r.width, h: r.height }; });
+  if (keep) el.style.setProperty("font-size", keep, kp);
+  kids.forEach(function (d, i) {
+    var b = before[i], fs = parseFloat(getComputedStyle(d).fontSize) || 0, tag = d.tagName.toLowerCase();
+    var media = tag === "svg" || tag === "img" || tag === "canvas" || tag === "video";
+    if (d.ownerSVGElement) return;
+    if (media) { var r = d.getBoundingClientRect(); if (b.w && Math.abs(r.width - b.w * f) > 1) { d.style.setProperty("width", Math.round(b.w * f) + "px", "important"); d.style.setProperty("height", Math.round(b.h * f) + "px", "important"); d.setAttribute("data-akl2f", "1"); } return; }
+    if (b.fs && Math.abs(fs - b.fs * f) > 0.4) { d.style.setProperty("font-size", Math.round(b.fs * f * 10) / 10 + "px", "important"); d.setAttribute("data-akl2f", "1"); }
+  });
+}
+function akL2GridW(el, w) {
+  var par = el.parentElement; if (!par) return;
+  var cs = getComputedStyle(par); if (cs.display.indexOf("grid") < 0) return;
+  var tr = cs.gridTemplateColumns.split(/\s+/).filter(Boolean);
+  var kids = Array.prototype.filter.call(par.children, function (k) { var c = getComputedStyle(k); return c.display !== "none" && c.position !== "absolute" && c.position !== "fixed"; });
+  if (tr.length !== kids.length) return;
+  var i = kids.indexOf(el); if (i < 0) return;
+  if (!par.hasAttribute("data-akl2g")) par.setAttribute("data-akl2g", par.style.gridTemplateColumns || "-");
+  var sum = tr.reduce(function (a, x) { return a + (parseFloat(x) || 0); }, 0), fr = Math.abs(sum - par.clientWidth + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)) < tr.length * 4 + 24;
+  var cur = par.hasAttribute("data-akl2w") ? JSON.parse(par.getAttribute("data-akl2w")) : {}; cur[i] = w; par.setAttribute("data-akl2w", JSON.stringify(cur));
+  par.style.gridTemplateColumns = tr.map(function (x, j) { return cur[j] ? cur[j] + "px" : fr ? "minmax(0,1fr)" : x; }).join(" ");
+  el.style.maxWidth = "none";
+}
+(function () {
+  var a0 = akL2ApplyIn;
+  akL2ApplyIn = function (root, L, editing) {
+    var out = a0.apply(this, arguments);
+    try {
+      if (root && L && L.s && Object.keys(L.s).length) {
+        var marked = root.querySelectorAll("[data-akl2]"), list = root.hasAttribute && root.hasAttribute("data-akl2") ? [root] : [];
+        list = list.concat(Array.prototype.slice.call(marked));
+        list.forEach(function (el) {
+          var s = L.s[akL2Key(el)]; if (!s) return;
+          /* words, b, span: width and height only work on a box */
+          if ((s.w || s.h) && getComputedStyle(el).display === "inline") el.style.display = "inline-block";
+          /* some buttons set their size with !important; his size wins */
+          if (s.w) { el.style.setProperty("width", s.w + "px", "important"); el.style.setProperty("min-width", "0", "important"); el.style.setProperty("flex", "0 0 auto", "important"); }
+          if (s.h) { el.style.setProperty("height", s.h + "px", "important"); el.style.setProperty("min-height", "0", "important"); }
+          if (s.w) akL2GridW(el, s.w);
+          /* Text size counts from the thing's own size (a heading is already bigger than what it sits in) */
+          if (s.f) { el.style.fontSize = ""; var nat = parseFloat(getComputedStyle(el).fontSize) || 16; el.style.setProperty("font-size", Math.round(nat * s.f * 10) / 10 + "px", "important"); akL2ScaleIn(el, s.f); }
+        });
+      }
+    } catch (e) {}
+    return out;
+  };
+  var c0 = akL2Clear;
+  akL2Clear = function (root) {
+    if (root) {
+      Array.prototype.forEach.call(root.querySelectorAll("[data-akl2f]"), function (d) { d.style.fontSize = ""; d.style.width = ""; d.style.height = ""; d.removeAttribute("data-akl2f"); });
+      var gs = [root].concat(Array.prototype.slice.call(root.querySelectorAll("[data-akl2g]")));
+      gs.forEach(function (g) { if (!g.hasAttribute || !g.hasAttribute("data-akl2g")) return; var v = g.getAttribute("data-akl2g"); g.style.gridTemplateColumns = v === "-" ? "" : v; g.removeAttribute("data-akl2g"); g.removeAttribute("data-akl2w"); });
+    }
+    return c0.apply(this, arguments);
+  };
+})();
+/* ---------------------------------------------------------------- Settings: one place. "📐 My defaults" (19.4) and "✎ Edit this screen" (19.8)
+   opened the same editor; now there's only ✎ Edit this screen, with everything from both: Start editing, Send my layout to Claude (now also
+   carries the folds, page arrangements and notes My defaults sent), What starts folded (the old Arrange), Put it all back. */
+(function () {
+  var prev = akL2Export;
+  akL2Export = function () {
+    var out = prev.apply(this, arguments);
+    try { var s = settings(); out.defaults = { layout: clone(s.layout || {}), open: clone(s.akOpen || {}), folds: clone(s.akCol || {}), notes: clone(typeof akDzNotes === "function" ? akDzNotes() : {}), look: { bshape: s.bshape, theme: s.theme, toolsLook: s.toolsLook, foldAllBtn: s.foldAllBtn } }; } catch (e) {}
+    return out;
+  };
+  /* the old 📐 file (akDzExport) adds editor = akL2Export(): leave defaults out of that copy, it has them already */
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    var skip = false, inEd = false, added = false, c2 = Object.create(c);
+    function extras() {
+      if (added) return; added = true;
+      var nN = 0; try { nN = Object.keys(akDzNotes()).length + Object.keys(akL2S().notes || {}).length; } catch (e) {}
+      c.out.appendChild(h("div", { class: "akyd-row" },
+        h("button", { class: "sm akyd-b", onClick: function () { go("songs"); setTimeout(function () { try { AKL2.oldArrange(); } catch (e) { toast("Open ✎ Edit this screen › ⋯ › Old Arrange."); } }, 300); } }, "⇅ What starts folded"),
+        h("button", { class: "sm akyd-b", onClick: function () { try { akDzExport(); } catch (e) {} } }, "💾 Save a copy")));
+      c.out.appendChild(h("p", { class: "hint akl2w-merged" }, "This is also where 📐 My defaults went: Send my layout carries your sizes, folds, page arrangements and " + nN + " note" + (nN === 1 ? "" : "s") + " for Claude. Hold any editor button to size the editor too."));
+    }
+    c2.section = function (t) {
+      if (inEd) extras();
+      inEd = /Edit this screen/.test(t); skip = /My defaults/.test(t);
+      if (skip) return;
+      return c.section.apply(this, arguments);
+    };
+    /* a new group (or going back to an earlier one) ends "My defaults": without this its controls were swallowed (Your data then stayed last) */
+    c2.group = function () { if (inEd) extras(); inEd = false; skip = false; return c.group.apply(c, arguments); };
+    c2.again = function () { if (inEd) extras(); inEd = false; skip = false; return c.again.apply(c, arguments); };
+    c2.out = { appendChild: function (n) { if (skip) return n; return c.out.appendChild(n); } };
+    ns(c2);
+    if (inEd) extras();
+  };
+})();
+if (typeof AKTC_WHERE !== "undefined") { AKTC_WHERE["my-defaults"] = ["Settings › Tools and extras › ✎ Edit this screen (My defaults is part of it now)", { p: ["Tools and extras", "Edit this screen"] }]; AKTC.forEach(function (x) { if (x.id === "my-defaults") { x.where = AKTC_WHERE[x.id][0]; x.find = AKTC_WHERE[x.id][1]; x.t = "✎ Edit this screen (was 📐 My defaults)"; x.go = ["settings", {}, "Edit this screen"]; } }); }
+
+akCss("akl2w",
+  "body.akl2-on:not(.akl2-using) #app :disabled,body.akl2-on:not(.akl2-using) .tabbar :disabled,body.akl2-on .akl2-dock :disabled,body.akl2-on .akl2-insp :disabled{pointer-events:none}" +
+  ".akl2-up{height:26px!important;min-width:28px;padding:0 6px!important;flex:none}.akl2-up:disabled{opacity:.3}" +
+  ".akl2-hdl,.akl2-fold{height:26px!important;min-width:28px;padding:0 6px!important;flex:none;touch-action:none}.akl2-hdl{cursor:grab;letter-spacing:-2px}" +
+  ".akl2-insp.akl2-folded .akl2-pane,.akl2-insp.akl2-folded .akl2-tabs{display:none}.akl2-insp.akl2-folded{padding-bottom:2px}" +
+  ".akl2-hint{align-self:center;opacity:.6}.akl2-ui.akl2-edpick .akl2-ov{z-index:3}.akl2-ui.akl2-edpick .akl2-grip,.akl2-ui.akl2-edpick .akl2-move{display:none}" +
+  ".akl2-dock button,.akl2-insp button{touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}");
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Resize any words, heading, icon or button (Edit this screen)", a: "⋯ More › ✎ Edit this screen. Tap the words (like Songs at the top) or any button, then Size › Text A− / A+, Smaller / Bigger, W, H. ⬑ picks the box it sits in. Hold any editor button (↶ ↷ Done …) to size the editor too.", k: "resize words heading title text size undo redo icon editor toolbar every element bigger smaller font" });
+AK_WHATS_NEW = ["✎ Edit this screen sizes everything now: the words at the top (Songs), tips, song titles, greyed-out buttons, icons in the bottom bar (they grow with Text A+), wider bottom bar tabs, and the editor's own buttons (hold ↶, ↷, Done and the rest to size them). ⬑ picks the box a thing sits in. The tool panel folds (▾) and drags out of the way (⋮⋮). Settings has one ✎ Edit this screen (📐 My defaults is inside it)."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") {
+  akTcAdd("20.8", "App", [
+    ["l2w-head", "✎ Resize the Songs words at the top", "Songs › ⋯ More › ✎ Edit this screen. Tap the words Songs (499), then Size › Text A+ twice. Add a song: it stays big.", function () { go("songs"); setTimeout(function () { akL2Start(); var e = document.querySelector("#app .topbar h1"); if (e) { AKL2.sel = [akL2Key(e)]; akL2Draw(); } }, 300); }],
+    ["l2w-undo", "✎ Resize ↶ and the editor's ↶ ↷", "In the editor, tap the screen's grey ↶ and press + Bigger. Then press and hold the editor's own ↶ (top row) until it's picked, and press + Bigger.", function () { go("songs"); setTimeout(akL2Start, 300); }],
+    ["l2w-all", "✎ Every element resizes", "Try a tip, a song title, a bottom bar icon (Text A+ grows the ♫ too), W + on a bottom tab, and ⬑ to pick the box something sits in. Save as my default, close, open again: still there.", function () { go("songs"); setTimeout(akL2Start, 300); }],
+    ["l2w-one", "✎ One Edit this screen in Settings", "Settings › Tools and extras: only ✎ Edit this screen now (📐 My defaults is inside it). Start editing, Send my layout to Claude, ⇅ What starts folded, 💾 Save a copy, ↺ Put it all back are all there.", ["settings", {}, "Edit this screen"]],
+    ["l2w-panel", "✎ Fold or move the tool panel", "In the editor, tap ▾ at the right of the Size row: the tools fold to a thin bar (▴ opens them). Drag ⋮⋮ up or down to move them out of the way; double-tap ⋮⋮ puts them back. Close and reopen: they stay how you left them.", function () { go("songs"); setTimeout(akL2Start, 300); }]]);
+  if (typeof AKTC_WHERE !== "undefined") {
+    var AKL2W_WHERE = {
+      "l2w-head": ["Songs › ⋯ More › ✎ Edit this screen › tap the Songs words at the top", { sel: "#app .topbar h1" }],
+      "l2w-undo": ["Songs › ⋯ More › ✎ Edit this screen › ↶ next to ⋯ (and the editor's ↶ ↷ at the top)", { sel: "#app button.ak17-undo" }],
+      "l2w-one": ["Settings › Tools and extras › ✎ Edit this screen", { p: ["Tools and extras", "Edit this screen"] }],
+      "l2w-panel": ["Songs › ⋯ More › ✎ Edit this screen › ▾ and ⋮⋮ on the tool panel", { sel: ".akl2-insp .akl2-fold" }],
+      "l2w-all": ["Songs › ⋯ More › ✎ Edit this screen › Size tab (and ⬑ next to the name)", { sel: ".tabbar .ak8-more" }]
+    };
+    AKTC.forEach(function (x) { var w = AKL2W_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+  }
+}
+AK_VERSION = "20.8";
+
+/* ================================================================ ak_v20r: 20.9 his 🧪 test notes (claude-fix-list.json, 11-04) + 20.4.1 in the app.
+   Files view fixes (search keeps the keyboard, hold to pick, ▸ arrows, ☐ Pick) live in ak_v19l.js; Remove background zoom / ✋ Pan in ak_v19k.js.
+   Here:
+   1. Graphics pop-up list: it opened right under the finger and the same tap (or a quick second one) could hit Delete. For a short moment
+      after a part is picked the list ignores taps, and when it would sit under the finger it moves beside it.
+   2. ✎ Tap the words twice: the typing box covered the words. It is now a strip docked away from the words (above them when they're low,
+      under them when they're high), and the words change on the picture as you type, so you see size and font live. ✓ keeps, ✕ / Esc puts
+      the old words back. It's one ↶ in the studio.
+   3. ♪ Convert: the row shows which chord One will change (“Am → x02210 in Lyrics”); frets of 10 or more are written with dots by default
+      (x.10.12.12.11.x: smaller than dashes; dashes stay a choice); a Lyrics / Chords pick says which box it works on (or “Last used”);
+      → [Brackets] turns a chords-above-the-words sheet into [G]words, so the separate “Convert chords-above” button is hidden (still used).
+   Test ak_t615. ================================================================ */
+
+/* ---------------------------------------------------------------- 1. the pop-up list never takes the tap that opened it */
+var AKPL5 = { sel: "", tx: null, ty: null, at: 0 };
+function akPl5Tap(wrap) {
+  if (!wrap || wrap._pl5) return; wrap._pl5 = 1;
+  wrap.addEventListener("pointerdown", function (e) {
+    if (e.target && e.target.closest && e.target.closest(".akg-pop,.akpl-ed5")) return;
+    var r = wrap.getBoundingClientRect(); AKPL5.tx = e.clientX - r.left; AKPL5.ty = e.clientY - r.top; AKPL5.at = Date.now();
+  }, true);
+}
+function akPl5Away(pop, wrap) {
+  if (AKPL5.tx == null || Date.now() - AKPL5.at > 1500) return;
+  var x = pop.offsetLeft, y = pop.offsetTop, w = pop.offsetWidth, hh = pop.offsetHeight, W = wrap.clientWidth, H = wrap.clientHeight, m = 28;
+  var under = AKPL5.tx > x - m && AKPL5.tx < x + w + m && AKPL5.ty > y - m && AKPL5.ty < y + hh + m;
+  if (!under) return;
+  /* beside the finger if there's room, else under it, else over it (it may reach past the picture, onto the tools, but stays on the screen) */
+  var wr = wrap.getBoundingClientRect(), VH = window.innerHeight || 800, cand = [];
+  cand.push([AKPL5.tx + m + 6, y], [AKPL5.tx - m - 6 - w, y], [x, AKPL5.ty + m + 6], [x, AKPL5.ty - m - 6 - hh]);
+  var pick = null;
+  for (var i = 0; i < cand.length && !pick; i++) {
+    var c = cand[i], fitsX = c[0] >= 0 && c[0] + w <= W, top = wr.top + c[1], fitsY = top >= 0 && top + hh <= VH;
+    if (fitsX && fitsY) pick = c;
+  }
+  if (!pick) pick = [x, AKPL5.ty + m + 6];
+  pop.style.left = Math.max(0, Math.min(W - w, pick[0])) + "px"; pop.style.top = pick[1] + "px";
+  pop._away = { sel: akGfxState().sel, l: pop.style.left, t: pop.style.top };
+}
+(function () {
+  if (typeof akGfxPopSync !== "function") return;
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) {
+    var r = p0.apply(this, arguments);
+    try {
+      akPl5Tap(wrap);
+      var pop = wrap._pop, st = akGfxState();
+      if (!pop || pop.hidden || !st.sel) { AKPL5.sel = ""; return r; }
+      if (st.sel !== AKPL5.sel) {
+        AKPL5.sel = st.sel; pop.classList.add("akpl-wait"); clearTimeout(pop._w5);
+        pop._w5 = setTimeout(function () { pop.classList.remove("akpl-wait"); }, 450);
+        pop._away = null; akPl5Away(pop, wrap);
+      } else if (pop._away && pop._away.sel === st.sel && !pop._dragged5) { pop.style.left = pop._away.l; pop.style.top = pop._away.t; }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- 2. typing the words: a strip out of the way, the picture changes live */
+(function () {
+  if (typeof akPlWords !== "function") return;
+  var w0 = akPlWords;
+  akPlWords = function (cur, done, id) {
+    var cfg = akGfxCfg(), wrap = AKPL.wrap, cv = AKPL.cv, st = akGfxState(), P = st.P;
+    var L = P && P.layers.filter(function (l) { return l.id === id; })[0];
+    if (cfg.tapEdit === false || !wrap || !cv || !L || !wrap.isConnected) return w0.apply(this, arguments);
+    akPlEdClose(true);
+    var bx = akLayerBox(L, P), k = cv._k || 1, top = cv.offsetTop + (cv._oy || 0) + bx.y * k, bot = top + bx.h * k;
+    var cvTop = cv.offsetTop, cvBot = cv.offsetTop + cv.offsetHeight, mid = (top + bot) / 2;
+    var lines = String(cur || "").split("\n").length;
+    var ta = h("textarea", { class: "akpl-t5", rows: Math.min(4, Math.max(1, lines)), "aria-label": "Edit the words", spellcheck: "true" });
+    ta.value = cur || "";
+    var ok = h("button", { type: "button", class: "akpl-e5b", "aria-label": "Keep the words", title: "Keep (Enter)" }, "✓");
+    var no = h("button", { type: "button", class: "akpl-e5b", "aria-label": "Put the old words back", title: "Put the old words back (Esc)" }, "✕");
+    var box = h("div", { class: "akpl-ed5", role: "group", "aria-label": "Edit the words" }, h("small", { class: "akpl-e5h" }, "✎ Words: they change on the picture as you type"), h("div", { class: "akpl-e5r" }, ta, ok, no));
+    /* dock: above the words when they're in the lower part of the picture (the phone's keyboard covers the bottom), else under them */
+    wrap.appendChild(box);
+    var bh = box.offsetHeight || 80, y;
+    if (mid > cvTop + (cvBot - cvTop) * 0.42) y = Math.max(cvTop + 2, top - bh - 10);
+    else y = Math.min(Math.max(cvTop, cvBot - bh), bot + 10);
+    if (y < top && y + bh > top) y = Math.max(0, top - bh - 4);
+    box.style.top = Math.max(0, y) + "px";
+    var fin = false, last = cur, t = 0, U = typeof AKGU !== "undefined" ? AKGU : null;
+    if (U) U.quiet = true;
+    function live() { clearTimeout(t); t = setTimeout(function () { var v = ta.value; if (fin || v === last || !String(v).trim()) return; last = v; try { done(v); } catch (e) {} }, 140); }
+    function end(keep) {
+      if (fin) return; fin = true; clearTimeout(t);
+      var v = ta.value;
+      try { box.remove(); } catch (e) {}
+      AKPL.ed = null;
+      if (keep && String(v).trim()) { if (v !== last) { last = v; done(v); } }
+      else if (last !== cur) { last = cur; done(cur); }
+      if (U) { U.quiet = false; setTimeout(function () { try { akGfxUndoNote(true); } catch (e) {} }, 60); }
+    }
+    ta.addEventListener("input", live);
+    ta.addEventListener("keydown", function (e) { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); end(false); } else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); end(true); } });
+    ta.addEventListener("blur", function () { setTimeout(function () { if (!fin && document.activeElement !== ta && !box.contains(document.activeElement)) end(true); }, 120); });
+    [ok, no].forEach(function (b) { b.addEventListener("pointerdown", function (e) { e.preventDefault(); e.stopPropagation(); }); });
+    ok.addEventListener("click", function (e) { e.stopPropagation(); end(true); });
+    no.addEventListener("click", function (e) { e.stopPropagation(); end(false); });
+    box.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+    AKPL.ed = { end: end };
+    function focus() { try { ta.focus(); if (cfg.selAllEdit) ta.select(); else ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {} }
+    focus(); setTimeout(function () { if (!fin && document.activeElement !== ta) focus(); }, 60);
+  };
+})();
+
+/* ---------------------------------------------------------------- 3. ♪ Convert: which chord, dots, which box, chords-above */
+function akCv5Sep() { var c = settings().akCv || {}; return c.sep === "-" ? "-" : "."; }
+(function () {
+  /* frets of 10 or more: dots (x.10.12.12.11.x) unless he picks dashes */
+  if (typeof akShapeText === "function") akShapeText = function (frets) {
+    var big = frets.some(function (f) { return f >= 10; });
+    return frets.map(function (f) { return f < 0 ? "x" : String(f); }).join(big ? akCv5Sep() : "");
+  };
+  if (typeof akCvCfg === "function") akCvCfg = function () {
+    var s = settings(), c = s.akCv = s.akCv || {};
+    if (c.mode !== "one") c.mode = "all";
+    if (!/^(names|shapes|dash|dot|above)$/.test(c.to || "")) c.to = "shapes";
+    if (!/^(last|lyrics|chords)$/.test(c.box || "")) c.box = "last";
+    return c;
+  };
+  if (typeof akCvTo === "function") {
+    var t0 = akCvTo;
+    akCvTo = function (tok, to, loose) {
+      if (to !== "dot" && to !== "dash") return t0.apply(this, arguments);
+      var f = akCvShape(tok, loose), kind = "shape";
+      if (!f) { var n = akCvName(tok); if (!n) return null; f = akCvNameShape(n); kind = "name"; if (!f) return null; }
+      var t2 = f.map(function (x) { return x < 0 ? "x" : String(x); }).join(to === "dot" ? "." : "-");
+      return t2 !== tok ? { to: t2, kind: kind } : null;
+    };
+  }
+  if (typeof akCvRun === "function") {
+    var r0 = akCvRun;
+    akCvRun = function (row) {
+      var c = akCvCfg();
+      if (c.box !== "last") S.akCvIn = c.box;
+      if (c.to === "above") {
+        var b = akCv5AboveBtn(); if (!b) { toast("Open a song's ✎ Edit first."); return; }
+        b.click(); return;
+      }
+      var r = r0.apply(this, arguments);
+      setTimeout(function () { akCv5Preview(row); }, 60);
+      return r;
+    };
+  }
+})();
+function akCv5AboveBtn() {
+  var all = document.querySelectorAll("#app button"); for (var i = 0; i < all.length; i++) if (all[i].textContent.trim() === "Convert chords-above") return all[i];
+  return null;
+}
+function akCv5Box(row) {
+  var c = akCvCfg(), B = akCvBoxes(row), which = c.box !== "last" ? c.box : (S.akCvIn || "chords"), ta = B[which] || B.chords || B.lyrics;
+  return { ta: ta, which: ta && ta === B.lyrics ? "lyrics" : "chords" };
+}
+function akCv5Preview(row) {
+  var pv = row && row.querySelector(".akcv-pv"); if (!pv) return;
+  var c = akCvCfg();
+  if (c.to === "above") { pv.hidden = false; pv.textContent = "→ [Brackets]: chords written above the words become [G]words, in Lyrics."; return; }
+  if (c.mode !== "one") { pv.hidden = false; pv.textContent = "All: every chord in " + (c.box === "last" ? "the box you used last (" + (akCv5Box(row).which === "lyrics" ? "Lyrics" : "Chords") + ")" : c.box === "lyrics" ? "Lyrics" : "the Chords box") + "."; return; }
+  var b = akCv5Box(row), ta = b.ta; if (!ta) { pv.hidden = true; return; }
+  var sel = [ta.selectionStart || 0, ta.selectionEnd || 0], r = null;
+  try { r = akCvScan(ta.value, { to: c.to === "dot" || c.to === "dash" ? c.to : c.to, box: b.which, sel: sel }); } catch (e) {}
+  var where = b.which === "lyrics" ? "Lyrics" : "Chords";
+  pv.hidden = false;
+  pv.textContent = r && r.items.length ? "One: " + r.items.slice(0, 4).map(function (x) { return x.from + " → " + x.to; }).join(",  ") + (r.items.length > 4 ? " …" : "") + "  (in " + where + ")"
+    : "One: put the cursor on a chord in " + where + " (or select a few). It shows here before you convert.";
+}
+(function () {
+  if (typeof akCvMount !== "function") return;
+  var m0 = akCvMount;
+  akCvMount = function () {
+    var r = m0.apply(this, arguments);
+    try {
+      var row = document.querySelector("#app .akcv-row:not([data-cv5])"); if (!row) return r;
+      row.setAttribute("data-cv5", "1");
+      var c = akCvCfg(), sels = row.querySelectorAll("select"), to = sels[1];
+      function opt(v, t) { return h("option", { value: v, selected: c.to === v ? "selected" : null }, t); }
+      if (to) {
+        to.textContent = "";
+        [opt("names", "→ Names"), opt("shapes", "→ Shapes"), opt("dot", "→ Shapes x.3.2"), opt("dash", "→ Shapes x-3-2"), opt("above", "→ [Brackets]")].forEach(function (o) { to.appendChild(o); });
+        to.title = "Names = G, Am7. Shapes = x32010 (10 and up get dots: x.10.12.12.11.x). x.3.2 = always dots, x-3-2 = always dashes. [Brackets] = chords written above the words become [G]words.";
+        to.addEventListener("change", function () { akCvCfg().to = this.value; save(); akCv5Preview(row); });
+      }
+      if (sels[0]) sels[0].addEventListener("change", function () { akCv5Preview(row); });
+      var box = h("select", { class: "akcv-box", "aria-label": "Which box", title: "Which box Convert works on", onChange: function () { akCvCfg().box = this.value; save(); akCv5Preview(row); } },
+        h("option", { value: "last", selected: c.box === "last" ? "selected" : null }, "Last used"), h("option", { value: "lyrics", selected: c.box === "lyrics" ? "selected" : null }, "Lyrics"), h("option", { value: "chords", selected: c.box === "chords" ? "selected" : null }, "Chords"));
+      var tip = row.querySelector(".akcv-tip"); row.insertBefore(box, tip || null);
+      if (tip) { var p = tip.querySelector("p"); if (p) p.textContent = "Turns chords into names (G, Am7) or fret shapes (x32010: one fret per string, low string first, x = not played). Frets of 10 or more get dots: x.10.12.12.11.x (pick “x-3-2” for dashes; Settings below). One converts the chord at the cursor or the ones you select: the line under this row shows which before you tap. The box pick says where it works: Lyrics, Chords, or the one you used last. → [Brackets] turns chords written above the words into [G]words.";
+        var sepSel = h("select", { "aria-label": "Frets of 10 or more", onChange: function () { akCvCfg().sep = this.value; save(); } }, h("option", { value: ".", selected: akCv5Sep() === "." ? "selected" : null }, "Frets 10+: dots x.10.12"), h("option", { value: "-", selected: akCv5Sep() === "-" ? "selected" : null }, "Frets 10+: dashes x-10-12"));
+        tip.appendChild(sepSel); }
+      var pv = h("div", { class: "hint akcv-pv", role: "status" }); row.appendChild(pv);
+      var B = akCvBoxes(row);
+      [B.lyrics, B.chords].forEach(function (ta) { if (!ta) return; ["keyup", "click", "select", "focus"].forEach(function (ev) { ta.addEventListener(ev, function () { setTimeout(function () { akCv5Preview(row); }, 0); }); }); });
+      /* the separate “Convert chords-above” row is hidden: → [Brackets] in the Convert row does its job */
+      var ab = akCv5AboveBtn(); if (ab && ab.parentNode && ab.parentNode.children.length === 1) { ab.parentNode.classList.add("akcv-oldab"); ab.parentNode.style.display = "none"; }
+      akCv5Preview(row);
+    } catch (e) { try { console.warn("cv5", e); } catch (x) {} }
+    return r;
+  };
+})();
+
+akCss("ak205", [
+  ".akg-pop.akpl-wait .akpl{pointer-events:none}",
+  ".akpl-ed5{position:absolute;left:4px;right:4px;z-index:9;background:var(--panel,var(--bg,#1b1b24));color:var(--fg,#eee);border:1px solid var(--accent,#C8962E);border-radius:2px;box-shadow:0 4px 14px rgba(0,0,0,.45);padding:4px}",
+  ".akpl-e5h{display:block;font-size:11px;opacity:.7;margin:0 2px 3px}",
+  ".akpl-e5r{display:flex;gap:4px;align-items:stretch}",
+  ".akpl-t5{flex:1 1 auto;min-width:0;box-sizing:border-box;margin:0;padding:6px 8px;font-size:16px;line-height:1.25;border:1px solid rgba(127,127,127,.5);border-radius:2px;background:transparent;color:inherit;resize:none;font-family:inherit}",
+  ".akpl-e5b{flex:0 0 40px;min-height:40px;padding:0;border:1px solid rgba(127,127,127,.5)!important;border-radius:2px!important;background:transparent!important;color:inherit!important;font-size:16px}",
+  ".akcv-box{background:transparent;border:1px solid var(--line,#555);color:inherit;border-radius:2px;min-height:34px;padding:4px 20px 4px 6px!important;font-size:14px;width:auto!important;flex:0 1 auto;min-width:0;max-width:96px;margin:0!important}",
+  ".akcv-row>select:nth-child(3){max-width:104px}.akcv-row{flex-wrap:wrap!important}",
+  ".akcv-pv{flex:1 0 100%;margin:0 0 2px;font-size:12px;opacity:.85}.akcv-tip select{margin:4px 0 0;border-radius:2px}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Pick several things in Files", a: "⋯ More › 📁 Files: press and hold a row (or tap ☐ Pick next to List / Grid), tap more rows, then use the bar on top: Move, Color, Pin, Trash.", k: "files pick several select multiple hold long press" });
+  AK_HELP_WHERE.push({ t: "Zoom in while removing a background", a: "Graphics › tap your photo › ▣ Photo tools › ✂ Remove background: − slider + under the picture (or pinch), ✋ Pan to move the view without erasing (two fingers always pan), ⤢ fits it again.", k: "remove background zoom pan eraser brush fine tune pinch" });
+  AK_HELP_WHERE.push({ t: "Fret shapes with dots for frets 10 and up", a: "Song editor › ♪ Convert › → Shapes (10 and up get dots: x.10.12.12.11.x). ⓘ there switches dots and dashes. → Shapes x.3.2 always uses dots, x-3-2 dashes.", k: "fret shape dots dashes 10th fret double digit convert" });
+}
+AK_WHATS_NEW = ["🧪 From your test notes: 📁 Files search keeps the keyboard up, press and hold picks rows (or tap ☐ Pick), headings show ▸ ▾. ✂ Remove background has zoom (− slider +, or pinch) and ✋ Pan. The Graphics pop-up no longer takes the tap that opened it, and typing words twice opens a strip out of the way while the words change on the picture. ♪ Convert shows which chord One will change, uses dots for frets 10 and up, lets you pick Lyrics or Chords, and → [Brackets] replaces the Convert chords-above button. Search boxes no longer ask to save a password."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("20.9", "Your test notes", [
+  ["f5-search", "🔍 Files search keeps the keyboard", "⋯ More › 📁 Files: type a whole word in the search box. The keyboard stays up and the results change under it.", ["files", {}, "Search"]],
+  ["f5-hold", "Hold to pick several (or ☐ Pick)", "In 📁 Files press and hold a row for half a second: it stays picked (☑) after you lift. Tap more rows, then Move / Color / Pin / Trash on the bar. ☐ Pick next to List / Grid does the same.", ["files", {}, "Pick"]],
+  ["f5-arrows", "▸ ▾ arrows on Files headings", "📁 Files: every heading that folds (Pinned, Recent, Folders, Smart folders, All, Trash) has ▸ when folded and ▾ when open.", ["files", {}, ""]],
+  ["f5-pop", "Pop-up list doesn't take your tap", "Graphics › tap a part. The list opens beside your finger, not under it, and tapping again quickly doesn't press Delete.", ["graphics", {}, ""]],
+  ["f5-words", "✎ Words strip out of the way", "Graphics › tap words, tap them again: a strip opens above or under the words (not on them). Type: the words change on the picture. ✓ keeps, ✕ puts them back. One ↶.", ["graphics", {}, ""]],
+  ["f5-zoom", "✂ Remove background: zoom and ✋ Pan", "Graphics › tap your photo › ▣ Photo tools › ✂ Remove background: − slider + zooms (or pinch), ✋ Pan drags the view without erasing, two fingers always pan, ⤢ fits.", ["graphics", {}, ""]],
+  ["f5-cvone", "♪ Convert shows which chord", "Song › ✎ Edit › ♪ Convert › One: tap on a chord in Lyrics or Chords. The line under the row says “One: Am → x02210 (in Lyrics)” before you convert.", ["song", null, "♪ Convert"]],
+  ["f5-cvdot", "Dots for frets 10 and up", "♪ Convert › → Shapes on a high chord: x.10.12.12.11.x. ⓘ switches to dashes. → Shapes x.3.2 always dots.", ["song", null, "♪ Convert"]],
+  ["f5-cvbox", "♪ Convert: Lyrics / Chords pick + → [Brackets]", "The row has Last used / Lyrics / Chords. → [Brackets] turns chords written above the words into [G]words; the old “Convert chords-above” button is gone.", ["song", null, "♪ Convert"]],
+  ["f5-pass", "No save-password prompt", "Settings: tap the search box at the top and type. The phone doesn't offer to save a password.", ["settings", {}, ""]]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK205_WHERE = { "f5-search": ["⋯ More › 📁 Files › the search box"], "f5-hold": ["⋯ More › 📁 Files › hold a row, or ☐ Pick"], "f5-arrows": ["⋯ More › 📁 Files › the headings"], "f5-pop": ["Graphics › tap a part of the picture › the list"], "f5-words": ["Graphics › tap words twice"], "f5-zoom": ["Graphics › tap your photo › ▣ Photo tools › ✂ Remove background › − slider + and ✋ Pan"], "f5-cvone": ["Songs › a song › ✎ Edit › ♪ Convert › One"], "f5-cvdot": ["Songs › a song › ✎ Edit › ♪ Convert › → Shapes"], "f5-cvbox": ["Songs › a song › ✎ Edit › ♪ Convert › Last used / Lyrics / Chords"], "f5-pass": ["Settings › the search box at the top"] };
+  AKTC.forEach(function (x) { var w = AK205_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+
+
+/* ================================================================ ak_v20s: 20.9 the queued ideas he said GO to (11-04).
+   1. 🎨 A flyer for each show. A show's 🎨 Flyer button used to open whatever flyer was last in the studio. Now a flyer made for a show
+      belongs to it: saving a design stamps the draft with the show (dr.gigId), and the show remembers "the flyer" (g.flyer = draft id).
+      Flyer from a show: opens the show's flyer; no flyer yet = a new one for that show in the current look, saved as its draft right away.
+      Whatever was open is saved as a draft first, so nothing is lost. A show can have several drafts: 📁 My designs gets a "For this show"
+      box on top (each draft with ★ The flyer / ☆ Make it the flyer, ＋ New draft for this show). The show page strip's Designs list marks ★.
+   2. 🏷 Venue logos. A venue can have a logo (venue › Edit › 🏷 Logo). A flyer for a show at that venue gets the logo placed at the bottom
+      right by default (an ordinary picture part: tap it › Delete to erase it; it isn't put back). Settings › Tools and extras › Graphics
+      pop-up: "Put the venue's logo on its shows' flyers" (on by default). When it's off, For this show has 🏷 Add the venue logo.
+   3. 🧪 Run the tests: Settings, on the 🧪 test version line (it shows even folded): reopens the test helper on the item he was on, or the
+      checklist when there's none. The item he was on is remembered on this device (aktc:last).
+   4. Learn hidden everywhere (his ask: hide, don't delete). The 🎓 Learn and practice menu row, ⚙ Learn screen options, Learn in Choose the
+      tabs, and the help entries that only point into Learn are hidden while settings().learnShow is not true. Settings › Tools and extras ›
+      "Show Learn again" brings all of it back (and the tab).
+   Test ak_t616. ================================================================ */
+
+/* ---------------------------------------------------------------- 1. a flyer for each show */
+function akFly5Drafts(gid) { return akGfxDrafts().filter(function (d) { return d.kind === "flyer" && (d.gigId === gid || (d.d && d.d.gigId === gid)); }); }
+function akFly5The(g) { var L = akFly5Drafts(g.id); return (g.flyer && L.filter(function (d) { return d.id === g.flyer; })[0]) || L[0] || null; }
+function akFly5Load(dr) {
+  var c = akGfxCfg(), st = akGfxState();
+  c.last.flyer = JSON.parse(JSON.stringify(dr.d)); c.last.flyer.draftId = dr.id;
+  st.snap = st.snap || {}; st.snap.flyer = akGfxJson(c.last.flyer); st.sel = "";
+}
+function akFly5KeepOpen() {
+  /* whatever is in the studio now is saved (to its own draft, or as a new draft) before another one is opened */
+  try {
+    var c = akGfxCfg(), D = c.last.flyer, st = akGfxState(); if (!D) return false;
+    var changed = st.snap && st.snap.flyer != null ? akGfxJson(D) !== st.snap.flyer : false;
+    if (!changed) return false;
+    akGfxDraftSave(D, false); return true;
+  } catch (e) { return false; }
+}
+function akFly5Open(g) {
+  var c = akGfxCfg(), kept = akFly5KeepOpen(), dr = akFly5The(g), n = akFly5Drafts(g.id).length;
+  if (dr) {
+    if (!(c.last.flyer && c.last.flyer.draftId === dr.id)) akFly5Load(dr);
+    if (!g.flyer) g.flyer = dr.id;
+  } else {
+    /* a new flyer for this show, in the look of the one that was open */
+    var D = JSON.parse(JSON.stringify(akGfxDesign("flyer"))); delete D.draftId;
+    if (typeof akGfxShowSwitch === "function") akGfxShowSwitch(D, g.id);
+    D.gigId = g.id; D.free = (D.free || []).filter(function (f) { return !f.vlogo; }); D.vlogo = {};
+    c.last.flyer = D; akGfxState().sel = "";
+    var nd = akGfxDraftSave(D, true, "Flyer · " + (typeof akGigTitle === "function" ? akGigTitle(g) : g.name || "show"));
+    g.flyer = nd.id;
+  }
+  akVl5Ensure(c.last.flyer, g);
+  save(); go("gfx", { gfxKind: "flyer", gfxGig: g.id });
+  toast((kept ? "Saved what was open as a draft. " : "") + (dr ? (n > 1 ? "This show's flyer (★). It has " + n + " drafts: 📁 My designs › For this show." : "This show's flyer.") : "A new flyer for this show. It's saved as its draft."));
+}
+(function () {
+  if (typeof akGfxOpen !== "function") return;
+  var o0 = akGfxOpen;
+  akGfxOpen = function (kind, g) {
+    if (kind === "flyer" && g && g.id) {
+      /* a private show still asks first (akcal_a), then opens ITS flyer */
+      if (g.priv) {
+        modal("Private show", h("p", null, "“" + (typeof akGigTitle === "function" ? akGigTitle(g) : g.name) + "” is a private show, so it stays off flyers and posters. Make a flyer for it anyway? (It stays private everywhere else.)"),
+          [{ label: "Cancel" }, { label: "Make a flyer", primary: true, onClick: function () { akFly5Open(g); try { var D = akGfxCfg().last.flyer; if (D) { D.privOk = g.id; save(); } } catch (e) {} } }]);
+        return;
+      }
+      return akFly5Open(g);
+    }
+    return o0.apply(this, arguments);
+  };
+  akFlyerOpen = function (gig) { akGfxOpen("flyer", gig || null); };
+  /* saving stamps the draft with its show; a show without a flyer gets this one */
+  var s0 = akGfxDraftSave;
+  akGfxDraftSave = function (D, asNew, name) {
+    var dr = s0.apply(this, arguments);
+    try { if (dr && D && D.kind === "flyer" && D.gigId) { dr.gigId = D.gigId; var g = akGig(D.gigId); if (g && !g.flyer) { g.flyer = dr.id; save(); } } } catch (e) {}
+    return dr;
+  };
+})();
+function akFly5Box(X) {
+  var D = X.D, g = D && D.kind === "flyer" && D.gigId ? akGig(D.gigId) : null; if (!g) return null;
+  var L = akFly5Drafts(g.id), box = h("div", { class: "akfly5" });
+  box.appendChild(h("div", { class: "akfly5-h" }, h("b", null, "🎤 For this show: " + (typeof akGigTitle === "function" ? akGigTitle(g) : g.name || "")), h("span", { class: "hint" }, L.length + (L.length === 1 ? " draft" : " drafts"))));
+  L.forEach(function (dr) {
+    var the = g.flyer === dr.id, open = D.draftId === dr.id;
+    box.appendChild(h("div", { class: "akfly5-r" + (the ? " on" : "") }, dr.th ? h("img", { src: dr.th, alt: "" }) : h("span", { class: "akfly5-ph" }, "🎨"),
+      h("span", { class: "grow" }, dr.name + (open ? " (open now)" : "")),
+      h("button", { class: "sm akfly5-star", "aria-pressed": the ? "true" : "false", title: the ? "This is the show's flyer" : "Make it the show's flyer", onClick: function () { g.flyer = dr.id; save(); toast("“" + dr.name + "” is now the flyer for this show."); X.drawPanel(); } }, the ? "★ The flyer" : "☆ Make it the flyer"),
+      open ? null : h("button", { class: "sm", onClick: function () { akFly5KeepOpen(); akFly5Load(dr); save(); render(); } }, "Open")));
+  });
+  var v = akVenueFor(g);
+  box.appendChild(h("div", { class: "akfly5-acts" },
+    h("button", { class: "sm", onClick: function () {
+      akFly5KeepOpen();
+      var D2 = JSON.parse(JSON.stringify(D)); delete D2.draftId; D2.free = (D2.free || []).filter(function (f) { return !f.vlogo; }); D2.vlogo = {};
+      akGfxCfg().last.flyer = D2; var nd = akGfxDraftSave(D2, true, akNextCopyName ? akNextCopyName(L[0] ? L[0].name : "Flyer") : "Flyer (2)");
+      akVl5Ensure(D2, g, true); save(); toast("New draft for this show: " + nd.name + "."); render();
+    } }, "＋ New draft for this show"),
+    v && v.logo ? h("button", { class: "sm", onClick: function () { akVl5Ensure(D, g, true); X.ch(true); toast("Venue logo added at the bottom right."); } }, "🏷 Add the venue logo") : null));
+  return box;
+}
+(function () {
+  if (typeof akGfxDraftsFill !== "function") return;
+  var f0 = akGfxDraftsFill;
+  akGfxDraftsFill = function (d, X) { try { var b = akFly5Box(X); if (b) d.appendChild(b); } catch (e) {} return f0.apply(this, arguments); };
+})();
+/* the show page strip: Designs list marks the flyer */
+(function () {
+  if (typeof akOrgGigStrip !== "function") return;
+  var g0 = akOrgGigStrip;
+  akOrgGigStrip = function (g) {
+    var el = g0.apply(this, arguments);
+    try {
+      var cells = el.querySelectorAll("button"), des = akFly5Drafts(g.id);
+      [].forEach.call(cells, function (b) {
+        if (!/Design/.test(b.textContent)) return;
+        var nb = b.cloneNode(true);
+        nb.addEventListener("click", function () {
+          var all = akOrgDrafts().filter(function (d) { return d.d && d.d.gigId === g.id || d.gigId === g.id; });
+          if (!all.length) { akFly5Open(g); return; }
+          menu(nb, all.map(function (d) { return { label: (g.flyer === d.id ? "★ " : "🎨 ") + (d.name || "Design"), onClick: function () { if (d.kind === "flyer") { g.flyer = g.flyer || d.id; akFly5KeepOpen(); akFly5Load(d); save(); go("gfx", { gfxKind: "flyer" }); } else akOrgOpen(akOrgItem("design", d)); } }; }).concat([{ sep: true }, { label: "＋ New flyer for this show", onClick: function () { var keep = g.flyer; g.flyer = ""; var was = akFly5Drafts(g.id).map(function (d) { return d.id; }); akGfxDrafts().forEach(function (d) { if (was.indexOf(d.id) >= 0) d._h5 = 1; }); akFly5NewFor(g); } }]));
+        });
+        b.parentNode.replaceChild(nb, b);
+      });
+    } catch (e) {}
+    return el;
+  };
+})();
+function akFly5NewFor(g) {
+  akFly5KeepOpen();
+  var c = akGfxCfg(), D = JSON.parse(JSON.stringify(akGfxDesign("flyer"))); delete D.draftId;
+  if (typeof akGfxShowSwitch === "function") akGfxShowSwitch(D, g.id);
+  D.gigId = g.id; D.free = (D.free || []).filter(function (f) { return !f.vlogo; }); D.vlogo = {};
+  c.last.flyer = D; var nd = akGfxDraftSave(D, true, "Flyer · " + (typeof akGigTitle === "function" ? akGigTitle(g) : "show"));
+  akGfxDrafts().forEach(function (d) { delete d._h5; });
+  g.flyer = nd.id; akVl5Ensure(D, g); save(); go("gfx", { gfxKind: "flyer", gfxGig: g.id }); toast("A new flyer for this show. It's now ★ the flyer.");
+}
+
+/* ---------------------------------------------------------------- 2. venue logos */
+function akVl5On() { var g = akGfxCfg(); return g.venueLogo !== false; }
+function akVl5Ensure(D, g, force) {
+  try {
+    if (!D || !g) return false; var v = akVenueFor(g); if (!v || !v.logo) return false;
+    if (!force && !akVl5On()) return false;
+    D.vlogo = D.vlogo || {}; if (D.vlogo[g.id] && !force) return false;
+    var F = akGfxFree(D); if (F.some(function (f) { return f.vlogo === v.id && f.img === v.logo; })) { D.vlogo[g.id] = 1; return false; }
+    F.push({ id: uid(), t: "pic", img: v.logo, name: "Venue logo: " + (v.name || ""), x: 0.84, y: 0.9, w: 0.24, ar: v.logoAr || 1, vlogo: v.id });
+    D.vlogo[g.id] = 1; return true;
+  } catch (e) { return false; }
+}
+function akVl5Row(holder) {
+  /* holder = { v } for an existing venue, or { pending } for a new one (set when saved) */
+  var row = h("div", { class: "akvl5" });
+  function draw() {
+    row.textContent = "";
+    var id = holder.pending !== undefined ? holder.pending : holder.v && holder.v.logo, src = id && IMG[id] ? (IMG[id].data || IMG[id]) : "";
+    row.appendChild(h("span", { class: "akvl5-l" }, "🏷 Logo"));
+    row.appendChild(src && typeof src === "string" ? h("img", { class: "akvl5-im", src: src, alt: "Venue logo" }) : h("span", { class: "hint" }, id ? "(saved)" : "None"));
+    var file = h("input", { type: "file", accept: "image/*", style: "display:none", onChange: function () {
+      var f = this.files && this.files[0]; if (!f) return;
+      akGfxPicIn(f).then(function (r) { holder.pending = r.id; holder.ar = r.ar; if (holder.v && !holder.isNew) { holder.v.logo = r.id; holder.v.logoAr = r.ar; save(); } draw(); toast("Logo added. Flyers for shows here get it at the bottom right."); }, function (e) { toast(e.message || "Couldn't read that picture."); });
+    } });
+    row.appendChild(file);
+    row.appendChild(h("button", { type: "button", class: "sm", onClick: function () { file.click(); } }, id ? "Change" : "＋ Add logo"));
+    if (id) row.appendChild(h("button", { type: "button", class: "sm", onClick: function () { holder.pending = ""; if (holder.v && !holder.isNew) { delete holder.v.logo; delete holder.v.logoAr; save(); } draw(); } }, "Remove"));
+  }
+  draw(); return row;
+}
+(function () {
+  if (typeof akVenueEdit !== "function") return;
+  var e0 = akVenueEdit;
+  akVenueEdit = function (v, done, preName) {
+    var holder = { v: v, isNew: !v };
+    var r = e0.call(this, v, function (sv) { try { if (sv && holder.pending !== undefined) { if (holder.pending) { sv.logo = holder.pending; sv.logoAr = holder.ar || sv.logoAr || 1; } else { delete sv.logo; delete sv.logoAr; } save(); } } catch (e) {} done && done(sv); }, preName);
+    try {
+      var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1], body = m && (m.querySelector(".modal-body") || m.querySelector(".body") || m);
+      var first = body && body.querySelector("label.fld");
+      if (first) first.parentNode.insertBefore(akVl5Row(holder), first.nextSibling);
+    } catch (e) {}
+    return r;
+  };
+})();
+(function () {
+  if (typeof akVenueCard !== "function") return;
+  var c0 = akVenueCard;
+  akVenueCard = function (v, o) {
+    var r = c0.apply(this, arguments);
+    try {
+      if (v && v.logo && IMG[v.logo]) { var ms = document.querySelectorAll(".modal"), m = ms[ms.length - 1], card = m && m.querySelector(".akv-card"); var src = IMG[v.logo].data || IMG[v.logo]; if (card && typeof src === "string") card.insertBefore(h("img", { class: "akvl5-im", src: src, alt: "Venue logo" }), card.firstChild); }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* ---------------------------------------------------------------- 3. 🧪 Run the tests (Settings, test version line) */
+(function () {
+  if (typeof akTcGo !== "function") return;
+  var g0 = akTcGo;
+  akTcGo = function (it) { try { if (it && it.id) akTcLS("aktc:last", it.id); } catch (e) {} return g0.apply(this, arguments); };
+})();
+function akTc5Run() {
+  var id = akTcLS("aktc:last"), it = id && AKTC.filter(function (x) { return x.id === id; })[0];
+  if (it && !akTcState(it.id)) { try { akTcLS("aktc:open", "1"); } catch (e) {} akTcGo(it); toast("Back on: " + it.t + ". The 🧪 square has the steps and ✓ / ✗."); return; }
+  if (it) {
+    var L = (S.akTcOnly === "new" ? akTcNew() : AKTC), i = L.indexOf(it), nx = null;
+    for (var j = i + 1; j < L.length; j++) if (!akTcState(L[j].id)) { nx = L[j]; break; }
+    if (nx) { akTcGo(nx); toast("Next to test: " + nx.t + "."); return; }
+  }
+  go("testlist");
+}
+(function () {
+  var v0 = AK_VIEWS.settings || viewSettings, viaMap = !!AK_VIEWS.settings;
+  var wrapped = function () {
+    var el = v0.apply(this, arguments);
+    try {
+      if (typeof akTcOn === "function" && !akTcOn()) return el;
+      var sum = el.querySelector(".akver details.akst-fold > summary") || el.querySelector(".akver");
+      if (sum && !sum.querySelector(".aktc5-run")) {
+        var b = h("button", { type: "button", class: "sm aktc5-run", title: "Open the test helper where you left off", onClick: function (e) { e.preventDefault(); e.stopPropagation(); akTc5Run(); } }, "🧪 Run the tests");
+        sum.appendChild(b);
+      }
+    } catch (e) {}
+    return el;
+  };
+  if (viaMap) AK_VIEWS.settings = wrapped; else viewSettings = wrapped;
+})();
+
+/* ---------------------------------------------------------------- 4. Learn hidden (hide, don't delete) */
+function akLearn5Hidden() { var s = settings(); return s.learnShow !== true; }
+var AKL5 = { help: [], tab: null };
+function akLearn5Apply() {
+  var hid = akLearn5Hidden();
+  try {
+    if (typeof AK_HELP_WHERE !== "undefined") {
+      if (hid) {
+        for (var i = AK_HELP_WHERE.length - 1; i >= 0; i--) { var e = AK_HELP_WHERE[i], t = e.t || "", a = typeof e.a === "string" ? e.a : "";
+          if (/^Learn\b|Learn tab|^Vocal warm-ups$/.test(t) || /^Learn ›/.test(a)) { AKL5.help.push(e); AK_HELP_WHERE.splice(i, 1); }
+          else if (/, also in Learn\./.test(a)) { e._a5 = a; e.a = a.replace(/, also in Learn\./, "."); } }
+      } else {
+        while (AKL5.help.length) AK_HELP_WHERE.push(AKL5.help.pop());
+        AK_HELP_WHERE.forEach(function (e) { if (e._a5) { e.a = e._a5; delete e._a5; } });
+      }
+    }
+    if (typeof AK_TAB_ALL !== "undefined") {
+      var k = -1; AK_TAB_ALL.forEach(function (x, j) { if (x[0] === "learn") k = j; });
+      if (hid && k >= 0) { AKL5.tab = [k, AK_TAB_ALL[k]]; AK_TAB_ALL.splice(k, 1); }
+      if (!hid && k < 0 && AKL5.tab) { AK_TAB_ALL.splice(AKL5.tab[0], 0, AKL5.tab[1]); AKL5.tab = null; }
+    }
+    if (hid && settings().learnTab === true && !settings().learnShow) settings().learnTab = false;
+  } catch (e) {}
+}
+setTimeout(akLearn5Apply, 0);
+(function () {
+  /* menus: every menu() goes through one clean copy (AKMENU_STD, 18.9), so the rows are taken out as the menu appears */
+  function sweep(m) {
+    if (!akLearn5Hidden()) return;
+    [].forEach.call(m.querySelectorAll("button[role=menuitem]"), function (b) { if (/^🎓|Learn and practice|^⚙ Learn options/.test(b.textContent.trim())) b.remove(); });
+  }
+  try {
+    new MutationObserver(function (ms) { ms.forEach(function (x) { [].forEach.call(x.addedNodes || [], function (n) { if (n.nodeType === 1 && n.classList && n.classList.contains("menu")) sweep(n); }); }); }).observe(document.body || document.documentElement, { childList: true });
+  } catch (e) {}
+  var v0 = AK_VIEWS.settings || viewSettings, viaMap = !!AK_VIEWS.settings;
+  var wrapped = function () {
+    var el = v0.apply(this, arguments);
+    try {
+      if (akLearn5Hidden()) [].forEach.call(el.querySelectorAll(".ak8-scrbtns button"), function (b) { if (b.textContent.trim() === "⚙ Learn") b.style.display = "none"; });
+    } catch (e) {}
+    return el;
+  };
+  if (viaMap) AK_VIEWS.settings = wrapped; else viewSettings = wrapped;
+})();
+
+/* Settings › Tools and extras: venue logos on flyers, Show Learn again */
+(function () {
+  if (typeof akSettingsExtra26 !== "function") return;
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("Venue logos and Learn", "Logos on show flyers; the hidden Learn screen");
+      var g = akGfxCfg();
+      c.check("Put the venue's logo on its shows' flyers (tap it › Delete to take it off)", function () { return g.venueLogo !== false; }, function (v) { g.venueLogo = v; });
+      c.check("Show Learn again (lessons, teacher, practice; hidden since 19.2)", function () { return settings().learnShow === true; }, function (v) { settings().learnShow = v; settings().learnTab = v; akLearn5Apply(); setTimeout(render, 0); });
+    } catch (e) {}
+  };
+})();
+
+akCss("ak209", [
+  ".akfly5{border:1px solid rgba(200,150,46,.5);border-radius:2px;padding:6px;margin:0 0 8px}",
+  ".akfly5-h{display:flex;align-items:baseline;gap:8px;justify-content:space-between;margin:0 0 4px}",
+  ".akfly5-r{display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid rgba(127,127,127,.2)}.akfly5-r img{width:34px;height:44px;object-fit:cover;border-radius:2px}.akfly5-ph{width:34px;text-align:center}",
+  ".akfly5-r.on .grow{font-weight:700}.akfly5-star{border-radius:2px!important;white-space:nowrap}",
+  ".akfly5-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.akfly5-acts button{border-radius:2px!important}",
+  ".akvl5{display:flex;align-items:center;gap:8px;margin:6px 0}.akvl5-l{font-size:13px;opacity:.85;min-width:4.5em}.akvl5-im{max-width:72px;max-height:48px;object-fit:contain;background:rgba(127,127,127,.15);border-radius:2px}.akvl5 button{border-radius:2px!important}",
+  ".aktc5-run{margin-left:auto;border-radius:2px!important;min-height:30px!important;padding:2px 8px!important;font-size:13px}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "A show's flyer (each show has its own)", a: "A show's page › 🎨 Flyer opens that show's flyer (★). No flyer yet: a new one is made for the show. Graphics › 📁 My designs › For this show: ☆ Make it the flyer, ＋ New draft for this show.", k: "flyer show own draft the flyer star which flyer per show" });
+  AK_HELP_WHERE.push({ t: "Venue logo on flyers", a: "Shows › ⋯ › Venues › a venue › Edit › 🏷 Logo › ＋ Add logo. Flyers for shows there get it at the bottom right (tap it › Delete to remove). Settings › Tools and extras › Venue logos and Learn turns it off.", k: "venue logo flyer brand bar restaurant logo" });
+  AK_HELP_WHERE.push({ t: "Run the tests again (test helper)", a: "Settings › 🧪 test version line › 🧪 Run the tests: back to the item you were on, with the 🧪 square.", k: "test checklist helper reopen run tests resume" });
+  AK_HELP_WHERE.push({ t: "Bring back Learn", a: "Settings › Tools and extras › Venue logos and Learn › Show Learn again.", k: "learn lessons teacher practice tab hidden bring back" });
+}
+AK_WHATS_NEW = ["🎨 Each show has its own flyer: a show's 🎨 Flyer opens that show's flyer (★), or starts one for it. 📁 My designs › For this show lists its drafts. 🏷 Venues can have a logo that goes on their shows' flyers. Settings › 🧪 Run the tests picks up where you left off. Learn is hidden everywhere (Settings › Tools and extras brings it back)."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("20.9", "Shows and flyers", [
+  ["fly5-own", "🎨 Each show has its own flyer", "Open a show › 🎨 Flyer. Change something, go back, open ANOTHER show › 🎨 Flyer: a new flyer for that show. Back to the first show › 🎨 Flyer: your first flyer, as you left it.", AKTC_GIG],
+  ["fly5-drafts", "For this show: several drafts, ★ the flyer", "Graphics (from a show's flyer) › 📁 My designs › For this show: ＋ New draft for this show, then ☆ Make it the flyer on one. The show's 🎨 Flyer opens the ★ one.", AKTC_GIG],
+  ["vl5-logo", "🏷 Venue logo on flyers", "Shows › ⋯ › Venues › a venue › Edit › 🏷 Logo › ＋ Add logo. Make a flyer for a show at that venue: the logo is at the bottom right. Tap it › Delete takes it off.", ["shows", {}, ""]],
+  ["tc5-run", "🧪 Run the tests in Settings", "Start a test (Go ›), close the helper with ✕, then Settings › 🧪 Run the tests: you're back on the same item with the 🧪 square.", ["settings", {}, "Run the tests"]],
+  ["learn5", "Learn hidden everywhere", "Songs ⋮ has no 🎓 Learn and practice; Choose the tabs has no Learn; Settings › Options for each screen has no ⚙ Learn. Settings › Tools and extras › Show Learn again brings it all back.", ["songs", {}, ""]]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK209_WHERE = { "fly5-own": ["Shows › a show › 🎨 Flyer"], "fly5-drafts": ["Graphics › 📁 My designs › For this show"], "vl5-logo": ["Shows › ⋯ › Venues › a venue › Edit › 🏷 Logo"], "tc5-run": ["Settings › 🧪 test version line › 🧪 Run the tests"], "learn5": ["Songs › ⋮ (no Learn), Settings › Tools and extras › Show Learn again"] };
+  AKTC.forEach(function (x) { var w = AK209_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_VERSION = "20.9";
+
+/* ================================================================ ak_v21a: 21.0 obvious tools right at the top of every pop-up (his ask 11-04).
+   He added a color screen to a blank page and its pop-up had no way to change the color. Now every part's pop-up list has a short
+   tools strip under its header with what you'd expect for that kind of part, and ↶ ↷ in the header:
+     Words:          Font ▾, size − +, Color, then B I ⇤ ≡ ⇥
+     Color screen:   Color ▾ + Black/White/Navy/Warm/Purple, Strength slider
+     Pattern overlay, shapes, blobs, lines, circles, spirals, logo/name pictures: size − +, Color
+     Photo:          size − +, 🔁 Swap
+     Background (tap the empty page): Color, 🔁 Swap (the background had no pop-up at all)
+   The less common ones go in the ◐ Look fold (no new fold): Turn, See-through, Filled/Outline (shapes), Corners/Frame + Shadow
+   (photos), Pattern + Blend (overlays), Where it sits + Blend (color screens), Fade to a second color (shapes).
+   Every control is the studio's own (taken from the ✋ Part tab, akGfxSelFill), so it does exactly what the Part tab does and each
+   tap is one ↶ step; a slider is one step when you let go. While a slider in the list is held the list is not rebuilt.
+   Setting (akGfxCfg().plQuick, Settings › Tools and extras › Graphics pop-up): tools strip on/off. ================================================================ */
+var AKPQ = { hold: false, pend: null };
+function akPqOn() { return akGfxCfg().plQuick !== false; }
+function akPqLab(n, re) { return n && n.tagName === "LABEL" && re.test((n.textContent || "").trim()); }
+/* the Part tab's controls for the picked part, top-level children only (the effects block is left out) */
+function akPqKids(X) {
+  var d = h("div"); try { akGfxSelFill(d, X); } catch (e) { return { d: d, kids: [] }; }
+  return { d: d, kids: [].slice.call(d.children).filter(function (n) { return !(n.classList && n.classList.contains("akg-fxmod")); }) };
+}
+function akPqKind(L) {
+  if (!L) return "";
+  if (L.type === "text") return "text";
+  if (L.type === "gbg") return "bg";
+  if (L.type === "govl") return L.o && L.o.p === "solid" ? "screen" : "ovl";
+  if (akSegIsPic(L)) return "pic";
+  return "shape";
+}
+function akPqTidy(n) {
+  [].forEach.call(n.querySelectorAll("button"), function (b) {
+    if (!b.getAttribute("aria-label")) { var t = b.textContent.trim(); if (t) b.setAttribute("aria-label", t); }
+    if (!b.title) b.title = b.getAttribute("aria-label") || "";
+    if (!b.type) b.type = "button";
+  });
+  [].forEach.call(n.querySelectorAll(".hint, .akg-help, small.fhelp"), function (x) { x.remove(); });
+  return n;
+}
+/* the strip under the header */
+function akPqStrip(L, X) {
+  var k = akPqKind(L), P = akPqKids(X), d = P.d, kids = P.kids, out = h("div", { class: "akpq akpq-" + k, role: "group", "aria-label": "Quick tools for this part" });
+  function add(n, cls) { if (n) { if (cls) n.classList.add(cls); out.appendChild(akPqTidy(n)); } }
+  if (k === "text") {
+    var tb = d.querySelector(".akg-tbox");
+    add(tb && tb.querySelector(".akg-tgrid:not(.akg-tgrid2)"), "akpq-row");
+    add(tb && tb.querySelector(".akg-tgrid2"), "akpq-icons");
+  } else if (k === "screen") {
+    add(d.querySelector(".akcw-sw"), "akpq-row");
+    add(kids.filter(function (n) { return akPqLab(n, /^Strength/); })[0], "akpq-sl");
+  } else {
+    add(d.querySelector(".akg-tgrid"), "akpq-row");
+  }
+  return out.firstChild ? out : null;
+}
+/* extras for the ◐ Look fold */
+function akPqLook(L, X) {
+  var k = akPqKind(L), P = akPqKids(X), d = P.d, kids = P.kids, out = [];
+  function lastLab(re) { var m = kids.filter(function (n) { return akPqLab(n, re); }); return m[m.length - 1]; }
+  if (k === "shape") { out.push(d.querySelector('.chips[aria-label="Filled or outline"]')); }
+  if (k === "pic") { out.push(d.querySelector(".akg-tsel")); out.push(kids.filter(function (n) { return n.tagName === "LABEL" && n.classList.contains("chk") && /^Shadow/.test(n.textContent.trim()); })[0]); }
+  if (k === "ovl") { out.push(lastLab(/^Pattern/)); out.push(lastLab(/^Blend/)); }
+  if (k === "screen") { out.push(lastLab(/^Where it sits/)); out.push(lastLab(/^Blend/)); }
+  if (k !== "screen" && k !== "bg" && k !== "ovl") out.push(lastLab(/^Turn/));
+  out.push(lastLab(/^See-through/));
+  return out.filter(Boolean).map(akPqTidy);
+}
+/* ↶ ↷ in the header */
+function akPqUndoBtns(X) {
+  function b(t, aria, step, can) { return h("button", { class: "akpl-hb akpl-u", type: "button", "data-step": String(step), "aria-label": aria, title: aria, disabled: !can(), onClick: function (e) { e.stopPropagation(); akGfxUndoGo(step, X); setTimeout(akPqUSync, 0); } }, t); }
+  return [b("↶", "Undo", -1, akGfxCanUndo), b("↷", "Redo", 1, akGfxCanRedo)];
+}
+function akPqUSync() {
+  [].forEach.call(document.querySelectorAll(".akpl-u"), function (b) { b.disabled = b.getAttribute("data-step") === "-1" ? !akGfxCanUndo() : !akGfxCanRedo(); });
+}
+(function () {
+  var r0 = akPlRender;
+  akPlRender = function (pop) {
+    /* a slider in the list is being held: rebuild when it's let go (else the slider would vanish under the finger) */
+    if (AKPQ.hold) { AKPQ.pend = pop; return; }
+    var r = r0.apply(this, arguments);
+    try {
+      var st = akGfxState(), X = AKPL.X, L = akPlLayer(), box = pop.querySelector(".akpl"); if (!X || !L || !box) return r;
+      var hd = box.querySelector(".akpl-h"), fb = hd && hd.querySelector(".akpl-hb");
+      if (hd && fb) akPqUndoBtns(X).forEach(function (b) { hd.insertBefore(b, fb); });
+      /* the background can't be copied, deleted or picked with others */
+      if (L.type === "gbg") [].forEach.call(box.querySelectorAll(".akpl-r"), function (x) { if (/^(📋|📥|🗑|☑)/.test(x.textContent.trim())) x.remove(); });
+      if (AKPL.fold || !akPqOn()) return r;
+      var strip = akPqStrip(L, X); if (strip && hd) hd.parentNode.insertBefore(strip, hd.nextSibling);
+      /* the ◐ Look fold gets the less common ones */
+      if (AKPL.group === "look") {
+        var rows = [].slice.call(box.querySelectorAll(".akpl-r")), lr = rows.filter(function (x) { return /Look/.test(x.textContent); })[0], g = lr && lr.nextSibling;
+        if (g && g.classList.contains("akpl-g")) {
+          var more = akPqLook(L, X);
+          if (more.length) { var none = g.querySelector(".akpl-none"); if (none) none.remove(); var w = h("div", { class: "akpq-look" }); more.forEach(function (n) { w.appendChild(n); }); g.appendChild(w); }
+        }
+      }
+    } catch (e) { try { console.warn("pop tools", e); } catch (x) {} }
+    return r;
+  };
+  /* hold / let go of a slider inside the list */
+  document.addEventListener("pointerdown", function (e) { var t = e.target; if (t && t.closest && t.closest(".akpl input[type=range]")) AKPQ.hold = true; }, true);
+  function up() {
+    if (!AKPQ.hold) return; AKPQ.hold = false;
+    var p = AKPQ.pend; AKPQ.pend = null;
+    if (p && p.isConnected) setTimeout(function () { if (!AKPQ.hold) { try { akPlRender(p); } catch (e) {} } }, 0);
+  }
+  document.addEventListener("pointerup", up, true); document.addEventListener("pointercancel", up, true);
+  /* keyboard on a slider in the list: rebuild after a pause */
+  document.addEventListener("change", function (e) { var t = e.target; if (t && t.closest && t.closest(".akpl input[type=range]") && !AKPQ.hold && AKPL.wrap && AKPL.wrap._pop) { try { akPlRender(AKPL.wrap._pop); } catch (er) {} } }, true);
+  var p0 = akGfxPopSync;
+  akGfxPopSync = function (wrap, cv, X, busy) {
+    var r = p0.apply(this, arguments);
+    try {
+      var pop = wrap._pop; if (!pop || !akPlOn()) return r;
+      var st = akGfxState(), P = st.P, D = X.D, L = P && st.sel && P.layers.filter(function (l) { return l.id === st.sel; })[0];
+      /* the background (tap the empty page) gets a list too */
+      if (L && L.type === "gbg" && !busy && akGfxCfg().pop !== false && !st.multiMode) {
+        AKPL.wrap = wrap; AKPL.cv = cv; AKPL.X = X;
+        var first = pop.hidden || !pop.classList.contains("akpl-on");
+        pop.hidden = false; pop.classList.add("akpl-on");
+        if (first && (akGfxCfg().plRemember === false || akGfxCfg().plx == null)) { pop.style.left = "6px"; pop.style.top = (cv.offsetTop + 6) + "px"; }
+      }
+      if (pop.hidden || !L) return r;
+      /* overlays and the background keep their settings outside D.edit: rebuild when those change too */
+      var o = L.type === "govl" ? akGfxOvlList(D).filter(function (x) { return "uo_" + x.id === L.id; })[0] : null;
+      var k2 = [L.id, JSON.stringify(o || null), L.type === "gbg" ? JSON.stringify(D.bg || null) : "", akPqOn(), akGfxCanUndo(), akGfxCanRedo()].join("|");
+      if (pop._pqk !== k2 || !pop.querySelector(".akpl")) { pop._pqk = k2; akPlRender(pop); }
+      /* only the background's list is placed here; every other part was placed by the list itself (and by later "out of the finger's way" moves) */
+      if (L.type === "gbg") akPlPlace(pop, wrap);
+    } catch (e) { try { console.warn("pop tools sync", e); } catch (x) {} }
+    return r;
+  };
+  if (typeof akGfxUBtns === "function") { var u0 = akGfxUBtns; akGfxUBtns = function () { var r = u0.apply(this, arguments); try { akPqUSync(); } catch (e) {} return r; }; }
+})();
+akCss("akpq", [
+  ".akg-pop.akpl-on{width:232px}",
+  ".akg-pop.akpl-on .akpl-hb{flex:0 0 32px;width:32px}.akpl-hb.akpl-u:disabled{opacity:.35}.akg-pop.akpl-on .akpl-hd{padding:0 6px;gap:5px}",
+  ".akpq .akfl-od{display:none}",
+  ".akpl-hd span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+  ".akpq{display:flex;flex-direction:column;gap:6px;padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.35)}",
+  ".akpq .akpq-row,.akpq .akpq-icons{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0}",
+  ".akpq button,.akpq-look button{min-height:32px;padding:0 8px;border:1px solid rgba(127,127,127,.5)!important;font-size:13px;white-space:nowrap}",
+  /* square corners win over the app-wide button shape (the :not(#id) adds weight) */
+  ".akpq button:not(#akpq0):not(#akpq1),.akpq-look button:not(#akpq0):not(#akpq1),.akpq-look select:not(#akpq0),.akpl button:not(#akpq0):not(#akpq1){border-radius:2px!important}",
+  ".akpq .akg-fontbtn{flex:1 1 100%;max-width:100%;overflow:hidden;text-overflow:ellipsis;text-align:left}",
+  ".akpq .akg-step{display:inline-flex;align-items:center;gap:0}.akpq .akg-step button{min-width:32px;padding:0}.akpq .akg-step span{min-width:44px;text-align:center;font-size:12px}",
+  ".akpq .akg-colb i,.akpq-look .akg-colb i{display:inline-block;width:14px;height:14px;margin-right:5px;vertical-align:-2px;border:1px solid rgba(127,127,127,.6);border-radius:2px}",
+  ".akpq .akpq-icons button{min-width:34px;padding:0 6px}.akpq .akpq-icons button span{display:none}",
+  ".akpq .akpq-icons button[aria-pressed=true],.akpq-look button[aria-pressed=true],.akpq-look .on{background:color-mix(in srgb,var(--accent,#C8962E) 35%,transparent)!important;font-weight:700}",
+  ".akpq-screen .akcw-sw button.sm{padding:0 6px;font-size:12px}",
+  ".akpq .akg-slider,.akpq-look .akg-slider,.akpq-look .fld{display:block;margin:0;font-size:12px}",
+  ".akpq input[type=range],.akpq-look input[type=range]{width:100%}",
+  ".akpq-look{display:flex;flex-direction:column;gap:6px;padding:8px 12px 10px 12px;border-top:1px solid rgba(127,127,127,.2)}",
+  ".akpq-look .chips{display:flex;flex-wrap:wrap;gap:4px}.akpq-look select{max-width:100%;border-radius:2px}"
+].join("\n"));
+/* the list is taller now: when it opens next to the part (not where he dragged it), it never sits on the part itself.
+   Below, above, right or left of the part, whichever covers the least of it. */
+(function () {
+  var pl0 = akPlPlace;
+  akPlPlace = function (pop, wrap) {
+    var c = akGfxCfg();
+    if (c.plRemember !== false && c.plx != null && c.ply != null) return pl0.apply(this, arguments);
+    try {
+      var st = akGfxState(), L = akPlLayer(), cv = AKPL.cv; if (!L || !cv || !st.P) return pl0.apply(this, arguments);
+      var k = cv._k || 1, bx = akLayerBox(L, st.P), W = wrap.clientWidth, H = wrap.clientHeight, pw = pop.offsetWidth, ph = pop.offsetHeight;
+      var px = cv.offsetLeft + (cv._ox || 0) + bx.x * k, py = cv.offsetTop + (cv._oy || 0) + bx.y * k, pW = bx.w * k, pH = bx.h * k;
+      function cl(v, lo, hi) { return Math.max(lo, Math.min(Math.max(lo, hi), v)); }
+      var cx = cl(px + pW / 2 - pw / 2, 0, W - pw), cy = cl(py + pH / 2 - ph / 2, 0, H - ph);
+      var cands = [[cx, py + pH + 8], [cx, py - ph - 8], [px + pW + 8, cy], [px - pw - 8, cy]].map(function (p) { return [cl(p[0], 0, W - pw), cl(p[1], 0, H - 40)]; }); /* like 20.4: it may hang below the picture */
+      function cover(p) { var ox = Math.max(0, Math.min(p[0] + pw, px + pW) - Math.max(p[0], px)), oy = Math.max(0, Math.min(p[1] + ph, py + pH) - Math.max(p[1], py)); return ox * oy; }
+      var best = cands[0], bc = cover(best);
+      cands.forEach(function (p) { var v = cover(p); if (v < bc - 1) { bc = v; best = p; } });
+      pop.style.left = best[0] + "px"; pop.style.top = best[1] + "px";
+    } catch (e) { return pl0.apply(this, arguments); }
+  };
+})();
+/* a tap on the empty page (nothing picked, nothing under the finger) picks the background, so its color is one tap away */
+(function () {
+  var dn = null;
+  document.addEventListener("pointerdown", function (e) { var cv = e.target && e.target.closest && e.target.closest("canvas.akg-cv"); dn = cv ? { x: e.clientX, y: e.clientY, had: !!akGfxState().sel } : null; }, true);
+  document.addEventListener("pointerup", function (e) {
+    var d = dn; dn = null; if (!d || d.had || Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 8 || !akPqOn() || !akPlOn()) return;
+    setTimeout(function () {
+      var st = akGfxState(), X = st.X; if (S.view !== "gfx" || !X || !st.P || st.sel || st.multiMode) return;
+      if (!st.P.layers.some(function (l) { return l.type === "gbg" && !l.hide; })) return;
+      st.sel = "background"; try { X.paint(); X.refill("parts", true); } catch (er) {}
+      /* the studio finishes its own tap after this: paint once more so the list shows */
+      setTimeout(function () { if (akGfxState().sel === "background") try { X.paint(); } catch (er) {} }, 250);
+    }, 60);
+  }, true);
+})();
+/* Settings › Tools and extras › Graphics pop-up: tools strip on/off */
+(function () {
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      var g = akGfxCfg();
+      c.check("Obvious tools at the top of the list (color, size, font…)", function () { return g.plQuick !== false; }, function (v) { g.plQuick = v; });
+    } catch (e) {}
+  };
+})();
+/* Go ›: a blank page with a color screen picked, its Color ▾ ringed */
+function akPqShow(kind) {
+  return function () {
+    try { akGfxDesign("blank"); akGfxOpen("blank", null); } catch (e) { go("graphics"); }
+    var tries = 0;
+    (function wait() {
+      var st = akGfxState(), X = st.X;
+      if ((!X || !st.P) && tries++ < 20) { setTimeout(wait, 200); return; }
+      if (!X) return;
+      var D = X.D;
+      if (kind === "screen") {
+        var o = akGfxOvlList(D).filter(function (x) { return x.p === "solid"; })[0];
+        if (!o) { o = akGfxOvlNew("", { p: "solid", name: "Color screen", color: "#000000", op: 45, pos: "mid" }); akGfxOvlList(D).push(o); }
+        st.sel = "uo_" + o.id;
+      } else if (kind === "bg") st.sel = "background";
+      else {
+        var f = akGfxFree(D).filter(function (x) { return x.t === "text"; })[0];
+        if (!f) { f = { id: uid(), t: "text", text: "Your words", x: 0.5, y: 0.3, size: 0.08, w: 0.8, weight: 700 }; akGfxFree(D).push(f); }
+        st.sel = "uf_" + f.id;
+      }
+      X.ch(true);
+      var n = 0;
+      (function ring() {
+        var b = document.querySelector(".akg-pop:not([hidden]) .akpq .akg-colb");
+        if (!b && n++ < 15) { try { X.paint(); } catch (e) {} setTimeout(ring, 150); return; }
+        if (b && typeof akSpot === "function") akSpot(b, { title: "Color, right at the top", path: ["Graphics", "tap a part", "the list", "Color"], how: "Tap Color and pick one. ↶ in the list's header undoes it." });
+      })();
+    })();
+  };
+}
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Change a part's color, size or font right in the pop-up", a: "Graphics studio › tap a part: the top of the list has the obvious tools for it. Words: font, size, color, B I and line up. Color screen: color and strength. Shapes and overlays: size and color. Photo: size and swap. Tap the empty page for the background's color. ◐ Look has turn, see-through, outline, corners and frame. ↶ ↷ in the list's header.", k: "color colour screen fill size bigger smaller font bold italic align strength opacity see-through turn rotate outline corners frame shadow background page color undo redo pop-up list" });
+}
+AK_WHATS_NEW = ["🎨 Graphics: every pop-up has the obvious tools right at the top. Color screen: Color and Strength. Words: font, size, color, B I, line up. Shapes and overlays: size and color. Photos: size and swap. Tap the empty page for the background color. ◐ Look adds Turn, See-through, outline, corners, frame. ↶ ↷ sit in the list's header."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("21.0", "Graphics", [
+  ["pq-screen", "Color screen: color at the top", "Graphics › 🆕 Blank design › ＋ › ▦ A color screen. Tap it: the list's top has Color ▾, Black/White/Navy/Warm/Purple and Strength. Change both, then ↶ in the header undoes one at a time.", akPqShow("screen")],
+  ["pq-words", "Words: font, size, color at the top", "Tap some words: Font ▾, − + size, Color, then B I ⇤ ≡ ⇥ are right at the top of the list.", akPqShow("words")],
+  ["pq-bg", "Background color (tap the empty page)", "On a blank page tap the empty page: a list opens with Color and 🔁 Swap for the background.", akPqShow("bg")],
+  ["pq-look", "◐ Look: turn, see-through, outline, corners", "Tap a shape › ◐ Look: Filled/Outline, Turn, See-through. Tap a photo › ◐ Look: Corners, Frame, Shadow.", ["graphics", {}, ""]]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AKPQ_WHERE = { "pq-screen": ["Graphics › tap a color screen › the list › Color ▾ (top)"], "pq-words": ["Graphics › tap words › the list › Font ▾ / − + / Color (top)"], "pq-bg": ["Graphics › tap the empty page › the list › Color"], "pq-look": ["Graphics › tap a shape or photo › the list › ◐ Look"] };
+  AKTC.forEach(function (x) { var w = AKPQ_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_VERSION = "21.0";
+
+/* ================= 21.1: menus tidied, one matching icon set ================= (account 2, 11-04)
+   1. Menus. Rows he picked are taken out of the menu (the code stays; "hide" and "remove" both just keep the row off the menu).
+      Songs ⋮: no Smart lists, New setlist from the songs listed, Tidy my library, Fix chords the app doesn't read, Help: Where is…?,
+      Build a setlist, Play history, Recently deleted, Tour and feature guide, Quick idea, Notepad, Libraries (all live somewhere else).
+      Shows ⋮: no Artist info, Recently deleted, Venues… on a setlist's menu. Song page: no Chord shapes ⇄ names (it is ✎ Edit › ♪ Convert).
+      ⋯ More (phone): Tour and feature guide and Notepad added; Choose the tabs moved to Settings › Tools and extras › Bottom bar.
+      Menus get small sub-headings (Settings › Tools and extras › Menus: sub-headings on/off).
+      menu() is rebuilt on every click by AKMENU_STD, so rows are changed on the finished .menu element, not by wrapping menu().
+   2. Icons. The bottom bar and ⋯ More use one set of thin line icons (1.4), tinted by the theme. Icons only by default;
+      Settings › Tools and extras › Bottom bar › Words under the icons puts the names back. */
+
+var AKM21 = { heads: true };
+function akM21Heads() { return settings().menuHeads !== false; }
+
+/* ---------------------------------------------------------------- menu rows */
+var AKM21_OUT = {
+  songs: [/^Smart lists/, /^New setlist from the songs listed/, /^🧹 Tidy my library/, /^Fix chords the app doesn't read/, /^❓ Help: Where is/, /^Build a setlist/, /^Play history/, /^Recently deleted/, /^Tour and feature guide/, /^💡 Quick idea/, /^📝 Notepad/, /^Libraries/],
+  shows: [/^🎤 Artist info/, /^Recently deleted/],
+  setlist: [/^Venues…/],
+  song: [/^Chord shapes ⇄ names/]
+};
+/* sub-headings: first row of each group → heading */
+var AKM21_HEAD = {
+  songs: [[/^Select songs/, "Pick and group"], [/^Discover songs/, "Find"], [/^🏷 Quick tagging/, "Tags"], [/^Undo last change/, "Undo"]],
+  shows: [[/^⚙ Shows options/, "This screen"], [/^🖨 Signs/, "Print and make"], [/^🎨 Graphics studio/, "Graphics"], [/^📅 Booking/, "Bookings"], [/^Select setlists/, "Setlists"], [/^Undo last change/, "Undo"]]
+};
+function akM21Kind(m) {
+  var t = [].map.call(m.querySelectorAll("button[role=menuitem]"), function (b) { return b.textContent.trim(); });
+  function has(re) { return t.some(function (x) { return re.test(x); }); }
+  if (has(/^Group songs/) && has(/^Select songs/)) return "songs";
+  if (has(/^⚙ Shows options/)) return "shows";
+  if (has(/^Chord shapes ⇄ names/)) return "song";
+  if (has(/^Venues…/) && !has(/^⚙ Shows options/) && (has(/^Print|^Export|^Duplicate setlist|^Rename/) || S.view === "show")) return "setlist";
+  return "";
+}
+function akM21Sweep(m) {
+  try {
+    if (m.getAttribute("data-akm21")) return; m.setAttribute("data-akm21", "1");
+    var kind = akM21Kind(m); if (!kind) return;
+    var outs = AKM21_OUT[kind] || [];
+    [].forEach.call(m.querySelectorAll("button[role=menuitem]"), function (b) {
+      var x = b.textContent.trim();
+      if (outs.some(function (re) { return re.test(x); })) b.remove();
+    });
+    /* separators that now sit at the top, bottom, or twice in a row */
+    var kids = [].slice.call(m.children), prevSep = true;
+    kids.forEach(function (c) { var sep = c.tagName !== "BUTTON"; if (sep && prevSep) c.remove(); prevSep = sep; });
+    while (m.lastElementChild && m.lastElementChild.tagName !== "BUTTON") m.lastElementChild.remove();
+    if (akM21Heads() && AKM21_HEAD[kind]) {
+      AKM21_HEAD[kind].forEach(function (hd) {
+        var b = [].filter.call(m.querySelectorAll("button[role=menuitem]"), function (x) { return hd[0].test(x.textContent.trim()); })[0];
+        if (b) {
+          var prev = b.previousElementSibling;
+          if (prev && prev.tagName !== "BUTTON") prev.remove();
+          m.insertBefore(h("div", { class: "akm21-h", role: "presentation" }, hd[1]), b);
+        }
+      });
+    }
+  } catch (e) {}
+}
+(function () {
+  try {
+    new MutationObserver(function (ms) {
+      ms.forEach(function (x) { [].forEach.call(x.addedNodes || [], function (n) { if (n.nodeType === 1 && n.classList && n.classList.contains("menu")) { akM21Sweep(n); akM21Icons(n); } }); });
+    }).observe(document.body || document.documentElement, { childList: true });
+  } catch (e) {}
+})();
+
+/* ---------------------------------------------------------------- icons */
+var AKM21_IC = {
+  songs: '<path d="M9 17.5V5.5l10-2v12"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>',
+  shows: '<rect x="4" y="5" width="16" height="15" rx="1"/><path d="M4 10h16M8 3v4M16 3v4"/>',
+  play: '<path d="M8 5l11 7-11 7z"/>',
+  learn: '<path d="M2 9l10-4 10 4-10 4z"/><path d="M6 11v4c3 2 9 2 12 0v-4"/>',
+  import: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  write: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+  graphics: '<rect x="4" y="5" width="16" height="14" rx="1"/><circle cx="9" cy="10" r="1.5"/><path d="M4 17l5-4 4 3 3-2 4 3"/>',
+  tonight: '<path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/>',
+  more: '<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>',
+  back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  tidy: '<path d="M5 7l2 2 3-3M13 8h6M5 15l2 2 3-3M13 16h6"/>',
+  guide: '<path d="M12 6v13M12 6C9 4 6 4 3 5v13c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1z"/>',
+  notepad: '<rect x="5" y="4" width="14" height="16" rx="1"/><path d="M8.5 9h7M8.5 13h7M8.5 17h4"/>',
+  sync: '<path d="M20 8a8 8 0 0 0-14-2M4 4v4h4M4 16a8 8 0 0 0 14 2M20 20v-4h-4"/>',
+  backup: '<path d="M7 18a4 4 0 0 1-.5-8A6 6 0 0 1 18 9a4.5 4.5 0 0 1 0 9z"/><path d="M12 16v-5M9.5 13l2.5-2.5 2.5 2.5"/>',
+  tabs: '<rect x="3" y="14" width="18" height="6" rx="1"/><path d="M8 14v6M13 14v6"/>',
+  artist: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/>',
+  help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 16.8v.2"/>',
+  files: '<path d="M3.5 7.5V18a1 1 0 0 0 1 1h15a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1h-8l-2-2.5h-5a1 1 0 0 0-1 1z"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+  edit: '<rect x="3.5" y="4" width="17" height="16" rx="1"/><path d="M3.5 9h17M9 9v11"/>',
+  test: '<path d="M9.5 3.5h5M10.5 3.5v6L5 19a1 1 0 0 0 .9 1.5h12.2A1 1 0 0 0 19 19l-5.5-9.5v-6"/><path d="M8 15h8"/>',
+  business: '<rect x="3.5" y="7.5" width="17" height="12" rx="1"/><path d="M9 7.5v-2h6v2M3.5 13h17"/>',
+  clips: '<rect x="3.5" y="5" width="17" height="14" rx="1"/><path d="M3.5 9h17M3.5 15h17M8 5v14M16 5v14"/>'
+};
+function akM21Svg(id) {
+  var d = AKM21_IC[id]; if (!d) return null;
+  var s = document.createElement("span"); s.className = "akm21-i"; s.setAttribute("aria-hidden", "true");
+  s.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="' + (id === "more" ? "currentColor" : "none") + '" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + d + '</svg>';
+  return s;
+}
+function akM21IdOf(label) {
+  var t = String(label || "").replace(/[^A-Za-z? ]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  var map = { songs: "songs", shows: "shows", playing: "play", learn: "learn", import: "import", settings: "settings", write: "write", graphics: "graphics", tonight: "tonight", more: "more", back: "back", "tidy my library": "tidy", "tour and feature guide": "guide", notepad: "notepad", sync: "sync", backup: "backup", "choose the tabs": "tabs", "artist info": "artist", files: "files", "search everything": "search", "edit this screen": "edit", "test checklist": "test", business: "business", clips: "clips" };
+  if (map[t]) return map[t];
+  if (/^help/.test(t)) return "help";
+  return "";
+}
+function akM21Labels() { return settings().tabLabels === true; }
+/* the bottom bar: every tab gets a line icon; names are kept for screen readers */
+function akM21Bar(bar) {
+  try {
+    if (!bar || !bar.querySelectorAll) return bar;
+    [].forEach.call(bar.querySelectorAll(":scope > button"), function (b) {
+      var ic = b.querySelector(".ic"), lab = b.textContent.trim(), id = akM21IdOf(b.classList.contains("tbback") ? "back" : (ic ? lab.slice(ic.textContent.length) : lab));
+      if (!id) return;
+      if (!b.getAttribute("aria-label")) b.setAttribute("aria-label", id === "more" ? "More" : (ic ? lab.slice(ic.textContent.length).trim() : lab));
+      var svg = akM21Svg(id); if (!svg) return;
+      if (ic) { ic.textContent = ""; ic.appendChild(svg); ic.classList.add("akm21-ic"); }
+    });
+    bar.classList.add("akm21"); bar.classList.toggle("akm21-words", akM21Labels());
+  } catch (e) {}
+  return bar;
+}
+(function () {
+  var tb = tabBarEl;
+  tabBarEl = function () { return akM21Bar(tb.apply(this, arguments)); };
+  /* the bar is rebuilt on screens that swap the sync/backup buttons in later: do it once more when the bar changes */
+  try {
+    new MutationObserver(function (ms) {
+      ms.forEach(function (x) { if (x.target && x.target.classList && x.target.classList.contains("tabbar") && !x.target.__akm21) { x.target.__akm21 = 1; akM21Bar(x.target); setTimeout(function () { x.target.__akm21 = 0; }, 50); } });
+    }).observe(document.body || document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+})();
+/* menu rows: the same icons, in front of the words */
+function akM21Icons(m) {
+  try {
+    if (m.getAttribute("data-akm21i")) return; m.setAttribute("data-akm21i", "1");
+    [].forEach.call(m.querySelectorAll("button[role=menuitem]"), function (b) {
+      var id = akM21IdOf(b.textContent.trim().replace(/…$/, ""));
+      if (!id || id === "more" || id === "back" || b.querySelector(".akm21-i")) return;
+      var svg = akM21Svg(id); if (!svg) return;
+      var tn = b.firstChild; if (tn && tn.nodeType === 3) tn.nodeValue = tn.nodeValue.replace(/^[^A-Za-z0-9]+\s*/, "");
+      b.insertBefore(svg, b.firstChild);
+    });
+  } catch (e) {}
+}
+
+/* ---------------------------------------------------------------- ⋯ More: Tour guide and Notepad in, Choose the tabs out (Settings has it) */
+(function () {
+  var m0 = menu;
+  /* the More menu is built in ak8_more.js; its rows are matched by their labels once the menu is on the screen */
+  try {
+    new MutationObserver(function (ms) {
+      ms.forEach(function (x) { [].forEach.call(x.addedNodes || [], function (n) {
+        if (n.nodeType !== 1 || !n.classList || !n.classList.contains("menu")) return;
+        var rows = [].slice.call(n.querySelectorAll("button[role=menuitem]")), ch = rows.filter(function (b) { return /^Choose the tabs/.test(b.textContent.trim()); })[0];
+        var tidy = rows.filter(function (b) { return /^Tidy my library$/.test(b.textContent.replace(/^[^A-Za-z]*/, "").trim()); })[0];
+        if (!ch || !tidy || n.getAttribute("data-akm21m")) return;
+        n.setAttribute("data-akm21m", "1");
+        var mk = function (label, fn) { var c = tidy.cloneNode(true); c.textContent = label; c.addEventListener("click", function (e) { e.stopPropagation(); [].forEach.call(document.querySelectorAll(".menu"), function (q) { q.remove(); }); fn(); }, true); return c; };
+        tidy.parentNode.insertBefore(mk("Tour and feature guide", function () { go("guide"); }), ch.previousElementSibling || ch);
+        tidy.parentNode.insertBefore(mk("Notepad", function () { akNotepad(); }), ch.previousElementSibling || ch);
+        var prev = ch.previousElementSibling; ch.remove(); if (prev && prev.tagName !== "BUTTON" && !prev.nextElementSibling) prev.remove();
+        var kids2 = [].slice.call(n.children), ps = true; kids2.forEach(function (c) { var sp = c.tagName !== "BUTTON"; if (sp && ps) c.remove(); ps = sp; });
+        n.removeAttribute("data-akm21i"); akM21Icons(n);
+      }); });
+    }).observe(document.body || document.documentElement, { childList: true });
+  } catch (e) {}
+})();
+
+/* ---------------------------------------------------------------- Settings */
+(function () {
+  if (typeof akSettingsExtra26 !== "function") return;
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("Bottom bar and menus", "Which tabs, icons or words, menu headings");
+      c.out.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { akTabsDialog(); } }, "Choose the tabs…")));
+      c.check("Words under the icons on the bottom bar", function () { return settings().tabLabels === true; }, function (v) { settings().tabLabels = v; document.querySelectorAll(".tabbar").forEach(function (b) { b.classList.toggle("akm21-words", v); }); });
+      c.check("Small sub-headings in the ⋮ menus", function () { return settings().menuHeads !== false; }, function (v) { settings().menuHeads = v; });
+    } catch (e) {}
+  };
+})();
+
+akCss("akm21", [
+  ".akm21-h{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.6;padding:6px 12px 2px;pointer-events:none}",
+  ".menu .akm21-i{display:inline-flex;vertical-align:middle;margin-right:8px;opacity:.85}.menu .akm21-i svg{width:18px;height:18px}",
+  ".tabbar.akm21 .akm21-ic{display:inline-flex;align-items:center;justify-content:center;font-size:20px;line-height:0}",
+  ".tabbar.akm21 .akm21-ic svg{width:1.1em;height:1.1em;stroke:currentColor}",
+  ".tabbar.akm21 button{color:var(--fg,inherit)}.tabbar.akm21 button[aria-current=page]{color:var(--accent,var(--fg))}",
+  ".tabbar.akm21:not(.akm21-words) button{font-size:0;gap:0;justify-content:center}",
+  ".tabbar.akm21.akm21-words button{font-size:11px;flex-direction:column;gap:1px}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Bottom bar icons, words under them", a: "Settings › Tools and extras › Bottom bar and menus › Words under the icons on the bottom bar. Choose the tabs… is there too.", k: "bottom bar tabs icons words labels choose the tabs more", p: ["settings", {}, ""] });
+  AK_HELP_WHERE.push({ t: "Menus: sub-headings, where the removed rows went", a: "Songs ⋮ keeps only song things. Smart lists, Tidy and Fix chords are in ⋯ More or Tools. Build a setlist and Play history are in Shows ⋮. Tour guide and Notepad are in ⋯ More. Quick idea is in Write. Libraries and Recently deleted are in Settings › Your data and Files › Trash. Sub-headings: Settings › Tools and extras › Bottom bar and menus.", k: "menu songs shows more removed moved tidy build setlist play history notepad tour guide libraries recently deleted headings", p: ["settings", {}, ""] });
+}
+if (typeof akTcAdd === "function") akTcAdd("21.1", "Menus and icons", [
+  ["m21-songs", "Songs ⋮ is short", "Open Songs › ⋮. Only song things: Select, Group, Discover, Requests, Duplicates, Tags. No Smart lists, Tidy, Build a setlist, Play history, Notepad.", ["songs", {}, ""]],
+  ["m21-more", "⋯ More has Tour guide and Notepad", "Phone: tap ⋯ More on the bottom bar. Tour and feature guide and Notepad are there; Choose the tabs is not.", ["songs", {}, ""]],
+  ["m21-icons", "Matching line icons on the bottom bar", "Look at the bottom bar and ⋯ More: the same thin line style, in the theme's color. Settings › Tools and extras › Bottom bar and menus › Words under the icons.", ["settings", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK21B_WHERE = { "m21-songs": ["Songs › ⋮"], "m21-more": ["Bottom bar › ⋯ More"], "m21-icons": ["Settings › Tools and extras › Bottom bar and menus"] };
+  AKTC.forEach(function (x) { var w = AK21B_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+
+/* ================= 21.1: Words you can curve, underline and tilt in 3D (his ask 11-04) =================
+   The Graphics pop-up list has "Aa Words": size − +, Font, B I U, line up, Turn, Curve, 3D (tilt side to side, tilt up and down, depth).
+   Everything shows on the picture while you move the slider. Stored per part in D.edit[id]: under, curve (-100..100), tiltX, tiltY (-60..60), depth (0..100).
+   Underline and Curve are drawn in akGfxText (akgfx_c.js). The 3D look is drawn here: the words (with all their effects) are drawn flat on a spare
+   canvas, given thickness (depth), then squeezed in strips for the tilt, and put on the picture. Boxes for tapping stay where the flat words are. */
+(function () {
+  var bk = akGfxBake;
+  akGfxBake = function (P, E) {
+    var out = bk.apply(this, arguments); E = E || {};
+    out.layers = out.layers.map(function (l) {
+      var e = E[l.id]; if (!e || l.type !== "text") return l;
+      if (e.under == null && e.curve == null && e.tiltX == null && e.tiltY == null && e.depth == null) return l;
+      var c = Object.assign({}, l);
+      if (e.under != null) c.under = !!e.under;
+      if (e.curve != null) c.curve = e.curve;
+      if (e.tiltX != null) c.tiltX = e.tiltX;
+      if (e.tiltY != null) c.tiltY = e.tiltY;
+      if (e.depth != null) c.depth = e.depth;
+      return c;
+    });
+    return out;
+  };
+})();
+
+function akGfx3dNew(w, h2) { var c = document.createElement("canvas"); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h2)); return c; }
+/* squeeze a canvas in 1-pixel strips so one side looks nearer: axis "x" tilts side to side, "y" up and down */
+function akGfx3dTilt(src, deg, axis, d) {
+  var w = src.width, h2 = src.height, out = akGfx3dNew(w, h2), o = out.getContext("2d"), s = Math.sin(deg * Math.PI / 180), cs = Math.cos(deg * Math.PI / 180), i;
+  var half = (axis === "x" ? w : h2) / 2, n = axis === "x" ? w : h2, prev = null;
+  function proj(u) { var den = Math.max(0.35, 1 - u * s / d); return { p: u * cs / den, sc: 1 / den }; }
+  for (i = 0; i < n; i++) {
+    var u0 = i - half, u1 = i + 1 - half, a = proj(u0), b = proj(u1), sc = (a.sc + b.sc) / 2, ln = Math.max(1, Math.abs(b.p - a.p) + 0.6);
+    if (axis === "x") o.drawImage(src, i, 0, 1, h2, half + Math.min(a.p, b.p), h2 / 2 - h2 * sc / 2, ln, h2 * sc);
+    else o.drawImage(src, 0, i, w, 1, w / 2 - w * sc / 2, half + Math.min(a.p, b.p), w * sc, ln);
+  }
+  return out;
+}
+function akGfxText3D(ctx, l, P) {
+  var B = akGfxTextBox(l), z = B.f.size, tm = ctx.getTransform ? ctx.getTransform() : null, sc = tm ? Math.max(0.5, Math.min(3, Math.hypot(tm.a, tm.b))) : 1;
+  var depth = Math.max(0, Math.min(100, l.depth || 0)), steps = Math.round(depth / 100 * z * 0.45), pad = z * 1.1 + steps + 4;
+  var W = Math.ceil(B.w + pad * 2), H = Math.ceil(B.h + pad * 2), W2 = Math.ceil(W * 1.7), H2 = Math.ceil(H * 1.7);
+  var flat = Object.assign({}, l, { tiltX: 0, tiltY: 0, depth: 0, rot: 0 });
+  /* 1. the words, flat, with their effects */
+  var f = akGfx3dNew(W * sc, H * sc), fc = f.getContext("2d"); fc.scale(sc, sc); fc.translate(pad - B.x, pad - B.y); akGfxText(fc, flat, P);
+  /* 2. thickness: darker copies behind, down and to the right */
+  var solid = akGfx3dNew(W * sc, H * sc), sctx = solid.getContext("2d");
+  if (steps > 0) {
+    var dk = akGfx3dNew(W * sc, H * sc), dc = dk.getContext("2d"); dc.drawImage(f, 0, 0);
+    dc.globalCompositeOperation = "source-atop"; dc.fillStyle = "rgba(0,0,0,0.52)"; dc.fillRect(0, 0, dk.width, dk.height);
+    for (var i = steps; i >= 1; i--) sctx.drawImage(dk, i * 0.75 * sc, i * 0.75 * sc);
+  }
+  sctx.drawImage(f, 0, 0);
+  /* 3. bring the tilt in, on a roomier canvas, then put it on the picture */
+  var big = akGfx3dNew(W2 * sc, H2 * sc), bc = big.getContext("2d"); bc.drawImage(solid, (big.width - solid.width) / 2, (big.height - solid.height) / 2);
+  var d = Math.max(W2, H2) * sc * 1.6;
+  if (l.tiltY) big = akGfx3dTilt(big, Math.max(-65, Math.min(65, l.tiltY)), "x", d);
+  if (l.tiltX) big = akGfx3dTilt(big, Math.max(-65, Math.min(65, l.tiltX)), "y", d);
+  ctx.save();
+  var ax = B.x + B.w / 2, ay = B.y + B.h / 2;
+  ctx.translate(ax, ay); if (l.rot) ctx.rotate(l.rot * Math.PI / 180);
+  ctx.drawImage(big, -big.width / sc / 2, -big.height / sc / 2, big.width / sc, big.height / sc);
+  ctx.restore();
+}
+
+akCss("akv21c", [
+  ".akpl-wr{display:flex;gap:4px;align-items:stretch;margin:4px 0}.akpl-wr .akpl-pb{flex:1 1 0}.akpl-wr .akpl-wv{flex:1 1 0;display:flex;align-items:center;justify-content:center;font-size:13px;opacity:.85}",
+  ".akpl-pb.on{background:var(--accent,#c8962e)!important;color:var(--on-accent,#000)!important}",
+  ".akpl-sub{display:block;margin:6px 0 0;font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.6}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Curve, underline and 3D words", a: "Graphics › tap words › Aa Words: A− A+, Font, B I U, line up, Turn, Curve (up arch, down smile), 3D (tilt side to side, tilt up and down, Depth). Flat again puts them back.", k: "words text curve arch smile underline 3d tilt depth turn rotate font bold italic", p: ["graphics", {}, ""] });
+}
+if (typeof akTcAdd === "function") akTcAdd("21.1", "Words controls", [
+  ["w21-group", "Aa Words group in the Words pop-up", "Graphics › tap words › Aa Words: size A− A+, Font, B I U, line up, Turn all work and show right away.", ["graphics", {}, ""]],
+  ["w21-curve", "Curve the words", "Graphics › tap words › Aa Words › Curve: drag right, the words arch up; drag left, they smile. It shows on the picture while you drag.", ["graphics", {}, ""]],
+  ["w21-3d", "3D: tilt and depth", "Graphics › tap words › Aa Words › 3D: Tilt side to side, Tilt up and down, Depth. Flat again puts them back.", ["graphics", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK21C_WHERE = { "w21-group": ["Graphics › tap words › Aa Words"], "w21-curve": ["Graphics › tap words › Aa Words › Curve"], "w21-3d": ["Graphics › tap words › Aa Words › 3D"] };
+  AKTC.forEach(function (x) { var w = AK21C_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_WHATS_NEW = ["🎨 Words: Aa Words in the pop-up has size, Font, B I U, line up, Turn, Curve and 3D (tilt, depth), all live on the picture. Menus are shorter with small headings; the bottom bar and ⋯ More share one set of line icons (names under them: Settings › Tools and extras › Bottom bar and menus)."].concat(typeof AK_WHATS_NEW !== "undefined" ? AK_WHATS_NEW : []);
+AK_VERSION = "21.1";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
