@@ -26691,10 +26691,12 @@ function akPageTheme() {
   try { var a = t && akArtFor(t); if (a && /^https?:/.test(location.protocol)) o.art = new URL(a.data, location.href).href; } catch (e) {}
   return o.bg ? o : null;
 }
+function akGigPub(g) { if (!g || g.priv || g.deleted || g.archived) return false; return g.pub == null ? true : !!g.pub; }
 function akPublicShows() {
-  var L = akLive(); akStageCfg(); if (!L.showCal) return [];
+  /* 22.5: shows are public unless he says otherwise (private shows never are), and the calendar is on unless turned off */
+  var L = akLive(); akStageCfg(); if (L.showCal === false) return [];
   var today = akTodayKey();
-  return akGigs().filter(function (g) { return g.pub && g.date && g.date >= today; }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }).slice(0, 60).map(function (g) {
+  return akGigs().filter(function (g) { return akGigPub(g) && g.date && g.date >= today; }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }).slice(0, 60).map(function (g) {
     var v = akVenueFor(g), addr = akGigAddr(g);
     return { d: g.date, s: g.start || "", e: g.end || "", n: g.name || "", v: g.venue || (v && v.name) || "", a: addr, u: akMapsUrl(g.venue, addr), x: g.pubNote || "" };
   });
@@ -26742,7 +26744,7 @@ setInterval(function () {
 /* a show's details: public on the request page (the checkbox is drawn by viewGig) */
 function akGigPubRow(g) {
   return h("div", { class: "ak10-pubbox" },
-    h("label", { class: "chk ak10-pub" }, h("input", { type: "checkbox", checked: !!g.pub, onChange: function () { g.pub = this.checked; save(); if (AKL.conn) akLivePublish().catch(function () {}); } }), "Show on my request page (people can see the date, time and place, and add it to their calendar)"),
+    h("label", { class: "chk ak10-pub" }, h("input", { type: "checkbox", checked: akGigPub(g), onChange: function () { g.pub = this.checked; save(); if (AKL.conn) akLivePublish().catch(function () {}); } }), "Show on my request page (people can see the date, time and place, and add it to their calendar)"),
     h("input", { type: "text", class: "ak10-pubnote", value: g.pubNote || "", placeholder: "Note for the public, like “Free entry, all ages” (optional)", "aria-label": "Public note", onInput: function () { g.pubNote = this.value; save(); } }));
 }
 
@@ -27654,7 +27656,7 @@ function akPosterLook(look) {
   return { bg: look === "theme" ? v("--bg", "#0c0a18") : "#0c0a18", fg: "#F4EEDD", muted: "#cfc6e0", accent: look === "theme" ? v("--accent", "#E7C66B") : "#E7C66B", panel: "rgba(8,6,20,0.55)", art: typeof art === "string" ? art : "" };
 }
 function akMonthKey(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2); }
-function akGigsIn(fromKey, toKey, pubOnly) { return akGigs().filter(function (g) { return g.date && g.date >= fromKey && g.date <= toKey && (!pubOnly || g.pub); }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }); }
+function akGigsIn(fromKey, toKey, pubOnly) { return akGigs().filter(function (g) { return g.date && g.date >= fromKey && g.date <= toKey && (!pubOnly || akGigPub(g)); }).sort(function (a, b) { return (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")); }); }
 function akTime12(t) { if (!t) return ""; var m = /^(\d+):(\d+)/.exec(t); if (!m) return t; var hh = Number(m[1]), ap = hh >= 12 ? "pm" : "am"; hh = hh % 12 || 12; return hh + (m[2] !== "00" ? ":" + m[2] : "") + ap; }
 function akDateLong(key) { var d = new Date(key + "T12:00:00"); return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
 function akDateShort(key) { var d = new Date(key + "T12:00:00"); return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
@@ -56056,13 +56058,23 @@ function akWcDesc(venueName, own) {
   akLivePublicProfile = function () {
     var p = prof.apply(this, arguments), c = akWcCfg();
     p.cal = { c1: c.c1, c2: c.c2, c3: c.c3, bg: c.bg, fg: c.fg, font: c.font, title: c.title || "" };
+    if (c.gOn && c.gid && c.gkey) { p.cal.gid = c.gid; p.cal.gkey = c.gkey; }
     var lc = akLinkCfg(); p.lp = p.lp || {}; p.lp.st = Object.assign({}, lc.st || {});
     if (lc.bg) p.lp.bg = lc.bg; if (c.bg) p.cal.bg = c.bg; if (lc.bg && lc.btnLay && Array.isArray(lc.btnLay.items)) p.lp.btnLay = lc.btnLay;
     if (lc.photo === "none") p.lp.photo = "none"; else if (lc.photo) { var ph = akLpPhotoData(lc.photo); if (ph) p.lp.photo = ph; }
     return p;
   };
 })();
-function akCalUrl() { return typeof akPageGoUrl === "function" ? akPageGoUrl("cal") : ""; }
+function akCalUrl() {
+  /* 22.5: straight from Google Calendar: its own address, no app or sign-in needed */
+  var c = akWcCfg();
+  if (c.gOn && c.gid && c.gkey) {
+    var L = akLive(), base = L.pageUrl || (/^https?:/.test(location.protocol) ? new URL("request/", location.href).href : "request/index.html");
+    var nm = (L.profile && L.profile.name) || "";
+    return base.split("?")[0] + "?go=cal&gcal=" + encodeURIComponent(c.gid) + "&gkey=" + encodeURIComponent(c.gkey) + (nm ? "&n=" + encodeURIComponent(nm) : "") + (c.title ? "&t=" + encodeURIComponent(c.title) : "") + (c.font === "system" ? "&f=system" : "");
+  }
+  return typeof akPageGoUrl === "function" ? akPageGoUrl("cal") : "";
+}
 function akCalEmbedCode(u) { return '<iframe id="akcal" src="' + u + '" style="width:100%;height:560px;border:0" loading="lazy" title="Shows calendar"></iframe>\n<scr' + 'ipt>window.addEventListener("message",function(e){if(e.data&&e.data.akCalHeight){var f=document.getElementById("akcal");if(f)f.style.height=(e.data.akCalHeight+8)+"px"}})</scr' + 'ipt>'; }
 function akWcPublishSoon() { if (typeof akLinkPublishSoon === "function") akLinkPublishSoon(); }
 
@@ -56071,8 +56083,19 @@ function akPublicCalCard() {
   var cfg = settings().gfxHub = settings().gfxHub || { open: {} }, c = akWcCfg(), L = akLive(), u = akCalUrl();
   var d = h("details", { class: "card akgh-card akqr-lpage", "data-bk": "gh-pcal", open: !!cfg.open.pcal, onToggle: function () { cfg.open.pcal = d.open; } }, h("summary", null, h("b", null, "🗓 Public calendar for my website")));
   d.appendChild(h("p", { class: "hint" }, "A month calendar of your public shows (never private ones or private notes) that you can put on your own website. Tap a day to see the venue, address, time and a short description. It updates by itself when the app publishes."));
-  d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!L.showCal, onChange: function () { L.showCal = this.checked; save(); akWcPublishSoon(); render(); } }), "Publish my public shows (needs Live requests on)"));
-  if (!L.on) d.appendChild(h("p", { class: "hint" }, "Turn on Live requests (and sign in, or set the short address) and the calendar gets its address."));
+  /* 22.5: the calendar reads a public Google Calendar by itself (e.g. "Aedryan's Performances"), so it's current the moment Google is */
+  var gk = (typeof calSet === "function" && calSet().key) || "";
+  if (!c.gkey && gk) c.gkey = gk;
+  if (!c.gid && typeof calSet === "function" && calSet().id) c.gid = calSet().id;
+  var gbox = h("div", { class: "card", style: "margin:6px 0" }, h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.gOn, onChange: function () { c.gOn = this.checked; save(); akWcPublishSoon(); render(); } }), h("b", null, "Live from my Google Calendar (always up to date)")));
+  if (c.gOn) {
+    gbox.appendChild(h("label", { class: "fld" }, "Calendar ID (Google Calendar › settings of the public calendar › Integrate calendar)", h("input", { type: "text", value: c.gid || "", placeholder: "…@group.calendar.google.com", autocapitalize: "off", spellcheck: "false", onChange: function () { c.gid = this.value.trim(); save(); akWcPublishSoon(); render(); } })));
+    gbox.appendChild(h("label", { class: "fld" }, "Google API key (the same kind the app's calendar sync uses)", h("input", { type: "text", value: c.gkey || "", placeholder: "AIza…", autocapitalize: "off", spellcheck: "false", onChange: function () { c.gkey = this.value.trim(); save(); akWcPublishSoon(); render(); } })));
+    gbox.appendChild(h("p", { class: "hint" }, "That calendar must be public (its settings › Access permissions › Make available to public). In Google Cloud, limit the key to the Google Calendar API and to your websites (aedryan13.github.io and your own site). Every change you make in Google shows on your website the next time the page loads (and every 5 minutes while it's open). Private calendars are never read."));
+  }
+  d.appendChild(gbox);
+  if (!c.gOn) d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: L.showCal !== false, onChange: function () { L.showCal = this.checked; save(); akWcPublishSoon(); render(); } }), "Publish my public shows (needs Live requests on)"));
+  if (!L.on && !c.gOn) d.appendChild(h("p", { class: "hint" }, "Turn on Live requests (and sign in, or set the short address) and the calendar gets its address."));
   if (u) {
     d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { window.open(u, "_blank"); } }, "👁 Open it"), h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText(akCalEmbedCode(u)); toast("Embed code copied. Paste it into an HTML block on your website."); } catch (e) { toast("Select the code below and copy it."); } } }, "Copy embed code"), h("button", { class: "sm", onClick: function () { try { navigator.clipboard.writeText(u); toast("Link copied."); } catch (e) { toast(u); } } }, "Copy link")));
     d.appendChild(h("textarea", { rows: 3, readonly: true, "aria-label": "Embed code", style: "width:100%;font:11px monospace", onFocus: function () { this.select(); } }, akCalEmbedCode(u)));
@@ -56195,6 +56218,8 @@ function akLpPhotoBlock() {
     return d;
   };
 })();
+
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Calendar live from Google Calendar (website)", a: "Graphics › 🗓 Public calendar for my website › Live from my Google Calendar: paste the public calendar's ID (Google Calendar › that calendar's settings › Integrate calendar) and a Google API key, then copy the embed code. The website reads Google itself, so it's always current.", k: "calendar google live website embed always updated performances public", p: ["gfx", {}, ""] });
 
 /* ================= 18.8a: 🔁 Replace opens a picture picker pop-up =================
    The Replace button in the part pop-up used to jump to My pictures. Now it opens a sheet right over the picture with your pictures
@@ -56999,7 +57024,7 @@ function akmMilesTo(q, cb) {
 function akmLinksText() { return akArtist().links.filter(function (l) { return l && l.url; }).map(function (l) { return (l.label ? l.label + ": " : "") + l.url; }).join("\n"); }
 function akmLinksPage() { try { return typeof akLinksUrl === "function" ? akLinksUrl() : ""; } catch (e) { return ""; } }
 function akmUpcoming() {
-  try { var t = akTodayKey(); return akGigs().filter(function (g) { return g.pub && g.date && g.date >= t; }).sort(function (a, b) { return a.date.localeCompare(b.date); }).slice(0, 4).map(function (g) { var v = akVenueFor(g); return "• " + akmDate(g.date) + " · " + (g.venue || (v && v.name) || g.name || ""); }).join("\n"); } catch (e) { return ""; }
+  try { var t = akTodayKey(); return akGigs().filter(function (g) { return akGigPub(g) && g.date && g.date >= t; }).sort(function (a, b) { return a.date.localeCompare(b.date); }).slice(0, 4).map(function (g) { var v = akVenueFor(g); return "• " + akmDate(g.date) + " · " + (g.venue || (v && v.name) || g.name || ""); }).join("\n"); } catch (e) { return ""; }
 }
 function akmDate(k) { if (!k) return ""; try { var p = k.split("-"), d = new Date(+p[0], +p[1] - 1, +p[2]); var o = { weekday: "long", month: "long", day: "numeric" }; if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric"; return d.toLocaleDateString(undefined, o); } catch (e) { return k; } }
 function akmTime(t) { if (!t) return ""; var p = t.split(":"), hh = +p[0], m = p[1] || "00"; return (hh % 12 || 12) + (m !== "00" ? ":" + m : "") + (hh >= 12 ? " pm" : " am"); }
