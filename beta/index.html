@@ -36649,7 +36649,7 @@ function viewGfx() {
   }
   function paint() {
     if (!base) return;
-    var P = akGfxBake(base, D.edit); st.P = P;
+    var P = akGfxBake(base, D.edit); st.P = P; st.PD = D; /* 21.9: which design this picture is of (ak_v21od) */
     var wide = window.innerWidth >= 900 || (typeof akGfxLand === "function" && akGfxLand()), bw = prevWrap.clientWidth || Math.min(window.innerWidth - 32, 420), maxH = Math.max(typeof akGfxSplitFrac === "function" ? (typeof akGfxCfg === "function" && typeof akGfxCfg().split === "number" ? 24 : 120) : 220, (typeof akGfxVH === "function" ? akGfxVH() : window.innerHeight) * (st.big ? 0.86 : typeof akGfxSplitFrac === "function" ? akGfxSplitFrac(st, wide) : st.min ? (wide ? 0.8 : 0.66) : wide ? 0.58 : 0.42));
     var k = Math.min(bw / P.W, maxH / P.H), dpr = Math.min(2, window.devicePixelRatio || 1), cw = Math.round(P.W * k), chh = Math.round(P.H * k);
     /* 18.7s: once the picture-size slider has been used, its height is the picture window. A window taller than the picture needs makes the picture zoom in to fill it
@@ -68227,6 +68227,119 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
   AKTC.forEach(function (x) { var w = AK21V_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
 }
 AK_VERSION = "21.7";
+
+/* ================================================================ ak_v21od: 21.9 a saved design opens the right one (his note 11-04:
+   "Sometimes opening a saved graphic design opens the wrong one"). Three causes, all fixed here:
+   1. Wrong little picture. Saving a design took its picture in 📁 My designs (and Graphics › My designs, Files) from whatever the studio
+      drew LAST (S.akg.P), even when the design being saved was another one: a show's new flyer (it got the picture of the flyer that was
+      open before), "Saved what was open" before a show's flyer, Save your changes? with two kinds changed, a ＋ New design that took more
+      than 0.9 s to draw. So a card could show design X's picture and open design Y. Now the studio's picture is used only when it was drawn
+      from that very design (S.akg.PD, set in akgfx_b paint); otherwise the picture is drawn from the saved design itself in the background.
+      Pictures saved before 21.9 are redrawn once from their own design (settings().gfx.th219), quietly, one at a time.
+   2. Undo history was kept per kind, not per design: after opening another saved design of the same kind, ↶ brought back the one before
+      (still named as the new one, so 💾 Save wrote it over). Opening a different design now starts its own undo history.
+   3. Files › a design while the studio had unsaved changes jumped to the studio at once, with the OLD design behind the "Open …?" box
+      (tap outside the box = the old one stays). Now it goes to the studio only after Open, with the design you tapped.
+   Test ak_t697. ================================================================ */
+
+/* the picture of a design, drawn from the design itself -> Promise of a small jpeg data URL ("" when it can't be drawn) */
+function akGfxThumbFromD(D) {
+  try {
+    var Dc = JSON.parse(JSON.stringify(D));
+    return akGfxPrepare(akGfxLayers(Dc), Dc).then(function (P) { return akGfxThumbOf(akGfxBake(P, Dc.edit || {})); }).catch(function () { return ""; });
+  } catch (e) { return Promise.resolve(""); }
+}
+/* redraw a draft's picture from its own design; only kept when the draft hasn't been saved again meanwhile */
+function akGfxThumbRedo(dr) {
+  if (!dr || !dr.d) return Promise.resolve(false);
+  var at = dr.at;
+  return akGfxThumbFromD(dr.d).then(function (th) {
+    if (!th || dr.at !== at || akGfxDrafts().indexOf(dr) < 0) return false;
+    if (dr.th !== th) { dr.th = th; save(); }
+    return true;
+  });
+}
+(function () {
+  if (typeof akGfxDraftSave !== "function") return;
+  var s0 = akGfxDraftSave;
+  akGfxDraftSave = function (D, asNew, name) {
+    var st = akGfxState(), P = st.P, mine = !!(P && st.PD === D);
+    if (!mine) st.P = null; /* never hand another design's picture to this one */
+    var dr;
+    try { dr = s0.apply(this, arguments); } finally { if (!mine) st.P = P; }
+    if (!mine && dr) {
+      if (!asNew && dr.th && dr.th219 !== dr.at) dr.th = ""; /* an old picture of its own may be someone else's too */
+      dr.th219 = dr.at; akGfxThumbRedo(dr);
+    } else if (dr) dr.th219 = dr.at;
+    return dr;
+  };
+})();
+
+/* 2. undo history belongs to one design */
+(function () {
+  if (typeof akGfxUndoStart !== "function" || typeof AKGU === "undefined") return;
+  var u0 = akGfxUndoStart;
+  akGfxUndoStart = function (D, kind) {
+    var other = AKGU.kind === kind && AKGU.st.length && AKGU.D && AKGU.D !== D &&
+      ((AKGU.D.draftId || "") !== (D.draftId || "") || akGfxJson(D) !== AKGU.st[AKGU.i]);
+    if (other) { clearTimeout(AKGU.t); AKGU.st = []; AKGU.i = -1; }
+    return u0.apply(this, arguments);
+  };
+})();
+
+/* 3. opening a saved design from anywhere goes to the studio only once it is really open (same as akgfx_d's, plus that) */
+akGfxDraftOpen = function (dr) {
+  if (!dr) return;
+  try { if (typeof akOrgRecent === "function") akOrgRecent("design:" + dr.id); } catch (e) {}
+  var st = akGfxState(), c = akGfxCfg();
+  function open() {
+    c.last[dr.kind] = JSON.parse(JSON.stringify(dr.d)); c.last[dr.kind].draftId = dr.id;
+    st.snap = st.snap || {}; st.snap[dr.kind] = akGfxJson(c.last[dr.kind]); st.sel = "";
+    S.gfxKind = dr.kind; save(); toast("Opened “" + dr.name + "”.");
+    if (S.view !== "gfx") { S.gfxGig = ""; go("gfx", { gfxKind: dr.kind }); } else render();
+  }
+  if (akGfxChanged().indexOf(dr.kind) >= 0) confirmBox("Open “" + dr.name + "”? What is in the studio now is replaced (save it as a draft first to keep it).", "Open", open); else open();
+};
+if (typeof akOrgOpen === "function") {
+  (function () {
+    var g0 = akOrgOpen;
+    akOrgOpen = function (it) {
+      if (it && it.kind === "design") { try { akOrgRecent(it.key); save(); } catch (e) {} akGfxDraftOpen(it.obj); return; }
+      return g0.apply(this, arguments);
+    };
+  })();
+}
+
+/* pictures saved before 21.9: redraw each once from its own design */
+function akGfxThumbFixAll() {
+  var c = akGfxCfg(); if (c.th219 || AKGO_TH.on) return;
+  AKGO_TH.on = true;
+  var L = akGfxDrafts().filter(function (d) { return d.th219 == null; }), i = 0;
+  (function next() {
+    if (i >= L.length) { c.th219 = 1; AKGO_TH.on = false; save(); if (S.view === "graphics") render(); return; }
+    var dr = L[i++];
+    akGfxThumbRedo(dr).then(function () { dr.th219 = dr.at; }).then(function () { setTimeout(next, 60); });
+  })();
+}
+var AKGO_TH = { on: false };
+(function () {
+  var r0 = typeof viewGraphics === "function" ? viewGraphics : null;
+  if (r0) viewGraphics = function () { var out = r0.apply(this, arguments); setTimeout(akGfxThumbFixAll, 1500); return out; };
+  if (typeof viewGfx === "function") { var v0 = viewGfx; viewGfx = function () { var out = v0.apply(this, arguments); setTimeout(akGfxThumbFixAll, 4000); return out; }; }
+})();
+
+AK_WHATS_NEW = ["🎨 A saved design now always opens the one you tapped: each design's picture in 📁 My designs is drawn from that design (old pictures are redrawn once), ↶ Undo no longer brings back the design you had open before, and opening a design from Files waits for your answer when the studio has unsaved changes."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("21.9", "Graphics", [
+  ["od9-pics", "My designs: each picture matches its design", "Graphics › 📁 My designs: tap a few designs' pictures. Each one opens the design in its picture (pictures saved before 21.9 are redrawn once, give it a few seconds).", ["graphics", {}, ""]],
+  ["od9-showfly", "A show's new flyer has its own picture", "Open a flyer, then a show with no flyer › 🎨 Flyer, then 📁 My designs: the new “Flyer · …” card shows that show's flyer, not the one before.", ["shows", {}, ""]],
+  ["od9-undo", "Undo stays in the design you opened", "Studio: open one saved design, change something, open another saved design of the same kind, tap ↶. It does not bring back the first design.", ["gfx", { gfxKind: "flyer", gfxGig: "" }, ""]],
+  ["od9-files", "Files › a design opens that design", "Change something in the studio, then Files › a design › Open: the studio shows the design you tapped (after Open in the question box).", ["files", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK21OD_WHERE = { "od9-pics": ["Graphics › 📁 My designs and templates"], "od9-showfly": ["Shows › a show › 🎨 Flyer, then Graphics › 📁 My designs"], "od9-undo": ["Graphics studio › ↶ (under the picture)"], "od9-files": ["Files › a design"] };
+  AKTC.forEach(function (x) { var w = AK21OD_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_VERSION = "21.9";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
