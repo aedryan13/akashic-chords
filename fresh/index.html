@@ -48911,6 +48911,7 @@ function akGfxIsSync(f) { return /syncopate/i.test(String(f || "")); }
 function akGfxDelPart(D, X, id) {
   var st = akGfxState(), f = akGfxFreeOf(D, id), s = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id);
   if (id === "uborder") { akGfxDecoCfg(D).border.style = "none"; st.sel = ""; st.popMore = false; delete D.edit[id]; X.ch(true); toast("Border removed. ↶ brings it back."); return; }
+  if (o && o.fromOv) { D.overlay = 0; delete D.ovGrad; D.ovMoved = 1; }
   if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s), 1); else if (o) akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1);
   st.sel = ""; st.popMore = false;
   if (f || s || o) { delete D.edit[id]; X.ch(true); toast("Deleted. ↶ brings it back."); }
@@ -57682,8 +57683,10 @@ AKG_OVL_PATS.push(["solid", "Color screen", "solid"]);
   akGfxLayers = function (D) {
     try {
       if (D && D.overlay > 0 && !D.ovMoved) {
-        var o = akGfxOvlNew("", { p: "solid", name: "Dark screen", color: D.overlayCol || "#000000", op: Math.round(D.overlay), pos: "mid" });
-        akGfxOvlList(D).push(o);
+        /* 22.6b: only once. Some designs are drawn from a copy, so the "moved" mark never reached the real design and every redraw added another Dark screen */
+        var have = akGfxOvlList(D).filter(function (x) { return x.fromOv; })[0];
+        var o = have || akGfxOvlNew("", { p: "solid", name: "Dark screen", color: D.overlayCol || "#000000", op: Math.round(D.overlay), pos: "mid", fromOv: 1 });
+        if (!have) akGfxOvlList(D).push(o);
         if (D.ovGrad) { D.edit = D.edit || {}; var e = D.edit["uo_" + o.id] = D.edit["uo_" + o.id] || {}; e.fxs = [Object.assign(akFxNew("fade"), D.ovGrad, { amt: 100 })]; e.fxscope = "part"; }
         D.overlay = 0; delete D.ovGrad; D.ovMoved = 1;
       }
@@ -70178,6 +70181,52 @@ if (typeof AK_HELP_WHERE !== "undefined") {
     return out;
   };
 })();
+/* ---------------------------------------------------------------- 🗂 Layers: pick several for real (his ask 11-05 15:09)
+   ☑ Pick several turns every row into a checkbox: tapping a row adds or removes it (no unfolding, the others stay picked).
+   Select all / none, and 🗑 Delete or 👁 Hide everything picked at once. */
+(function () {
+  var f0 = akGfxLayersFill;
+  akGfxLayersFill = function (d, X) {
+    var out = f0.apply(this, arguments);
+    try {
+      var st = akGfxState(), D = X.D, list = d.querySelector(".akg-layers"); if (!list) return out;
+      var rows = [].slice.call(list.querySelectorAll(".akg-lay[data-lid]")), on = !!st.multiMode;
+      if (!Array.isArray(st.multi)) st.multi = [];
+      function redo() { X.paint(); try { X.refill("layers", true); } catch (e) { try { X.cat("layers"); } catch (e2) {} } }
+      var bar = h("div", { class: "row akly-bar" },
+        h("button", { class: "sm" + (on ? " primary" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { st.multiMode = !on; st.multi = []; st.sel = ""; redo(); } }, on ? "☑ Picking several: done" : "☑ Pick several"));
+      if (on) {
+        var ids = rows.map(function (r) { return r.getAttribute("data-lid"); }), n = st.multi.length;
+        bar.appendChild(h("button", { class: "sm", onClick: function () { st.multi = n === ids.length ? [] : ids.slice(); redo(); } }, n === ids.length ? "Select none" : "Select all"));
+        bar.appendChild(h("button", { class: "sm danger", disabled: !n, onClick: function () {
+          if (!n) return; var many = st.multi.slice();
+          confirmBox("Delete " + many.length + (many.length === 1 ? " part" : " parts") + "? (Layout parts are hidden instead; ↶ Undo brings everything back.)", "Delete", function () {
+            many.forEach(function (id) { try { var f = akGfxFreeOf(D, id), s2 = akGfxShapeOf(D, id), o = akGfxOvlOf(D, id); if (f) akGfxFree(D).splice(akGfxFree(D).indexOf(f), 1); else if (s2) akGfxDecoCfg(D).shapes.splice(akGfxDecoCfg(D).shapes.indexOf(s2), 1); else if (o) { if (o.fromOv) { D.overlay = 0; delete D.ovGrad; D.ovMoved = 1; } akGfxOvlList(D).splice(akGfxOvlList(D).indexOf(o), 1); } else { D.edit[id] = D.edit[id] || {}; D.edit[id].hide = true; return; } delete D.edit[id]; } catch (e) {} });
+            st.multi = []; st.sel = ""; X.ch(true); toast("Deleted " + many.length + ". ↶ brings them back."); redo();
+          });
+        } }, "🗑 Delete" + (n ? " (" + n + ")" : "")));
+        bar.appendChild(h("button", { class: "sm", disabled: !n, onClick: function () { st.multi.forEach(function (id) { D.edit[id] = D.edit[id] || {}; D.edit[id].hide = true; }); X.ch(true); redo(); } }, "👁 Hide"));
+        rows.forEach(function (r) {
+          var id = r.getAttribute("data-lid"), picked = st.multi.indexOf(id) >= 0;
+          r.classList.add("akly-pk"); r.classList.toggle("on", picked);
+          var nb = r.querySelector(".akg-pname"); if (nb) nb.disabled = false;
+          var box = r.nextElementSibling; if (box && box.classList.contains("akg-laybox")) box.remove();
+          var cb = h("input", { type: "checkbox", class: "akly-cb", checked: picked, "aria-label": "Pick " + (nb ? nb.textContent : id), tabindex: "-1" });
+          r.insertBefore(cb, r.firstChild);
+          r.addEventListener("click", function (e) {
+            if (e.target && e.target.closest && e.target.closest("button") && !e.target.closest(".akg-pname")) return; /* 👁 ↑ ↓ 🔒 keep working */
+            e.preventDefault(); e.stopPropagation();
+            var i = st.multi.indexOf(id); if (i >= 0) st.multi.splice(i, 1); else st.multi.push(id);
+            st.sel = ""; redo();
+          }, true);
+        });
+      }
+      list.parentNode.insertBefore(bar, list);
+    } catch (e) {}
+    return out;
+  };
+})();
+akCss("akly", ".akly-bar{flex-wrap:wrap;gap:4px;margin:4px 0}.akly-pk{cursor:pointer}.akly-pk .akly-cb{width:20px;height:20px;margin:0 2px;flex:0 0 auto}.akly-pk.on{outline:2px solid var(--accent,#00B7FF)}");
 
 /* ================= ak_v22lr.js - 22.4: Live requests, cleaned up, and a request page you lay out yourself =================
    His 11-05 asks (mock-up https://claude.ai/artifact/9D99cpESdn5qAsZ2Q68jrV, picks in its db mockup/picks):
