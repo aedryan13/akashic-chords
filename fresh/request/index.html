@@ -84,6 +84,9 @@
   .rq-req.all .rq-scroll { overflow: visible; }
   .rq-rh { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; } .rq-rt { font-size: 1.3rem; } .rq-rh .muted { font-size: .85rem; }
   .rq-lim, .rq-tipl { text-align: center; font-size: .88rem; margin: 2px 0 4px; }
+  .rq-line ol { margin: 6px 0 0; padding-left: 22px; } .rq-line li.me { font-weight: 700; }
+  .rq-priv { text-align: center; font-size: .7rem; opacity: .55; margin: 18px 0 4px; }
+  .rq-disc { text-align: center; font-size: .74rem; opacity: .8; margin: 0 0 6px; line-height: 1.3; }
   .rq-req .notice { margin: 4px 0; }
   .rq-head { margin: 0 0 12px; }
   .rq-lbtns { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 8px 0; }
@@ -158,7 +161,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       prof = store("akreq:profile"); me.uid = store("akreq:me") || rid(); store("akreq:me", me.uid);
       window.addEventListener("storage", function (e) { if (e.key === "akreq:inbox") readLocal(); if (e.key === "akreq:profile") { prof = store("akreq:profile"); draw(); } });
       try { var bc = new BroadcastChannel("akreq"); bc.onmessage = function (e) { if (e.data && e.data.t === "status") readLocal(); if (e.data && e.data.t === "profile") { prof = store("akreq:profile"); draw(); } }; me.bc = bc; } catch (e) {}
-      readLocal(); draw(); return;
+      rqVisit(); readLocal(); draw(); return;
     }
     var key = P.get("k"), proj = P.get("j");
     if (!key || !proj || !me.pid) { fail("This link is missing a part. Ask the performer for the QR code again."); return; }
@@ -169,9 +172,25 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       return fb.auth().signInAnonymously();
     }).then(function (cred) {
       me.uid = cred.user.uid;
+      rqVisit();
       me.db.collection("performers").doc(me.pid).onSnapshot(function (d) { prof = d.exists ? d.data() : null; draw(); }, function () { fail("Couldn't load this performer's page."); });
       unsub = me.db.collection("performers").doc(me.pid).collection("requests").where("uid", "==", me.uid).onSnapshot(function (s) { s.forEach(function (d) { var x = d.data(); x.id = d.id; mine[d.id] = x; }); draw(); }, function () {});
     }).catch(function () { fail("Couldn't connect. Check your signal and reload the page."); });
+  }
+  /* 22.6: count a visit (which code, when, phone or computer, language, time zone, new or repeat). No names, no location, nothing sent anywhere else. */
+  /* a one-line note at the very bottom of the request page: what the visit count is */
+  function rqPrivNote() { if (CE || LM || !app || app.querySelector(".rq-priv")) return; add(app, h("p", { class: "muted rq-priv" }, "This page counts visits to see which signs work. No names unless you give one.")); }
+  /* back from Square's checkout: say so, and show My requests (the request appears there once Square confirms) */
+  if (P.get("paid")) { view = "mine"; setTimeout(function () { try { var n = h("p", { class: "notice" }, "✅ Paid. Thank you! Your request shows up here in a moment."); app.insertBefore(n, app.firstChild); } catch (e) {} }, 1200); }
+  function rqVisit() {
+    if (P.get("preview") || P.get("edit") || P.get("help")) return;
+    try {
+      var vid = store("akreq:vid"), first = !vid; if (!vid) { vid = rid(); store("akreq:vid", vid); }
+      var v = { uid: me.uid || "", at: Date.now(), src: String(P.get("src") || (P.get("go") || "page")).slice(0, 40), dev: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? "phone" : "computer",
+        lang: String(navigator.language || "").slice(0, 12), tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { return ""; } })().slice(0, 40), vid: vid, path: first ? "new" : "again" };
+      if (LOCAL) { var all = store("akreq:visits") || []; all.push(v); store("akreq:visits", all.slice(-2000)); return; }
+      if (me.db && me.pid) { v.at = firebase.firestore.FieldValue.serverTimestamp(); me.db.collection("performers").doc(me.pid).collection("visits").add(v).catch(function () {}); }
+    } catch (e) {}
   }
   function readLocal() { var all = store("akreq:inbox") || []; mine = {}; all.forEach(function (r) { if (r.uid === me.uid) mine[r.id] = r; }); draw(); }
   function send(r) {
@@ -452,7 +471,17 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
      tip messages, request limits, dedications and birthday details, your own help cards, styles from ✎ Edit this page,
      or a 📱 Request page design from the Graphics studio (a picture behind, the live parts placed where you put them). ---------- */
   var PV = P.get("preview") === "1", PVHELP = P.get("help") === "1", PVEDIT = P.get("edit") === "1", rqNote = "", rqPick = Math.random();
-  var RQW = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}" };
+  var RQW = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}",
+    /* 22.6: the lines that follow the tip rule, the encore card, the fine print and the thank-you (all editable in the app; {name} {price} {songs} {he} {him} {his} fill in) */
+    tipFree: "Requests are free. Tips are always appreciated.", tipOpt: "Tips appreciated, never required. {price} suggested.", tipReq: "Request a song for a small tip ({price}).", tipFirst: "Your first song is on me! After that, a small tip ({price}) with each request.",
+    encH: "🔥 Keep {name} playing!", encL: "Encore bribe: {price} for {songs}.",
+    discFree: "Requests are up to {name}. Some songs may not fit the moment or {his} voice tonight, so not every request gets played.", discReq: "Your tip goes with your request. If your song doesn't get played tonight, you'll get your tip back.",
+    thanks: "Thank you so much for the tip! 🙏", replyAsk: "Want a reply? Leave a phone number or email (only {name} sees it).", nextBtn: "⚡ Play it next", nextLine: "Skip the line: {price} and your song is up next." };
+  function rqW2(k) { var w = (prof && prof.rq && prof.rq.words) || (prof && prof.words) || {}; return w[k] != null && String(w[k]).trim() !== "" ? String(w[k]) : RQW[k]; }
+  function rqF(t, x) { x = x || {}; var pz = x.price != null ? x.price : ((prof && prof.rules && prof.rules.price) || 5);
+    return String(t || "").replace(/\{name\}/g, who1("the performer")).replace(/\{price\}/g, "$" + pz).replace(/\{songs\}/g, x.songs > 1 ? x.songs + " more songs" : "one more song")
+      .replace(/\{he\}/g, pr("s")).replace(/\{He\}/g, pr("S")).replace(/\{him\}/g, pr("o")).replace(/\{his\}/g, pr("p")); }
+  function ord(n) { var v = n % 100; return n + (v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"); }
   function rqOn() { return !!(prof && prof.rq && typeof prof.rq === "object" && !LM && !CE); }
   function rqW(k) { var w = (prof && prof.rq && prof.rq.words) || {}; return w[k] != null && String(w[k]).trim() !== "" ? String(w[k]) : RQW[k]; }
   /* the name in sentences: a band keeps its whole name, a person goes by the first name ("ask Aedryan to play a song"); headings still show the full name */
@@ -471,8 +500,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   }
   function rqTipText() {
     var R = prof.rules || {};
-    return R.mode === "free" ? "Requests are free. Tips are always appreciated." : R.mode === "required" ? (R.firstFree && usedCount() === 0 ? "Your first request is free! After that, a tip of $" + (R.price || 5) + " comes with each request." : "A tip of $" + (R.price || 5) + " comes with each request.") : "Tips are optional. $" + (R.price || 5) + " is suggested.";
+    return rqF(rqW2(R.mode === "free" ? "tipFree" : R.mode === "required" ? (R.firstFree && usedCount() === 0 ? "tipFirst" : "tipReq") : "tipOpt"));
   }
+  /* the fine print: free or optional = "up to the performer"; required = "your tip comes back if it isn't played" */
+  function rqDisc() { if (!prof || (prof.rq && prof.rq.disc === false) || prof.disc === false) return ""; var R = prof.rules || {}; return rqF(rqW2(R.mode === "required" ? "discReq" : "discFree")); }
   function rqTipLines() {
     var T = prof.rq.tipLines || {}, a = [];
     if (prof.rq.ruleLine === false) return a;
@@ -569,6 +600,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     if (lt.length) box.appendChild(h("p", { class: "muted rq-lim" }, lt.join(" · ")));
     var why = rqNote || rqBlocked(); if (why && !draft) box.appendChild(h("p", { class: "notice" }, why)); rqNote = "";
     rqTipLines().forEach(function (t) { box.appendChild(h("p", { class: "muted rq-tipl" }, t)); });
+    var dsc = rqDisc(); if (dsc) box.appendChild(h("p", { class: "muted rq-disc" }, dsc));
     rqMsgs("songs").forEach(function (n) { box.appendChild(n); });
     var main = rqAfterNav(A);
     main.forEach(function (n, i) { if (i === 0 && n.tagName === "P" && /center/.test(n.className)) return; if (n.tagName === "DETAILS" && /about/.test(n.className)) return; box.appendChild(n); });
@@ -742,8 +774,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     var EN = prof.encore;
     if (!LM && EN && EN.open && !draft) {
       var pays0 = (prof.pay || []).filter(function (p) { return p.url; });
-      if (pays0.length) add(app, h("div", { class: "card encore" }, h("div", { class: "enc-h" }, "🔥 Keep " + who1("the music") + (prof.name ? " playing!" : " going!")),
-        h("div", null, "Encore bribe: ", h("strong", null, "$" + EN.price), " for " + (EN.songs > 1 ? EN.songs + " more songs" : "one more song") + "."),
+      if (pays0.length) add(app, h("div", { class: "card encore" }, h("div", { class: "enc-h" }, rqF(rqW2("encH"), { price: EN.price, songs: EN.songs })),
+        h("div", null, rqF(rqW2("encL"), { price: EN.price, songs: EN.songs })),
         EN.n ? h("div", { class: "muted" }, "Bribes so far tonight: " + EN.n + ". The price goes up with each one" + (EN.cap ? " (up to $" + EN.cap + ")" : "") + ".") : (EN.step ? h("div", { class: "muted" }, "The price goes up with each encore.") : null),
         h("div", { class: "row" }, h("button", { class: "primary", onClick: function () { draft = { kind: "encore", title: "Encore bribe", price: EN.price }; draw(); } }, "Bribe for an encore"))));
     }
@@ -759,8 +791,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     if (view === "links") {
       drawLinks();
     } else if (view === "songs") {
-      var R2 = R.mode === "free" ? "Requests are free. Tips are always appreciated." : R.mode === "required" ? (R.firstFree && usedCount() === 0 ? "Your first request is free! After that, a tip of $" + (R.price || 5) + " comes with each request." : "A tip of $" + (R.price || 5) + " comes with each request.") : "Tips are optional. $" + (R.price || 5) + " is suggested.";
-      add(app, h("p", { class: "muted center" }, R2));
+      add(app, h("p", { class: "muted center" }, rqTipText())); var dsc2 = rqOn() ? "" : rqDisc(); if (dsc2) add(app, h("p", { class: "muted center rq-disc" }, dsc2));
       var all = prof.songs || [], q = h("input", { type: "search", value: flt.q, placeholder: "Search " + all.length + " songs", "aria-label": "Search songs" }), list = h("div", { class: "slist" });
       var genres = {}; all.forEach(function (s) { if (s.g) genres[s.g] = (genres[s.g] || 0) + 1; });
       var gl = Object.keys(genres).sort();
@@ -797,11 +828,18 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       drawBookTab();
     } else if (view === "mine") {
       mineList = mineList.filter(function (r) { return r.kind !== "signup"; });
+      var LN0 = prof.rq && Array.isArray(prof.rq.line) ? prof.rq.line : null;
+      if (LN0 && LN0.length && LN0[0].t != null) {
+        var lc = h("div", { class: "card rq-line" }, h("strong", null, "🎵 The request line (" + LN0.length + ")"));
+        var lo = h("ol", null); LN0.slice(0, 15).forEach(function (x) { add(lo, h("li", { class: mine[x.i] ? "me" : "" }, (x.t || "A request") + (x.n ? " ⚡" : "") + (mine[x.i] ? "  ← yours" : ""))); });
+        add(lc, lo); add(app, lc);
+      }
       mineList.sort(function (a, b) { return (b.at && b.at.toMillis ? b.at.toMillis() : b.at || 0) - (a.at && a.at.toMillis ? a.at.toMillis() : a.at || 0); }).forEach(function (r) {
         var enc = r.kind === "message" && r.title === "Encore bribe", held = r.kind === "play" && r.status === "new" && r.tip && !r.tipOk && (prof.rules || {}).holdUnpaid;
-        var st = { new: enc ? (r.read ? "Received. Thank you!" : "Sent") : r.kind === "message" ? "Sent" : held ? "Waiting for your tip to come through" : "Waiting", played: "Played!", declined: "Not tonight", looking: "I'll look into it", working: "Working on it" }[r.status] || r.status;
+        var LN = prof.rq && Array.isArray(prof.rq.line) ? prof.rq.line : Array.isArray(prof.line) ? prof.line : null, pos = LN && r.kind === "play" && r.status === "new" && !held ? LN.map(function (x) { return x.i; }).indexOf(r.id) : -1;
+        var st = { new: enc ? (r.read ? "Received. Thank you!" : "Sent") : r.kind === "message" ? "Sent" : held ? "Waiting for your tip to come through" : pos === 0 ? "You're up next!" : pos > 0 ? "You're " + ord(pos + 1) + " in line" : "Waiting", played: "Played!", declined: "Not tonight", looking: "I'll look into it", working: "Working on it" }[r.status] || r.status;
         add(app, h("div", { class: "card" }, h("div", null, h("strong", null, enc ? "🔥 Encore bribe" + (r.tip && r.tip.amount ? " ($" + r.tip.amount + ")" : "") : r.kind === "message" ? (r.title === "Booking inquiry" ? "📅 Booking inquiry" : "Message") : r.title), r.kind === "learn" ? h("span", { class: "muted" }, "  (learn request)") : null), r.note ? h("div", { class: "muted" }, r.note) : null,
-          h("div", { style: "margin-top:6px" }, h("span", { class: "status s-" + r.status }, st)), r.reply && r.status !== "new" && r.reply !== st ? h("div", { style: "margin-top:6px" }, "“" + r.reply + "”") : null));
+          h("div", { style: "margin-top:6px" }, h("span", { class: "status s-" + r.status }, st)), r.reply && (r.status !== "new" || r.tipOk || r.replied) && r.reply !== st ? h("div", { class: "rq-reply", style: "margin-top:6px" }, h("span", { class: "muted" }, (r.replied ? "💬 " + who1("The performer") + ": " : "")), "“" + r.reply + "”") : null));
       });
     }
   }
@@ -947,28 +985,60 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     add(card, [h("label", null, "Your name"), nIn]);
     var ded = rqDedBox(d); if (ded) add(card, ded);
     add(card, [h("label", null, d.kind === "message" ? "Message" : "Note"), note]);
+    /* 22.6: a message can ask for a reply; the contact goes in the note, so only the performer sees it */
+    var askRe = d.kind === "message" && d.title === "Message" && !(prof.rq && prof.rq.replyOn === false), conIn = askRe ? h("input", { type: "text", maxlength: 80, placeholder: "Phone or email (optional)", autocomplete: "off", "aria-label": "Phone or email for a reply" }) : null;
+    if (askRe) add(card, [h("label", null, rqF(rqW2("replyAsk"))), conIn]);
     var tipBox = h("div"), tip = null, pays = (prof.pay || []).filter(function (p) { return p.url; });
-    var tipNow = d.kind === "play" && (needTip() || R.mode === "optional") && pays.length;
+    var NX = d.kind === "play" && R.next && Number(R.nextPrice) > 0 ? Number(R.nextPrice) : 0;
+    var tipNow = d.kind === "play" && (needTip() || R.mode === "optional" || NX) && pays.length;
     if (tipNow) {
       /* amounts to tap: the suggested one, double, four times, your own, and (when tips are optional) No tip */
       var base = Number(R.price) || 5, pick = needTip() || R.tipStart !== "none" ? base : 0;
       var amt = h("input", { type: "number", min: 1, step: 1, value: base, inputmode: "decimal", "aria-label": "Tip amount in dollars", class: "hidden" });
       var cover = h("input", { type: "checkbox" }), coverRow = h("label", { class: "chk hidden" }, cover, h("span", null, "Add a little to cover the card fee (optional)"));
       var chips = h("div", { class: "seg amts", role: "group", "aria-label": "Tip amount" }), choices = [[base, "$" + base], [base * 2, "$" + base * 2], [base * 4, "$" + base * 4], ["other", "Other"]];
+      if (R.mode === "free" && !needTip() && NX) { choices = []; pick = 0; }
+      if (NX) choices.push(["next", rqF(rqW2("nextBtn")) + " $" + NX]);
       if (!needTip()) choices.push([0, "No tip"]);
       chips.style.gridTemplateColumns = "repeat(" + choices.length + ",1fr)";
       function paintAmt() {
         chips.textContent = "";
-        choices.forEach(function (c) { add(chips, h("button", { "aria-pressed": (c[0] === "other" ? pick === "other" : pick === c[0]) ? "true" : "false", onClick: function () { pick = c[0]; if (c[0] !== "other" && c[0]) amt.value = c[0]; if (!pick) tip = null; paintAmt(); if (pick === "other") amt.focus(); } }, c[1])); });
+        choices.forEach(function (c) { add(chips, h("button", { "aria-pressed": (c[0] === "other" ? pick === "other" : pick === c[0]) ? "true" : "false", onClick: function () { pick = c[0]; if (c[0] === "next") amt.value = NX; else if (c[0] !== "other" && c[0]) amt.value = c[0]; if (!pick) tip = null; paintAmt(); if (pick === "other") amt.focus(); } }, c[1])); });
+        if (nxLine) nxLine.classList.toggle("hidden", pick !== "next");
         amt.classList.toggle("hidden", pick !== "other"); btns.classList.toggle("hidden", !pick); sentMsg.textContent = pick ? sentMsg.textContent : "No tip. Just tap Send request.";
       }
-      add(tipBox, [h("label", null, needTip() ? "Your tip (comes with the request)" : "Add a tip? (optional)"), chips, amt]);
+      var nxLine = NX ? h("p", { class: "muted hidden" }, rqF(rqW2("nextLine"), { price: NX })) : null;
+      add(tipBox, [h("label", null, needTip() ? "Your tip (comes with the request)" : "Add a tip? (optional)"), chips, amt, nxLine]);
       var btns = h("div", { class: "row" }, pays.map(function (p) { return h("button", { onClick: function () {
         var a = Number(amt.value) || R.price || 5; if (p.kind === "square" && R.coverBox) { coverRow.classList.remove("hidden"); if (cover.checked) a = Math.round(a * (1 + (R.coverPct || 3.5) / 100) * 100) / 100; }
-        tip = { method: p.kind, amount: a, cover: !!cover.checked }; window.open(payUrl(p, a), "_blank", "noopener"); sentMsg.textContent = "When you've sent the tip in " + (p.label || PAY[p.kind]) + ", come back here and tap Send request." + (R.holdUnpaid ? " Your request joins the line once " + who1("the performer") + " sees the tip." : "");
+        tip = { method: p.kind, amount: a, cover: !!cover.checked }; if (pick === "next") tip.next = true; window.open(payUrl(p, a), "_blank", "noopener"); sentMsg.textContent = "When you've sent the tip in " + (p.label || PAY[p.kind]) + ", come back here and tap Send request." + (R.holdUnpaid ? " Your request joins the line once " + who1("the performer") + " sees the tip." : "");
       } }, p.label || PAY[p.kind] || "Tip"); }));
       var sentMsg = h("p", { class: "muted" });
       add(tipBox, [btns, coverRow, sentMsg]); paintAmt();
+      add(card, tipBox);
+    }
+    /* 22.6: pay by card with Square: the request joins the line by itself once Square says it's paid (needs the performer's Square setup) */
+    var payCard = d.kind === "play" && R.payReq && R.payFn && !LOCAL && me.pid && (needTip() || NX);
+    if (payCard) {
+      tipBox.textContent = ""; tip = null;
+      var cBase = Number(R.price) || 5, cPick = needTip() ? cBase : NX, cMsg = h("p", { class: "muted" });
+      var cChips = h("div", { class: "seg amts", role: "group", "aria-label": "Amount" }), cCh = [];
+      if (needTip()) cCh.push([cBase, "$" + cBase]);
+      if (NX) cCh.push([NX, rqF(rqW2("nextBtn")) + " $" + NX]);
+      cChips.style.gridTemplateColumns = "repeat(" + cCh.length + ",1fr)";
+      function cPaint() { cChips.textContent = ""; cCh.forEach(function (c) { add(cChips, h("button", { "aria-pressed": cPick === c[0] ? "true" : "false", onClick: function () { cPick = c[0]; cPaint(); } }, c[1])); }); payBtn.textContent = "💳 Pay $" + cPick + " and send"; }
+      var payBtn = h("button", { class: "primary", onClick: function () {
+        var b = this, rr = { pid: me.pid, title: d.title, artist: d.artist || "", songId: d.songId || "", name: nIn.value.trim(), note: note.value.trim(), next: !!(NX && cPick === NX && !(needTip() && NX === cBase)), amount: cPick, back: location.href.replace(/[?&]paid=[^&]*/, "") };
+        if (ded && ded._note) { var dn2 = ded._note(); if (dn2) rr.note = (dn2 + (rr.note ? " — " + rr.note : "")).slice(0, 600); }
+        if (PV) { cMsg.textContent = "This is a preview. Nothing is sent from here."; return; }
+        var blk2 = rqBlocked(); if (blk2) { cMsg.textContent = blk2; return; }
+        b.disabled = true; cMsg.textContent = "Opening the card payment…"; store("akreq:name", rr.name);
+        firebase.auth().currentUser.getIdToken().then(function (t) {
+          return fetch(String(R.payFn).replace(/\/$/, "") + "/squareCheckout", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + t }, body: JSON.stringify(rr) });
+        }).then(function (r) { return r.json(); }).then(function (j) { if (j.url) location.href = j.url; else { b.disabled = false; cMsg.textContent = j.error || "Couldn't start the payment. Try again."; } },
+          function () { b.disabled = false; cMsg.textContent = "Couldn't reach the payment page. Check your signal and try again."; });
+      } });
+      add(tipBox, [h("label", null, "Pay by card (Square)"), cChips, payBtn, cMsg, NX ? h("p", { class: "muted" }, rqF(rqW2("nextLine"), { price: NX })) : null]); cPaint();
       add(card, tipBox);
     }
     var err = h("p", { class: "notice hidden" });
@@ -976,6 +1046,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     add(card, h("div", { class: "row" }, h("button", { onClick: function () { draft = null; draw(); } }, "Back"), h("button", { class: "primary", onClick: function () {
       var r = { kind: d.kind, title: d.kind === "learn" ? tIn.value.trim() : d.title, artist: d.kind === "learn" ? aIn.value.trim() : d.artist || "", songId: d.songId || "", name: nIn.value.trim(), note: note.value.trim() };
       if (ded && ded._note) { var dn = ded._note(); if (dn) r.note = (dn + (r.note ? " — " + r.note : "")).slice(0, 600); }
+      if (conIn && conIn.value.trim()) r.note = (r.note + "\n📞 Reply to: " + conIn.value.trim()).slice(0, 600);
       if (PV) { err.textContent = "This is a preview. Nothing is sent from here."; err.classList.remove("hidden"); return; }
       var blk = d.kind === "play" ? rqBlocked() : null; if (blk) { err.textContent = blk; err.classList.remove("hidden"); return; }
       if (d.kind === "learn" && !r.title) { err.textContent = "Type the song title."; err.classList.remove("hidden"); return; }
@@ -986,8 +1057,10 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       store("akreq:name", r.name); this.disabled = true;
       send(r).then(function () { draft = null; view = "mine"; draw(); }, function () { err.textContent = "That didn't go through. Try again."; err.classList.remove("hidden"); });
     } }, d.kind === "message" ? "Send message" : d.kind === "learn" ? "Send" : "Send request")));
+    if (typeof payCard !== "undefined" && payCard) [].slice.call(card.querySelectorAll("button.primary")).forEach(function (x) { if (/^Send request$|^Send$/.test(x.textContent) || x.textContent === rqW("send")) x.classList.add("hidden"); });
     add(app, card);
   }
+  (function () { var d0 = draw; draw = function () { var r = d0.apply(this, arguments); try { rqPrivNote(); } catch (e) {} return r; }; })();
   start();
 })();
 </script>

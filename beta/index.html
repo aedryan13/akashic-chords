@@ -14473,7 +14473,7 @@ function akQrSvg(text, px) {
 function openLiveQr() {
   var L = akLive(); if (!L.on) { toast("Turn on live requests first, in Settings > Requests and tips."); return; }
   if (L.mode === "cloud" && AKL.conn !== "cloud") { toast("Sign in first, in Settings > Requests and tips."); return; }
-  var url = akLivePageUrl(), box = h("div", { class: "akqr" }, akQrSvg(url, 300));
+  var url = typeof akSrcUrl === "function" ? akSrcUrl(akLivePageUrl(), "qr-screen") : akLivePageUrl(), box = h("div", { class: "akqr" }, akQrSvg(url, 300));
   modal("Scan to request a song", h("div", { class: "center" }, h("div", { class: "akqr-name" }, L.profile.name || ""), box,
     h("p", { class: "hint" }, L.mode === "local" ? "This device only: open the page below in another tab of this browser to try it. Phones can't reach it until you go online." : "Point a phone camera here. Show it on a tablet stand, or print it."),
     h("div", { class: "row center" }, h("button", { onClick: function () { copyPlain(url, "Link copied."); } }, "Copy the link"), h("a", { class: "btn", href: url, target: "_blank", rel: "noopener" }, "Open the page"), h("button", { onClick: function () { akLiveQrPrint(url); } }, "Print…"))),
@@ -14535,6 +14535,7 @@ function openLivePanel(root, song) {
             inPlay && s ? h("button", { class: "primary", onClick: function () { closeLivePanel(root); akLiveUpdate(r, { status: "played" }); playInsert(s.id, true); } }, "Play now") : null,
             h("button", { onClick: function () { akLiveUpdate(r, { status: "played" }); } }, "Played"),
             r.tip && r.tip.method && !r.tipOk ? h("button", { onClick: function () { akLiveUpdate(r, { tipOk: true }); } }, "Tip received") : null,
+            r.tip && r.tip.paid && !r.tip.refunded && typeof akSqRefund === "function" ? h("button", { onClick: function () { akSqRefund(r); } }, "↩ Refund") : null,
             h("button", { class: "danger", onClick: function () { akLiveUpdate(r, { status: "declined", reply: "Sorry, not tonight." }); } }, "Decline")));
         rows.push(row); body.appendChild(row);
         rowDrag({ handle: grip, self: row, rows: function () { return rows; }, onDrop: function (from, to) { var m = q.splice(from, 1)[0]; q.splice(to, 0, m); var t0 = Date.now(); q.forEach(function (x, i) { if (x.order !== t0 + i) akLiveUpdate(x, { order: t0 + i }); }); draw(); } });
@@ -14566,7 +14567,10 @@ function openLivePanel(root, song) {
       ms.forEach(function (r) {
         body.appendChild(h("div", { class: "card akl-row" + (r.read ? " read" : "") }, h("div", { class: "muted", style: "font-size:.85rem" }, (r.name || "Someone") + " · " + new Date(r.at || Date.now()).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })),
           h("div", { class: "akl-msg" }, r.note || r.title || ""), tipLine(r),
-          h("div", { class: "row", style: "margin:6px 0 0" }, r.tip && r.tip.method && !r.tipOk ? h("button", { class: "primary", onClick: function () { akLiveUpdate(r, { tipOk: true, read: true }); } }, "Tip received") : null, r.read ? null : h("button", { onClick: function () { akLiveUpdate(r, { read: true }); } }, "Mark read"), h("button", { class: "danger", onClick: function () { confirmBox("Delete this message?", "Delete", function () { akLiveDelete(r); }); } }, "Delete"))));
+          h("div", { class: "row", style: "margin:6px 0 0" }, r.tip && r.tip.method && !r.tipOk ? h("button", { class: "primary", onClick: function () { akLiveUpdate(r, { tipOk: true, read: true }); } }, "Tip received") : null,
+            /* 22.6: answer them: the words show on their phone (My requests); if they left a number or email, text or email them too */
+            h("button", { onClick: function () { askText("Reply to " + (r.name || "them"), r.replied ? r.reply : "", "Send", function (v) { v = String(v || "").trim(); if (v) akLiveUpdate(r, { reply: v.slice(0, 400), replied: true, read: true }); }); } }, r.replied ? "✎ Reply" : "💬 Reply"),
+            akLiveContactBtns(r), r.read ? null : h("button", { onClick: function () { akLiveUpdate(r, { read: true }); } }, "Mark read"), h("button", { class: "danger", onClick: function () { confirmBox("Delete this message?", "Delete", function () { akLiveDelete(r); }); } }, "Delete"))));
       });
     }
   }
@@ -14694,6 +14698,15 @@ akCss("ak2-live", [
   ".akl-steps li{margin:6px 0}",
   "a.btn{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--fg);text-decoration:none}"
 ].join("\n"));
+
+/* 22.6: quick text / email buttons when a message says "📞 Reply to: …" */
+function akLiveContactBtns(r) {
+  var m = /📞 Reply to: (.+)$/m.exec(String(r.note || "")); if (!m) return null;
+  var c = m[1].trim(), em = /@/.test(c), ph = c.replace(/[^\d+]/g, "");
+  if (em) return h("a", { class: "btn sm", href: "mailto:" + encodeURIComponent(c), target: "_blank", rel: "noopener" }, "✉ Email");
+  if (ph.length >= 7) return h("a", { class: "btn sm", href: "sms:" + ph }, "📱 Text");
+  return null;
+}
 
 /* ================= Akashic Chords: when a show ends, and encores =================
    One show night at a time ("run"), kept in this browser under chordbook:showrun:
@@ -70000,6 +70013,146 @@ AK_WHATS_NEW = [
   "15 minutes before the show (you can change it) the app jumps to the show page by itself, and the countdown keeps going on top."
 ].concat(AK_WHATS_NEW);
 
+/* ================= ak_v22ps.js - 22.6: print several per page (any design) + QR sheets repeat the whole card =================
+   His asks 11-05: "any number per page should be exactly what the original one was, just multiplied", pick how many per page,
+   portrait or landscape, and a table-tent choice (every other row turned upside down so both sides read after folding).
+   1. 🖨 Print gets "How many on a page": 1, 2, 4, 6, 8, 9, 12. The finished design is drawn once, then copied into each spot,
+      at the biggest size that fits; Direction (Best fit / Portrait / Landscape); Table tent; Cut lines.
+   2. 🔳 QR sheets: the background picture and the dark overlay are now drawn inside each card instead of once across the page (for portrait or landscape, print one card several to a page). */
+
+/* the grid: cols × rows = n, the biggest copy that fits; a table tent needs an even number of rows (pairs) */
+function akPsGrid(n, pw, ph, dw, dh, tent) {
+  var best = null;
+  for (var c = 1; c <= n; c++) {
+    if (n % c) continue; var r = n / c; if (tent && r % 2) continue;
+    var cw = pw / c, chh = ph / r, s = Math.min(cw / dw, chh / dh);
+    if (!best || s > best.s) best = { c: c, r: r, s: s, cw: cw, ch: chh };
+  }
+  return best;
+}
+function akPsPaper(paper, dir, n, P, tent) {
+  var base = paper === "a4" ? [8.27, 11.69] : [8.5, 11], m = 0.25, opts = [];
+  if (dir !== "landscape") opts.push([base[0], base[1]]);
+  if (dir !== "portrait") opts.push([base[1], base[0]]);
+  var best = null;
+  opts.forEach(function (o) { var g = akPsGrid(n, o[0] - 2 * m, o[1] - 2 * m, P.W, P.H, tent); if (g && (!best || g.s > best.g.s)) best = { w: o[0], h: o[1], g: g, m: m }; });
+  return best;
+}
+/* the sheet as a canvas: the design drawn once, then copied into every spot */
+function akPsCanvas(P, o) {
+  var lay = akPsPaper(o.paper, o.dir, o.n, P, o.tent); if (!lay) return null;
+  var dpi = 200, cv = document.createElement("canvas"); cv.width = Math.round(lay.w * dpi); cv.height = Math.round(lay.h * dpi);
+  var x = cv.getContext("2d"); x.fillStyle = "#ffffff"; x.fillRect(0, 0, cv.width, cv.height);
+  var one = akPosterCanvas(P), g = lay.g, m = lay.m * dpi, cw = g.cw * dpi, chh = g.ch * dpi, gap = o.cut ? 0.06 * dpi : 0;
+  var s = Math.min((cw - 2 * gap) / P.W, (chh - 2 * gap) / P.H), w = P.W * s, hh = P.H * s;
+  for (var i = 0; i < o.n; i++) {
+    var col = i % g.c, row = Math.floor(i / g.c), cx = m + col * cw + cw / 2, cy = m + row * chh + chh / 2, flip = o.tent && row % 2 === 0;
+    x.save(); x.translate(cx, cy); if (flip) x.rotate(Math.PI); x.drawImage(one, -w / 2, -hh / 2, w, hh); x.restore();
+  }
+  if (o.cut) {
+    x.strokeStyle = "#9a9a9a"; x.lineWidth = Math.max(1, dpi / 100); x.setLineDash([dpi * 0.06, dpi * 0.05]);
+    for (var a = 0; a <= g.c; a++) { x.beginPath(); x.moveTo(m + a * cw, m); x.lineTo(m + a * cw, m + g.r * chh); x.stroke(); }
+    for (var b = 0; b <= g.r; b++) {
+      var fold = o.tent && b % 2 === 1;
+      x.setLineDash(fold ? [dpi * 0.02, dpi * 0.04] : [dpi * 0.06, dpi * 0.05]);
+      x.beginPath(); x.moveTo(m, m + b * chh); x.lineTo(m + g.c * cw, m + b * chh); x.stroke();
+    }
+  }
+  return { cv: cv, w: lay.w, h: lay.h, g: g };
+}
+function akPsPrint(P, nm, o) {
+  var r = akPsCanvas(P, o); if (!r) { toast("That number doesn't fit as table tents. Pick an even number."); return; }
+  var html = "<!doctype html><title>" + String(nm).replace(/</g, "&lt;") + "</title><style>@page{size:" + r.w + "in " + r.h + "in;margin:0}html,body{margin:0}img{width:" + r.w + "in;height:" + r.h + "in;display:block}</style><img src='" + r.cv.toDataURL("image/jpeg", 0.92) + "'>";
+  try {
+    var f = document.createElement("iframe"); f.setAttribute("aria-hidden", "true"); f.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0";
+    document.body.appendChild(f); var doc = f.contentDocument || f.contentWindow.document; doc.open(); doc.write(html); doc.close();
+    var go = function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { akGfxPrintWin(html); } setTimeout(function () { if (f.parentNode) f.parentNode.removeChild(f); }, 60000); };
+    var im = doc.querySelector("img"); if (im && !im.complete) im.onload = function () { setTimeout(go, 150); }; else setTimeout(go, 250);
+  } catch (e) { akGfxPrintWin(html); }
+}
+var akPsWant = false;
+(function () {
+  var p0 = akGfxPrint;
+  akGfxPrint = function (P, nm) {
+    var C = akGfxCfg(), ps = C.printSheet = C.printSheet || { n: 1, dir: "auto", tent: false, cut: true, paper: "letter" };
+    var nSel = h("select", { "aria-label": "How many on a page" }, [[1, "1 (just this design)"], [2, "2"], [4, "4"], [6, "6"], [8, "8"], [9, "9"], [12, "12"]].map(function (o) { return h("option", { value: o[0], selected: (Number(ps.n) > 1 ? Number(ps.n) : 4) === o[0] }, o[1]); }));
+    if (Number(ps.n) <= 1 && !akPsWant) {
+      /* the plain Print window, plus a way into several on a page */
+      p0.apply(this, arguments);
+      setTimeout(function () {
+        var all = document.querySelectorAll(".modal"), md = all[all.length - 1]; if (!md || md.querySelector(".akps-go")) return;
+        var body = md.querySelector(".body, .modal-body, .content") || md;
+        body.appendChild(h("div", { class: "row akps-go", style: "margin-top:6px" }, h("button", { class: "sm", onClick: function () { [].forEach.call(document.querySelectorAll(".modal"), function (q) { q.remove(); }); akPsWant = true; try { akGfxPrint(P, nm); } finally { akPsWant = false; } } }, "🖨 Several on a page (cards, table tents)…")));
+      }, 40);
+      return;
+    }
+    var dSel = h("select", { "aria-label": "Direction" }, [["auto", "Best fit"], ["portrait", "Portrait (tall)"], ["landscape", "Landscape (wide)"]].map(function (o) { return h("option", { value: o[0], selected: ps.dir === o[0] }, o[1]); }));
+    var pSel = h("select", { "aria-label": "Paper" }, [["letter", "Letter"], ["a4", "A4"]].map(function (o) { return h("option", { value: o[0], selected: ps.paper === o[0] }, o[1]); }));
+    var tent = h("input", { type: "checkbox", checked: !!ps.tent }), cut = h("input", { type: "checkbox", checked: ps.cut !== false });
+    var prev = h("div", { class: "akps-prev" }), info = h("p", { class: "hint" });
+    function opts() { return { n: Number(nSel.value) || 1, dir: dSel.value, paper: pSel.value, tent: tent.checked, cut: cut.checked }; }
+    function paint() {
+      var o = opts(); prev.textContent = ""; if (o.n <= 1) { info.textContent = "One copy: tap 🖨 Print."; return; }
+      var r = akPsCanvas(P, o); if (!r) { info.textContent = "Table tents need an even number (2, 4, 6, 8 or 12)."; return; }
+      var im = new Image(); im.src = r.cv.toDataURL("image/jpeg", 0.7); im.alt = "Preview of the printed page"; prev.appendChild(im);
+      info.textContent = r.g.c + " across × " + r.g.r + " down on " + (r.w > r.h ? "landscape" : "portrait") + " " + (o.paper === "a4" ? "A4" : "Letter") + (o.tent ? ". Fold on the dotted lines: the top of each pair is upside down, so both sides read." : ". Cut on the dashed lines.");
+    }
+    [nSel, dSel, pSel, tent, cut].forEach(function (e) { e.addEventListener("change", paint); });
+    modal("Print several on a page", h("div", null,
+      h("p", { class: "hint", style: "margin-top:0" }, "Each spot gets the whole design, exactly as it is, just smaller."),
+      h("div", { class: "akps-row" }, h("label", { class: "fld" }, "How many on a page", nSel), h("label", { class: "fld" }, "Direction", dSel), h("label", { class: "fld" }, "Paper", pSel)),
+      h("label", { class: "chk" }, tent, "Table tent: turn every other row upside down (fold in the middle)"),
+      h("label", { class: "chk" }, cut, "Cut and fold lines"), info, prev),
+      [{ label: "Cancel" }, { label: "⬇ Save the page", onClick: function () { var o = opts(); var r = akPsCanvas(P, o); if (!r) return false; r.cv.toBlob(function (b) { akGfxShare ? akGfxShare(b, nm + "-x" + o.n + ".png") : null; }, "image/png"); Object.assign(ps, o); save(); } },
+       { label: "🖨 Print", primary: true, onClick: function () { var o = opts(); Object.assign(ps, o); save(); if (o.n <= 1) { ps.n = 1; save(); akGfxPrintGo(P, nm, akGfxCfg().printFit || "actual"); } else akPsPrint(P, nm, o); } }], { wide: true });
+    paint();
+  };
+})();
+akCss("akv22ps", ".akps-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.akps-prev img{display:block;max-width:100%;max-height:46vh;margin:6px auto 0;border:1px solid var(--line,#888);background:#fff}");
+
+/* ---------------------------------------------------------------- QR sheets: each card gets the background and overlay; portrait or landscape */
+(function () {
+  if (typeof akQsBuild !== "function") return;
+  var l1 = akGfxLayers;
+  akGfxLayers = function (D) {
+    var P = l1.apply(this, arguments);
+    if (!D || D.kind !== "qrsheet" || !P || !Array.isArray(P.layers)) return P;
+    try {
+      var spec = AKQS_LAYOUTS.filter(function (x) { return x[0] === D.layout; })[0] || AKQS_LAYOUTS[0], cols = spec[2], rows = spec[3];
+      var dpi = P.W / ((akGfxSize(D.size)[4]) || 8.5), m = D.layout === "tent" ? 0 : 0.25 * dpi, cw = (P.W - 2 * m) / cols, chh = (P.H - 2 * m) / rows;
+      var bg = P.layers.filter(function (l) { return l.id === "background"; })[0];
+      var hasPic = bg && (bg.src || bg.grad || (bg.color && !/^#fff(fff)?$/i.test(bg.color)));
+      /* anything else spread across the whole page (dark overlay, a quick-idea shape or picture) goes into each card too */
+      var wide = P.layers.filter(function (l) { return l && l !== bg && !/^c\d+_|^cut|^background_c|^overlay_c/.test(l.id || "") && l.type !== "text" && l.type !== "qr" && (l.x || 0) <= P.W * 0.02 && (l.y || 0) <= P.H * 0.02 && (l.w || 0) >= P.W * 0.96 && (l.h || 0) >= P.H * 0.96; });
+      if (!hasPic && !wide.length) return P;
+      var keep = P.layers.filter(function (l) { return wide.indexOf(l) < 0 && l !== bg; }), add = [];
+      if (bg) add.push(Object.assign({}, bg, { id: "background", color: "#ffffff", src: "", grad: null, color2: "" }));
+      for (var i = 0; i < cols * rows; i++) {
+        var x = m + (i % cols) * cw, y = m + Math.floor(i / cols) * chh, inset = D.layout === "tent" ? 0.15 * dpi : 0.04 * dpi, box = { x: x + inset, y: y + inset, w: cw - 2 * inset, h: chh - 2 * inset };
+        if (hasPic) add.push(Object.assign({}, bg, box, { id: "background_c" + (i + 1), name: "Card " + (i + 1) + ": background" }));
+        wide.forEach(function (l, k) { add.push(Object.assign({}, l, box, { id: (l.id === "overlay" ? "overlay" : l.id) + "_c" + (i + 1), name: "Card " + (i + 1) + ": " + (l.name || "overlay"), fixed: true })); });
+      }
+      P.layers = add.concat(keep);
+    } catch (e) {}
+    return P;
+  };
+})();
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Print several on a page (cards, mini flyers, table tents)", a: "Graphics › any design › ⬇ Save › 🖨 Print › Several on a page: pick how many (2, 4, 6, 8, 9, 12), Portrait or Landscape, Table tent (every other row upside down) and cut lines. Each spot is the whole design, just smaller.", k: "print several per page 4 6 8 copies table tent cut lines landscape portrait mini flyers", p: ["gfx", {}, ""] });
+}
+/* ---------------------------------------------------------------- 🎲 with overlays kept: the picture no longer gets darker every roll
+   (each roll set the old "dark overlay" again, and the studio turned it into one more dark screen on top of the kept ones) */
+(function () {
+  var r0 = akGfxRoll;
+  akGfxRoll = function (D, only) {
+    var lk = akGfxLocks(), keep = lk.ovl && only !== "ovl" && D ? JSON.parse(JSON.stringify(D.ovl || [])) : null;
+    var out = r0.apply(this, arguments);
+    /* kept overlays come back exactly; the roll's "dark overlay" setting would otherwise be turned into one more dark screen on top every time */
+    try { if (keep) { D.ovl = keep; D.overlay = 0; delete D.ovGrad; D.ovMoved = 1; } } catch (e) {}
+    return out;
+  };
+})();
+
 /* ================= ak_v22lr.js - 22.4: Live requests, cleaned up, and a request page you lay out yourself =================
    His 11-05 asks (mock-up https://claude.ai/artifact/9D99cpESdn5qAsZ2Q68jrV, picks in its db mockup/picks):
    - Settings › Requests and tips › Live requests in folds: 🔌 Connection and sign-in, 🎨 Page design, 🎂 Birthdays and dedications,
@@ -70030,7 +70183,24 @@ var AKLR_HELP = [
   { id: "mail", e: "📬", t: "Stay in touch", b: "Tap Sign up near the top to join the email list.", when: "Only when the email list is on" },
   { id: "shows", e: "📅", t: "Upcoming shows", b: "The Shows tab has the next dates. You can add them to your phone's calendar.", when: "Only when you have public shows" }
 ];
-var AKLR_WORDS = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}" };
+var AKLR_WORDS = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}",
+  tipFree: "Requests are free. Tips are always appreciated.", tipOpt: "Tips appreciated, never required. {price} suggested.", tipReq: "Request a song for a small tip ({price}).", tipFirst: "Your first song is on me! After that, a small tip ({price}) with each request.",
+  encH: "🔥 Keep {name} playing!", encL: "Encore bribe: {price} for {songs}.",
+  discFree: "Requests are up to {name}. Some songs may not fit the moment or {his} voice tonight, so not every request gets played.", discReq: "Your tip goes with your request. If your song doesn't get played tonight, you'll get your tip back.",
+  thanks: "Thank you so much for the tip! 🙏", replyAsk: "Want a reply? Leave a phone number or email (only {name} sees it).", nextBtn: "⚡ Play it next", nextLine: "Skip the line: {price} and your song is up next." };
+/* 22.6: ready-made ways to say each line (he picks one, or types his own) */
+var AKLR_PICKS = {
+  tipFree: ["Requests are free. Tips are always appreciated.", "Request away, it's free! Tips always welcome.", "Free requests tonight. The tip jar's open if you're feeling generous."],
+  tipOpt: ["Tips appreciated, never required. {price} suggested.", "Feeling tipsy? Tip the band! {price} suggested.", "Tips keep the music going. {price} suggested, never required.", "Requests are free; tips make {name}'s night. {price} suggested."],
+  tipReq: ["Request a song for a small tip ({price}).", "Every request comes with a small tip ({price}). Thank you!", "Pick a song, add a {price} tip, and it's on the list."],
+  tipFirst: ["Your first song is on me! After that, a small tip ({price}) with each request.", "First request is free! After that it's {price} a song.", "One free request on the house, then a small tip ({price}) each."],
+  encH: ["🔥 Keep {name} playing!", "Can't get enough?", "Encore, encore!", "Not ready to go home?"],
+  encL: ["Encore bribe: {price} for {songs}.", "Hoping {name} keeps playing all night? Bribe {him} to stay a little longer: {price} for {songs}.", "Keep the music going: {price} buys {songs}.", "{price} keeps {name} on stage for {songs}."],
+  discFree: ["Requests are up to {name}. Some songs may not fit the moment or {his} voice tonight, so not every request gets played.", "{name} plays what fits the room, so not every request makes it in. Thanks for understanding!", "Every request is welcome, but the performer has the final say on what gets played."],
+  discReq: ["Your tip goes with your request. If your song doesn't get played tonight, you'll get your tip back.", "If {name} can't play your song tonight, your tip comes back to you.", "Not played tonight? You'll get your tip back."],
+  thanks: ["Thank you so much for the tip! 🙏", "Thanks for the tip! You're the best.", "Got it! Thank you for supporting live music. 🎶"],
+  replyAsk: ["Want a reply? Leave a phone number or email (only {name} sees it).", "Leave your number or email if you'd like {name} to get back to you."]
+};
 var AKLR_BLOCKS = [{ k: "name", on: true, size: "big" }, { k: "req", on: true, size: "half" }, { k: "head", on: true, size: "slim" }, { k: "msgs", on: true }, { k: "next", on: true, size: "small" }, { k: "more", on: true }];
 var AKLR_BLK = { name: "Your name", req: "🎵 Request a song", head: "Photo, bio and link buttons", msgs: "Your messages", next: "📅 Next shows", more: "Other tabs (Learn, Message, Tip, Shows, My requests)" };
 var AKLR_SIZES = { name: [["big", "Big"], ["med", "Medium"], ["small", "Small"]], req: [["third", "A third of the screen"], ["half", "Half the screen"], ["two", "Two-thirds"], ["all", "Whole list (page scrolls)"]], head: [["slim", "Just the link buttons"], ["full", "Photo, tagline, bio and buttons"]], next: [["line", "One line"], ["small", "Small list"], ["cards", "Cards"]] };
@@ -70096,7 +70266,7 @@ function akLrPublic() {
     v: 1, blocks: c.blocks, nx: c.nx, words: c.words, tipLines: c.tipLines, lim: { one: !!c.lim.one, full: c.lim.full || AKLR_LIM_FULL }, spots: akLrSpots(),
     msgs: c.msgs.filter(function (m) { return m.on !== false && String(m.text || "").trim() && (!m.until || !today || m.until >= today); }).map(function (m) { return { text: m.text, style: m.style || "plain", where: m.where || "top", until: m.until || "" }; }),
     helpOn: c.helpOn !== false, help: c.help.filter(function (x) { return x.on !== false; }).map(function (x) { return { id: x.id, e: x.e, t: x.t, b: x.b }; }),
-    ded: c.ded, st: c.st, links: c.links, helpBtn: c.helpBtn !== false, ruleLine: c.ruleLine !== false, tabs: c.tabs,
+    ded: c.ded, st: c.st, links: c.links, helpBtn: c.helpBtn !== false, ruleLine: c.ruleLine !== false, tabs: c.tabs, disc: c.disc !== false, replyOn: c.replyOn !== false, line: c.lineOn !== false ? akLrLine(c) : null,
     studio: c.studio.on && c.studio.img ? { img: c.studio.img, W: c.studio.W, H: c.studio.H, fg: c.studio.fg, font: c.studio.font, parts: c.studio.parts } : null
   };
 }
@@ -70249,6 +70419,26 @@ function akLrSettings(out, ctx, tmp) {
       T.list.forEach(function (l, i) { p.appendChild(h("div", { class: "aklr-ih" }, h("span", { class: "grow" }, txt(null, function () { return T.list[i]; }, function (v) { T.list[i] = v; }, { ph: "Your tip message" })), h("button", { class: "icon sm", "aria-label": "Remove", onClick: function () { T.list.splice(i, 1); chg(true); } }, "✕"))); });
       p.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { T.list.push(""); chg(true); } }, "+ Add a tip message"),
         sel(null, function () { return T.show || "random"; }, function (v) { T.show = v; }, [["random", "Show one at random each visit"], ["rotate", "Change every 8 seconds"], ["all", "Show them all"], ["first", "Always the first one"]], false)));
+      p.appendChild(h("div", { class: "row" }, sel(null, function () { return ""; }, function (v) { if (v) { T.list.push(v); chg(true); } }, [["", "+ Add a ready-made tip message…"], ["Feeling tipsy? Tip the band!", "Feeling tipsy? Tip the band!"], ["Tips appreciated!", "Tips appreciated!"], ["Every tip keeps live music alive. Thank you!", "Every tip keeps live music alive."], ["Tip jar's open! 🎶", "Tip jar's open! 🎶"]], false)));
+      /* 22.6: each line can be picked from a few ready-made ones or typed; {name} {price} {songs} {he} {him} {his} fill in by themselves */
+      function pick(k, label) {
+        var cur = c.words[k] != null && String(c.words[k]).trim() ? c.words[k] : AKLR_WORDS[k];
+        return h("div", { class: "aklr-pk" }, txt(label, function () { return cur; }, function (v) { c.words[k] = v; }, { area: true, rows: 2 }),
+          sel(null, function () { return ""; }, function (v) { if (v) { c.words[k] = v; chg(true); } }, [["", "Pick a ready-made one…"]].concat((AKLR_PICKS[k] || []).map(function (x) { return [x, x.length > 60 ? x.slice(0, 58) + "…" : x]; })), false));
+      }
+      p.appendChild(h("div", { class: "aklr-k" }, "The tip line for each rule"));
+      p.appendChild(h("p", { class: "hint" }, "Shows under Request a song, matching your tip rule. {name} = " + (akLive().profile.nick || String(akLive().profile.name || "your name").split(" ")[0]) + ", {price} = your suggested tip."));
+      p.appendChild(pick("tipFree", "Requests are free")); p.appendChild(pick("tipOpt", "Tips optional")); p.appendChild(pick("tipReq", "Tip required")); p.appendChild(pick("tipFirst", "Tip required, first one free"));
+      p.appendChild(h("div", { class: "aklr-k" }, "Fine print"));
+      p.appendChild(chk("Show the fine print under the tip line", function () { return c.disc !== false; }, function (v) { c.disc = v; }, true));
+      if (c.disc !== false) { p.appendChild(pick("discFree", "When tips are free or optional")); p.appendChild(pick("discReq", "When a tip is required")); }
+      p.appendChild(h("div", { class: "aklr-k" }, "🔥 Encore bribe card"));
+      p.appendChild(pick("encH", "Heading")); p.appendChild(pick("encL", "Line ({price} and {songs} fill in)"));
+      p.appendChild(h("div", { class: "aklr-k" }, "Thank-you and replies"));
+      p.appendChild(chk("When I tap Tip received, send a thank-you to their phone", function () { return c.thankOn !== false; }, function (v) { c.thankOn = v; }, true));
+      if (c.thankOn !== false) p.appendChild(pick("thanks", "Thank-you"));
+      p.appendChild(chk("Messages: ask if they'd like a reply (phone or email box)", function () { return c.replyOn !== false; }, function (v) { c.replyOn = v; }, true));
+      if (c.replyOn !== false) p.appendChild(pick("replyAsk", "The question"));
     } else {
       pageSeg.filter(function (n) { return n.nodeType === 1 && n.tagName === "LABEL" && /Page look/.test(n.textContent); }).forEach(function (n) { p.appendChild(n); });
       p.appendChild(sel("Page layout", function () { return c.studio.on && c.studio.img ? "studio" : "arrange"; }, function (v) { c.studio.on = v === "studio"; if (v === "studio" && !c.studio.img) { toast("Make it first: 📱 Design it in Graphics, then 📤 Use on my request page."); c.studio.on = false; } }, [["arrange", "⇅ Arrange (parts one under another)"], ["studio", "📱 My Request page design from Graphics"]], true));
@@ -70303,6 +70493,19 @@ function akLrSettings(out, ctx, tmp) {
     var tc = take(/^Tip choices/); if (tc.length) b.appendChild(h("h3", { class: "akl-h" }, "Tip choices"));
     tc.forEach(function (n) { b.appendChild(n); });
     var Lm = c.lim;
+    /* 22.6: ⚡ Play it next (a bigger tip puts the song first) and the line people can see */
+    var RR = akLive().rules;
+    b.appendChild(h("h3", { class: "akl-h" }, "⚡ Play it next"));
+    b.appendChild(chk("Offer “Play it next”: a bigger tip puts their song first in line", function () { return RR.next; }, function (v) { RR.next = v; }, true));
+    if (RR.next) b.appendChild(h("label", { class: "fld" }, "Play it next tip ($)", h("input", { type: "number", min: 1, step: 1, inputmode: "decimal", value: RR.nextPrice || Math.max(10, (Number(RR.price) || 5) * 3), onChange: function () { RR.nextPrice = Math.max(1, Number(this.value) || 15); chg(false); } })));
+    if (RR.next && !RR.nextPrice) RR.nextPrice = Math.max(10, (Number(RR.price) || 5) * 3);
+    b.appendChild(h("h3", { class: "akl-h" }, "💳 Pay by card (Square)"));
+    b.appendChild(h("p", { class: "hint" }, "People pay by card, Apple Pay or Google Pay, and the request joins your line by itself once Square says it's paid. You can refund from the request. Needs a one-time setup in your Square and Firebase accounts (Online mode): see the setup guide."));
+    b.appendChild(chk("Take card payments for requests (when a tip is required, and for ⚡ Play it next)", function () { return RR.payReq; }, function (v) { RR.payReq = v; if (v && !RR.payFn && akLive().fb && akLive().fb.projectId) RR.payFn = "https://us-central1-" + akLive().fb.projectId + ".cloudfunctions.net"; }, true));
+    if (RR.payReq) b.appendChild(h("label", { class: "fld" }, "Your functions address (from the setup guide)", h("input", { type: "url", value: RR.payFn || "", placeholder: "https://us-central1-yourproject.cloudfunctions.net", autocapitalize: "off", onChange: function () { RR.payFn = this.value.trim(); chg(false); } })));
+    b.appendChild(h("h3", { class: "akl-h" }, "Place in line"));
+    b.appendChild(chk("Show people where their request is in line (“You're 3rd in line”)", function () { return c.lineOn !== false; }, function (v) { c.lineOn = v; }, true));
+    if (c.lineOn !== false) b.appendChild(chk("Also show the songs waiting (otherwise just the order)", function () { return !!c.lineNames; }, function (v) { c.lineNames = v; }, false));
     b.appendChild(h("h3", { class: "akl-h" }, "Request limits"));
     b.appendChild(chk("One request per person at a time (they can send another once it's played)", function () { return Lm.one; }, function (v) { Lm.one = v; }, true));
     b.appendChild(h("div", { class: "aklr-two" },
@@ -70313,6 +70516,7 @@ function akLrSettings(out, ctx, tmp) {
     take(/Encore bribes/).forEach(function (n) { b.appendChild(n); });
   });
   /* 📱 */
+  fold("scans", "📊 QR code scans", "How many people opened your page, from which code, and what they did", function (b) { akScanPanel(b); });
   fold("stage", "📱 On the playing screen", "Info bar count, flash, buzz, beep", function (b) { take(/^On the playing screen/).forEach(function (n) { b.appendChild(n); }); });
   /* anything else the old section had */
   var rest = Object.keys(seg).filter(function (k) { return !used[k] && k.indexOf("__") !== 0 && seg[k].length; });
@@ -70485,6 +70689,7 @@ akCss("ak-v22lr", [
   ".aklr-tabs button[aria-pressed=true]{color:var(--accent);font-weight:800;box-shadow:inset 0 -2px 0 var(--accent)}",
   ".aklr-pane{display:grid;gap:8px}",
   ".aklr-item{border:1px solid var(--line);border-radius:2px;padding:6px;display:grid;gap:6px}.aklr-item.off{opacity:.55}",
+  ".aklr-pk{display:flex;flex-direction:column;gap:3px;margin:4px 0 8px}.aklr-pk select{font-size:12px;max-width:100%}" +
   ".aklr-ih{display:flex;gap:6px;align-items:center}.aklr-ih .grow{flex:1 1 auto;min-width:0}.aklr-ih select{width:auto;max-width:12em}",
   ".aklr-emo{width:3em!important;text-align:center;flex:none}",
   ".aklr-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px 10px}",
@@ -70511,6 +70716,141 @@ if (typeof akTcAdd === "function") akTcAdd("22.5", "First name on the request pa
 if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") AKTC.forEach(function (x) { if (x.id === "rq-first" || x.id === "rq-pro" || x.id === "rq-nick") { var w = ["Settings › Requests and tips › Live requests › About you"]; AKTC_WHERE[x.id] = w; x.where = w[0]; } });
 AK_WHATS_NEW = ["🎤 Your request page talks like a person: “ask Aedryan to play a song” (first name), or the whole band name if you tick We're a band. Pick he, she or they too (Settings › Requests and tips › Live requests › About you)."].concat(AK_WHATS_NEW);
 AK_VERSION = "22.5";
+/* ================= 22.6: thank-you when a tip comes in ================= */
+function akLrFill(t, x) {
+  x = x || {}; var L = akLive(), P = L.profile || {}, nm = P.nick || (P.band ? P.name : String(P.name || "").trim().split(/\s+/)[0]) || "the performer";
+  var pro = P.band ? "they" : (P.pro || "they"), PR = { he: ["he", "him", "his"], she: ["she", "her", "her"], they: ["they", "them", "their"] }[pro] || ["they", "them", "their"];
+  return String(t || "").replace(/\{name\}/g, nm).replace(/\{price\}/g, "$" + (x.price != null ? x.price : ((L.rules || {}).price || 5))).replace(/\{songs\}/g, x.songs > 1 ? x.songs + " more songs" : "one more song")
+    .replace(/\{he\}/g, PR[0]).replace(/\{him\}/g, PR[1]).replace(/\{his\}/g, PR[2]);
+}
+(function () {
+  var up = akLiveUpdate;
+  akLiveUpdate = function (r, patch) {
+    try { if (patch && patch.tipOk === true && r && !r.tipOk && !r.reply && !patch.reply && akLr().thankOn !== false) patch.reply = akLrFill(akLrW("thanks")); } catch (e) {}
+    return up.apply(this, arguments);
+  };
+})();
+
+/* ================= 22.6: the request line people can see, and ⚡ Play it next first ================= */
+(function () {
+  var q0 = akLiveQueue;
+  akLiveQueue = function () {
+    var R = akLive().rules || {}, q = q0.apply(this, arguments);
+    function nx(r) { return !!(r.tip && r.tip.next && (!R.holdUnpaid || r.tipOk)); }
+    return q.filter(nx).sort(function (a, b) { return (a.at || 0) - (b.at || 0); }).concat(q.filter(function (r) { return !nx(r); }));
+  };
+})();
+function akLrLine(c) {
+  var R = akLive().rules || {}, q = [];
+  try { q = akLiveQueue().filter(function (r) { return !(R.holdUnpaid && r.tip && r.tip.method && !r.tipOk); }); } catch (e) {}
+  return q.slice(0, 40).map(function (r) { return c.lineNames ? { i: r.id, t: String(r.title || "").slice(0, 60), n: r.tip && r.tip.next ? 1 : 0 } : { i: r.id }; });
+}
+(function () {
+  var lp = akLivePaint, sig = "";
+  akLivePaint = function () {
+    var out = lp.apply(this, arguments);
+    try { var c = akLr(); if (c.lineOn !== false || akLive().rules.next) { var s = JSON.stringify(akLrLine(c)); if (s !== sig) { sig = s; akLrPublishSoon(); } } } catch (e) {}
+    return out;
+  };
+})();
+/* ================= 22.6: a QR code is never covered: QR layers are always drawn last (on top of everything) ================= */
+(function () {
+  if (typeof akGfxBake !== "function") return;
+  var bk = akGfxBake;
+  akGfxBake = function () {
+    var out = bk.apply(this, arguments);
+    try { if (out && Array.isArray(out.layers) && out.layers.some(function (l) { return l && l.type === "qr"; })) out.layers = out.layers.filter(function (l) { return !l || l.type !== "qr"; }).concat(out.layers.filter(function (l) { return l && l.type === "qr"; })); } catch (e) {}
+    return out;
+  };
+})();
+
+/* ================= 22.6: QR code scans (simple: no pop-ups, no outside companies) =================
+   Each QR code the app makes carries a small tag (&src=…) so the page knows which one was scanned. The page writes one "visit" per open:
+   time, tag, phone or computer, language, time zone, and a random visitor id kept on that phone (new or again). Online: performers/{you}/visits
+   (rules block below; only you can read them). This-device mode: the browser's own storage. */
+function akSrcUrl(url, tag) {
+  url = String(url || ""); if (!url || !tag || /[?&]src=/.test(url) || !/\/request\/|\/r\//.test(url)) return url;
+  return url + (url.indexOf("?") >= 0 ? "&" : "?") + "src=" + encodeURIComponent(String(tag).toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 30));
+}
+(function () {
+  if (typeof akQrLib !== "function") return;
+  var ql = akQrLib;
+  akQrLib = function () { var out = ql.apply(this, arguments); try { out.forEach(function (e) { if (e && e.url) e.url = akSrcUrl(e.url, e.custom ? "qr-" + (e.label || e.id) : e.id); }); } catch (er) {} return out; };
+})();
+if (typeof AK_FB_RULES === "string" && AK_FB_RULES.indexOf("/visits/") < 0)
+  AK_FB_RULES = AK_FB_RULES.replace("      match /requests/{rid} {", "      match /visits/{vid} {\n        allow create: if request.auth != null && request.resource.data.uid == request.auth.uid\n          && request.resource.data.keys().hasOnly(['uid', 'at', 'src', 'dev', 'lang', 'tz', 'vid', 'path']);\n        allow read, delete: if request.auth != null && request.auth.uid == pid;\n      }\n      match /requests/{rid} {");
+function akScanLoad() {
+  if (AKL.conn === "cloud" && AKL.db) return AKL.db.collection("performers").doc(AKL.uid).collection("visits").orderBy("at", "desc").limit(3000).get().then(function (q) {
+    var a = []; q.forEach(function (d) { var x = d.data(); x.at = x.at && x.at.toMillis ? x.at.toMillis() : Number(x.at) || 0; a.push(x); }); return a;
+  });
+  var raw = []; try { raw = JSON.parse(localStorage.getItem("akreq:visits") || "[]"); } catch (e) {}
+  return Promise.resolve(Array.isArray(raw) ? raw : []);
+}
+function akScanSum(v, days) {
+  var since = days ? Date.now() - days * 864e5 : 0; v = v.filter(function (x) { return (x.at || 0) >= since; });
+  var people = {}, by = {}, hrs = new Array(24).fill(0), dev = { phone: 0, computer: 0 }, uids = {};
+  v.forEach(function (x) { people[x.vid || x.uid] = (people[x.vid || x.uid] || 0) + 1; var k = x.src || "page"; by[k] = by[k] || { n: 0, p: {} }; by[k].n++; by[k].p[x.vid || x.uid] = 1; if (x.at) hrs[new Date(x.at).getHours()]++; dev[x.dev === "computer" ? "computer" : "phone"]++; if (x.uid) uids[x.uid] = 1; });
+  var did = { req: 0, tip: 0, msg: 0, signup: 0 };
+  try { akLiveList().forEach(function (r) { if (!r.uid || !uids[r.uid]) return; if (r.kind === "play") did.req++; if (r.tip && r.tip.method) did.tip++; if (r.kind === "message") did.msg++; if (r.kind === "signup") did.signup++; }); } catch (e) {}
+  var n = Object.keys(people).length, again = Object.keys(people).filter(function (k) { return people[k] > 1; }).length, top = hrs.indexOf(Math.max.apply(null, hrs));
+  return { total: v.length, people: n, again: again, by: by, top: v.length ? top : -1, dev: dev, did: did };
+}
+function akScanPanel(b) {
+  var st = AKLR.scan = AKLR.scan || { days: 30 }, box = h("div", null, h("p", { class: "muted" }, "Loading…"));
+  b.appendChild(h("p", { class: "hint" }, "Counts each time someone opens your request page: which QR code, when, phone or computer, and whether they've been before. No names (unless they type one on a request), no location, no pop-ups. Online needs the visits block in your Firebase rules (🔌 Connection › Copy the rules, then Publish)."));
+  b.appendChild(h("div", { class: "row" }, [[1, "Today"], [7, "7 days"], [30, "30 days"], [0, "All"]].map(function (d) { return h("button", { class: "sm", "aria-pressed": st.days === d[0] ? "true" : "false", onClick: function () { st.days = d[0]; paint(); this.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", "false"); }); this.setAttribute("aria-pressed", "true"); } }, d[1]); })));
+  b.appendChild(box);
+  var all = null;
+  function hr(n) { var a = n % 12 || 12; return a + (n < 12 ? "am" : "pm"); }
+  function paint() {
+    box.textContent = ""; if (!all) return;
+    var S2 = akScanSum(all, st.days);
+    if (!S2.total) { box.appendChild(h("p", { class: "muted" }, "No scans yet in this time.")); return; }
+    box.appendChild(h("div", { class: "aklr-two" }, h("div", { class: "card" }, h("b", null, String(S2.total)), " opens"), h("div", { class: "card" }, h("b", null, String(S2.people)), " different people"),
+      h("div", { class: "card" }, h("b", null, String(S2.again)), " came back"), h("div", { class: "card" }, "Busiest: ", h("b", null, S2.top >= 0 ? hr(S2.top) : "–"))));
+    box.appendChild(h("p", { class: "hint" }, "📱 " + S2.dev.phone + " on phones, 💻 " + S2.dev.computer + " on computers. Then: " + S2.did.req + " requests, " + S2.did.tip + " tips, " + S2.did.msg + " messages, " + S2.did.signup + " email sign-ups."));
+    var rows = Object.keys(S2.by).sort(function (a, c) { return S2.by[c].n - S2.by[a].n; });
+    var t = h("div", { class: "card" }, h("b", null, "By code"));
+    rows.forEach(function (k) { t.appendChild(h("div", { class: "row", style: "margin:2px 0" }, h("span", { class: "grow" }, k === "page" ? "Opened without a tag (old QR or a link)" : k), h("span", null, S2.by[k].n + " · " + Object.keys(S2.by[k].p).length + " people"))); });
+    box.appendChild(t);
+  }
+  akScanLoad().then(function (v) { all = v; paint(); }, function () { box.textContent = ""; box.appendChild(h("p", { class: "muted" }, "Couldn't read the scans. If you're online, copy the rules again and Publish them in Firebase.")); });
+}
+
+/* ================= 22.6: refund a card-paid request ================= */
+function akSqRefund(r) {
+  var R = akLive().rules || {};
+  if (!R.payFn || !(AKL.conn === "cloud" && firebase && firebase.auth && firebase.auth().currentUser)) { toast("Refunds need Online mode and the Square setup."); return; }
+  if (!confirm2("Refund $" + r.tip.amount + " to " + (r.name || "them") + "?")) return;
+  firebase.auth().currentUser.getIdToken().then(function (t) {
+    return fetch(String(R.payFn).replace(/\/$/, "") + "/squareRefund", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + t }, body: JSON.stringify({ id: r.id }) });
+  }).then(function (x) { return x.json(); }).then(function (j) { if (j.ok) { r.tip.refunded = true; r.status = "declined"; akLivePaint(); toast("Refunded."); } else toast(j.error || "Couldn't refund."); }, function () { toast("Couldn't reach Square. Try again."); });
+}
+function confirm2(msg) { try { return window.confirm(msg); } catch (e) { return true; } }
+/* ================= 22.6: help, test items, What's new ================= */
+if (typeof AK_HELP_WHERE !== "undefined") [
+  ["Tip line, fine print, encore card, thank-you wording", "Settings › Requests and tips › Live requests › 🎨 Page design › Words: each line has ready-made picks or your own words; {name} {price} {songs} {he} {him} {his} fill in."],
+  ["Play it next (a bigger tip puts the song first)", "Settings › Requests and tips › Live requests › 💵 Tips and request rules › ⚡ Play it next."],
+  ["Show people their place in line", "Settings › Requests and tips › Live requests › 💵 Tips and request rules › Place in line."],
+  ["Reply to a message from the request page", "Live panel › Messages › 💬 Reply (shows on their phone); ✉ Email or 📱 Text when they left contact info."],
+  ["How many people scanned my QR codes", "Settings › Requests and tips › Live requests › 📊 QR code scans."],
+  ["Take card payments for requests (Square)", "Settings › Requests and tips › Live requests › 💵 Tips and request rules › 💳 Pay by card. One-time setup: docs/release/square-pay-setup.md in the source repo."],
+  ["QR codes are always on top", "Graphics: QR codes are drawn last, so nothing covers them."]
+].forEach(function (x) { AK_HELP_WHERE.push({ t: x[0], a: x[1], k: x[0].toLowerCase(), p: ["settings", {}, ""] }); });
+if (typeof akTcAdd === "function") akTcAdd("22.6", "Requests: words, line, replies, scans", [
+  ["rq6-words", "Friendly tip line and fine print", "Settings › Requests and tips › Live requests › 🎨 Page design › Words: pick a ready-made tip line for your rule, then 👁 Preview: it shows under Request a song with the fine print.", ["settings", {}, ""]],
+  ["rq6-encore", "Encore card in your words", "Words › 🔥 Encore bribe card: pick “Can't get enough?” and a line; the encore card on the page uses them.", ["settings", {}, ""]],
+  ["rq6-line", "Place in line and Play it next", "💵 Tips and request rules: tick ⚡ Play it next and Place in line. On the page, a request shows “You're 2nd in line”; the song screen offers ⚡ Play it next.", ["settings", {}, ""]],
+  ["rq6-reply", "Reply and thank-you", "Send a message from the page with a phone or email; in the Live panel tap 💬 Reply. Tap Tip received on a tipped request: the thank-you shows on their phone.", ["settings", {}, ""]],
+  ["rq6-scans", "QR code scans", "Open your page from a QR code, then 📊 QR code scans: the visit shows with its code.", ["settings", {}, ""]],
+  ["ps-sheet", "Print several on a page", "Graphics › any design › ⬇ Save › 🖨 Print › Several on a page: 6, Landscape, Table tent. Each spot is the whole design.", ["gfx", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK226_W = { "rq6-words": "Live requests › 🎨 Page design › Words", "rq6-encore": "Live requests › 🎨 Page design › Words › Encore", "rq6-line": "Live requests › 💵 Tips and request rules", "rq6-reply": "Live panel › Messages", "rq6-scans": "Live requests › 📊 QR code scans", "ps-sheet": "Graphics › ⬇ Save › 🖨 Print" };
+  AKTC.forEach(function (x) { if (AK226_W[x.id]) { AKTC_WHERE[x.id] = [AK226_W[x.id]]; x.where = AK226_W[x.id]; } });
+}
+AK_WHATS_NEW = ["🎤 Requests: friendly tip lines with ready-made picks, fine print, the encore card in your words, ⚡ Play it next, people see their place in line, 💬 replies and automatic thank-yous, 📊 QR scan counts, and card payments through Square (after a one-time setup). 🖨 Print any design several to a page (cards, table tents). QR codes are never covered."].concat(AK_WHATS_NEW);
+AK_VERSION = "22.6";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
