@@ -36964,6 +36964,8 @@ function viewGfx() {
       if (typeof akGfxAddrPick === "function") d.appendChild(akGfxAddrPick(D, ch));
     } else if (kind === "web" && typeof akGfxWebPanel === "function") {
       akGfxWebPanel(d, D, ch);
+    } else if (kind === "qrsheet" && typeof akQsPanel === "function") {
+      akQsPanel(d, D, ch);
     } else if ((kind === "tip" && akGfxFlySpec(D.layout)) || kind === "card") {
       akGfxSignPanel(d, D, ch, gigPick);
     } else if (kind === "tip") {
@@ -37013,6 +37015,7 @@ function viewGfx() {
     if (kind === "week") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "list" ? [["title", "Title"], ["sub", "Dates line"], ["footer1", "Website"]] : [["title", "Title"], ["sub", "Line under the title"], ["footer1", "Website"]];
     if (kind === "flyer") return L === "mine" ? [["title", "Title (two lines)", 1], ["footer1", "Footer, line 1"], ["footer2", "Footer, line 2"]] : L === "spot" ? [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date"], ["time", "Time"], ["town", "Town"], ["note", "Note", 1], ["footer1", "Website"]] : [["kicker", "Small heading"], ["title", "Venue"], ["date", "Date and time"], ["town", "Town"], ["footer1", "Website"]];
     if (kind === "tip") return L === "jar" ? [["title", "Big word"], ["sub", "Thank you line"], ["name", "Name"]] : L === "big" ? [["title", "Big word"], ["sub", "Line under it"], ["handles", "Handles", 1]] : [["title", "Heading", 1], ["sub", "Line under the heading"], ["footer1", "Website"]];
+    if (kind === "qrsheet") return [["title", "Heading (every card)"], ["kicker", "Small heading"], ["sub", "Line under the code"], ["footer1", "Website"]];
     return [["title", "Heading (INVOICE)"]];
   }
   function autoText(k) {
@@ -37130,7 +37133,7 @@ function viewGfx() {
     });
   }
   function cats() {
-    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? (akGfxFlySpec(D.layout) ? "🪧 On the sign" : "💵 Tip links") : kind === "card" ? "💼 On the card" : kind === "web" ? "🌐 On it" : "🧾 Details";
+    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? (akGfxFlySpec(D.layout) ? "🪧 On the sign" : "💵 Tip links") : kind === "card" ? "💼 On the card" : kind === "qrsheet" ? "🔳 On the sheet" : kind === "web" ? "🌐 On it" : "🧾 Details";
     var L = [];
     function f(fn) { return function (d) { fn(d, X); }; }
     if (typeof akGfxIdeasFill === "function") L.push(["ideas", "💡 Ideas", f(akGfxIdeasFill)]);
@@ -68619,6 +68622,200 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
   AKTC.forEach(function (x) { var w = AK21OD_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
 }
 AK_VERSION = "21.9";
+
+/* ================= ak_v21qs.js - 22.2 (built as 21.8): 🔳 QR sheets, many QR codes on one page, ready to print and cut =================
+   A Graphics kind of its own ("qrsheet", Letter or A4), with named layouts:
+     q4 = 4 cards (2 × 2), q6 = 6 cards (2 × 3), q9 = 9 cards (3 × 3), q12 = 12 stickers (3 × 4),
+     tent = table tents, 2 per sheet (4 panels, the top ones upside down so they read after folding),
+     half = half-page flyers, 2 per sheet (big QR code + how-to steps), like the 10-18 printed signs.
+   🔳 On the sheet: one code on every spot, or a different code in each spot (from the QR codes library, akQrLib),
+   cut lines, how-to steps. Words (heading, small heading, line under) fill in from each code; ✎ Words changes them all.
+   The page is built as a blank design (so pictures, words, logos and effects added in the studio still work),
+   then the cards are laid on top of the background. The QR codes library gets "🖨 Print a sheet of codes". */
+
+AKG_KINDS.splice(Math.max(0, AKG_KINDS.map(function (k) { return k[0]; }).indexOf("web") + 1) || AKG_KINDS.length, 0,
+  ["qrsheet", "🔳 QR sheets", "Many QR codes on one page to print and cut: 4, 6, 9 or 12 cards, table tents, half-page flyers"]);
+var AKQS_LAYOUTS = [["q4", "4 cards (2 × 2)", 2, 2], ["q6", "6 cards (2 × 3)", 2, 3], ["q9", "9 cards (3 × 3)", 3, 3], ["q12", "12 stickers (3 × 4)", 3, 4],
+  ["tent", "Table tents (2 per sheet)", 2, 2], ["half", "Half-page flyers (2 per sheet)", 1, 2]];
+AKG_LAYOUTS.qrsheet = AKQS_LAYOUTS.map(function (l) { return [l[0], l[1]]; });
+AKG_KSIZES.qrsheet = ["letter", "a4"];
+
+/* the words a code gets by itself: [small heading, heading, line under] */
+var AKQS_WORDS = { req: ["SONG REQUESTS", "Request a song", "Scan, pick a song, tap Send"], pay: ["TIPS", "Tips appreciated", ""], links: ["FIND ME", "Follow me", "All my links in one place"],
+  web: ["MY WEBSITE", "Visit my website", ""], social: ["FOLLOW ME", "Follow me", ""], book: ["BOOKING", "Book me", "Live music for your event"], contact: ["CONTACT", "Save my contact", "Scan to add me to your phone"] };
+
+function akQsCodes() { try { return typeof akQrLib === "function" ? akQrLib() : []; } catch (e) { return []; } }
+function akQsCfg(D) {
+  if (!D.qs || typeof D.qs !== "object") D.qs = {};
+  var q = D.qs; if (!q.mode) q.mode = "same"; if (!Array.isArray(q.spots)) q.spots = []; if (q.cut == null) q.cut = true; if (q.steps == null) q.steps = true;
+  return q;
+}
+function akQsSpots(id) { var l = AKQS_LAYOUTS.filter(function (x) { return x[0] === id; })[0] || AKQS_LAYOUTS[0]; return l[2] * l[3]; }
+/* the code for each spot: [{url, label, grp, h}] */
+function akQsPick(D, n) {
+  var q = akQsCfg(D), all = akQsCodes(), out = [];
+  function byUrl(u) { return all.filter(function (e) { return e.url === u; })[0]; }
+  var one = byUrl(q.one) || all.filter(function (e) { return e.grp === "req"; })[0] || all[0] || null;
+  for (var i = 0; i < n; i++) out.push(q.mode === "each" ? (byUrl(q.spots[i]) || all[i % Math.max(1, all.length)] || null) : one);
+  return out;
+}
+function akQsWords(D, e) {
+  var T = D.text || {}, w = (e && AKQS_WORDS[e.grp]) || ["", e ? e.label : "", ""];
+  var line = w[2] || (e ? (e.grp === "pay" ? e.label + (e.h ? "  " + e.h : "") : e.h || e.label) : "");
+  function t(k, d) { return T[k] != null && T[k] !== "" ? T[k] : d; }
+  return { kick: t("kicker", w[0]), head: t("title", w[1]), line: t("sub", line), name: akGfxNameCase(D, akGfxName()), site: t("footer1", akGfxSite()) };
+}
+
+function akQsBuild(D, W, H) {
+  var q = akQsCfg(D), F = D.fonts, out = [], dpi = W / ((akGfxSize(D.size)[4]) || 8.5), m = 0.25 * dpi, L = D.layout, step = q.steps !== false;
+  var spec = AKQS_LAYOUTS.filter(function (x) { return x[0] === L; })[0] || AKQS_LAYOUTS[0], cols = spec[2], rows = spec[3], n = cols * rows;
+  var codes = akQsPick(D, n), syn = akGfxStack("Syncopate");
+  if (L === "tent") m = 0;
+  var cw = (W - 2 * m) / cols, chh = (H - 2 * m) / rows;
+  function cellOf(i) { return { x: m + (i % cols) * cw, y: m + Math.floor(i / cols) * chh, w: cw, h: chh }; }
+  /* flip = turned upside down inside its cell (the top half of a table tent) */
+  function T(c, flip) {
+    return {
+      text: function (id, nm, t, fx, fy, size, o) {
+        if (!t) return;
+        var x = c.x + fx * c.w, y = c.y + fy * c.h; if (flip) { x = c.x + c.w - fx * c.w; y = c.y + c.h - fy * c.h; }
+        out.push(Object.assign({ id: id, name: nm, type: "text", text: t, x: x, y: y, size: size, font: F.main, weight: 400, color: "#111", fgAuto: true, align: "center", maxW: c.w * 0.88, lh: 1.15 }, flip ? { rot: 180 } : {}, o || {}));
+      },
+      qr: function (id, nm, e, fx, fy, s) {
+        if (!e || !e.url) return;
+        var cx = c.x + fx * c.w, cy = c.y + fy * c.h; if (flip) { cx = c.x + c.w - fx * c.w; cy = c.y + c.h - fy * c.h; }
+        out.push({ id: id, name: nm, type: "qr", url: e.url, x: cx - s / 2, y: cy - s / 2, s: s });
+      }
+    };
+  }
+  function tall(i, c, e, flip) {
+    var p = "c" + (i + 1) + "_", W2 = akQsWords(D, e), t = T(c, flip), u = Math.min(c.w, c.h * 0.78) / 100, lab = "Card " + (i + 1) + ": ";
+    var s = Math.min(c.w * 0.6, c.h * 0.48), qy = 0.27 + (s / c.h) / 2;
+    t.text(p + "kicker", lab + "small heading", W2.kick, 0.5, 0.075, 3.4 * u, { font: F.small, weight: 700, spacing: 0.5 * u });
+    t.text(p + "title", lab + "heading", W2.head, 0.5, 0.165, 8 * u, { font: F.title, weight: 700, lh: 1.05 });
+    t.qr(p + "qr", lab + "QR code (" + (e ? e.label : "none") + ")", e, 0.5, qy, s);
+    t.text(p + "line", lab + "line under", W2.line, 0.5, qy + (s / c.h) / 2 + 0.06, 4 * u, { weight: 600 });
+    t.text(p + "name", lab + "name", W2.name, 0.5, 0.875, 4 * u, { font: syn, spacing: 0.2 * u });
+    t.text(p + "site", lab + "website", W2.site, 0.5, 0.94, 2.9 * u, { font: F.small, weight: 600 });
+  }
+  function tiny(i, c, e) {
+    var p = "c" + (i + 1) + "_", W2 = akQsWords(D, e), t = T(c, false), u = Math.min(c.w, c.h) / 100, lab = "Sticker " + (i + 1) + ": ", s = c.h * 0.6;
+    t.text(p + "title", lab + "heading", W2.head, 0.5, 0.12, 6.4 * u, { font: F.title, weight: 700 });
+    t.qr(p + "qr", lab + "QR code (" + (e ? e.label : "none") + ")", e, 0.5, 0.52, s);
+    t.text(p + "line", lab + "line under", W2.line || W2.name, 0.5, 0.9, 4.2 * u, { weight: 600 });
+  }
+  function half(i, c, e) {
+    var p = "c" + (i + 1) + "_", W2 = akQsWords(D, e), lab = "Flyer " + (i + 1) + ": ", u = c.h / 100, s = Math.min(c.h * 0.74, c.w * 0.44);
+    var qx = c.x + c.w * 0.05, tx0 = qx + s + c.w * 0.05, tw = c.x + c.w * 0.96 - tx0, cx = tx0 + tw / 2;
+    function txt(id, nm, t, y, size, o) { if (t) out.push(Object.assign({ id: p + id, name: lab + nm, type: "text", text: t, x: cx, y: c.y + y * c.h, size: size, font: F.main, weight: 400, color: "#111", fgAuto: true, align: "center", maxW: tw, lh: 1.15 }, o || {})); }
+    if (e && e.url) out.push({ id: p + "qr", name: lab + "QR code (" + e.label + ")", type: "qr", url: e.url, x: qx, y: c.y + (c.h - s) / 2, s: s });
+    txt("kicker", "small heading", W2.kick, 0.13, 3.2 * u, { font: F.small, weight: 700, spacing: 0.5 * u });
+    txt("title", "heading", W2.head, 0.27, 7.2 * u, { font: F.title, weight: 700, lh: 1.05 });
+    if (step) txt("steps", "how-to steps", "1  Open your phone's camera\n2  Point it at the square code\n3  Tap the link" + (e && e.grp === "req" ? ", pick a song" : ""), 0.52, 3.6 * u, { lh: 1.45, weight: 500 });
+    else txt("line", "line under", W2.line, 0.5, 4 * u, { weight: 600 });
+    txt("name", "name", W2.name, 0.8, 4 * u, { font: syn, spacing: 0.2 * u });
+    txt("site", "website", W2.site, 0.89, 2.8 * u, { font: F.small, weight: 600 });
+  }
+  for (var i = 0; i < n; i++) {
+    var c = cellOf(i);
+    if (L === "q12") tiny(i, c, codes[i]);
+    else if (L === "half") half(i, c, codes[i]);
+    else if (L === "tent") { var pad = { x: c.x + 0.15 * dpi, y: c.y + 0.15 * dpi, w: c.w - 0.3 * dpi, h: c.h - 0.3 * dpi }; tall(i, pad, codes[i], i < cols); }
+    else tall(i, c, codes[i], false);
+  }
+  /* cut lines (and the fold line of a table tent) */
+  if (q.cut !== false) {
+    var lw = Math.max(2, Math.round(dpi / 100)), col = "#9a9a9a";
+    var line = function (id, nm, x, y, w, hh) { out.push({ id: id, name: nm, type: "grect", fixed: true, x: x, y: y, w: w, h: hh, fill: col }); };
+    for (var a = (L === "tent" ? 1 : 0); a <= cols - (L === "tent" ? 1 : 0); a++) line("cutv" + a, "Cut line (up and down) " + (a + 1), m + a * cw - lw / 2, m, lw, H - 2 * m);
+    for (var b = (L === "tent" ? 1 : 0); b <= rows - (L === "tent" ? 1 : 0); b++) line("cuth" + b, (L === "tent" ? "Fold line " : "Cut line (across) ") + (b + 1), m, m + b * chh - lw / 2, W - 2 * m, lw);
+  }
+  return out;
+}
+
+(function () {
+  /* a new QR sheet: white paper (saves ink), the sign fonts */
+  var d0 = akGfxDefault;
+  akGfxDefault = function (kind) {
+    if (kind !== "qrsheet") return d0.apply(this, arguments);
+    var D = d0("blank"); D.kind = "qrsheet"; D.layout = "q4"; D.size = "letter"; D.logo = false; D.wordmark = false; D.fg = "auto";
+    D.fonts = { title: akGfxStack("Syncopate"), main: akGfxStack("Outfit"), small: akGfxStack("Outfit") };
+    D.qs = { mode: "same", one: "", spots: [], cut: true, steps: true };
+    return D;
+  };
+  /* build the page as a blank design, then lay the cards on top of the background */
+  var l0 = akGfxLayers;
+  akGfxLayers = function (D) {
+    if (!D || D.kind !== "qrsheet") return l0.apply(this, arguments);
+    var Db = Object.assign({}, D, { kind: "blank", layout: "blank" }), P = l0.call(this, Db);
+    var at = 0; P.layers.forEach(function (l, i) { if (l.id === "background" || l.id === "overlay") at = i + 1; });
+    var cards = akQsBuild(D, P.W, P.H);
+    P.layers = P.layers.slice(0, at).concat(cards, P.layers.slice(at));
+    return P;
+  };
+  if (typeof akGfxFileName === "function") {
+    var f0 = akGfxFileName;
+    akGfxFileName = function (D) { if (D && D.kind === "qrsheet") { var l = AKQS_LAYOUTS.filter(function (x) { return x[0] === D.layout; })[0]; return "QR sheet " + (l ? l[1].replace(/[^\w ]+/g, "").replace(/\s+/g, " ").trim() : ""); } return f0.apply(this, arguments); };
+  }
+})();
+
+/* ---------------------------------------------------------------- 🔳 On the sheet (the data panel of the studio) */
+function akQsPanel(d, D, ch) {
+  var q = akQsCfg(D), all = akQsCodes(), n = akQsSpots(D.layout);
+  if (!all.length) {
+    d.appendChild(h("p", { class: "hint" }, "No QR codes yet. Add tip links or song requests in Settings › Requests and tips, your website in 🎤 Artist info, or ＋ New QR code in Graphics › 🔳 QR codes."));
+    return;
+  }
+  function opts(sel) { return all.map(function (e) { return h("option", { value: e.url, selected: e.url === sel }, e.label); }); }
+  var cur = akQsPick(D, n);
+  var mode = h("select", { "aria-label": "Which QR code", onChange: function () { if (this.value === "*each") q.mode = "each"; else { q.mode = "same"; q.one = this.value; } ch(true); } },
+    [h("option", { value: "*each", selected: q.mode === "each" }, "A different code on each " + (D.layout === "q12" ? "sticker" : "card"))].concat(all.map(function (e) { return h("option", { value: e.url, selected: q.mode !== "each" && cur[0] && cur[0].url === e.url }, e.label); })));
+  d.appendChild(h("label", { class: "fld" }, "QR code", mode));
+  if (q.mode === "each") {
+    var grid = h("div", { class: "akqs-spots" });
+    for (var i = 0; i < n; i++) (function (i) {
+      grid.appendChild(h("label", { class: "fld" }, String(i + 1), h("select", { "aria-label": "Code for spot " + (i + 1), onChange: function () { for (var j = 0; j < n; j++) if (!q.spots[j] && cur[j]) q.spots[j] = cur[j].url; q.spots[i] = this.value; ch(); } }, opts(cur[i] ? cur[i].url : ""))));
+    })(i);
+    d.appendChild(grid);
+  }
+  function chk(label, key) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: q[key] !== false, onChange: function () { q[key] = this.checked; ch(true); } }), label); }
+  d.appendChild(h("div", { class: "row" }, chk(D.layout === "tent" ? "Cut and fold lines" : "Cut lines", "cut"), D.layout === "half" ? chk("How-to steps", "steps") : null));
+  d.appendChild(h("p", { class: "hint" }, "Print: 📁 File ▾ › 🖨 Print, Paper “The size of the design”, and print at 100% (not “fit to page”)." + (D.layout === "tent" ? " Cut down the middle, then fold each tent across the middle." : "")));
+}
+akCss("ak-v21qs", [".akqs-spots{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:4px 8px}", ".akqs-spots .fld{margin:0}", ".akqs-spots select{width:100%}"].join("\n"));
+
+/* the QR codes library: a sheet of codes is one tap away */
+(function () {
+  if (typeof akQrHubCard !== "function") return;
+  var c0 = akQrHubCard;
+  akQrHubCard = function () {
+    var d = c0.apply(this, arguments);
+    try {
+      var row = d.querySelector(".row");
+      if (row) row.appendChild(h("button", { class: "sm", "data-qs": "open", onClick: function () { S.gfxKind = "qrsheet"; akGfxOpen("qrsheet", null); } }, "🖨 Print a sheet of codes"));
+    } catch (e) {}
+    return d;
+  };
+})();
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Print many QR codes on one page (4, 6, 9 or 12 cards, table tents, half-page flyers)", a: "⋯ More › 🎨 Graphics › 🔳 QR sheets. 🧩 Layout picks the sheet; 🔳 On the sheet picks one code for every card or a different code on each. Print with 📁 File ▾ › 🖨 Print at 100%. Also: Graphics › 🔳 QR codes › 🖨 Print a sheet of codes.", k: "qr sheet print many per page 4 6 9 12 cards stickers table tent half page flyer cut lines multiple" });
+}
+AK_WHATS_NEW = ["🔳 QR sheets are back in Graphics: 4, 6, 9 or 12 QR cards on a page, table tents (2 per sheet) and half-page flyers (2 per sheet), with cut lines. One code everywhere or a different one on each card."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("22.2", "QR sheets", [
+  ["qs-open", "QR sheets in Graphics", "⋯ More › 🎨 Graphics › 🔳 QR sheets. 🧩 Layout should list 4 cards, 6 cards, 9 cards, 12 stickers, Table tents, Half-page flyers.", ["graphics", {}, ""]],
+  ["qs-each", "A different code on each card", "🔳 On the sheet › QR code › A different code on each card, then change spot 2. Scan each one with another phone.", ["graphics", {}, ""]],
+  ["qs-print", "Print a sheet", "📁 File ▾ › 🖨 Print, Paper = the size of the design, print at 100%. Cut on the gray lines; QR codes should scan.", ["graphics", {}, ""]],
+  ["qs-lib", "From the QR codes library", "Graphics › 🔳 QR codes › 🖨 Print a sheet of codes opens the QR sheet.", ["graphics", {}, ""]]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AKQS_WHERE = {
+    "qs-open": ["⋯ More › 🎨 Graphics › 🔳 QR sheets", { g: ["graphics", {}], sel: "#app button", re: "^🔳 ?QR sheets" }],
+    "qs-each": ["⋯ More › 🎨 Graphics › 🔳 QR sheets › 🔳 On the sheet", { g: ["graphics", {}], sel: "#app button", re: "^🔳 ?QR sheets" }],
+    "qs-print": ["⋯ More › 🎨 Graphics › 🔳 QR sheets › 📁 File ▾ › 🖨 Print", { g: ["graphics", {}], sel: "#app button", re: "^🔳 ?QR sheets" }],
+    "qs-lib": ["⋯ More › 🎨 Graphics › 🔳 QR codes › 🖨 Print a sheet of codes", { g: ["graphics", {}], sel: "[data-qs=open]" }] };
+  AKTC.forEach(function (x) { var w = AKQS_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "22.2";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
