@@ -149,6 +149,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   /* ---------- connection ---------- */
   function loadScript(src) { return new Promise(function (res, rej) { var s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
   function start() {
+    /* calendar straight from a public Google Calendar: no app or Firebase needed, always current */
+    if (CE && P.get("gcal") && P.get("gkey")) {
+      prof = { name: P.get("n") || "", cal: { style: "styled", gid: P.get("gcal"), gkey: P.get("gkey"), title: P.get("t") || "", hd: P.get("hd") ? "#" + P.get("hd").replace(/[^0-9a-f]/gi, "").slice(0, 6) : "", font: P.get("f") === "system" ? "system" : "" }, shows: [] };
+      draw(); return;
+    }
     if (LOCAL) {
       prof = store("akreq:profile"); me.uid = store("akreq:me") || rid(); store("akreq:me", me.uid);
       window.addEventListener("storage", function (e) { if (e.key === "akreq:inbox") readLocal(); if (e.key === "akreq:profile") { prof = store("akreq:profile"); draw(); } });
@@ -278,12 +283,30 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   function needTip() { var R = prof.rules || {}; if (R.mode !== "required") return false; return !(R.firstFree && usedCount() === 0); }
 
   /* ---------- 19.3: the styled calendar (the default look; "fiery" keeps the older one). Month with ‹ Today ›, This week, Upcoming shows ---------- */
+  /* events from a public Google Calendar (Calendar API v3 with a browser key); turns them into the page's show list */
+  function gcalShows(C) {
+    var now = new Date(), from = new Date(now.getFullYear(), now.getMonth() - 3, 1), to = new Date(now.getFullYear() + 1, now.getMonth() + 2, 1);
+    var u = "https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(C.gid) + "/events?key=" + encodeURIComponent(C.gkey) + "&singleEvents=true&orderBy=startTime&maxResults=500&timeMin=" + encodeURIComponent(from.toISOString()) + "&timeMax=" + encodeURIComponent(to.toISOString());
+    return fetch(u).then(function (r) { if (!r.ok) throw new Error("gcal " + r.status); return r.json(); }).then(function (j) {
+      return (j.items || []).filter(function (e) { return e.status !== "cancelled" && e.start; }).map(function (e) {
+        var sd = e.start.dateTime || e.start.date || "", ed = (e.end && (e.end.dateTime || e.end.date)) || "", loc = String(e.location || "").trim();
+        var desc = String(e.description || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim().slice(0, 300);
+        var nm = String(e.summary || "Live music").trim();
+        return { d: sd.slice(0, 10), s: e.start.dateTime ? sd.slice(11, 16) : "", e: e.end && e.end.dateTime ? ed.slice(11, 16) : "", n: nm, v: nm, a: loc, u: loc ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(loc) : "", x: desc };
+      });
+    });
+  }
   function drawCalStyled(C) {
     var ok = function (c) { return /^#[0-9a-f]{6}$/i.test(c || ""); }, light = C.style === "light";
     var hd = ok(C.hd) ? C.hd : "#660000", bg = light ? "#ffffff" : "#000000", fg = light ? "#141414" : "#ffffff", ln = light ? "rgba(0,0,0,.75)" : "rgba(255,255,255,.9)";
     var font = C.font === "system" ? "system-ui,-apple-system,Segoe UI,Roboto,sans-serif" : "'Syncopate',system-ui,sans-serif";
     if (C.font !== "system" && !document.getElementById("cefont")) { var lk = document.createElement("link"); lk.id = "cefont"; lk.rel = "stylesheet"; lk.href = "https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&display=swap"; document.head.appendChild(lk); }
-    var all = (prof.shows || []).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x.d || ""); }).sort(function (a, b) { return (a.d + (a.s || "")).localeCompare(b.d + (b.s || "")); }), byDay = {};
+    if (C.gid && C.gkey && !cal.gl) {
+      cal.gl = 1;
+      var pull = function () { gcalShows(C).then(function (l) { cal.gs = l; cal.gerr = 0; draw(); }, function () { cal.gerr = 1; if (!cal.gs) cal.gs = prof.shows || []; draw(); }); };
+      pull(); setInterval(pull, 5 * 60 * 1000);
+    }
+    var all = ((C.gid && C.gkey ? cal.gs : null) || prof.shows || []).filter(function (x) { return /^\d{4}-\d{2}-\d{2}$/.test(x.d || ""); }).sort(function (a, b) { return (a.d + (a.s || "")).localeCompare(b.d + (b.s || "")); }), byDay = {};
     all.forEach(function (x) { (byDay[x.d] = byDay[x.d] || []).push(x); });
     function key(d) { return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2); }
     var now = new Date(), todayKey = key(now);
