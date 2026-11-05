@@ -36973,6 +36973,8 @@ function viewGfx() {
       akGfxWebPanel(d, D, ch);
     } else if (kind === "qrsheet" && typeof akQsPanel === "function") {
       akQsPanel(d, D, ch);
+    } else if (kind === "reqpage" && typeof akLrStudioPanel === "function") {
+      akLrStudioPanel(d, D, ch);
     } else if ((kind === "tip" && akGfxFlySpec(D.layout)) || kind === "card") {
       akGfxSignPanel(d, D, ch, gigPick);
     } else if (kind === "tip") {
@@ -37140,7 +37142,7 @@ function viewGfx() {
     });
   }
   function cats() {
-    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? (akGfxFlySpec(D.layout) ? "🪧 On the sign" : "💵 Tip links") : kind === "card" ? "💼 On the card" : kind === "qrsheet" ? "🔳 On the sheet" : kind === "web" ? "🌐 On it" : "🧾 Details";
+    var data = kind === "week" ? "📅 Shows on it" : kind === "flyer" ? "📅 Show" : kind === "tip" ? (akGfxFlySpec(D.layout) ? "🪧 On the sign" : "💵 Tip links") : kind === "card" ? "💼 On the card" : kind === "qrsheet" ? "🔳 On the sheet" : kind === "reqpage" ? "📱 On my page" : kind === "web" ? "🌐 On it" : "🧾 Details";
     var L = [];
     function f(fn) { return function (d) { fn(d, X); }; }
     if (typeof akGfxIdeasFill === "function") L.push(["ideas", "💡 Ideas", f(akGfxIdeasFill)]);
@@ -69975,6 +69977,508 @@ AK_WHATS_NEW = [
   "☾ Tonight is now your pre-show page: a countdown to the show, tonight's setlist (pick one and it goes on the show, or ✦ make one from suggestions), warm-ups (built-in or YouTube), the tuner, song requests on/off with 🚫 per song, your packing list and notes. ⚙ turns parts on or off and moves them.",
   "⏰ Get ready: works back from showtime to tell you when to get ready, pack the car and leave, with the drive time remembered for each venue (🗺 works it out from your home address) and extra time for gas. Alarms ring and buzz, with a heads-up before you have to leave, and 📅 puts them in your phone's calendar too.",
   "15 minutes before the show (you can change it) the app jumps to the show page by itself, and the countdown keeps going on top."
+].concat(AK_WHATS_NEW);
+
+/* ================= ak_v22lr.js - 22.4: Live requests, cleaned up, and a request page you lay out yourself =================
+   His 11-05 asks (mock-up https://claude.ai/artifact/9D99cpESdn5qAsZ2Q68jrV, picks in its db mockup/picks):
+   - Settings › Requests and tips › Live requests in folds: 🔌 Connection and sign-in, 🎨 Page design, 🎂 Birthdays and dedications,
+     ❓ Help pop-ups, 🎵 Songs people can request, 💵 Tips and request rules, 📱 On the playing screen. Nothing old is removed:
+     the old controls are drawn as before and moved into the fold they belong to (by their headings).
+   - 🎨 Page design tabs: ⇅ Arrange (order, on/off, size of each part; Request a song on top, half the screen), Top (name, photo,
+     tagline, bio OFF by default, website and social link buttons), Messages (specials, banners, end date), Next shows, Tabs, Words
+     (every tab and button, tip messages), Look. 👁 Preview = the real request page in a phone frame; ✎ Edit this page = tap any
+     part of it and change its size, font, colors, position (styles kept as settings().liveRq.st, sent to the page).
+   - 📱 Request page as a Graphics studio design (kind "reqpage"): each live part (name, Request a song box and title, link buttons,
+     How this works, messages, next shows, tabs, photo and bio) is a layer you move, size and color with the studio's tools; every
+     other layer (pictures, words, shapes, effects) becomes the picture behind. 📤 Use on my request page sends it.
+   - Request limits: one per person at a time, most waiting at once, no more than the songs left in the set (the app sends
+     "spots" with the page and keeps it current).
+   - 💝 Dedicate it / 🎂 birthday songs: the page asks who it's for, how to say their name, when, where they're sitting…; the
+     answers go at the front of the request's note, so they show in the requests panel and the Info bar like any note.
+   - Help pop-ups: the page's first-visit cards start as the app's words; edit, turn off, move, reset, add your own.
+   settings().liveRq = { blocks, nx, msgs, words, tipLines, lim, helpOn, help, ded, st, bio, ownBio, photo, tagline, links, helpBtn,
+     ruleLine, tabs, studio: { on, img, W, H, fg, font, parts }, ui } */
+
+var AKLR_HELP = [
+  { id: "welcome", e: "👋", t: "Welcome!", b: "This page lets you ask {name} to play a song. No app or account needed.", when: "" },
+  { id: "pick", e: "🎵", t: "Pick a song", b: "Scroll the list, or type a few letters of the song or the singer in the search box. Then tap the song.", when: "" },
+  { id: "send", e: "✉️", t: "Send it", b: "Type your name if you like, then tap the big Send request button. That's it!", when: "" },
+  { id: "tips", e: "💵", t: "Tips", b: "Tips are welcome but never required. The Tip tab has the ways to tip.", when: "Only when tips are on" },
+  { id: "dedic", e: "🎂", t: "Birthday or dedication?", b: "Tap 💝 Dedicate it when you send a request. Tell {name} their name, how to say it, when you'd like it played and where they're sitting, so it's just right.", when: "Only when dedications are on" },
+  { id: "see", e: "👀", t: "See what happens", b: "Your requests show under My requests, with a note when it's played.", when: "" },
+  { id: "mail", e: "📬", t: "Stay in touch", b: "Tap Sign up near the top to join the email list.", when: "Only when the email list is on" },
+  { id: "shows", e: "📅", t: "Upcoming shows", b: "The Shows tab has the next dates. You can add them to your phone's calendar.", when: "Only when you have public shows" }
+];
+var AKLR_WORDS = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}" };
+var AKLR_BLOCKS = [{ k: "name", on: true, size: "big" }, { k: "req", on: true, size: "half" }, { k: "head", on: true, size: "slim" }, { k: "msgs", on: true }, { k: "next", on: true, size: "small" }, { k: "more", on: true }];
+var AKLR_BLK = { name: "Your name", req: "🎵 Request a song", head: "Photo, bio and link buttons", msgs: "Your messages", next: "📅 Next shows", more: "Other tabs (Learn, Message, Tip, Shows, My requests)" };
+var AKLR_SIZES = { name: [["big", "Big"], ["med", "Medium"], ["small", "Small"]], req: [["third", "A third of the screen"], ["half", "Half the screen"], ["two", "Two-thirds"], ["all", "Whole list (page scrolls)"]], head: [["slim", "Just the link buttons"], ["full", "Photo, tagline, bio and buttons"]], next: [["line", "One line"], ["small", "Small list"], ["cards", "Cards"]] };
+var AKLR_DED = { on: true, bday: true, bdaySongs: "Happy Birthday, Birthday, Anniversary Song",
+  words: "Want it to be extra special? Tell me who it's for, how to say their name, when you'd like it, and where they're sitting, so I can look their way.",
+  bdayWords: "🎂 A birthday! Help me get it right: who's the birthday person, how do you say their name, and where are they sitting?",
+  fields: [{ k: "who", on: true, l: "Their name", ph: "Maria" }, { k: "say", on: true, l: "How to say it", ph: "sounds like mah-REE-ah" }, { k: "when", on: true, l: "When to play it", ph: "", pick: true }, { k: "where", on: true, l: "Where they're sitting", ph: "table by the window, red shirt" }, { k: "what", on: true, l: "What's the occasion", ph: "birthday, anniversary, just because" }, { k: "more", on: true, l: "Anything else I should know", ph: "it's a surprise, she's turning 30" }],
+  whenOpts: "Any time tonight, Next song if you can, After the break, Around a time (type it)" };
+var AKLR_LIM_FULL = "The request line is full right now. Try again after the next song!";
+
+function akLr() {
+  var s = settings(); if (!s.liveRq || typeof s.liveRq !== "object") s.liveRq = {};
+  var c = s.liveRq;
+  if (!Array.isArray(c.blocks) || !c.blocks.length) c.blocks = clone(AKLR_BLOCKS);
+  AKLR_BLOCKS.forEach(function (b) { if (!c.blocks.some(function (x) { return x.k === b.k; })) c.blocks.push(clone(b)); });
+  if (!c.nx || typeof c.nx !== "object") c.nx = { count: 3, link: true };
+  if (!Array.isArray(c.msgs)) c.msgs = [];
+  if (!c.words || typeof c.words !== "object") c.words = {};
+  if (!c.tipLines || typeof c.tipLines !== "object") c.tipLines = { auto: true, show: "random", list: [] };
+  if (!Array.isArray(c.tipLines.list)) c.tipLines.list = [];
+  if (!c.lim || typeof c.lim !== "object") c.lim = { one: false, max: 0, setLeft: false, full: AKLR_LIM_FULL };
+  if (c.helpOn == null) c.helpOn = true;
+  if (!Array.isArray(c.help)) c.help = clone(AKLR_HELP);
+  if (!c.ded || typeof c.ded !== "object") c.ded = clone(AKLR_DED);
+  Object.keys(AKLR_DED).forEach(function (k) { if (c.ded[k] === undefined) c.ded[k] = clone(AKLR_DED[k]); });
+  if (!c.st || typeof c.st !== "object") c.st = {};
+  if (!c.bio) c.bio = "off";
+  ["photo", "tagline", "helpBtn", "ruleLine"].forEach(function (k) { if (c[k] == null) c[k] = true; });
+  if (!c.links || typeof c.links !== "object") c.links = { website: true, social: true };
+  if (!c.tabs || typeof c.tabs !== "object") c.tabs = {};
+  if (!c.studio || typeof c.studio !== "object") c.studio = { on: false };
+  if (!c.ui || typeof c.ui !== "object") c.ui = { open: "design", tab: "arrange" };
+  return c;
+}
+function akLrW(k) { var w = akLr().words; return w[k] != null && String(w[k]).trim() !== "" ? w[k] : AKLR_WORDS[k]; }
+var AKLR = { t: 0, spots: undefined, frame: null };
+function akLrPublishSoon() { clearTimeout(AKLR.t); AKLR.t = setTimeout(function () { try { save(); if (AKL.conn) akLivePublish().catch(function () {}); } catch (e) {} }, 700); }
+
+/* ---------------------------------------------------------------- what goes to the page */
+function akLrBioText(c) {
+  var a = typeof akArtist === "function" ? akArtist() : { bios: {} }, b = a.bios || {};
+  if (c.bio === "off") return "";
+  if (c.bio === "own") return String(c.ownBio || "");
+  return String(b[c.bio] || b.line || b.short || "");
+}
+/* how many more requests can join the line right now (null = no limit) */
+function akLrSpots() {
+  var c = akLr(), L = c.lim, n = null;
+  if (!L.max && !L.setLeft) return null;
+  var waiting = 0; try { waiting = akLiveList("play").filter(function (r) { return r.status === "new"; }).length; } catch (e) {}
+  if (L.max) n = Math.max(0, L.max - waiting);
+  if (L.setLeft) {
+    try {
+      var p = S.play, it = p && typeof curItem === "function" ? curItem() : null;
+      if (p && it && S.view === "play") { var left = p.list.slice(p.idx + 1).filter(function (x) { return x.setNo === it.setNo; }).length, m = Math.max(0, left - waiting); n = n == null ? m : Math.min(n, m); }
+    } catch (e) {}
+  }
+  return n;
+}
+function akLrPublic() {
+  var c = akLr(), today = akTodayKey ? akTodayKey() : "";
+  return {
+    v: 1, blocks: c.blocks, nx: c.nx, words: c.words, tipLines: c.tipLines, lim: { one: !!c.lim.one, full: c.lim.full || AKLR_LIM_FULL }, spots: akLrSpots(),
+    msgs: c.msgs.filter(function (m) { return m.on !== false && String(m.text || "").trim() && (!m.until || !today || m.until >= today); }).map(function (m) { return { text: m.text, style: m.style || "plain", where: m.where || "top", until: m.until || "" }; }),
+    helpOn: c.helpOn !== false, help: c.help.filter(function (x) { return x.on !== false; }).map(function (x) { return { id: x.id, e: x.e, t: x.t, b: x.b }; }),
+    ded: c.ded, st: c.st, links: c.links, helpBtn: c.helpBtn !== false, ruleLine: c.ruleLine !== false, tabs: c.tabs,
+    studio: c.studio.on && c.studio.img ? { img: c.studio.img, W: c.studio.W, H: c.studio.H, fg: c.studio.fg, font: c.studio.font, parts: c.studio.parts } : null
+  };
+}
+(function () {
+  var p0 = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = p0.apply(this, arguments), c = akLr();
+    try {
+      var a = typeof akArtist === "function" ? akArtist() : null, bio = akLrBioText(c);
+      if (a) {
+        var art = p.artist || { tag: "", bio: "", photo: "" };
+        art = { tag: c.tagline ? (a.tagline || art.tag || "") : "", bio: bio, photo: c.photo ? (art.photo || "") : "" };
+        if (art.tag || art.bio || art.photo) p.artist = art; else delete p.artist;
+      }
+      p.rq = akLrPublic(); AKLR.spots = p.rq.spots;
+    } catch (e) {}
+    return p;
+  };
+})();
+/* keep the "spots open" number current while the limits are on */
+setInterval(function () {
+  try {
+    var L = akLive(), c = akLr(); if (!L.on || !AKL.conn || (!c.lim.max && !c.lim.setLeft)) return;
+    var n = akLrSpots(); if (n !== AKLR.spots) { AKLR.spots = n; akLivePublish().catch(function () {}); }
+  } catch (e) {}
+}, 12000);
+
+/* ---------------------------------------------------------------- Settings › Requests and tips › Live requests, in folds */
+(function () {
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    var tmp = h("div"), r = ls.call(this, tmp, ctx);
+    try { akLrSettings(out, ctx, tmp); } catch (e) { while (tmp.firstChild) out.appendChild(tmp.firstChild); out.appendChild(h("p", { class: "hint" }, "(Couldn't tidy this section: " + ((e && e.message) || e) + ")")); }
+    return r;
+  };
+})();
+function akLrSplit(tmp) {
+  var seg = { pre: [], songs: [] }, cur = "pre";
+  Array.prototype.slice.call(tmp.childNodes).forEach(function (n) {
+    if (n.nodeType === 1 && n.tagName === "H3" && /akl-h/.test(n.className)) { cur = n.textContent.trim(); seg[cur] = []; return; }
+    if (n.nodeType === 1 && n.querySelector && n.querySelector(":scope > h3") && /Songs people can request/.test(n.querySelector(":scope > h3").textContent)) { seg.songs.push(n); return; }
+    seg[cur].push(n);
+  });
+  return seg;
+}
+function akLrSettings(out, ctx, tmp) {
+  var c = akLr(), L = akLive(), seg = akLrSplit(tmp), used = { pre: 1, songs: 1 };
+  function take(re) { var k = Object.keys(seg).filter(function (x) { return re.test(x); })[0]; if (!k) return []; used[k] = 1; return seg[k]; }
+  function chg(redraw) { ctx.mark(); save(); akLrPublishSoon(); if (redraw) { ctx.refresh(); go("settings"); } }
+  /* the top: intro, on/off, status, the main buttons (+ 👁 Preview) */
+  var pre = seg.pre, conn = [];
+  pre.forEach(function (n) {
+    if (n.nodeType !== 1) return;
+    var isRow = /row/.test(n.className) && /Show my QR code/.test(n.textContent);
+    if (n === pre[0] || (n.tagName === "LABEL" && /Turn on live requests/.test(n.textContent)) || /akl-status/.test(n.className)) out.appendChild(n);
+    else if (isRow) { n.classList.add("aklr-bar"); n.appendChild(h("button", { "data-lr": "pv", onClick: function () { akLrPreview(false); } }, "👁 Preview")); out.appendChild(n); }
+    else conn.push(n);
+  });
+  if (!L.on) return;
+  function fold(id, title, desc, fill, isNew) {
+    var d = h("details", { class: "aklr-g", "data-lr": id, open: c.ui.open === id ? true : null },
+      h("summary", null, h("b", null, title), isNew ? h("span", { class: "aklr-new" }, "NEW") : null, h("span", { class: "aklr-d" }, desc)), h("div", { class: "aklr-b" }));
+    d.addEventListener("toggle", function () { if (d.open) { c.ui.open = id; save(); Array.prototype.forEach.call(out.querySelectorAll("details.aklr-g"), function (x) { if (x !== d) x.open = false; }); } else if (c.ui.open === id) { c.ui.open = ""; save(); } });
+    fill(d.lastChild); out.appendChild(d); return d;
+  }
+  function chk(label, get, set, redraw) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); chg(redraw); } }), label); }
+  function sel(label, get, set, opts, redraw) { var s = h("select", { "aria-label": label || "Choose", onChange: function () { set(this.value); chg(redraw); } }, opts.map(function (o) { return h("option", { value: o[0], selected: String(get()) === String(o[0]) ? true : null }, o[1]); })); return label ? h("label", { class: "fld" }, label, s) : s; }
+  function txt(label, get, set, o) { o = o || {}; var i = h(o.area ? "textarea" : "input", { type: o.area ? null : (o.type || "text"), rows: o.rows || null, placeholder: o.ph || "", value: get() == null ? "" : String(get()), "aria-label": label || o.ph || "Text", onInput: function () { set(this.value); ctx.mark(); save(); akLrPublishSoon(); } }); return label ? h("label", { class: "fld" }, label, i) : i; }
+  function move(arr, i, d) { var j = i + d; if (j < 0 || j >= arr.length) return; arr.splice(j, 0, arr.splice(i, 1)[0]); chg(true); }
+  function ud(arr, i) { return [h("button", { class: "icon sm", "aria-label": "Move up", disabled: i === 0, onClick: function () { move(arr, i, -1); } }, "↑"), h("button", { class: "icon sm", "aria-label": "Move down", disabled: i === arr.length - 1, onClick: function () { move(arr, i, 1); } }, "↓")]; }
+
+  /* 🔌 */
+  fold("conn", "🔌 Connection and sign-in", "How it connects, Firebase, your account, short address", function (b) {
+    conn.forEach(function (n) { b.appendChild(n); });
+    take(/^Short web address/).forEach(function (n) { b.appendChild(n); });
+  });
+  /* 🎨 */
+  fold("design", "🎨 Page design", "Arrange, top, messages, next shows, tabs, words, look", function (b) {
+    var tabs = [["arrange", "⇅ Arrange"], ["top", "Top"], ["msgs", "Messages" + (c.msgs.length ? " (" + c.msgs.length + ")" : "")], ["next", "Next shows"], ["tabs", "Tabs"], ["words", "Words"], ["look", "Look"]];
+    b.appendChild(h("div", { class: "aklr-tabs", role: "tablist" }, tabs.map(function (t) { return h("button", { role: "tab", "data-lr": "t-" + t[0], "aria-pressed": c.ui.tab === t[0] ? "true" : "false", onClick: function () { c.ui.tab = t[0]; save(); ctx.refresh(); go("settings"); } }, t[1]); })));
+    var p = h("div", { class: "aklr-pane" }); b.appendChild(p);
+    var about = take(/^About you/), ways = [];
+    about = about.filter(function (n) { if (n.nodeType === 1 && /Ways to tip you/.test((n.querySelector("strong") || {}).textContent || "")) { ways.push(n); return false; } if (n.nodeType === 1 && /Paste your own payment links/.test(n.textContent)) { ways.push(n); return false; } return true; });
+    seg.__ways = ways;
+    var pageSeg = take(/^Your request page/);
+    if (c.ui.tab === "arrange") {
+      p.appendChild(h("p", { class: "hint" }, "Top to bottom, the way the page shows it. People come from the Request a song QR, so Request a song starts near the top, half the screen."));
+      c.blocks.forEach(function (bl, i) {
+        p.appendChild(h("div", { class: "aklr-item" + (bl.on === false ? " off" : "") }, h("div", { class: "aklr-ih" },
+          h("input", { type: "checkbox", "aria-label": "Show " + AKLR_BLK[bl.k], checked: bl.on !== false, onChange: function () { bl.on = this.checked; chg(true); } }),
+          h("b", { class: "grow" }, AKLR_BLK[bl.k] || bl.k),
+          AKLR_SIZES[bl.k] ? sel(null, function () { return bl.size; }, function (v) { bl.size = v; }, AKLR_SIZES[bl.k], false) : null, ud(c.blocks, i))));
+      });
+      p.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { c.blocks = clone(AKLR_BLOCKS); chg(true); } }, "↺ Back to the default order"),
+        h("button", { class: "sm", "data-lr": "edit", onClick: function () { akLrPreview(true); } }, "✎ Edit this page"),
+        h("button", { class: "sm", "data-lr": "studio", onClick: function () { akLrStudioOpen(); } }, "📱 Design it in Graphics")));
+      p.appendChild(h("p", { class: "hint" }, c.studio.on && c.studio.img ? "Your page uses your 📱 Request page design from Graphics (Look › Page layout). Its parts sit where you put them there." : "✎ Edit this page: tap any part and change its size, font, colors and place. 📱 Design it in Graphics: every part is a layer, with all the studio's tools."));
+    } else if (c.ui.tab === "top") {
+      about.forEach(function (n) { p.appendChild(n); });
+      p.appendChild(h("div", { class: "aklr-k" }, "Show at the top"));
+      var a = typeof akArtist === "function" ? akArtist() : null;
+      function art(v) { if (a && v) { a.onPage = true; if (typeof akArtistPublishSoon === "function") akArtistPublishSoon(); } }
+      p.appendChild(h("div", { class: "aklr-two" },
+        chk("Photo", function () { return c.photo; }, function (v) { c.photo = v; art(v); }),
+        chk("Tagline", function () { return c.tagline; }, function (v) { c.tagline = v; art(v); }),
+        chk("Website button", function () { return c.links.website !== false; }, function (v) { c.links.website = v; }),
+        chk("Social link buttons", function () { return c.links.social !== false; }, function (v) { c.links.social = v; }),
+        chk("❓ How this works button", function () { return c.helpBtn; }, function (v) { c.helpBtn = v; })));
+      p.appendChild(sel("Bio", function () { return c.bio; }, function (v) { c.bio = v; art(v !== "off"); }, [["off", "Off (no bio)"], ["line", "One line (from 🎤 Artist info)"], ["short", "Short (from Artist info)"], ["medium", "Medium"], ["long", "Long"], ["own", "Write my own"]], true));
+      if (c.bio === "own") p.appendChild(txt(null, function () { return c.ownBio; }, function (v) { c.ownBio = v; }, { area: true, rows: 3, ph: "A bio just for this page" }));
+      p.appendChild(h("p", { class: "hint" }, "Photo, tagline and bios come from 🎤 Artist info. Photo, bio and link buttons is one part under ⇅ Arrange (pick “Photo, tagline, bio and buttons” to show the photo and bio)."));
+    } else if (c.ui.tab === "msgs") {
+      p.appendChild(h("p", { class: "hint" }, "Your own notes on the page: specials, a thank-you, “last song at 11”, a new album. Turn each on or off without losing it."));
+      c.msgs.forEach(function (m, i) {
+        p.appendChild(h("div", { class: "aklr-item" + (m.on === false ? " off" : "") },
+          h("div", { class: "aklr-ih" }, h("input", { type: "checkbox", "aria-label": "Show this message", checked: m.on !== false, onChange: function () { m.on = this.checked; chg(true); } }), h("b", { class: "grow" }, "Message " + (i + 1)), ud(c.msgs, i),
+            h("button", { class: "icon sm", "aria-label": "Remove", onClick: function () { c.msgs.splice(i, 1); chg(true); } }, "✕")),
+          txt(null, function () { return m.text; }, function (v) { m.text = v; }, { area: true, rows: 2, ph: "Type your message" }),
+          h("div", { class: "aklr-two" },
+            sel(null, function () { return m.style || "plain"; }, function (v) { m.style = v; }, [["plain", "Plain box"], ["hl", "Highlighted"], ["ban", "Banner (bold, colored)"]], false),
+            sel(null, function () { return m.where || "top"; }, function (v) { m.where = v; }, [["top", "In the Messages spot (⇅ Arrange)"], ["songs", "Inside Request a song"], ["tip", "On the Tip tab"], ["all", "At the very bottom"]], false)),
+          h("label", { class: "fld" }, "Hide it after (optional)", h("input", { type: "date", value: m.until || "", onChange: function () { m.until = this.value; chg(false); } }))));
+      });
+      p.appendChild(h("div", { class: "row" }, h("button", { class: "sm", "data-lr": "addmsg", onClick: function () { c.msgs.push({ on: true, text: "", style: "plain", where: "top", until: "" }); chg(true); } }, "+ Add a message"),
+        h("button", { class: "sm", onClick: function () { c.msgs.push({ on: true, text: "🎉 Thanks for coming out tonight!", style: "ban", where: "top", until: "" }); chg(true); } }, "+ Banner")));
+    } else if (c.ui.tab === "next") {
+      pageSeg.filter(function (n) { return !(n.nodeType === 1 && n.tagName === "LABEL" && /Page look/.test(n.textContent)); }).forEach(function (n) { p.appendChild(n); });
+      var nb = c.blocks.filter(function (x) { return x.k === "next"; })[0];
+      p.appendChild(chk("Show the 📅 Next shows box on the page", function () { return nb.on !== false; }, function (v) { nb.on = v; }, true));
+      p.appendChild(h("div", { class: "aklr-two" },
+        sel("Size", function () { return nb.size || "small"; }, function (v) { nb.size = v; }, AKLR_SIZES.next, false),
+        sel("How many", function () { return c.nx.count || 3; }, function (v) { c.nx.count = Number(v); }, [[1, "1"], [2, "2"], [3, "3"], [5, "5"]], false)));
+      p.appendChild(chk("“All shows ›” link to the Shows tab", function () { return c.nx.link !== false; }, function (v) { c.nx.link = v; }));
+      p.appendChild(h("p", { class: "hint" }, "It fills in by itself from your shows marked “Show on my request page”, and a show drops off once it's over. Move it under ⇅ Arrange."));
+    } else if (c.ui.tab === "tabs") {
+      p.appendChild(h("div", { class: "aklr-k" }, "Tabs on the page (each shows only when it has something in it)"));
+      p.appendChild(h("div", { class: "aklr-two" }, [["learn", akLrW("learn")], ["msg", akLrW("msg")], ["tip", akLrW("tip")], ["shows", akLrW("shows")], ["mine", akLrW("mine")]].map(function (t) {
+        return chk(t[1], function () { return c.tabs[t[0]] !== false; }, function (v) { c.tabs[t[0]] = v; });
+      })));
+      p.appendChild(h("p", { class: "hint" }, "Learn and message also need “Let people ask me to learn a song” / “send me a message” under 💵 Tips and request rules."));
+    } else if (c.ui.tab === "words") {
+      p.appendChild(h("p", { class: "hint" }, "What every tab and button says. Clear words, your way. Empty = the app's words."));
+      p.appendChild(h("div", { class: "aklr-two" }, [["req", "Request tab and box"], ["learn", "Learn tab"], ["msg", "Message tab"], ["tip", "Tip tab"], ["shows", "Shows tab"], ["mine", "My requests tab"], ["send", "Send button"], ["search", "Search box"], ["dedic", "Dedicate button"], ["tipBtn", "Each tip button ({app} = Venmo…)"]].map(function (x) {
+        return txt(x[1], function () { return c.words[x[0]] != null ? c.words[x[0]] : AKLR_WORDS[x[0]]; }, function (v) { c.words[x[0]] = v; });
+      })));
+      p.appendChild(h("div", { class: "aklr-k" }, "Tip messages"));
+      var T = c.tipLines;
+      p.appendChild(chk("Show a line about tips under Request a song", function () { return c.ruleLine; }, function (v) { c.ruleLine = v; }, true));
+      p.appendChild(chk("Include the automatic line (“Tips are optional. $5 is suggested.”)", function () { return T.auto !== false; }, function (v) { T.auto = v; }));
+      T.list.forEach(function (l, i) { p.appendChild(h("div", { class: "aklr-ih" }, h("span", { class: "grow" }, txt(null, function () { return T.list[i]; }, function (v) { T.list[i] = v; }, { ph: "Your tip message" })), h("button", { class: "icon sm", "aria-label": "Remove", onClick: function () { T.list.splice(i, 1); chg(true); } }, "✕"))); });
+      p.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { T.list.push(""); chg(true); } }, "+ Add a tip message"),
+        sel(null, function () { return T.show || "random"; }, function (v) { T.show = v; }, [["random", "Show one at random each visit"], ["rotate", "Change every 8 seconds"], ["all", "Show them all"], ["first", "Always the first one"]], false)));
+    } else {
+      pageSeg.filter(function (n) { return n.nodeType === 1 && n.tagName === "LABEL" && /Page look/.test(n.textContent); }).forEach(function (n) { p.appendChild(n); });
+      p.appendChild(sel("Page layout", function () { return c.studio.on && c.studio.img ? "studio" : "arrange"; }, function (v) { c.studio.on = v === "studio"; if (v === "studio" && !c.studio.img) { toast("Make it first: 📱 Design it in Graphics, then 📤 Use on my request page."); c.studio.on = false; } }, [["arrange", "⇅ Arrange (parts one under another)"], ["studio", "📱 My Request page design from Graphics"]], true));
+      p.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akLrStudioOpen(); } }, "📱 Design it in Graphics"), h("button", { class: "sm", onClick: function () { akLrPreview(true); } }, "✎ Edit this page"), Object.keys(c.st).length ? h("button", { class: "sm", onClick: function () { c.st = {}; chg(true); toast("Your ✎ styles are cleared."); } }, "↺ Clear my ✎ styles") : null));
+      p.appendChild(h("p", { class: "hint" }, "Corners are square and lines thin, like the app."));
+    }
+  });
+  /* 🎂 */
+  fold("ded", "🎂 Birthdays and dedications", "Who it's for, how to say their name, when, where they're sitting", function (b) {
+    var D = c.ded;
+    b.appendChild(chk("Let people dedicate a request (" + akLrW("dedic") + ", on the send screen)", function () { return D.on; }, function (v) { D.on = v; }));
+    b.appendChild(chk("Ask for the details by itself when someone picks a birthday song", function () { return D.bday; }, function (v) { D.bday = v; }, true));
+    if (D.bday) b.appendChild(txt("Songs that count as birthday songs (commas between)", function () { return D.bdaySongs; }, function (v) { D.bdaySongs = v; }));
+    b.appendChild(txt("What the dedication box says", function () { return D.words; }, function (v) { D.words = v; }, { area: true, rows: 2 }));
+    if (D.bday) b.appendChild(txt("What it says for a birthday song", function () { return D.bdayWords; }, function (v) { D.bdayWords = v; }, { area: true, rows: 2 }));
+    b.appendChild(h("div", { class: "aklr-k" }, "Questions to ask (tick, rename, change the grey example)"));
+    D.fields.forEach(function (f, i) {
+      b.appendChild(h("div", { class: "aklr-item" + (f.on === false ? " off" : "") }, h("div", { class: "aklr-ih" },
+        h("input", { type: "checkbox", "aria-label": "Ask this", checked: f.on !== false, onChange: function () { f.on = this.checked; chg(true); } }),
+        h("span", { class: "grow" }, txt(null, function () { return f.l; }, function (v) { f.l = v; }, { ph: "Question" })), ud(D.fields, i),
+        /^my/.test(f.k) ? h("button", { class: "icon sm", "aria-label": "Remove", onClick: function () { D.fields.splice(i, 1); chg(true); } }, "✕") : null),
+        f.pick ? txt("Choices (commas between)", function () { return D.whenOpts; }, function (v) { D.whenOpts = v; }) : txt(null, function () { return f.ph; }, function (v) { f.ph = v; }, { ph: "Grey example text" })));
+    });
+    b.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { D.fields.push({ k: "my" + Date.now().toString(36), on: true, l: "", ph: "" }); chg(true); } }, "+ Add a question"), h("button", { class: "sm", onClick: function () { c.ded = clone(AKLR_DED); chg(true); } }, "↺ The app's words")));
+    b.appendChild(h("p", { class: "hint" }, "Every answer is optional for them. The answers go at the front of the request's note, so your requests panel and the Info bar show them like: 💝 For Maria · say: mah-REE-ah · when: After the break · where: table by the window."));
+  }, true);
+  /* ❓ */
+  fold("help", "❓ Help pop-ups", "The cards people see the first time they open the page", function (b) {
+    b.appendChild(chk("Show the help the first time someone opens the page", function () { return c.helpOn; }, function (v) { c.helpOn = v; }));
+    b.appendChild(h("p", { class: "hint" }, "They start as the app's words. Edit any card, turn it off, move it, or add your own. {name} becomes your name."));
+    c.help.forEach(function (x, i) {
+      var def = AKLR_HELP.filter(function (d) { return d.id === x.id; })[0], edited = def && (def.e !== x.e || def.t !== x.t || def.b !== x.b);
+      b.appendChild(h("div", { class: "aklr-item" + (x.on === false ? " off" : "") },
+        h("div", { class: "aklr-ih" }, h("input", { type: "checkbox", "aria-label": "Use this card", checked: x.on !== false, onChange: function () { x.on = this.checked; chg(true); } }),
+          h("input", { type: "text", class: "aklr-emo", "aria-label": "Icon", value: x.e || "", onInput: function () { x.e = this.value; ctx.mark(); save(); akLrPublishSoon(); } }),
+          h("span", { class: "grow" }, txt(null, function () { return x.t; }, function (v) { x.t = v; }, { ph: "Heading" })), ud(c.help, i),
+          def ? h("button", { class: "icon sm", "aria-label": "Back to the app's words", title: "Back to the app's words", disabled: !edited, onClick: function () { x.e = def.e; x.t = def.t; x.b = def.b; chg(true); } }, "↺")
+            : h("button", { class: "icon sm", "aria-label": "Delete my card", onClick: function () { c.help.splice(i, 1); chg(true); } }, "✕")),
+        txt(null, function () { return x.b; }, function (v) { x.b = v; }, { area: true, rows: 2 }),
+        h("div", { class: "row", style: "margin:0" }, h("span", { class: "aklr-tag" + (def && !edited ? "" : " cust") }, def ? (edited ? "Your words" : "App's words") : "Your own card"), x.when ? h("span", { class: "aklr-tag" }, x.when) : null)));
+    });
+    b.appendChild(h("div", { class: "row" }, h("button", { class: "sm", "data-lr": "addcard", onClick: function () { c.help.push({ id: "my" + Date.now().toString(36), e: "⭐", t: "", b: "", when: "", on: true }); chg(true); } }, "+ Add my own card"),
+      h("button", { class: "sm", onClick: function () { akLrPreview(false, true); } }, "▶ Try it"),
+      h("button", { class: "sm", onClick: function () { c.help = clone(AKLR_HELP); chg(true); } }, "↺ All back to the app's words")));
+  }, true);
+  /* 🎵 */
+  fold("songs", "🎵 Songs people can request", "Which list the page shows", function (b) { seg.songs.forEach(function (n) { b.appendChild(n); }); });
+  /* 💵 */
+  fold("tips", "💵 Tips and request rules", "Free or tipped, ways to tip, limits, encore bribes", function (b) {
+    take(/^Request rules/).forEach(function (n) { b.appendChild(n); });
+    var ways = seg.__ways || []; ways.forEach(function (n) { b.appendChild(n); });
+    var tc = take(/^Tip choices/); if (tc.length) b.appendChild(h("h3", { class: "akl-h" }, "Tip choices"));
+    tc.forEach(function (n) { b.appendChild(n); });
+    var Lm = c.lim;
+    b.appendChild(h("h3", { class: "akl-h" }, "Request limits"));
+    b.appendChild(chk("One request per person at a time (they can send another once it's played)", function () { return Lm.one; }, function (v) { Lm.one = v; }, true));
+    b.appendChild(h("div", { class: "aklr-two" },
+      sel("Most requests waiting at once", function () { return Lm.max || 0; }, function (v) { Lm.max = Number(v); }, [[0, "No limit"], [3, "3"], [5, "5"], [8, "8"], [10, "10"], [15, "15"], [20, "20"]], true),
+      chk("No more than the songs left in the set (the “songs left” count)", function () { return Lm.setLeft; }, function (v) { Lm.setLeft = v; }, true)));
+    if (Lm.one || Lm.max || Lm.setLeft) b.appendChild(txt("What people see when it's full", function () { return Lm.full || AKLR_LIM_FULL; }, function (v) { Lm.full = v; }));
+    b.appendChild(h("p", { class: "hint" }, "With both limits on, the smaller number wins. Learn requests and messages don't count. The songs-left limit works while a setlist is playing."));
+    take(/Encore bribes/).forEach(function (n) { b.appendChild(n); });
+  });
+  /* 📱 */
+  fold("stage", "📱 On the playing screen", "Info bar count, flash, buzz, beep", function (b) { take(/^On the playing screen/).forEach(function (n) { b.appendChild(n); }); });
+  /* anything else the old section had */
+  var rest = Object.keys(seg).filter(function (k) { return !used[k] && k.indexOf("__") !== 0 && seg[k].length; });
+  if (rest.length) fold("more", "⋯ More", "Other live request settings", function (b) { rest.forEach(function (k) { b.appendChild(h("h3", { class: "akl-h" }, k)); seg[k].forEach(function (n) { b.appendChild(n); }); }); });
+}
+
+/* ---------------------------------------------------------------- 👁 Preview and ✎ Edit this page: the real page in a phone frame */
+function akLrPreview(edit, help) {
+  var L = akLive(); if (!L.on) { toast("Turn on live requests first."); return; }
+  if (L.mode === "cloud" && AKL.conn !== "cloud") { toast("Sign in first (🔌 Connection and sign-in), so the page has your details."); return; }
+  akLivePublish().catch(function () {});
+  /* this-device mode: hand the page your details straight away, even before the live connection has started */
+  if (L.mode !== "cloud") { try { localStorage.setItem("akreq:profile", JSON.stringify(akLivePublicProfile())); } catch (e) {} }
+  var url = akLivePageUrl() + "&preview=1" + (edit ? "&edit=1" : "") + (help ? "&help=1" : "");
+  var fr = h("iframe", { class: "aklr-frame", src: url, title: "Your request page", referrerpolicy: "no-referrer" });
+  AKLR.frame = fr;
+  modal(edit ? "✎ Edit this page" : "👁 Preview", h("div", null,
+    h("p", { class: "hint", style: "margin-top:0" }, edit ? "Tap any part of the page, then change it in the panel at the bottom. Changes save by themselves." : "This is your real page, as people see it. Nothing is sent from here."),
+    h("div", { class: "aklr-phone" }, fr),
+    h("div", { class: "row" }, h("button", { onClick: function () { fr.src = akLivePageUrl() + "&preview=1&help=1&t=" + Date.now(); } }, "▶ Try the help"),
+      h("button", { onClick: function () { fr.src = akLivePageUrl() + "&preview=1" + (edit ? "" : "&edit=1") + "&t=" + Date.now(); edit = !edit; this.textContent = edit ? "👁 Just look" : "✎ Edit this page"; } }, edit ? "👁 Just look" : "✎ Edit this page"))),
+    [{ label: "Done", primary: true, onClick: function () { AKLR.frame = null; } }], { wide: true });
+}
+window.addEventListener("message", function (e) {
+  try {
+    if (!e.data || e.data.ak !== "rq-st" || !AKLR.frame || e.source !== AKLR.frame.contentWindow) return;
+    var c = akLr(); c.st = e.data.st && typeof e.data.st === "object" ? JSON.parse(JSON.stringify(e.data.st)) : {}; save(); akLrPublishSoon();
+  } catch (x) {}
+});
+
+/* ---------------------------------------------------------------- 📱 Request page in the Graphics studio */
+AKG_KINDS.push(["reqpage", "📱 Request page", "Your song request page: move, size and color every part (they stay live), add pictures, words and effects behind them"]);
+AKG_LAYOUTS.reqpage = [["top", "Request a song on top"]];
+AKG_KSIZES.reqpage = ["story"];
+var AKLR_LIVE = [
+  ["rq_name", "Your name (live)", "text"], ["rq_reqt", "Request a song title (live)", "text"], ["rq_req", "🎵 Request a song box (live song list)", "box"],
+  ["rq_art", "Photo and bio (live)", "box"], ["rq_links", "Link buttons (live)", "box"], ["rq_help", "How this works button (live)", "box"],
+  ["rq_msgs", "Your messages (live)", "box"], ["rq_next", "📅 Next shows (live)", "box"], ["rq_tabs", "Other tabs (live)", "box"]];
+function akLrIsLive(id) { return /^rq_/.test(String(id || "")); }
+(function () {
+  var d0 = akGfxDefault;
+  akGfxDefault = function (kind) {
+    if (kind !== "reqpage") return d0.apply(this, arguments);
+    var D = d0("blank"), F = d0("flyer"); D.kind = "reqpage"; D.layout = "top"; D.size = "story"; D.bg = F.bg; D.overlay = 30; D.fg = "#ffffff"; D.logo = false; D.wordmark = false;
+    D.fonts = { title: akGfxStack("Syncopate"), main: akGfxStack("Outfit"), small: akGfxStack("Outfit") };
+    D.edit = { rq_art: { hide: true } };
+    return D;
+  };
+  var l0 = akGfxLayers;
+  akGfxLayers = function (D) {
+    if (!D || D.kind !== "reqpage") return l0.apply(this, arguments);
+    var Db = Object.assign({}, D, { kind: "blank", layout: "blank" }), P = l0.call(this, Db), W = P.W, F = D.fonts || {};
+    var at = 0; P.layers.forEach(function (l, i) { if (l.id === "background" || l.id === "overlay") at = i + 1; });
+    var nm = (akLive().profile || {}).name || akGfxName(), box = function (id, name, y, hh, a) { return { id: id, name: name, type: "grect", x: 60, y: y, w: W - 120, h: hh, r: 4, fill: "#000000", alpha: a == null ? 0.45 : a }; };
+    var L = [
+      { id: "rq_name", name: "Your name (live)", type: "text", text: nm, x: W / 2, y: 120, size: 78, font: F.title || akGfxStack("Syncopate"), weight: 400, color: "#ffffff", fgAuto: true, align: "center", maxW: W * 0.9, lh: 1.1 },
+      box("rq_req", "🎵 Request a song box (live song list)", 210, 900),
+      { id: "rq_reqt", name: "Request a song title (live)", type: "text", text: akLrW("req"), x: 100, y: 262, size: 50, font: F.main || akGfxStack("Outfit"), weight: 700, color: "#ffffff", fgAuto: true, align: "left", maxW: W * 0.8, lh: 1.1 },
+      box("rq_art", "Photo and bio (live)", 1135, 170, 0.35),
+      box("rq_links", "Link buttons (live)", 1135, 120, 0.35), box("rq_help", "How this works button (live)", 1275, 80, 0.35),
+      box("rq_msgs", "Your messages (live)", 1375, 150, 0.35), box("rq_next", "📅 Next shows (live)", 1545, 190, 0.35), box("rq_tabs", "Other tabs (live)", 1755, 110, 0.35)];
+    P.layers = P.layers.slice(0, at).concat(L, P.layers.slice(at));
+    return P;
+  };
+  /* in the studio the live boxes say what they are; the picture sent to the page leaves them out */
+  var dl = akDrawLayer;
+  akDrawLayer = function (ctx, l, P) {
+    var r = dl.apply(this, arguments);
+    try {
+      if (!AKLR.baking && l && l.type === "grect" && akLrIsLive(l.id)) {
+        var lab = (AKLR_LIVE.filter(function (x) { return x[0] === l.id; })[0] || [0, l.name])[1], s = Math.max(1, P.W / 1080);
+        ctx.save(); ctx.setLineDash([14 * s, 10 * s]); ctx.lineWidth = 3 * s; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.strokeRect(l.x, l.y, l.w, l.h); ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = "600 " + Math.round(26 * s) + "px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(lab, l.x + l.w / 2, l.y + (l.id === "rq_req" ? l.h / 2 : l.h / 2), l.w - 20);
+        if (l.id === "rq_req") { ctx.font = "400 " + Math.round(22 * s) + "px system-ui, sans-serif"; ctx.fillText("search box and songs go here", l.x + l.w / 2, l.y + l.h / 2 + 40 * s, l.w - 20); }
+        ctx.restore();
+      }
+    } catch (e) {}
+    return r;
+  };
+  if (typeof akGfxFileName === "function") { var f0 = akGfxFileName; akGfxFileName = function (D) { return D && D.kind === "reqpage" ? "Request page" : f0.apply(this, arguments); }; }
+})();
+function akLrHex(c, a) {
+  var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(c || "").trim()); if (!m) return c || "";
+  var x = m[1].length === 3 ? m[1].split("").map(function (q) { return q + q; }).join("") : m[1];
+  return "rgba(" + parseInt(x.slice(0, 2), 16) + "," + parseInt(x.slice(2, 4), 16) + "," + parseInt(x.slice(4, 6), 16) + "," + (a == null ? 1 : Math.round(a * 100) / 100) + ")";
+}
+/* the design -> { img (the picture without the live parts, JPEG), W, H, parts: { id: {x,y,w,h in %, fill, r, fs, font, color, weight, align, spacing, shadow} } } */
+function akLrStudioBake(D) {
+  var P = akGfxLayers(D);
+  return akGfxPrepare(P, D).then(function (P2) {
+    var B = akGfxBake(P2, D.edit), parts = {}, W = B.W, H = B.H;
+    B.layers.forEach(function (l) {
+      if (!akLrIsLive(l.id)) return;
+      if (l.type === "text") {
+        var bx = akLayerBox(l, B);
+        parts[l.id] = { x: bx.x / W * 100, y: bx.y / H * 100, w: Math.max(bx.w, l.align === "left" ? W - 120 - bx.x : bx.w) / W * 100, h: bx.h / H * 100, fs: l.size, font: l.font, color: l.color, weight: l.weight || 400, align: l.align, spacing: l.spacing || 0,
+          shadow: l.shadow && l.shadow.c ? (l.shadow.x || 0) + "px " + (l.shadow.y || 0) + "px " + (l.shadow.b || 0) + "px " + l.shadow.c : "" };
+      } else parts[l.id] = { x: l.x / W * 100, y: l.y / H * 100, w: l.w / W * 100, h: l.h / H * 100, fill: akLrHex(l.fill, l.alpha), r: l.r || 0 };
+    });
+    var only = Object.assign({}, B, { layers: B.layers.filter(function (l) { return !akLrIsLive(l.id); }) }), k = Math.min(1, 720 / W);
+    AKLR.baking = true;
+    var cv; try { cv = akPosterCanvas(only, null, k); } finally { AKLR.baking = false; }
+    return { img: cv.toDataURL("image/jpeg", 0.8), W: W, H: H, fg: B.fg || "#ffffff", font: (D.fonts || {}).main || "", parts: parts };
+  });
+}
+function akLrStudioOpen() { try { S.gfxKind = "reqpage"; akGfxOpen("reqpage", null); } catch (e) { go("graphics"); } }
+function akLrStudioPanel(d, D, ch) {
+  var c = akLr();
+  d.appendChild(h("p", { class: "hint", style: "margin-top:0" }, "Every part with “(live)” in its name is a real part of your request page: move it, size it, color it with the studio's tools (✋ Selected, 🎨 Colors, 🔤 Fonts). Pictures, words, shapes and effects you add go behind it as one picture."));
+  var st = h("p", { class: "hint", role: "status" }, c.studio.on && c.studio.img ? "✓ Your request page uses this design." : "Your request page doesn't use this design yet.");
+  d.appendChild(h("div", { class: "row" },
+    h("button", { class: "primary", "data-lr": "use", onClick: function () {
+      var b = this; b.disabled = true; st.textContent = "Getting it ready…";
+      akLrStudioBake(D).then(function (o) {
+        var cc = akLr(); cc.studio = { on: true, img: o.img, W: o.W, H: o.H, fg: o.fg, font: o.font, parts: o.parts, at: Date.now() }; save();
+        b.disabled = false; st.textContent = "✓ Sent. Your request page now uses this design."; if (AKL.conn) akLivePublish().catch(function () {}); toast("Your request page uses this design now.");
+      }, function (e) { b.disabled = false; st.textContent = "Couldn't make it: " + ((e && e.message) || e); });
+    } }, "📤 Use on my request page"),
+    c.studio.on ? h("button", { onClick: function () { var cc = akLr(); cc.studio.on = false; save(); if (AKL.conn) akLivePublish().catch(function () {}); st.textContent = "Your request page is back to ⇅ Arrange."; } }, "Stop using it") : null,
+    h("button", { onClick: function () { akLrPreview(false); } }, "👁 Preview")));
+  d.appendChild(st);
+  d.appendChild(h("p", { class: "hint" }, "After changes here, tap 📤 Use on my request page again. Hide a live part (🗂 Layers) and the page leaves it out."));
+}
+
+/* ---------------------------------------------------------------- 🧪 test checklist, help */
+if (typeof akTcAdd === "function") akTcAdd("22.4", "Live requests", [
+  ["lr-folds", "Live requests in folds", "Settings › Requests and tips › Live requests: 🔌 Connection and sign-in, 🎨 Page design, 🎂 Birthdays and dedications, ❓ Help pop-ups, 🎵 Songs, 💵 Tips and request rules, 📱 On the playing screen. Open one, the others close.", ["settings", {}, ""]],
+  ["lr-preview", "👁 Preview of the request page", "Live requests › 👁 Preview (next to Show my QR code). Your real page in a phone frame; Send does nothing there.", ["settings", {}, ""]],
+  ["lr-arrange", "⇅ Arrange the page", "🎨 Page design › ⇅ Arrange: move Request a song, turn parts off, pick sizes. 👁 Preview shows it.", ["settings", {}, ""]],
+  ["lr-bio", "Bio off by default", "🎨 Page design › Top › Bio: Off. Pick One line and set Photo, bio and link buttons (⇅ Arrange) to “Photo, tagline, bio and buttons”.", ["settings", {}, ""]],
+  ["lr-msgs", "Your messages on the page", "🎨 Page design › Messages › + Add a message, type, pick Highlighted. 👁 Preview.", ["settings", {}, ""]],
+  ["lr-words", "Your words on tabs and buttons", "🎨 Page design › Words: change “Leave a tip”, add a tip message. 👁 Preview.", ["settings", {}, ""]],
+  ["lr-edit", "✎ Edit this page", "🎨 Page design › ⇅ Arrange › ✎ Edit this page: tap your name in the page, change the font and size. Done, then 👁 Preview again.", ["settings", {}, ""]],
+  ["lr-studio", "📱 Request page in Graphics", "🎨 Page design › ⇅ Arrange › 📱 Design it in Graphics: move the (live) boxes, change a color, then 📱 On my page › 📤 Use on my request page. 👁 Preview.", ["settings", {}, ""]],
+  ["lr-ded", "💝 Dedications and 🎂 birthdays", "On the request page (👁 Preview or your phone): pick a song › 💝 Dedicate it to someone. Pick Happy Birthday: the questions open by themselves. Send from a phone and check the note in the requests panel.", ["settings", {}, ""]],
+  ["lr-help", "Your help cards", "❓ Help pop-ups: change a card's words, + Add my own card, ▶ Try it.", ["settings", {}, ""]],
+  ["lr-limits", "Request limits", "💵 Tips and request rules › Request limits: One request per person at a time. Send two from one phone: the second is stopped.", ["settings", {}, ""]]
+]);
+if (typeof AKTC_WHERE === "object") {
+  var AKLR_WHERE = {
+    "lr-folds": ["Settings › Requests and tips › Live requests", { sel: "#app details.aklr-g summary", re: "Page design" }],
+    "lr-preview": ["Settings › Requests and tips › Live requests › 👁 Preview", { sel: "#app button[data-lr=pv]" }],
+    "lr-arrange": ["Live requests › 🎨 Page design › ⇅ Arrange", { sel: "#app button[data-lr=t-arrange]" }],
+    "lr-bio": ["Live requests › 🎨 Page design › Top › Bio", { sel: "#app button[data-lr=t-top]" }],
+    "lr-msgs": ["Live requests › 🎨 Page design › Messages › + Add a message", { sel: "#app button[data-lr=t-msgs]" }],
+    "lr-words": ["Live requests › 🎨 Page design › Words", { sel: "#app button[data-lr=t-words]" }],
+    "lr-edit": ["Live requests › 🎨 Page design › ⇅ Arrange › ✎ Edit this page", { sel: "#app button[data-lr=edit]" }],
+    "lr-studio": ["Live requests › 🎨 Page design › ⇅ Arrange › 📱 Design it in Graphics", { sel: "#app button[data-lr=studio]" }],
+    "lr-ded": ["Live requests › 🎂 Birthdays and dedications", { sel: "#app details[data-lr=ded] summary" }],
+    "lr-help": ["Live requests › ❓ Help pop-ups", { sel: "#app details[data-lr=help] summary" }],
+    "lr-limits": ["Live requests › 💵 Tips and request rules › Request limits", { sel: "#app details[data-lr=tips] summary" }]
+  };
+  AKTC.forEach(function (x) { var w = AKLR_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Request page layout, words, messages, preview", a: "Settings › Requests and tips › Live requests › 🎨 Page design: ⇅ Arrange, Top (bio is off by default), Messages, Next shows, Tabs, Words, Look. 👁 Preview, ✎ Edit this page, 📱 Design it in Graphics." });
+
+akCss("ak-v22lr", [
+  "details.aklr-g{border:1px solid var(--line);border-radius:2px;margin:6px 0;background:var(--panel)}",
+  "details.aklr-g>summary{list-style:none;cursor:pointer;padding:9px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}",
+  "details.aklr-g>summary::-webkit-details-marker{display:none}",
+  "details.aklr-g>summary::after{content:'▸';margin-left:auto;color:var(--muted)}details.aklr-g[open]>summary::after{content:'▾'}",
+  "details.aklr-g[open]>summary{border-bottom:1px solid var(--line)}",
+  ".aklr-d{color:var(--muted);font-size:.82rem;flex:1 1 12em;min-width:0}",
+  ".aklr-new{font-size:.68rem;font-weight:800;border:1px solid #C99A00;color:#C99A00;padding:0 4px;border-radius:2px;letter-spacing:.05em}",
+  ".aklr-b{padding:10px;display:grid;gap:8px}",
+  ".aklr-bar{flex-wrap:wrap}",
+  ".aklr-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));border:1px solid var(--line);border-radius:2px}",
+  ".aklr-tabs button{border:0;border-right:1px solid var(--line);border-radius:0;min-height:38px;font-size:.85rem;padding:2px 4px}",
+  ".aklr-tabs button[aria-pressed=true]{color:var(--accent);font-weight:800;box-shadow:inset 0 -2px 0 var(--accent)}",
+  ".aklr-pane{display:grid;gap:8px}",
+  ".aklr-item{border:1px solid var(--line);border-radius:2px;padding:6px;display:grid;gap:6px}.aklr-item.off{opacity:.55}",
+  ".aklr-ih{display:flex;gap:6px;align-items:center}.aklr-ih .grow{flex:1 1 auto;min-width:0}.aklr-ih select{width:auto;max-width:12em}",
+  ".aklr-emo{width:3em!important;text-align:center;flex:none}",
+  ".aklr-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px 10px}",
+  ".aklr-k{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:4px}",
+  ".aklr-tag{font-size:.72rem;border:1px solid var(--line);padding:1px 5px;border-radius:2px;color:var(--muted)}.aklr-tag.cust{color:#C99A00;border-color:#C99A00}",
+  ".aklr-phone{border:1px solid var(--line);background:#0f0d14;padding:6px;border-radius:4px;max-width:400px;margin:0 auto}",
+  ".aklr-frame{display:block;width:100%;height:min(70vh,720px);border:0;background:#fff}"
+].join("\n"));
+
+AK_VERSION = "22.4";
+AK_WHATS_NEW = [
+  "Settings › Requests and tips › Live requests is tidied into folds: sign-in and connection by itself, then 🎨 Page design, 🎂 Birthdays and dedications, ❓ Help pop-ups, songs, tips and limits, the playing screen.",
+  "🎨 Page design: ⇅ Arrange your request page (Request a song on top, half the screen), your name big on top, link buttons, your own messages, 📅 next shows, your words on every tab and button, tip messages. The bio is off unless you turn it on. 👁 Preview shows the real page.",
+  "✎ Edit this page: tap any part and change its size, font, colors and place. Or 📱 design the whole page in Graphics, with every part as a layer.",
+  "💝 People can dedicate a request, and a birthday song asks for the name, how to say it, when, and where they're sitting. Request limits: one at a time, or as many as the songs left in the set."
 ].concat(AK_WHATS_NEW);
 
 /* ---------- turning pasted charts into bracket form ---------- */
