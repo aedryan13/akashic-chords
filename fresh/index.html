@@ -3745,6 +3745,7 @@ function viewShow() {
           opts.push({ label: "→ A new set", onClick: function () { var ns = newSet("Set " + (x.sets.length + 1)); x.sets.push(ns); put(ns); } });
           menu(anchor, opts); }, 0); } }; })));
       } }, "Copy to another setlist…"),
+      typeof akNrSelBtn === "function" ? akNrSelBtn(collectSel, draw) : null,
       h("button", { class: "danger", disabled: !n, onClick: function () { var picked = collectSel(); snap("remove songs from set"); takeOut(picked); S.selSongs = {}; save(); draw(); toastUndo("Removed " + picked.length + (picked.length === 1 ? " song" : " songs") + " from the sets."); } }, "Remove"),
       h("button", { onClick: function () { S.selSongMode = false; S.selSongs = {}; draw(); } }, "Done"));
   }
@@ -3786,6 +3787,7 @@ function viewShow() {
       { sep: true },
       { label: "Sort or shuffle…", onClick: function () { setTimeout(function () { menu(anchor, sorts.map(function (o) { return { label: o[0], onClick: function () { snap("sort set"); sortSet(st, o[1]); save(); draw(); toastUndo(st.name + ": " + o[0].toLowerCase() + "."); } }; })); }, 0); } },
       { label: "Add songs…", onClick: function () { pickSongs(function (ids) { akSl16Add(sh, st, ids, draw); }, { have: akSl16Have(sh) }); } },
+    ].concat(typeof akNrSetItems === "function" ? [{ sep: true }].concat(akNrSetItems(st, draw), [{ sep: true }]) : []).concat([
       { label: "Color…", onClick: function () { modal("Set color", colorPicker(st.color, function (c) { st.color = c; save(); }), [{ label: "Done", onClick: function () { setTimeout(draw, 0); } }]); } },
       { label: "Rename…", onClick: function () { askText("Rename set", st.name, "Rename", function (v) { st.name = v; save(); draw(); }); } },
       { label: "Set length (for the break countdown)…", onClick: function () { askText("Length of " + st.name + " in minutes (blank = the setlist's)", st.mins ? String(st.mins) : "", "Save", function (v) { st.mins = Math.max(0, parseInt(v, 10) || 0); save(); draw(); }, "45"); } },
@@ -3794,7 +3796,7 @@ function viewShow() {
         var targets = sh.sets.map(function (x, xi) { return xi === si ? null : { label: "→ " + (/^set\s*\d+$/i.test(x.name.trim()) ? x.name : (xi + 1) + ". " + x.name), onClick: function () { moveAllSongs(st, x); } }; });
         targets.push({ label: "→ A new set", onClick: function () { var ns = newSet("Set " + (sh.sets.length + 1)); sh.sets.splice(si + 1, 0, ns); moveAllSongs(st, ns); } });
         menu(anchor, targets); }, 0); } },
-      { label: "Delete this set…", danger: true, disabled: n === 1, onClick: function () { deleteSetDialog(st, si); } }]);
+      { label: "Delete this set…", danger: true, disabled: n === 1, onClick: function () { deleteSetDialog(st, si); } }]));
   }
   function draw() {
     var scroll = $("mainScroll"), keep = scroll ? scroll.scrollTop : 0;
@@ -3819,6 +3821,7 @@ function viewShow() {
         { label: "Venues…", onClick: function () { openVenues(); } },
         { label: "Undo last change", disabled: !undoStack.length, onClick: undoLast },
         akSl16Prac() ? null : { label: "Timers, break and start-time countdown…", onClick: function () { openTimers({ showId: sh.id }); } },
+        typeof akNrShowItem === "function" ? akNrShowItem(sh, draw) : null,
         { label: "Choose what shows under each song…", onClick: function () { infoOptionsDialog("sets", function () { draw(); }); } },
         !akSl16Prac() && akRunLive(sh.id) ? { label: "End this show now…", onClick: function () { akEndShowAsk(draw); } } : null,
         !akSl16Prac() && !akRunLive(sh.id) && akRunJustEnded(sh.id) ? { label: "Resume this show (encore)", onClick: function () { akRunResume(); draw(); } } : null,
@@ -3880,13 +3883,15 @@ function viewShow() {
             return;
           }
           akAnnRows(sh, st, id, draw).forEach(function (r) { blk.appendChild(r); });
-          blk.appendChild(h("div", { class: "item srow", "data-set": st.id, "data-idx": String(i), style: s && s.color ? "border-left:6px solid " + s.color : null },
+          var nrOn = s && typeof akNrRowsOn === "function" && akNrRowsOn();
+          blk.appendChild(h("div", { class: "item srow" + (nrOn && s.noReq ? " aknr-off" : ""), "data-set": st.id, "data-idx": String(i), style: s && s.color ? "border-left:6px solid " + s.color : null },
             h("button", { class: "handle sh-song", "aria-label": "Drag to move", title: "Drag to move" }, "⠿"),
             h("div", { class: "num" }, String(i + 1)),
             akSl16Prac() ? null : h("button", { class: "tick" + (sh.played[id] ? " on" : ""), "aria-pressed": sh.played[id] ? "true" : "false", "aria-label": "Played", onClick: function () { if (sh.played[id]) { delete sh.played[id]; uncountPlay(id, sh.id); } else countPlay(id, sh.id, { setName: st.name, setNo: sh.sets.indexOf(st) + 1, manual: 1 }); save(); draw(); } }, sh.played[id] ? "✓" : ""),
             h("button", { class: "main-btn" + (!akSl16Prac() && sh.played[id] ? " done" : ""), onClick: function () { saveNow(); var idx = 0, c = 0; sh.sets.forEach(function (x, xi) { x.songIds.forEach(function (sid, k) { if (findSong(sid)) { if (xi === si && k === i) idx = c; c++; } }); }); playShow(sh, idx, function () { go("show", { showId: sh.id }); }); } },
               h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (st.rec && st.rec[id] ? "● " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : "")),
             s && typeof akTapPlays === "function" && akTapPlays() ? h("button", { class: "icon akedit", "aria-label": "Edit " + s.title, title: "Edit", onClick: function () { saveNow(); go("song", { songId: id }); } }, "✎") : null,
+            nrOn ? akNrBtn(s, draw) : null,
             h("button", { class: "icon", "aria-label": "Song options", onClick: function () { songMenu(this, st, si, i); } }, "⋯")));
         });
         if (S.selSongMode) blk.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { var allOn = st.songIds.length && st.songIds.every(function (id, i) { return S.selSongs[selKey(st, i)]; }); st.songIds.forEach(function (id, i) { if (allOn) delete S.selSongs[selKey(st, i)]; else S.selSongs[selKey(st, i)] = 1; }); draw(); } }, "Select all in this set")));
@@ -12653,10 +12658,12 @@ function openSongList(root) {
   function played(it) { var sh = it.showId && findShow(it.showId); return !!(sh && sh.played[it.songId]); }
   function row(song, it, i, num) {
     var sh = it && it.showId ? findShow(it.showId) : null, pl = sh && sh.played[song.id];
-    var r = h("div", { class: "li" + (it && i === p.idx ? " cur" : "") + (pl ? " played" : ""), style: song.color ? "border-left:6px solid " + song.color : null },
+    var nrOn = typeof akNrRowsOn === "function" && akNrRowsOn();
+    var r = h("div", { class: "li" + (it && i === p.idx ? " cur" : "") + (pl ? " played" : "") + (nrOn && song.noReq ? " aknr-off" : ""), style: song.color ? "border-left:6px solid " + song.color : null },
       sh ? h("button", { class: "tick" + (pl ? " on" : ""), "aria-pressed": pl ? "true" : "false", "aria-label": "Played", onClick: function () { if (sh.played[song.id]) { delete sh.played[song.id]; uncountPlay(song.id, sh.id); } else countPlay(song.id, sh.id, Object.assign({}, it, { manual: 1 })); save(); drawList(); } }, pl ? "✓" : "") : null,
       num ? h("span", { class: "n" }, String(num)) : null,
-      h("button", { class: "lbtn", onClick: function () { loadSongById(song.id, root); } }, h("div", { class: "t" }, song.title), h("div", { class: "s" }, [song.artist, song.key].filter(Boolean).join(" · ") || " ")));
+      h("button", { class: "lbtn", onClick: function () { loadSongById(song.id, root); } }, h("div", { class: "t" }, song.title), h("div", { class: "s" }, [song.artist, song.key].filter(Boolean).join(" · ") || " ")),
+      nrOn ? akNrBtn(song, function () { drawList(); }) : null);
     if (it && i === p.idx) body._cur = r;
     return r;
   }
@@ -68816,6 +68823,1159 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
   AKTC.forEach(function (x) { var w = AKQS_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
 }
 AK_VERSION = "22.2";
+
+/* 22.0: block song requests from the setlist (his note 11-05: "choose which songs I want to do later and not allow people
+   to request"). Uses the same flag as 16.3 (song.noReq, greyed "Not available right now" on the request page, Random skips it).
+   - 🚫 square on each song row of a setlist page and of the playing screen's song list (tap = blocked / open again)
+   - set ⋯: block / open every song in that set; Select songs bar: 🚫 Requests… for the picked songs
+   - setlist ⋯: open every song for requests again (end of the night)
+   - Settings › Requests and tips › Booking and not-available songs: show or hide the 🚫 squares
+   Hooks: views_show.js (row, set menu, More menu, select bar) and play.js (song list row) call these; all guarded with typeof. */
+function akNrRowsOn() {
+  var v = settings().noReqRows;
+  if (v === true || v === false) return v;
+  return akPersonal() || !!(typeof akLive === "function" && akLive().on);
+}
+function akNrSet(list, on) {
+  var n = 0;
+  (list || []).forEach(function (s) { if (!s) return; if (on) { if (!s.noReq) n++; s.noReq = true; } else if (s.noReq) { delete s.noReq; n++; } });
+  save(); if (typeof akChPush === "function") akChPush();
+  return n;
+}
+function akNrToggle(s) {
+  if (!s) return;
+  var on = !s.noReq; akNrSet([s], on);
+  toast(on ? "🚫 " + (s.title || "Song") + ": no requests for now (greyed on the request page)." : "✓ " + (s.title || "Song") + ": open for requests again.");
+}
+function akNrBtn(s, redraw) {
+  var on = !!(s && s.noReq);
+  return h("button", { class: "icon aknr" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false",
+    "aria-label": (on ? "Requests blocked for " : "Block requests for ") + (s ? s.title : "this song"),
+    title: on ? "Not taking requests for this song (tap to open it again)" : "Tap so people can't request this song right now",
+    onClick: function (e) { e.stopPropagation(); akNrToggle(s); if (redraw) redraw(); } }, "🚫");
+}
+function akNrSetSongs(st) { return (st.songIds || []).map(findSong).filter(Boolean); }
+function akNrSetItems(st, redraw) {
+  var L = akNrSetSongs(st), nb = L.filter(akNoReq).length;
+  return [
+    { label: "🚫 Block requests for every song in this set", disabled: !L.length || nb === L.length, onClick: function () { var c = akNrSet(L, true); redraw(); toast("🚫 " + c + (c === 1 ? " song" : " songs") + " in " + st.name + ": no requests for now."); } },
+    { label: "✓ Open every song in this set for requests" + (nb ? " (" + nb + " blocked)" : ""), disabled: !nb, onClick: function () { var c = akNrSet(L, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } }];
+}
+function akNrShowItem(sh, redraw) {
+  var all = []; sh.sets.forEach(function (st) { akNrSetSongs(st).forEach(function (s) { if (all.indexOf(s) < 0) all.push(s); }); });
+  var nb = all.filter(akNoReq).length, lb = lib().songs.filter(akNoReq).length;
+  return { label: "✓ Open all songs for requests again" + (lb ? " (" + lb + " blocked" + (nb < lb ? ", " + nb + " in this setlist" : "") + ")" : ""), disabled: !lb,
+    onClick: function () { var c = akNrSet(lib().songs, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } };
+}
+function akNrSelBtn(picked, redraw) {
+  return h("button", { disabled: !picked().length, onClick: function () {
+    var L = []; picked().forEach(function (x) { var s = findSong(x.id); if (s && L.indexOf(s) < 0) L.push(s); });
+    menu(this, [
+      { label: "🚫 No requests for these", onClick: function () { var c = akNrSet(L, true); redraw(); toast("🚫 " + c + (c === 1 ? " song" : " songs") + ": no requests for now."); } },
+      { label: "✓ Open these for requests", onClick: function () { var c = akNrSet(L, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } }]);
+  } }, "🚫 Requests…");
+}
+(function () {
+  /* the show / hide switch sits next to the 🚫 picker in Settings › Requests and tips */
+  var pk = akNoReqPicker;
+  akNoReqPicker = function () {
+    var r = pk.apply(this, arguments);
+    setTimeout(function () {
+      var m = Array.prototype.slice.call(document.querySelectorAll(".modal")).pop(), p = m && m.querySelector(".hint");
+      if (!p || m.querySelector(".aknr-rows")) return;
+      p.parentNode.insertBefore(h("label", { class: "chk aknr-rows" }, h("input", { type: "checkbox", checked: akNrRowsOn(), onChange: function () { settings().noReqRows = this.checked; save(); } }),
+        "🚫 square on each song in a setlist and in the playing screen's song list"), p.nextSibling);
+    }, 0);
+    return r;
+  };
+})();
+akCss("aknr-css", ".aknr{width:32px;min-width:32px;height:32px;min-height:32px;padding:0;border-radius:2px;border:1px solid var(--line);background:transparent;font-size:15px;line-height:1;flex:none;align-self:center;opacity:.38;filter:grayscale(1)}" +
+  ".aknr.on{opacity:1;filter:none;border-color:#c0392b;background:rgba(192,57,43,.14)}" +
+  ".srow.aknr-off .main-btn .t,.listpanel .li.aknr-off .t{text-decoration:line-through;text-decoration-color:rgba(192,57,43,.7);text-decoration-thickness:1px}" +
+  ".listpanel .li .aknr{margin-left:auto}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Block requests for songs I'm saving for later", a: "🎤 Shows › open a setlist › tap 🚫 on a song (red = blocked). Also on the playing screen's song list. Whole set: the set's ⋯. Several: ⋯ › Select songs › 🚫 Requests…. End of night: ⋯ › Open all songs for requests again. Blocked songs are greyed on the request page as “Not available right now”.", k: "requests block not available later save end of night no requests disable request song setlist hide request page" });
+}
+AK_WHATS_NEW = ["🚫 Setlists: tap 🚫 on a song so people can't request it right now (greyed on your request page). Whole set from its ⋯, several from Select songs, and ⋯ › Open all songs for requests again."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("22.3", "Requests", [
+  ["nr-row", "🚫 on a setlist song", "Open a setlist, tap 🚫 on a song: it turns red and the title is crossed out. Your request page shows it greyed (Not available right now). Tap again to open it.", AKTC_SET],
+  ["nr-set", "Block a whole set", "On a set's ⋯: 🚫 Block requests for every song in this set, then ✓ Open every song in this set.", AKTC_SET],
+  ["nr-sel", "Block several", "Setlist ⋯ › Select songs…, tick a few, 🚫 Requests… › No requests for these.", AKTC_SET],
+  ["nr-play", "🚫 while playing", "Play the setlist, open the song list: each song has 🚫 on the right.", AKTC_SET],
+  ["nr-all", "Open all again", "Setlist ⋯ › ✓ Open all songs for requests again.", AKTC_SET]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK22NR_WHERE = { "nr-row": ["🎤 Shows › a setlist › 🚫 on each song row", { sel: ".srow .aknr" }], "nr-set": ["🎤 Shows › a setlist › a set's ⋯ › 🚫 Block requests…", { sel: ".sethead [aria-label='Set options']" }],
+    "nr-sel": ["🎤 Shows › a setlist › ⋯ › Select songs… › 🚫 Requests…"], "nr-play": ["▶ Play setlist › song list › 🚫 on the right of each song"],
+    "nr-all": ["🎤 Shows › a setlist › ⋯ › ✓ Open all songs for requests again", { sel: ".main .icon[aria-label=More]" }] };
+  AKTC.forEach(function (x) { var w = AK22NR_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "22.0";
+
+/* ================= 22.1: a window for every Graphics section, side dock, jump right to a control (his picks 11-05 on the mock-up)
+   Mock-up: https://claude.ai/artifact/SVoLx6VxnQP8GSTCVtcCBN. His picks: phone = floating windows, tablet = side dock, right side,
+   several open at once, – makes a small square on the edge, square, pinned dock shrinks the picture, see-through while a slider is
+   dragged, short windows, dock buttons with words, tapping a tool opens right at that control (ringed). His note: floating windows
+   and side dock are the two he likes, and every choice should be a setting (Settings › Tools and extras › Graphics windows,
+   also ⊞ next to the tools).
+   - Replaces 21.5's ONE shared Tools window (ak_v21f): ak21fSync is turned off here; its panel element now sits in the window of
+     the group that is open (so tests and code that look for .akg-panel still find it).
+   - Each group of AKG_GROUPS (Design, Text, Add, Layers, Effects, Page) has its own window: its parts as tabs across the top
+     (a tab opens and scrolls to that part), the parts as folds below (same .akg-fold / .akg-foldhd as before), the body scrolls.
+   - Float: ⋮⋮ drag (remembered per window), – small square on the edge (or a tab along the bottom), ⇥ dock, ✕ close.
+     Side dock: a column of section buttons on one edge; a tap slides the panel out, tapping the picture slides it away,
+     📌 keeps it open (and shrinks the picture beside it), ⧉ floats it.
+   - X.cat(id, ctl): opens the group's window at part id; ctl = words of a control in that part (a heading, a button such as
+     "Gradient") to scroll to, open or press; it gets a yellow ring. 🔎 finds a control by name (AKGW_FIND).
+   Settings live in akGfxCfg().gw. */
+var AKGW = { open: {}, min: {}, z: [], wins: {}, dockOpen: false, pin: false, cur: "", o: null, jump: null, keep: {} };
+var AKGW_DEF = { phone: "float", tablet: "dock", side: "r", several: true, minTo: "edge", shape: "square", fit: true, peek: true, size: "short", labels: true, jump: "control" };
+var AKGW_MODES = [["float", "Floating windows"], ["dock", "Side dock"], ["under", "Under the picture (old way)"]];
+function akgwCfg() {
+  var c = akGfxCfg(); if (!c.gw || typeof c.gw !== "object") c.gw = {};
+  var g = c.gw; Object.keys(AKGW_DEF).forEach(function (k) { if (g[k] == null) g[k] = AKGW_DEF[k]; });
+  if (!g.pos || typeof g.pos !== "object") g.pos = {};
+  return g;
+}
+function akgwTablet() { return Math.min(window.innerWidth, window.innerHeight) >= 600; }
+function akgwMode() { var g = akgwCfg(), m = akgwTablet() ? g.tablet : g.phone; return AKGW_MODES.some(function (x) { return x[0] === m; }) ? m : "float"; }
+function akgwSetMode(m) { var g = akgwCfg(); if (akgwTablet()) g.tablet = m; else g.phone = m; save(); }
+/* the search list for 🔎: words people say -> part + the control's words in it (click = press it, it is a tab) */
+var AKGW_FIND = [
+  ["▦ Gradient background", "bg", "Gradient", 1, "gradient fill two colors fade background"],
+  ["⬛ Plain color background", "bg", "Plain color", 1, "plain solid color background fill"],
+  ["🖼 Theme pictures (background)", "bg", "Theme pictures", 1, "theme pictures background art"],
+  ["📷 My photos as background", "bg", "My photos", 1, "my photos background photo"],
+  ["🎞 Photo filter (black and white, sepia…)", "bg", "Photo filter", 0, "photo filter black white sepia duotone warm cool vivid faded"],
+  ["🎨 Color themes", "look", "Color themes", 0, "color colors theme palette"],
+  ["🎨 Words and lines color", "look", "Words and lines", 0, "words text color line color"],
+  ["💧 Dropper (pick a color from the picture)", "look", "💧 Dropper", 0, "dropper eyedropper pick color"],
+  ["🔳 QR code color", "look", "QR code", 0, "qr code color"],
+  ["🔤 Title font", "fonts", "Title font", 0, "font typeface letters title"],
+  ["🔤 Main and small fonts", "fonts", "Main font", 0, "font main small"],
+  ["🔤 Get a Google Font", "fonts", "Get a Google Font", 0, "google font download new font"],
+  ["🔠 Name letters (ALL CAPS)", "fonts", "Name letters", 0, "caps capitals upper case name"],
+  ["🌑 Shadow, glow, outline on the title", "tfx", "Title words", 0, "shadow glow outline stroke text effect title"],
+  ["▢ Shape behind the title words", "tfx", "Shape behind the title words", 0, "shape behind box banner"],
+  ["✨ Effects (any part)", "fx", "", 0, "effects blur glow fade shadow"],
+  ["↗ Reshape (curve, 3D)", "warp", "", 0, "reshape curve bend 3d warp tilt"],
+  ["⬛ Border", "deco", "Border", 0, "border frame edge"],
+  ["◯ Shapes", "deco", "Shapes", 0, "shapes circle square line"],
+  ["✦ Stars, grain, light leak", "deco", "Background graphics", 0, "stars sparkles grain light leak bokeh confetti halftone scan lines dark edges"],
+  ["🌀 Overlays (dots, lines, waves)", "ovl", "Add an overlay", 0, "overlay dots lines waves pattern screen"],
+  ["🏷 Logos", "logos", "", 0, "logo symbol name logo"],
+  ["🖼 My pictures", "pics", "", 0, "pictures photos headshots images"],
+  ["💡 Ideas to start from", "ideas", "", 0, "ideas start template"],
+  ["🔍 Check my design", "ideas", "🔍 Check my design", 0, "check design tips"],
+  ["🧩 Layout", "what", "", 0, "layout arrangement"],
+  ["🧩 Where the words sit", "what", "Where the words sit", 0, "where words sit position"],
+  ["✎ Words on it", "words", "", 0, "words text title footer"],
+  ["📅 Show date and place", "shows", "", 0, "show date venue time address"],
+  ["🗂 Layers", "layers", "", 0, "layers order hide lock"],
+  ["✋ The part I tapped", "sel", "", 0, "selected part size turn rotate"],
+  ["⭐ My styles", "styles", "", 0, "style saved look"],
+  ["📁 My designs", "drafts", "", 0, "designs drafts save open"]];
+
+/* 21.5's single window is replaced by these windows */
+if (typeof ak21fSync === "function") ak21fSync = function () { try { document.querySelectorAll(".ak21f-win").forEach(function (w) { w.hidden = true; }); } catch (e) {} };
+
+function akgwArea() {
+  var H = window.innerHeight, top = 0, floor = H;
+  try { var tb = document.querySelector(".tabbar"); if (tb && tb.offsetParent) floor = Math.min(H, tb.getBoundingClientRect().top); } catch (e) {}
+  try { var ms = document.getElementById("mainScroll"); if (ms) top = Math.max(0, ms.getBoundingClientRect().top); } catch (e) {}
+  return { top: top, floor: floor, h: floor - top, w: window.innerWidth };
+}
+function akgwGroups(o) { var by = {}; (o.L || []).forEach(function (c) { by[c[0]] = c; }); return AKG_GROUPS.filter(function (g) { return g[4].some(function (c) { return by[c]; }); }).map(function (g) { return { g: g, cats: g[4].filter(function (c) { return by[c]; }).map(function (c) { return by[c]; }) }; }); }
+function akgwLastCat(gid) {
+  var o = AKGW.o, st = o && o.st || akGfxState(), list = (o ? akgwGroups(o) : []).filter(function (x) { return x.g[0] === gid; })[0];
+  if (!list) return null; var ids = list.cats.map(function (c) { return c[0]; }), last = (st.grpCat || {})[gid];
+  return ids.indexOf(last) >= 0 ? last : ids[0];
+}
+function akgwFront(gid) { AKGW.z = AKGW.z.filter(function (x) { return x !== gid; }); AKGW.z.push(gid); }
+/* a part with the same fold-up behavior and the extra touches 17.x adds (sub-folds, the Selected part's own fill) */
+function akgwSec(o, c) {
+  var X = o.X, fill = c[2], f2 = c[0] === "sel" && typeof akGfxSelFill === "function" ? function (d) { akGfxSelFill(d, X); } : fill;
+  return o.sec(c[0], c[1], function (d) { f2(d); try { if (typeof akGfxSubFold === "function") akGfxSubFold(d, c[0]); } catch (e) {} });
+}
+function akgwBody(o, item, box) {
+  var st = o.st, X = o.X, cfg = akGfxCfg(), gid = item.g[0];
+  box.textContent = "";
+  var folds = h("div", { class: "akg-folds akgw-folds", "data-grp": gid });
+  item.cats.forEach(function (c) {
+    var id = c[0], open = cfg.open[id] != null ? !!cfg.open[id] : id === st.cat || id === akgwLastCat(gid);
+    var hd = h("button", { type: "button", class: "akg-foldhd" + (open ? " open" : ""), "aria-expanded": open ? "true" : "false", "data-cat": id, onClick: function () {
+      cfg.open[id] = !open; save(); if (!open) { st.cat = id; st._navCat = id; } X.drawPanel(); } }, h("span", null, c[1]), h("span", { class: "akg-foldic" }, open ? "▾" : "▸"));
+    var w = h("div", { class: "akg-fold akgw-part" + (open ? " open" : ""), "data-cat": id }, hd);
+    if (open) w.appendChild(akgwSec(o, c));
+    folds.appendChild(w);
+  });
+  box.appendChild(folds);
+}
+function akgwTabs(item, bd, tabs) {
+  tabs.textContent = "";
+  if (item.cats.length < 2) { tabs.hidden = true; return; }
+  tabs.hidden = false;
+  item.cats.forEach(function (c) {
+    tabs.appendChild(h("button", { type: "button", role: "tab", "data-cat": c[0], onClick: function () { akgwGo(item.g[0], c[0], "", 0, true); } }, c[1]));
+  });
+  function mark() {
+    var cur = null, top = bd.getBoundingClientRect().top + 10;
+    bd.querySelectorAll(".akgw-part").forEach(function (p) { if (p.getBoundingClientRect().top <= top) cur = p.getAttribute("data-cat"); });
+    if (!cur) { var f = bd.querySelector(".akgw-part"); cur = f && f.getAttribute("data-cat"); }
+    tabs.querySelectorAll("button").forEach(function (b) { var on = b.getAttribute("data-cat") === cur; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false"); });
+  }
+  if (!bd._akgwScroll) { bd._akgwScroll = 1; bd.addEventListener("scroll", function () { if (bd._mark) bd._mark(); }, { passive: true }); }
+  bd._mark = mark; setTimeout(mark, 0);
+}
+function akgwBtn(txt, aria, fn, cls) { return h("button", { type: "button", class: cls || "", "aria-label": aria, title: aria, onClick: function (e) { e.stopPropagation(); fn(e); } }, txt); }
+
+/* ---------------------------------------------------------------- floating windows */
+function akgwWinH() { var a = akgwArea(), s = akgwCfg().size; return Math.round(a.h * (s === "tall" ? 0.72 : s === "medium" ? 0.52 : 0.36)); }
+function akgwClamp(w, gid) {
+  var a = akgwArea(), g = akgwCfg(), p = g.pos[gid] || {}, W = window.innerWidth;
+  var x = p.x != null ? p.x : W - w.offsetWidth - 6 - Object.keys(AKGW.wins).indexOf(gid) * 14;
+  var y = p.y != null ? p.y : Math.max(a.top + 4, a.floor - w.offsetHeight - 8 - Math.max(0, Object.keys(AKGW.wins).indexOf(gid)) * 22);
+  x = Math.max(0, Math.min(W - Math.min(w.offsetWidth || 200, W), x)); y = Math.max(a.top, Math.min(a.floor - 40, y));
+  w.style.left = x + "px"; w.style.top = y + "px";
+  if (w._bd) w._bd.style.maxHeight = Math.max(110, Math.min(akgwWinH(), a.floor - y - 84)) + "px";
+}
+function akgwDrag(hd, w, gid) {
+  var d = null;
+  hd.addEventListener("pointerdown", function (e) {
+    if (e.target.closest && e.target.closest("button")) return;
+    e.preventDefault(); try { hd.setPointerCapture(e.pointerId); } catch (er) {}
+    d = { sx: e.clientX, sy: e.clientY, ox: w.offsetLeft, oy: w.offsetTop };
+  });
+  hd.addEventListener("pointermove", function (e) { if (!d) return; var g = akgwCfg(); g.pos[gid] = { x: Math.round(d.ox + e.clientX - d.sx), y: Math.round(d.oy + e.clientY - d.sy) }; akgwClamp(w, gid); });
+  function up() { if (!d) return; d = null; akgwCfg().pos[gid] = { x: w.offsetLeft, y: w.offsetTop }; save(); }
+  hd.addEventListener("pointerup", up); hd.addEventListener("pointercancel", up);
+}
+function akgwFloatWin(root, item, o) {
+  var gid = item.g[0], rec = AKGW.wins[gid];
+  if (!rec || !rec.w.isConnected) {
+    var tabs = h("div", { class: "akgw-tabs", role: "tablist" }), bd = h("div", { class: "akgw-bd" });
+    var hd = h("div", { class: "akgw-hd" }, h("span", { class: "akgw-g", "aria-hidden": "true" }, "⋮⋮"), h("span", { class: "akgw-t" }, item.g[1] + " " + item.g[2]),
+      akgwBtn("–", "Make it small", function () { AKGW.min[gid] = true; akgwSync(); }),
+      akgwBtn("⇥", "Dock it on the side", function () { akgwSetMode("dock"); AKGW.cur = gid; AKGW.dockOpen = true; akgwSync(); toast("Docked on the side. ⧉ in the dock floats it again; ⊞ by the tools switches layouts."); }),
+      akgwBtn("✕", "Close this window", function () { AKGW.open[gid] = false; akgwSync(); }));
+    var w = h("div", { class: "akgw-win", role: "dialog", "aria-label": item.g[2], "data-grp": gid }, hd, tabs, bd);
+    w._bd = bd; w._tabs = tabs;
+    w.addEventListener("pointerdown", function () { if (AKGW.z[AKGW.z.length - 1] !== gid) { akgwFront(gid); akgwZ(); } }, true);
+    akgwDrag(hd, w, gid);
+    root.appendChild(w);
+    rec = AKGW.wins[gid] = { w: w, bd: bd, tabs: tabs };
+  }
+  rec.w.style.width = Math.min(akgwTablet() ? 380 : 360, window.innerWidth - 8) + "px";
+  return rec;
+}
+function akgwZ() { Object.keys(AKGW.wins).forEach(function (k) { var r = AKGW.wins[k]; if (r && r.w) r.w.style.zIndex = 50 + Math.max(0, AKGW.z.indexOf(k)); }); }
+function akgwMinis(root) {
+  var g = akgwCfg(), ids = Object.keys(AKGW.open).filter(function (k) { return AKGW.open[k] && AKGW.min[k]; });
+  var box = root.querySelector(".akgw-minis");
+  if (!ids.length) { if (box) box.remove(); return; }
+  var a = akgwArea(), bar = g.minTo === "bar";
+  if (!box) { box = h("div", { class: "akgw-minis" }); root.appendChild(box); }
+  box.className = "akgw-minis " + (bar ? "bar" : "edge " + (g.side === "l" ? "l" : "r")) + (g.shape === "round" ? " round" : "");
+  box.style.top = bar ? "" : (a.top + 8) + "px"; box.style.bottom = bar ? (window.innerHeight - a.floor + 4) + "px" : "";
+  box.textContent = "";
+  AKG_GROUPS.forEach(function (gr) {
+    if (ids.indexOf(gr[0]) < 0) return;
+    box.appendChild(h("button", { type: "button", class: "akgw-mini", "data-grp": gr[0], "aria-label": "Open " + gr[2], title: "Open " + gr[2], onClick: function () { AKGW.min[gr[0]] = false; akgwFront(gr[0]); akgwSync(); } }, h("i", null, gr[1]), h("small", null, gr[2])));
+  });
+}
+
+/* ---------------------------------------------------------------- side dock */
+function akgwRailW() { return akgwCfg().labels ? 60 : 46; }
+function akgwDock(root, o, groups) {
+  var g = akgwCfg(), a = akgwArea(), side = g.side === "l" ? "l" : "r", rw = akgwRailW();
+  var rail = root.querySelector(".akgw-rail");
+  if (!rail) { rail = h("div", { class: "akgw-rail", role: "tablist", "aria-label": "Tool groups" }); root.appendChild(rail); }
+  rail.className = "akgw-rail " + side + (g.labels ? "" : " nolab");
+  rail.style.top = a.top + "px"; rail.style.height = a.h + "px"; rail.style.width = rw + "px";
+  rail.textContent = "";
+  groups.forEach(function (it) {
+    var on = AKGW.dockOpen && AKGW.cur === it.g[0];
+    rail.appendChild(h("button", { type: "button", class: "akgw-ri" + (on ? " on" : ""), role: "tab", "aria-selected": on ? "true" : "false", "data-grp": it.g[0], "aria-label": it.g[2], onClick: function () {
+      if (AKGW.dockOpen && AKGW.cur === it.g[0]) { AKGW.dockOpen = false; AKGW.pin = false; akgwSync(); return; }
+      AKGW.cur = it.g[0]; AKGW.dockOpen = true; o.X.cat(akgwLastCat(it.g[0])); } }, h("i", null, it.g[1]), h("span", null, it.g[2])));
+  });
+  rail.appendChild(h("div", { class: "akgw-sp" }));
+  rail.appendChild(h("button", { type: "button", class: "akgw-ri", "aria-label": "Find a tool", title: "Find a tool", onClick: function () { akgwFind(); } }, h("i", null, "🔎"), h("span", null, "Find")));
+  rail.appendChild(h("button", { type: "button", class: "akgw-ri", "aria-label": "Window layout", title: "Window layout", onClick: function () { akgwMenu(this); } }, h("i", null, "⊞"), h("span", null, "Layout")));
+  var item = groups.filter(function (x) { return x.g[0] === AKGW.cur; })[0] || groups[0];
+  if (!item) return null;
+  AKGW.cur = item.g[0];
+  var pan = root.querySelector(".akgw-pan"), pw = Math.min(akgwTablet() ? 380 : 330, window.innerWidth - rw - 24);
+  if (!pan) {
+    var tabs = h("div", { class: "akgw-tabs", role: "tablist" }), bd = h("div", { class: "akgw-bd" }), ti = h("span", { class: "akgw-t" });
+    var pin = akgwBtn("📌", "Keep it open (the picture moves beside it)", function () { AKGW.pin = !AKGW.pin; akgwSync(); });
+    pan = h("div", { class: "akgw-pan", role: "dialog" }, h("div", { class: "akgw-hd akgw-dhd" }, ti, pin,
+      akgwBtn("⧉", "Float it as a window", function () { var id = AKGW.cur; akgwSetMode("float"); AKGW.open[id] = true; AKGW.min[id] = false; akgwFront(id); AKGW.dockOpen = false; akgwSync(); }),
+      akgwBtn("✕", "Slide it away", function () { AKGW.dockOpen = false; AKGW.pin = false; akgwSync(); })), tabs, bd);
+    pan._bd = bd; pan._tabs = tabs; pan._t = ti; pan._pin = pin;
+    root.appendChild(pan);
+  }
+  pan._t.textContent = item.g[1] + " " + item.g[2]; pan.setAttribute("aria-label", item.g[2]); pan.setAttribute("data-grp", item.g[0]);
+  pan._pin.classList.toggle("on", AKGW.pin); pan._pin.setAttribute("aria-pressed", AKGW.pin ? "true" : "false");
+  pan.className = "akgw-pan " + side + (AKGW.dockOpen ? "" : " away");
+  pan.style.top = a.top + "px"; pan.style.height = a.h + "px"; pan.style.width = pw + "px"; pan.style[side === "r" ? "right" : "left"] = rw + "px"; pan.style[side === "r" ? "left" : "right"] = "";
+  /* the picture makes room: the rail always, the panel too when it is pinned (his pick: shrink the picture to fit beside it) */
+  var room = rw + (AKGW.dockOpen && AKGW.pin && g.fit ? pw : 0);
+  root.style.paddingRight = side === "r" ? room + "px" : ""; root.style.paddingLeft = side === "l" ? room + "px" : "";
+  return { item: item, rec: { w: pan, bd: pan._bd, tabs: pan._tabs } };
+}
+
+/* ---------------------------------------------------------------- put it all together after every drawPanel */
+function akgwClear(root) {
+  if (!root) return;
+  root.querySelectorAll(".akgw-win,.akgw-rail,.akgw-pan,.akgw-minis").forEach(function (x) { x.remove(); });
+  AKGW.wins = {}; root.style.paddingRight = ""; root.style.paddingLeft = ""; root.classList.remove("akgw-on", "akgw-dock");
+}
+function akgwHome(o) {
+  var p = o.panel, home = p._akgwHome;
+  if (home && p.parentNode !== home.parent) home.parent.insertBefore(p, home.next && home.next.parentNode === home.parent ? home.next : null);
+  p.hidden = false;
+}
+function akgwSync(o) {
+  o = o || AKGW.o; if (!o) return; AKGW.o = o;
+  var panel = o.panel, strip = o.strip, st = o.st, X = o.X;
+  if (!panel.parentNode || !strip.isConnected) { if (!panel._akgwWait) { panel._akgwWait = 1; setTimeout(function () { panel._akgwWait = 0; if (AKGW.o === o) akgwSync(o); }, 0); } return; }
+  if (!panel._akgwHome && !panel.closest(".akgw-win,.akgw-pan")) panel._akgwHome = { parent: panel.parentNode, next: panel.nextSibling };
+  var root = (panel._akgwHome && panel._akgwHome.parent.closest(".akg")) || strip.closest(".akg"); if (!root) return;
+  var mode = akgwMode();
+  if (mode === "under") { akgwHome(o); akgwClear(root); return; }
+  root.classList.add("akgw-on"); root.classList.toggle("akgw-dock", mode === "dock");
+  /* the tools row: ⊞ layout and 🔎 find; group tabs show which windows are open */
+  try {
+    var navc = strip.querySelector(".akg-navc");
+    if (navc && !navc.querySelector(".akgw-lay")) {
+      navc.insertBefore(h("button", { type: "button", class: "akg-navb akgw-fd", "aria-label": "Find a tool", title: "Find a tool", onClick: function () { akgwFind(); } }, "🔎"), navc.firstChild);
+      navc.insertBefore(h("button", { type: "button", class: "akg-navb akgw-lay", "aria-label": "Window layout", title: "Window layout: floating windows or side dock", onClick: function () { akgwMenu(this); } }, "⊞"), navc.firstChild);
+    }
+    strip.querySelectorAll(".akg-tab[data-grp]").forEach(function (t) { var id = t.getAttribute("data-grp"), on = mode === "float" ? !!(AKGW.open[id] && !AKGW.min[id]) : AKGW.dockOpen && AKGW.cur === id; t.classList.toggle("on", on); t.setAttribute("aria-selected", on ? "true" : "false"); });
+  } catch (e) {}
+  if (!strip._akgw) {
+    strip._akgw = 1;
+    strip.addEventListener("click", function (e) {
+      var t = e.target.closest && e.target.closest(".akg-tab[data-grp]"); if (!t || akgwMode() === "under") return;
+      e.stopPropagation(); e.preventDefault(); akgwTab(t.getAttribute("data-grp"));
+    }, true);
+  }
+  var groups = akgwGroups(o), keep = {};
+  Object.keys(AKGW.wins).forEach(function (k) { var r = AKGW.wins[k]; if (r && r.bd) keep[k] = r.bd.scrollTop; });
+  var pan0 = root.querySelector(".akgw-pan"); if (pan0 && pan0._bd) keep["dock:" + pan0.getAttribute("data-grp")] = pan0._bd.scrollTop;
+  var built = {};
+  panel.textContent = ""; panel.hidden = true;
+  if (mode === "dock") {
+    root.querySelectorAll(".akgw-win,.akgw-minis").forEach(function (x) { x.remove(); }); AKGW.wins = {};
+    var d = akgwDock(root, o, groups);
+    if (d) {
+      d.rec.bd.textContent = ""; d.rec.bd.appendChild(panel); panel.hidden = false;
+      /* built even while slid away (as 21.5 built its hidden window): the parts set their defaults the same way as before */
+      akgwBody(o, d.item, panel); akgwTabs(d.item, d.rec.bd, d.rec.tabs);
+      built[d.item.g[0]] = d.rec;
+      if (keep["dock:" + d.item.g[0]] != null) d.rec.bd.scrollTop = keep["dock:" + d.item.g[0]];
+    }
+  } else {
+    root.querySelectorAll(".akgw-rail,.akgw-pan").forEach(function (x) { x.remove(); }); root.style.paddingRight = ""; root.style.paddingLeft = "";
+    /* the panel goes home first, so removing a window never takes it out of the page */
+    akgwHome(o); panel.hidden = true;
+    var cur = akGfxGroupOf(st.cat)[0];
+    if (!(AKGW.open[cur] && !AKGW.min[cur])) cur = groups.map(function (x) { return x.g[0]; }).filter(function (k) { return AKGW.open[k] && !AKGW.min[k]; })[0];
+    groups.forEach(function (it) {
+      var id = it.g[0], show = AKGW.open[id] && !AKGW.min[id];
+      if (!show) { var r0 = AKGW.wins[id]; if (r0) { r0.w.remove(); delete AKGW.wins[id]; } return; }
+      var rec = akgwFloatWin(root, it, o), box;
+      rec.bd.textContent = "";
+      if (id === cur) { box = panel; panel.hidden = false; } else box = h("div", { class: "akg-panel akg-panel-tabs" });
+      rec.bd.appendChild(box);
+      akgwBody(o, it, box); akgwTabs(it, rec.bd, rec.tabs);
+      if (keep[id] != null) rec.bd.scrollTop = keep[id];
+      built[id] = rec;
+    });
+    Object.keys(AKGW.wins).forEach(function (k) { if (!built[k]) { AKGW.wins[k].w.remove(); delete AKGW.wins[k]; } });
+    /* no window shows the current group: still build it in the hidden panel (as 21.5 did in its closed window), so the parts
+       set their defaults at the same moments as before (undo/redo steps stay the same) */
+    if (!cur) { var ci = groups.filter(function (x) { return x.g[0] === akGfxGroupOf(st.cat)[0]; })[0]; if (ci) akgwBody(o, ci, panel); }
+    akgwZ();
+    Object.keys(built).forEach(function (k) { akgwClamp(built[k].w, k); });
+    akgwMinis(root);
+  }
+  /* a jump that was asked for (X.cat(id, ctl), a 🔎 pick, the tabs) */
+  var j = AKGW.jump; AKGW.jump = null;
+  if (j && built[j.g]) setTimeout(function () { akgwRing(built[j.g], j); }, 30);
+}
+function akgwTab(gid) {
+  var mode = akgwMode(), o = AKGW.o; if (!o) return;
+  if (mode === "dock") { if (AKGW.dockOpen && AKGW.cur === gid) { AKGW.dockOpen = false; AKGW.pin = false; akgwSync(); return; } AKGW.cur = gid; AKGW.dockOpen = true; }
+  else if (AKGW.open[gid] && !AKGW.min[gid] && AKGW.z[AKGW.z.length - 1] === gid) { AKGW.open[gid] = false; akgwSync(); return; }
+  var c = akgwLastCat(gid); if (c) o.X.cat(c);
+}
+/* open a group's window (or dock panel) */
+function akgwShow(gid) {
+  var g = akgwCfg();
+  if (akgwMode() === "dock") { AKGW.cur = gid; AKGW.dockOpen = true; return; }
+  if (!g.several) Object.keys(AKGW.open).forEach(function (k) { if (k !== gid) AKGW.open[k] = false; });
+  AKGW.open[gid] = true; AKGW.min[gid] = false; akgwFront(gid);
+}
+/* go to a part (and a control in it) */
+function akgwGo(gid, cat, ctl, click, tabOnly) {
+  var o = AKGW.o; if (!o) return;
+  var cfg = akGfxCfg(); cfg.open[cat] = true;
+  AKGW.jump = { g: gid, cat: cat, ctl: ctl || "", click: !!click, tab: !!tabOnly };
+  if (tabOnly) { o.st.cat = cat; o.st._navCat = cat; o.X.drawPanel(); return; }
+  o.X.cat(cat, ctl, click);
+}
+function akgwOwn(e) { var t = ""; for (var n = e.firstChild; n; n = n.nextSibling) if (n.nodeType === 3) t += n.textContent; t = t.trim(); return t || e.textContent.trim(); }
+function akgwRing(rec, j) {
+  var bd = rec.bd, part = bd.querySelector('.akgw-part[data-cat="' + j.cat + '"]'); if (!part) return;
+  var tgt = part, want = (j.ctl || "").toLowerCase();
+  if (want && akgwCfg().jump !== "top") {
+    var all = part.querySelectorAll(".akg-subhd, button, label, .akg-grp, h3, h4, .fld"), hit = null;
+    for (var i = 0; i < all.length && !hit; i++) { var t = akgwOwn(all[i]).replace(/[▾▸↺]/g, "").trim().toLowerCase(); if (t && t.indexOf(want) === 0) hit = all[i]; }
+    if (hit) {
+      tgt = hit;
+      /* a folded sub-part opens; a tab-like button gets pressed */
+      if (hit.classList.contains("akg-subhd") && hit.getAttribute("aria-expanded") === "false") hit.click();
+      else if (j.click && hit.tagName === "BUTTON") {
+        /* pressing a tab may redraw the part: find it again in the fresh part, then scroll and ring */
+        hit.click();
+        setTimeout(function () { var r2 = AKGW.wins[j.g] || (document.querySelector(".akgw-pan") ? { bd: document.querySelector(".akgw-pan")._bd } : null); if (r2 && r2.bd) akgwRing(r2, { g: j.g, cat: j.cat, ctl: j.ctl, click: false, tab: j.tab }); }, 80);
+        return;
+      }
+    }
+  }
+  var hdr = part.querySelector(".akg-foldhd"), y = tgt.getBoundingClientRect().top - bd.getBoundingClientRect().top + bd.scrollTop - 6;
+  if (tgt === part && hdr) y = hdr.getBoundingClientRect().top - bd.getBoundingClientRect().top + bd.scrollTop - 2;
+  try { bd.scrollTo({ top: Math.max(0, y), behavior: "smooth" }); } catch (e) { bd.scrollTop = Math.max(0, y); }
+  if (!j.tab || tgt !== part) { var r = tgt === part && hdr ? hdr : tgt; r.classList.remove("akgw-ring"); void r.offsetWidth; r.classList.add("akgw-ring"); setTimeout(function () { r.classList.remove("akgw-ring"); }, 1900); }
+  if (bd._mark) setTimeout(bd._mark, 400);
+}
+
+/* ---------------------------------------------------------------- ⊞ layout menu and 🔎 find */
+function akgwMenu(anchor) {
+  var g = akgwCfg(), m = akgwMode(), dev = akgwTablet() ? "On this tablet" : "On this phone";
+  menu(anchor, [{ head: dev }].concat(AKGW_MODES.map(function (x) { return { label: (x[0] === m ? "✓ " : "") + x[1], onClick: function () { akgwSetMode(x[0]); if (x[0] === "dock") AKGW.dockOpen = true; akgwRedraw(); } }; }))
+    .concat([{ sep: true },
+      { label: (g.several ? "✓ " : "") + "Several windows open at once", onClick: function () { g.several = !g.several; save(); akgwRedraw(); } },
+      { label: (g.peek ? "✓ " : "") + "See-through while I drag a slider", onClick: function () { g.peek = !g.peek; save(); } },
+      { label: "Dock and small windows: " + (g.side === "l" ? "left" : "right") + " (switch)", onClick: function () { g.side = g.side === "l" ? "r" : "l"; save(); akgwRedraw(); } },
+      { label: "More choices: Settings › Tools and extras › Graphics windows", onClick: function () { try { go("settings", {}); } catch (e) {} } }]));
+}
+function akgwRedraw() { try { var s = akGfxState(); if (s && s.X) s.X.drawPanel(); else akgwSync(); } catch (e) { akgwSync(); } }
+function akgwFind() {
+  var old = document.querySelector(".akgw-find"); if (old) { old.remove(); return; }
+  var o = AKGW.o; if (!o) return;
+  var have = {}; (o.L || []).forEach(function (c) { have[c[0]] = c; });
+  var list = AKGW_FIND.filter(function (x) { return have[x[1]]; });
+  (o.L || []).forEach(function (c) { if (!list.some(function (x) { return x[1] === c[0] && !x[2]; })) list.push([c[1], c[0], "", 0, ""]); });
+  var res = h("div", { class: "akgw-res", role: "listbox" }), a = akgwArea();
+  var inp = h("input", { type: "search", class: "akgw-q", placeholder: "Find a tool: gradient, shadow, font…", "aria-label": "Find a tool", autocomplete: "off", onInput: fill, onKeydown: function (e) { if (e.key === "Escape") box.remove(); if (e.key === "Enter") { var f = res.querySelector("button"); if (f) f.click(); } } });
+  var box = h("div", { class: "akgw-find", role: "dialog", "aria-label": "Find a tool" }, h("div", { class: "akgw-fhd" }, inp, akgwBtn("✕", "Close", function () { box.remove(); })), res);
+  box.style.top = (a.top + 6) + "px"; box.style.maxHeight = Math.max(200, a.h - 12) + "px";
+  function fill() {
+    var q = inp.value.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean); res.textContent = "";
+    list.filter(function (x) { var hay = (x[0] + " " + x[4]).toLowerCase(); return words.every(function (w) { return hay.indexOf(w) >= 0; }); }).slice(0, 40).forEach(function (x) {
+      var gr = akGfxGroupOf(x[1]);
+      res.appendChild(h("button", { type: "button", class: "akgw-hit", role: "option", onClick: function () { box.remove(); akgwGo(gr[0], x[1], x[2], x[3]); } }, h("span", null, x[0]), h("small", null, gr[2] + " ›")));
+    });
+    if (!res.firstChild) res.appendChild(h("p", { class: "hint", style: "padding:8px" }, "Nothing by that name. Try another word."));
+  }
+  fill(); document.body.appendChild(box); setTimeout(function () { try { inp.focus(); } catch (e) {} }, 30);
+}
+
+/* ---------------------------------------------------------------- hooks */
+(function () {
+  if (typeof akGfxNav !== "function") return;
+  var n0 = akGfxNav;
+  akGfxNav = function (o) {
+    if (akgwMode() === "under") { var r0 = n0.apply(this, arguments); try { AKGW.o = o; akgwSync(o); } catch (e) {} return r0; }
+    var cfg = akGfxCfg(), nav0 = cfg.nav, st = o.st, min0 = st.min, r;
+    /* the strip is drawn as tabs; the parts are drawn into the windows below (not under the picture) */
+    cfg.nav = "tabs"; st.min = false;
+    try { r = n0.call(this, Object.assign({}, o, { sec: function () { return h("div"); } })); } finally { cfg.nav = nav0; st.min = min0; }
+    try {
+      var X = o.X;
+      if (X && !X._akgw) {
+        X._akgw = 1;
+        var c0 = X.cat;
+        X.cat = function (id, ctl, click) {
+          if (akgwMode() !== "under") {
+            var gid = akGfxGroupOf(id)[0]; akgwShow(gid);
+            if (!AKGW.jump || AKGW.jump.cat !== id) AKGW.jump = { g: gid, cat: id, ctl: typeof ctl === "string" ? ctl : "", click: !!click };
+          }
+          return c0.apply(this, arguments);
+        };
+      }
+      AKGW.o = o; akgwSync(o);
+    } catch (e) { try { console.warn("graphics windows", e); } catch (x) {} }
+    return r;
+  };
+  /* see-through while a slider in a window is held */
+  function peek(on, t) { if (!akgwCfg().peek && on) return; var w = t && t.closest && t.closest(".akgw-win,.akgw-pan"); if (on && w && t.matches && t.matches("input[type=range]")) { w.classList.add("akgw-peek"); return; } if (!on) document.querySelectorAll(".akgw-peek").forEach(function (x) { x.classList.remove("akgw-peek"); }); }
+  document.addEventListener("pointerdown", function (e) { try { peek(true, e.target); } catch (x) {} }, true);
+  ["pointerup", "pointercancel"].forEach(function (ev) { document.addEventListener(ev, function () { try { peek(false); } catch (x) {} }, true); });
+  /* tapping the picture slides an unpinned dock away */
+  document.addEventListener("pointerdown", function (e) {
+    try { if (!AKGW.dockOpen || AKGW.pin || akgwMode() !== "dock") return; var t = e.target; if (t && t.closest && t.closest(".akg-prev") && !t.closest(".akgw-pan,.akgw-rail")) { AKGW.dockOpen = false; akgwSync(); } } catch (x) {}
+  }, true);
+  window.addEventListener("resize", function () { try { if (document.querySelector(".akgw-win,.akgw-rail")) akgwSync(); } catch (e) {} });
+})();
+
+/* Settings › Tools and extras › Graphics windows */
+(function () {
+  if (typeof akSettingsExtra26 !== "function") return;
+  var ns = akSettingsExtra26;
+  akSettingsExtra26 = function (c) {
+    ns(c);
+    try {
+      c.again("data-and-extras");
+      c.section("Graphics windows", "How the Graphics sections (Design, Text, Add, Layers, Effects, Page) open");
+      var g = akgwCfg(), modes = AKGW_MODES.map(function (x) { return [x[0], x[1]]; });
+      c.select("On a phone", function () { return g.phone; }, function (v) { g.phone = v; }, modes);
+      c.select("On a tablet", function () { return g.tablet; }, function (v) { g.tablet = v; }, modes);
+      c.select("Dock and small windows sit on", function () { return g.side; }, function (v) { g.side = v; }, [["r", "Right"], ["l", "Left"]]);
+      c.check("Several windows open at once (off = one at a time)", function () { return !!g.several; }, function (v) { g.several = v; });
+      c.select("– makes a window", function () { return g.minTo; }, function (v) { g.minTo = v; }, [["edge", "A small square on the edge"], ["bar", "A tab along the bottom"]]);
+      c.select("Small window shape", function () { return g.shape; }, function (v) { g.shape = v; }, [["square", "Square"], ["round", "Round"]]);
+      c.check("Pinned dock: shrink the picture to fit beside it", function () { return !!g.fit; }, function (v) { g.fit = v; });
+      c.check("See-through while I drag a slider", function () { return !!g.peek; }, function (v) { g.peek = v; });
+      c.select("Window height", function () { return g.size; }, function (v) { g.size = v; }, [["short", "Short"], ["medium", "Medium"], ["tall", "Tall"]]);
+      c.check("Side dock buttons show words", function () { return !!g.labels; }, function (v) { g.labels = v; });
+      c.select("Tapping a tool opens", function () { return g.jump; }, function (v) { g.jump = v; }, [["control", "Right at that control, ringed"], ["top", "The top of its part"]]);
+    } catch (e) {}
+  };
+})();
+
+akCss("akgw", [
+  ".akg.akgw-on .akg-panel[hidden]{display:none!important}",
+  ".akg.akgw-dock .akg-strip{display:none!important}",
+  ".akg.akgw-on .akg-navc>.akg-navb:not(.akgw-lay):not(.akgw-fd){display:none}",
+  ".akgw-win,.akgw-pan{position:fixed;z-index:58;display:flex;flex-direction:column;background:var(--panel,var(--bg,#1b1b24));color:var(--fg,#eee);border:1px solid rgba(127,127,127,.5);border-radius:2px;box-shadow:0 8px 24px rgba(0,0,0,.5);transition:opacity .12s}",
+  ".akgw-peek{opacity:.35}",
+  ".akgw-hd{display:flex;align-items:center;gap:4px;height:40px;flex:none;padding:0 4px 0 8px;border-bottom:1px solid rgba(127,127,127,.35);touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}",
+  ".akgw-dhd{cursor:default}",
+  ".akgw-g{opacity:.6;font-size:13px}",
+  ".akgw-t{flex:1 1 auto;min-width:0;font-weight:600;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}",
+  ".akgw-hd button{min-width:34px;height:32px;min-height:32px;padding:0 6px;margin:0;border:1px solid rgba(127,127,127,.45);border-radius:2px;background:transparent;color:inherit;font-size:13px}",
+  ".akgw-hd button.on{background:color-mix(in srgb,var(--accent,#C8962E) 40%,transparent)}",
+  ".akgw-tabs{display:flex;flex:none;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid rgba(127,127,127,.3)}.akgw-tabs::-webkit-scrollbar{display:none}",
+  ".akgw-tabs[hidden]{display:none}",
+  ".akgw-tabs button{flex:none;border:0;border-radius:0;background:transparent;color:inherit;opacity:.7;white-space:nowrap;font-size:12px;padding:6px 9px;min-height:32px;margin:0}",
+  ".akgw-tabs button.on{opacity:1;box-shadow:inset 0 -2px 0 var(--accent,#C8962E)}",
+  ".akgw-bd{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:4px 8px 8px}",
+  ".akgw-bd .akg-panel{margin:0!important;padding:0!important;border:0!important;background:transparent!important}",
+  ".akgw-folds .akg-foldall{display:none}",
+  ".akgw-ring{box-shadow:0 0 0 2px #ffd34d!important;background-color:rgba(255,211,77,.12)!important;transition:box-shadow .3s}",
+  ".akgw-pan{transition:transform .2s ease}.akgw-pan.r.away{transform:translateX(110%)}.akgw-pan.l.away{transform:translateX(-110%)}",
+  ".akgw-pan.away{pointer-events:none}",
+  ".akgw-rail{position:fixed;z-index:61;display:flex;flex-direction:column;background:var(--panel,var(--bg,#1b1b24));color:var(--fg,#eee);border:0 solid rgba(127,127,127,.5)}",
+  ".akgw-rail.r{right:0;border-left-width:1px}.akgw-rail.l{left:0;border-right-width:1px}",
+  ".akgw-ri{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:52px;padding:4px 0;margin:0;border:0;border-bottom:1px solid rgba(127,127,127,.25);border-radius:0;background:transparent;color:inherit;font-size:10px;line-height:1.1}",
+  ".akgw-ri i{font-style:normal;font-size:17px}",
+  ".akgw-rail.nolab .akgw-ri span{display:none}.akgw-rail.nolab .akgw-ri{min-height:44px}",
+  ".akgw-rail.r .akgw-ri.on{box-shadow:inset -3px 0 0 var(--accent,#C8962E)}.akgw-rail.l .akgw-ri.on{box-shadow:inset 3px 0 0 var(--accent,#C8962E)}",
+  ".akgw-ri.on{background:color-mix(in srgb,var(--accent,#C8962E) 18%,transparent)}",
+  ".akgw-sp{flex:1 1 auto}",
+  ".akgw-minis{position:fixed;z-index:42;display:flex;gap:6px}",
+  ".akgw-minis.edge{flex-direction:column}.akgw-minis.edge.r{right:6px}.akgw-minis.edge.l{left:6px}",
+  ".akgw-minis.bar{left:6px;right:6px;flex-direction:row;overflow-x:auto}",
+  ".akgw-mini{display:flex;flex-direction:column;align-items:center;justify-content:center;width:46px;height:46px;min-height:46px;padding:0;margin:0;border:1px solid var(--accent,#C8962E);border-radius:2px;background:var(--panel,var(--bg,#1b1b24));color:var(--fg,#eee);box-shadow:0 4px 12px rgba(0,0,0,.45);line-height:1}",
+  ".akgw-mini i{font-style:normal;font-size:17px}.akgw-mini small{font-size:9px;margin-top:2px;opacity:.75}",
+  ".akgw-minis.bar .akgw-mini{flex-direction:row;gap:5px;width:auto;height:34px;min-height:34px;padding:0 8px}.akgw-minis.bar .akgw-mini small{font-size:12px;margin:0;opacity:1}",
+  ".akgw-minis.round .akgw-mini{border-radius:50%!important}",
+  ".akgw-find{position:fixed;z-index:60;left:6px;right:6px;margin:0 auto;max-width:440px;display:flex;flex-direction:column;background:var(--panel,var(--bg,#1b1b24));color:var(--fg,#eee);border:1px solid var(--accent,#C8962E);border-radius:2px;box-shadow:0 10px 26px rgba(0,0,0,.6)}",
+  ".akgw-fhd{display:flex;gap:4px;padding:4px;border-bottom:1px solid rgba(127,127,127,.35)}",
+  ".akgw-q{flex:1 1 auto;min-width:0;margin:0;min-height:36px}",
+  ".akgw-res{overflow-y:auto}",
+  ".akgw-hit{display:flex;align-items:center;gap:8px;width:100%;margin:0;border:0;border-bottom:1px solid rgba(127,127,127,.2);border-radius:0;background:transparent;color:inherit;text-align:left;padding:8px 10px;min-height:38px;font-size:13px}",
+  ".akgw-hit span{flex:1 1 auto;min-width:0}.akgw-hit small{opacity:.65;font-size:11px;white-space:nowrap}"
+].join("\n"));
+
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Graphics sections in their own windows (or a side dock)", a: "Graphics studio › tap Design, Text, Add, Layers, Effects or Page: each opens its own window. ⋮⋮ drag it, – makes it a small square on the edge, ⇥ docks it, ✕ closes. ⊞ by the tools switches between floating windows, side dock and the old way. Settings › Tools and extras › Graphics windows has every choice.", k: "window windows float dock side dock photoshop minimize small square bubble layout panels sections tablet phone", p: ["graphics", {}, ""] });
+  AK_HELP_WHERE.push({ t: "Find a Graphics tool by name", a: "Graphics studio › 🔎 next to the tools (or Find in the side dock): type gradient, shadow, font… and tap it. Its window opens right at that control with a yellow ring.", k: "find search tool gradient shadow font where is", p: ["graphics", {}, ""] });
+}
+if (typeof akTcAdd === "function") akTcAdd("22.3", "Graphics windows", [
+  ["gw-float", "A window for every section", "Graphics › tap Text, then Page. Each opens its own window; both stay open. Drag one by ⋮⋮, tap the other to bring it forward. ✕ closes one.", ["graphics", {}, ""]],
+  ["gw-min", "– makes a small square", "In a Graphics window tap –: it becomes a small square on the right edge. Tap the square: the window comes back where it was.", ["graphics", {}, ""]],
+  ["gw-tabs", "Parts as tabs in a window", "Graphics › Page: Background and Colors are tabs across the top of the window. Tap Colors: it scrolls right to it.", ["graphics", {}, ""]],
+  ["gw-jump", "Opens right at the control", "Graphics › 🔎 next to the tools › type gradient › tap it. The Page window opens on the Gradient tab with a yellow ring. Try shadow and font too.", ["graphics", {}, ""]],
+  ["gw-peek", "See-through while sliding", "Hold any slider in a Graphics window: the window turns see-through so you see the picture; let go and it's solid again.", ["graphics", {}, ""]],
+  ["gw-dock", "Side dock (tablet)", "On the tablet sideways, Graphics shows the section buttons down the right edge. Tap one: it slides out; tap the picture: it slides away. 📌 keeps it open and the picture moves beside it. ⧉ floats it as a window.", ["graphics", {}, ""]],
+  ["gw-set", "Every choice is a setting", "Settings › Tools and extras › Graphics windows: phone and tablet layouts, side, one or several windows, small square or tab, square or round, see-through, height, dock words, jump right to a control. ⊞ next to the Graphics tools has the main ones.", ["settings", {}, ""]]
+]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AKGW_WHERE = { "gw-float": ["Graphics › Text, Page (the tools row)"], "gw-min": ["Graphics › a section window › –"], "gw-tabs": ["Graphics › Page window › tabs at the top"], "gw-jump": ["Graphics › 🔎 next to the tools"], "gw-peek": ["Graphics › any slider in a window"], "gw-dock": ["Graphics on the tablet › right edge"], "gw-set": ["Settings › Tools and extras › Graphics windows"] };
+  AKTC.forEach(function (x) { var w = AKGW_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; } });
+}
+AK_WHATS_NEW = ["🪟 Graphics: every section (Design, Text, Add, Layers, Effects, Page) opens in its own window. Move them, keep several open, – makes one a small square on the edge. On the tablet they sit in a side dock that slides out and away (📌 keeps it open). 🔎 finds any tool and opens it right there. Settings › Tools and extras › Graphics windows has every choice."].concat(AK_WHATS_NEW);
+AK_VERSION = "22.1";
+
+/* ================= 22.1: Tonight is the pre-show page (his 11-05 ask + his notes on the mock-up) =================
+   Mock-up he approved ("apply", 11-05): https://claude.ai/artifact/UCdp1jGMoZ3Z86CqrRThGd
+   Replaces old queue item 35 (fold Tonight into the Show screen): Tonight stays, and hands over to the show page by itself.
+   The page (AK_VIEWS.tonight = ak22tView, data-blocks "tonight" so ✎ Edit this screen still works):
+   - top: the next show (today or later), a live countdown to its start, Go to the show now, Show details, Flyer and QR.
+   - fold-down parts, each on/off and movable under ⚙ (settings().tonight22: order, on, open):
+     ⏰ Get ready (his mock-up note): a timeline worked back from the start time: get ready, pack the car, leave (drive time +
+       extra for gas and stops), arrive and set up, showtime. Drive time is kept per venue (venue.drive) so a venue he's played
+       before already knows it; "Work it out" asks OpenStreetMap routing (OSRM) from his home address, with a straight-line guess
+       when offline. Alarms for each step plus a heads-up before leaving: sound, buzz, a toast with a button, and a phone
+       notification when allowed, while the app is open. 📅 Add to my calendar saves an .ics with the same alarms so the phone
+       rings even when the app is closed.
+     ☰ Setlist: picking one makes it tonight's setlist (on the show right away); ✦ Make from suggestions opens Build a setlist and
+       the setlist it makes goes onto tonight's show; ▶ Play.
+     ♪ Warm-ups: Built-in (Learn › Warm-ups) and YouTube (lib().ytWarm) tabs.
+     ◎ Tuner: the same tuner as the Chord toolkit (stops when the part folds or the page changes).
+     🙋 Song requests: On / Off, who can ask for what (any song or only tonight's setlist; settings().tonight22.reqScope, only on
+       the show's day), and 🚫 per song (the same song.noReq flag as the song editor and 22.0's setlist rows).
+     🧳 Pack and check: the show's packing list (gig.pack, same list as the 🔔 gig reminders).
+     ✎ Notes for tonight: the show's notes (gig.notes).
+     ▶ Run the opener: the first song of tonight's setlist.
+     ↺ Last songs (off by default, the old Tonight card).
+   - ⚙: jump to the show page N minutes before it starts (default 15, 0 = off), open the app on Tonight on show days, keep the
+     countdown on the show page, Move parts, and the old "Open the app on Tonight" (settings().homeTonight).
+   - Show page: a countdown bar at the top on the show's day until it starts (with ← Tonight).
+   Tests: ak_t720. ================= */
+var AK22T = { stop: null, warmStop: null, jumped: {}, timer: 0 };
+var AK22T_BLOCKS = [["prep", "⏰", "Get ready"], ["setlist", "☰", "Setlist"], ["warm", "♪", "Warm-ups"], ["tuner", "◎", "Tuner"], ["req", "🙋", "Song requests"],
+  ["gear", "🧳", "Pack and check"], ["notes", "✎", "Notes for tonight"], ["opener", "▶", "Run the opener"], ["recent", "↺", "Last songs"]];
+var AK22T_STEPS = [["ready", "Get ready"], ["pack", "Pack the car"], ["leave", "Leave"], ["arrive", "Arrive and set up"], ["show", "Showtime"]];
+function ak22tCfg() {
+  var s = settings(); if (!s.tonight22 || typeof s.tonight22 !== "object") s.tonight22 = {};
+  var c = s.tonight22, d = { autoMin: 15, openOnShowDay: true, keepCd: true, warmTab: "built", reqScope: "setlist",
+    order: AK22T_BLOCKS.map(function (b) { return b[0]; }), on: { recent: false }, open: { setlist: true },
+    ready: 30, pack: 30, early: 45, buffer: 10, soon: 10, alarms: { ready: true, pack: true, leave: true, soon: true, arrive: false, show: false }, home: null, fired: {} };
+  Object.keys(d).forEach(function (k) { if (c[k] === undefined || c[k] === null && k !== "home") c[k] = JSON.parse(JSON.stringify(d[k])); });
+  if (!Array.isArray(c.order)) c.order = d.order.slice();
+  AK22T_BLOCKS.forEach(function (b) { if (c.order.indexOf(b[0]) < 0) c.order.push(b[0]); });
+  c.order = c.order.filter(function (id) { return AK22T_BLOCKS.some(function (b) { return b[0] === id; }); });
+  return c;
+}
+function ak22tOn(id) { return ak22tCfg().on[id] !== false; }
+
+/* ---------------------------------------------------------------- times */
+function ak22tGig() { return typeof akNextGig === "function" ? akNextGig() : null; }
+function ak22tToday() { var g = ak22tGig(); return g && g.date === akTodayKeySafe() ? g : null; }
+function ak22tStart(g) {
+  if (!g || !g.date || !/^\d+:\d+/.test(g.start || "")) return 0;
+  var p = g.date.split("-"), t = g.start.split(":");
+  return new Date(+p[0], +p[1] - 1, +p[2], +t[0], +t[1], 0, 0).getTime();
+}
+function ak22tClock(ms) { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function ak22tLeft(ms) {
+  var s = Math.max(0, Math.round(ms / 1000)), d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+  if (d) return d + (d === 1 ? " day " : " days ") + hh + " h";
+  function z(n) { return ("0" + n).slice(-2); }
+  return hh ? hh + ":" + z(mm) + ":" + z(ss) : mm + ":" + z(ss);
+}
+function ak22tCdText(g) {
+  var st = ak22tStart(g); if (!st) return "";
+  var left = st - Date.now(); return left > 0 ? ak22tLeft(left) : "Showtime";
+}
+function ak22tVenue(g) { try { return typeof akVenueFor === "function" ? akVenueFor(g) : null; } catch (e) { return null; } }
+function ak22tDrive(g) {
+  if (g && g.drive22 != null && g.drive22 !== "") return +g.drive22;
+  var v = ak22tVenue(g); return v && v.drive != null && v.drive !== "" ? +v.drive : null;
+}
+function ak22tEarly(g) { return g && g.early22 != null && g.early22 !== "" ? +g.early22 : +ak22tCfg().early; }
+/* the steps, worked back from the start time */
+function ak22tPlan(g) {
+  var st = ak22tStart(g); if (!st) return null;
+  var c = ak22tCfg(), drive = ak22tDrive(g), M = 60000;
+  var arrive = st - ak22tEarly(g) * M, leave = arrive - ((drive || 0) + (+c.buffer || 0)) * M, pack = leave - (+c.pack || 0) * M, ready = pack - (+c.ready || 0) * M;
+  return { drive: drive, steps: [{ k: "ready", at: ready }, { k: "pack", at: pack }, { k: "leave", at: leave }, { k: "arrive", at: arrive }, { k: "show", at: st }], soon: leave - (+c.soon || 0) * M };
+}
+function ak22tStepName(k) { for (var i = 0; i < AK22T_STEPS.length; i++) if (AK22T_STEPS[i][0] === k) return AK22T_STEPS[i][1]; return k; }
+function ak22tNext(plan) { var now = Date.now(); for (var i = 0; i < plan.steps.length; i++) if (plan.steps[i].at > now) return plan.steps[i]; return null; }
+
+/* ---------------------------------------------------------------- drive time */
+function ak22tHaversine(a, b) {
+  var R = 6371, r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lon - a.lon) * r;
+  var x = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function ak22tWhere(g, cb) {
+  var v = ak22tVenue(g);
+  if (v && v.lat && v.lon) return cb({ lat: +v.lat, lon: +v.lon });
+  var addr = typeof akGigAddr === "function" ? akGigAddr(g) : (g.address || "");
+  var q = [g.venue || g.name, addr].filter(Boolean).join(", ");
+  if (!q || typeof akVenueSearch !== "function") return cb(null);
+  akVenueSearch(q, function (err, a) {
+    var r = !err && a && a[0];
+    if (r && r.lat) { if (v) { v.lat = r.lat; v.lon = r.lon; save(); } cb({ lat: +r.lat, lon: +r.lon }); } else cb(null);
+  });
+}
+/* minutes from home to the show; remembered on the venue (or the show when it has no venue) */
+function ak22tDriveCalc(g, cb) {
+  var c = ak22tCfg(), home = c.home;
+  if (!home || !home.lat) { cb(null, "Add your home address first (it stays on this device and in your backups)."); return; }
+  ak22tWhere(g, function (to) {
+    if (!to) { cb(null, "I couldn't find the venue on the map. Add its address on the show, or type the drive time."); return; }
+    function keep(min, how) {
+      min = Math.max(1, Math.round(min)); var v = ak22tVenue(g);
+      if (v) { v.drive = min; v.driveHow = how; v.driveAt = Date.now(); } else { g.drive22 = min; }
+      save(); cb(min, how);
+    }
+    var guess = function () { keep(ak22tHaversine(home, to) * 1.3 / 65 * 60, "guess"); };
+    try {
+      fetch("https://router.project-osrm.org/route/v1/driving/" + home.lon + "," + home.lat + ";" + to.lon + "," + to.lat + "?overview=false")
+        .then(function (r) { if (!r.ok) throw new Error("http"); return r.json(); })
+        .then(function (j) { var sec = j && j.routes && j.routes[0] && j.routes[0].duration; if (sec) keep(sec / 60, "map"); else guess(); }, guess);
+    } catch (e) { guess(); }
+  });
+}
+
+/* ---------------------------------------------------------------- alarms */
+function ak22tBeep() {
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    var ctx = new AC(), t = ctx.currentTime;
+    [0, 0.35, 0.7].forEach(function (d) { var o = ctx.createOscillator(), gn = ctx.createGain(); o.frequency.value = 880; gn.gain.setValueAtTime(0.0001, t + d); gn.gain.exponentialRampToValueAtTime(0.4, t + d + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.28); o.connect(gn); gn.connect(ctx.destination); o.start(t + d); o.stop(t + d + 0.3); });
+    setTimeout(function () { try { ctx.close(); } catch (e) {} }, 1600);
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) {}
+}
+function ak22tAlarmText(k, g, plan) {
+  var w = akGigTitle(g);
+  if (k === "soon") return ["🚗 Leave in " + ak22tCfg().soon + " min", "You've got to leave for " + w + " soon (by " + ak22tClock(plan.steps[2].at) + ") or you'll be late."];
+  if (k === "ready") return ["⏰ Time to get ready", w + " starts at " + ak22tClock(plan.steps[4].at) + ". Pack the car at " + ak22tClock(plan.steps[1].at) + "."];
+  if (k === "pack") return ["🧳 Pack the car", "Leave for " + w + " at " + ak22tClock(plan.steps[2].at) + "."];
+  if (k === "leave") return ["🚗 Time to leave", "Drive to " + w + (plan.drive ? " (about " + plan.drive + " min)" : "") + "."];
+  if (k === "arrive") return ["📍 You should be at " + w, "Set up and sound check. Showtime " + ak22tClock(plan.steps[4].at) + "."];
+  return ["🎤 Showtime", w + " starts now."];
+}
+function ak22tFire(k, g, plan) {
+  var t = ak22tAlarmText(k, g, plan);
+  ak22tBeep();
+  toast(t[0] + ". " + t[1], { label: "Tonight", fn: function () { go("tonight"); } });
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+      var opt = { body: t[1], tag: "ak22t-" + k, icon: "icon-192.png", requireInteraction: true };
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { if (r && r.showNotification) r.showNotification(t[0], opt); else new Notification(t[0], opt); }).catch(function () {});
+      else new Notification(t[0], opt);
+    }
+  } catch (e) {}
+}
+function ak22tTick() {
+  try {
+    var g = ak22tToday(); if (!g) return;
+    var c = ak22tCfg(), plan = ak22tPlan(g); if (!plan) return;
+    var now = Date.now(), day = g.date, fired = c.fired, changed = false;
+    var list = plan.steps.map(function (s) { return [s.k, s.at]; }); list.push(["soon", plan.soon]);
+    list.forEach(function (x) {
+      var key = g.id + ":" + day + ":" + x[0];
+      if (!c.alarms[x[0]] || fired[key]) return;
+      if (now >= x[1] && now < x[1] + 10 * 60000) { fired[key] = day; changed = true; ak22tFire(x[0], g, plan); }
+      else if (now >= x[1] + 10 * 60000) { fired[key] = day; changed = true; } /* missed while closed: don't ring late */
+    });
+    Object.keys(fired).forEach(function (k) { if (fired[k] < akTodayKeySafe()) { delete fired[k]; changed = true; } });
+    /* the jump to the show page */
+    var st = plan.steps[4].at, jk = g.id + ":" + day;
+    if (+c.autoMin > 0 && now >= st - c.autoMin * 60000 && now < st + 30 * 60000 && !AK22T.jumped[jk] && !S.play && !document.querySelector(".modal") && /^(tonight|songs|shows|gigs)$/.test(S.view || "")) {
+      AK22T.jumped[jk] = 1; go("gig", { gigId: g.id }); toast("It's almost showtime. Here's tonight's show.");
+    }
+    if (changed) save();
+  } catch (e) {}
+}
+setInterval(ak22tTick, 15000); setTimeout(ak22tTick, 3000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) ak22tTick(); });
+/* live countdowns */
+setInterval(function () {
+  var els = document.querySelectorAll("[data-ak22cd]"); if (!els.length) return;
+  Array.prototype.forEach.call(els, function (el) { var g = akGig(el.getAttribute("data-ak22cd")); if (g) el.textContent = ak22tCdText(g); });
+  var nx = document.querySelectorAll("[data-ak22nx]");
+  Array.prototype.forEach.call(nx, function (el) { var g = akGig(el.getAttribute("data-ak22nx")); if (g) el.textContent = ak22tNextText(g); });
+}, 1000);
+function ak22tNextText(g) {
+  var plan = ak22tPlan(g); if (!plan) return "";
+  var n = ak22tNext(plan); if (!n || n.k === "show") return "";
+  return "Next: " + ak22tStepName(n.k) + " in " + ak22tLeft(n.at - Date.now());
+}
+
+/* the calendar file: one event per step, each with its alarm */
+function ak22tIcs(g, plan) {
+  function f(ms) { return new Date(ms).toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z"; }
+  var c = ak22tCfg(), out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Akashic Chords//Get ready//EN"];
+  var list = plan.steps.map(function (s) { return [s.k, s.at]; }); list.push(["soon", plan.soon]);
+  list.forEach(function (x) {
+    if (!c.alarms[x[0]]) return;
+    var t = ak22tAlarmText(x[0], g, plan);
+    out.push("BEGIN:VEVENT", "UID:ak22t-" + g.id + "-" + x[0] + "-" + g.date + "@akashic-chords", "DTSTAMP:" + f(Date.now()), "DTSTART:" + f(x[1]), "DURATION:PT10M",
+      "SUMMARY:" + t[0].replace(/[,;]/g, " "), "DESCRIPTION:" + t[1].replace(/[,;]/g, " "), "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + t[0].replace(/[,;]/g, " "), "TRIGGER:PT0M", "END:VALARM", "END:VEVENT");
+  });
+  out.push("END:VCALENDAR"); return out.join("\r\n");
+}
+
+/* the times window */
+function ak22tTimesDlg(g) {
+  var c = ak22tCfg(), box = h("div", { class: "ak22t-dlg" });
+  function num(label, get, set, unit) {
+    var i = h("input", { type: "number", min: "0", step: "5", value: String(get() == null ? "" : get()), "aria-label": label, onChange: function () { set(this.value === "" ? null : Math.max(0, +this.value)); save(); } });
+    return h("label", { class: "ak22t-num" }, h("span", null, label), i, h("span", { class: "muted" }, unit || "min"));
+  }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("div", { class: "ak22t-grid" },
+      num("Get ready", function () { return c.ready; }, function (v) { c.ready = v || 0; }),
+      num("Pack the car", function () { return c.pack; }, function (v) { c.pack = v || 0; }),
+      num("Arrive before showtime", function () { return ak22tEarly(g); }, function (v) { if (g) g.early22 = v; }),
+      num("Extra for gas and stops", function () { return c.buffer; }, function (v) { c.buffer = v || 0; }),
+      num("Drive to this venue", function () { return ak22tDrive(g); }, function (v) { var vv = ak22tVenue(g); if (vv) { vv.drive = v; vv.driveHow = "typed"; } else if (g) g.drive22 = v; })));
+    var msg = h("span", { class: "muted" });
+    box.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm", onClick: function () { msg.textContent = "Working it out…"; ak22tDriveCalc(g, function (m, how) { if (m == null) { msg.textContent = how; return; } draw(); toast("About " + m + " min" + (how === "guess" ? " (a guess from the distance; the map wasn't reachable)" : "") + ". Saved with the venue."); }); } }, "🗺 Work out the drive"), msg));
+    var home = h("input", { type: "text", value: (c.home && c.home.addr) || "", placeholder: "Your home address", "aria-label": "Home address" });
+    box.appendChild(h("div", { class: "row ak22t-row" }, home, h("button", { class: "sm", onClick: function () {
+      var q = home.value.trim(); if (!q) { c.home = null; save(); return; }
+      akVenueSearch(q, function (err, a) { var r = !err && a && a[0]; if (!r || !r.lat) { toast("I couldn't find that address. Try adding the town."); return; } c.home = { addr: q, lat: +r.lat, lon: +r.lon }; save(); toast("Home address saved."); draw(); });
+    } }, "Save")));
+    box.appendChild(h("p", { class: "hint" }, "Arrive time is for this show; the rest are for every show. The drive time stays with the venue, so next time you play there it's already known."));
+    box.appendChild(h("div", { class: "ak22t-sub" }, "Alarms"));
+    var al = h("div", { class: "ak22t-alarms" });
+    AK22T_STEPS.concat([["soon", "Heads-up before leaving"]]).forEach(function (s) {
+      al.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.alarms[s[0]], onChange: function () { c.alarms[s[0]] = this.checked; save(); } }), s[1]));
+    });
+    box.appendChild(al);
+    box.appendChild(num("Heads-up", function () { return c.soon; }, function (v) { c.soon = v || 0; }, "min before leaving"));
+    var nOk = typeof Notification !== "undefined" && Notification.permission === "granted";
+    box.appendChild(h("div", { class: "row ak22t-row" },
+      typeof Notification !== "undefined" && !nOk ? h("button", { class: "sm", onClick: function () { Notification.requestPermission().then(function () { draw(); }); } }, "Allow phone notifications") : null,
+      h("button", { class: "sm", onClick: function () { var p = ak22tPlan(g); if (!p) { toast("Add a start time to the show first."); return; } saveFile("get-ready-" + (g.date || "show") + ".ics", ak22tIcs(g, p), "text/calendar"); } }, "📅 Add the alarms to my calendar"),
+      h("button", { class: "sm", onClick: function () { ak22tBeep(); } }, "🔊 Test the sound")));
+    box.appendChild(h("p", { class: "hint" }, "Alarms ring while the app is open (sound, buzz and a notification). The calendar file makes your phone ring even when the app is closed."));
+  }
+  draw();
+  modal("⏰ Get ready times", box, [{ label: "Done", primary: true, onClick: function () { render(); } }]);
+}
+
+/* ---------------------------------------------------------------- the parts */
+function ak22tLists(g) { return ((g && g.setlists) || []).map(findShow).filter(Boolean); }
+function ak22tSongsOf(sh) { var out = []; (sh.sets || []).forEach(function (st) { (st.songIds || []).forEach(function (id) { var s = findSong(id); if (s && out.indexOf(s) < 0) out.push(s); }); }); return out; }
+function ak22tSetTonight(g, id) {
+  if (!g || !id) return; snap("tonight's setlist");
+  g.setlists = (g.setlists || []).filter(function (x) { return x !== id; });
+  g.setlists.unshift(id); save();
+  var sh = findShow(id); toast("“" + (sh ? sh.name : "Setlist") + "” is tonight's setlist now (on the show).");
+}
+function ak22tBody(id, g) {
+  var c = ak22tCfg(), b = h("div", { class: "ak22t-bb" }), lists = ak22tLists(g), first = lists[0];
+  function needShow(msg) { b.appendChild(h("p", { class: "hint" }, msg || "Add your next show first.")); return b; }
+  if (id === "prep") {
+    if (!g) return needShow();
+    var plan = ak22tPlan(g);
+    if (!plan) { b.appendChild(h("p", { class: "hint" }, "Add a start time to the show and I'll work out when to get ready, pack and leave.")); b.appendChild(h("button", { class: "sm", onClick: function () { go("gig", { gigId: g.id }); } }, "Open the show")); return b; }
+    var now = Date.now(), nx = ak22tNext(plan);
+    var tl = h("div", { class: "ak22t-tl" });
+    plan.steps.forEach(function (s) {
+      var past = s.at <= now, cur = nx && nx.k === s.k, sub = "";
+      if (s.k === "leave") sub = plan.drive == null ? "drive time not known yet" : "drive about " + plan.drive + " min + " + c.buffer + " extra";
+      if (s.k === "arrive") sub = ak22tEarly(g) + " min before showtime";
+      tl.appendChild(h("div", { class: "ak22t-step" + (past ? " past" : "") + (cur ? " cur" : "") },
+        h("span", { class: "ak22t-time" }, ak22tClock(s.at)), h("span", { class: "grow" }, ak22tStepName(s.k), sub ? h("span", { class: "muted" }, " · " + sub) : null),
+        h("span", { class: "ak22t-bell", title: c.alarms[s.k] ? "Alarm on" : "No alarm", "aria-label": c.alarms[s.k] ? "Alarm on" : "No alarm" }, c.alarms[s.k] ? "🔔" : "")));
+    });
+    b.appendChild(tl);
+    if (g.date === akTodayKeySafe()) b.appendChild(h("div", { class: "ak22t-next", "data-ak22nx": g.id }, ak22tNextText(g)));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm", onClick: function () { ak22tTimesDlg(g); } }, "⏰ Times and alarms"),
+      plan.drive == null ? h("button", { class: "sm", onClick: function () { ak22tDriveCalc(g, function (m, how) { if (m == null) { ak22tTimesDlg(g); toast(how); return; } toast("About " + m + " min. Saved with the venue."); render(); }); } }, "🗺 Work out the drive") : null,
+      typeof akMapsUrl === "function" && akMapsUrl(g.venue || g.name, akGigAddr(g)) ? h("a", { class: "btnlink sm", href: akMapsUrl(g.venue || g.name, akGigAddr(g)), target: "_blank", rel: "noopener" }, "📍 Map") : null));
+    return b;
+  }
+  if (id === "setlist") {
+    if (!g) return needShow();
+    var sel = h("select", { "aria-label": "Tonight's setlist", onChange: function () { if (this.value) { ak22tSetTonight(g, this.value); render(); } } });
+    sel.appendChild(h("option", { value: "" }, first ? "Change setlist…" : "Pick a setlist…"));
+    (lib().shows || []).filter(function (sh) { return !sh.deleted && !sh.archived; }).forEach(function (sh) { sel.appendChild(h("option", { value: sh.id, selected: first && sh.id === first.id }, (sh.name || "Setlist") + " (" + ak22tSongsOf(sh).length + ")")); });
+    b.appendChild(h("div", { class: "row ak22t-row" }, sel, h("button", { class: "sm", onClick: function () { S.ak22tBuild = g.id; go("build"); } }, "✦ Make from suggestions")));
+    if (first) {
+      var box = h("div", { class: "ak22t-set" });
+      (first.sets || []).forEach(function (st, si) {
+        if ((first.sets || []).length > 1) box.appendChild(h("div", { class: "ak22t-sub" }, st.name || "Set " + (si + 1)));
+        (st.songIds || []).forEach(function (sid, i) { var s = findSong(sid); if (s) box.appendChild(h("div", { class: "ak22t-li" }, h("span", { class: "muted ak22t-n" }, String(i + 1)), h("span", { class: "grow" }, s.title || "Untitled"))); });
+      });
+      b.appendChild(box);
+      b.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm primary", onClick: function () { akGigPlay(g); } }, "▶ Play"), h("button", { class: "sm", onClick: function () { go("show", { showId: first.id }); } }, "Edit"),
+        lists.length > 1 ? h("span", { class: "muted" }, "+" + (lists.length - 1) + " more on the show") : null));
+    } else b.appendChild(h("p", { class: "hint" }, "Picking one puts it on tonight's show right away."));
+    return b;
+  }
+  if (id === "warm") {
+    var tabs = h("div", { class: "ak22t-tabs", role: "tablist" }), pane = h("div", { class: "ak22t-wp" });
+    [["built", "Built-in"], ["yt", "YouTube"]].forEach(function (t) {
+      tabs.appendChild(h("button", { role: "tab", class: c.warmTab === t[0] ? "sel" : "", "aria-selected": c.warmTab === t[0] ? "true" : "false", onClick: function () { c.warmTab = t[0]; save(); render(); } }, t[1]));
+    });
+    b.appendChild(tabs); b.appendChild(pane);
+    try {
+      if (c.warmTab === "yt") { if (typeof akYtWarmCard === "function") pane.appendChild(akYtWarmCard()); else pane.appendChild(h("p", { class: "hint" }, "The YouTube window isn't in this version.")); }
+      else if (typeof akWarmupsView === "function") { akWarmupsView(pane); Array.prototype.forEach.call(pane.querySelectorAll(".akyt-warm,[data-bk=warm-videos]"), function (x) { x.remove(); }); }
+    } catch (e) { pane.appendChild(h("p", { class: "hint" }, "Warm-ups couldn't open here. Try Learn › Warm-ups.")); }
+    var t0 = new Date(); t0.setHours(0, 0, 0, 0); var mins = typeof akPracMins === "function" ? Math.round(akPracMins(t0.getTime())) : 0;
+    b.appendChild(h("div", { class: "muted" }, mins ? "Practiced " + mins + " min today." : "Nothing practiced yet today."));
+    return b;
+  }
+  if (id === "tuner") {
+    var tp = h("div", { class: "ak22t-tuner" }); b.appendChild(tp);
+    try { AK22T.stop = akToolTuner(tp); } catch (e) { tp.appendChild(h("button", { class: "sm", onClick: function () { openChordTools("tuner"); } }, "Open the tuner")); }
+    return b;
+  }
+  if (id === "req") {
+    var on = typeof akReqOnNow === "function" && akReqOnNow();
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "grow" }, "Requests tonight"),
+      h("button", { class: "sm" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { if (!on) akReqOnOff(true); setTimeout(render, 50); } }, "On"),
+      h("button", { class: "sm" + (on ? "" : " on"), "aria-pressed": on ? "false" : "true", onClick: function () { if (on) akReqOnOff(false); setTimeout(render, 50); } }, "Off")));
+    var sc = h("select", { "aria-label": "Which songs people can ask for", onChange: function () { c.reqScope = this.value; save(); try { akChPush(); } catch (e) {} render(); } },
+      [["all", "Any song in my library"], ["setlist", "Only tonight's setlist"]].map(function (o) { return h("option", { value: o[0], selected: c.reqScope === o[0] }, o[1]); }));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted" }, "People can ask for"), sc));
+    if (c.reqScope === "setlist" && !first) b.appendChild(h("p", { class: "hint" }, g ? "Pick tonight's setlist first. Until then any song can be asked for." : "With no show today any song can be asked for."));
+    var songs = c.reqScope === "setlist" && first ? ak22tSongsOf(first) : [];
+    if (songs.length) {
+      var bx = h("div", { class: "ak22t-set" });
+      songs.forEach(function (s) {
+        var bl = !!s.noReq;
+        bx.appendChild(h("div", { class: "ak22t-li" + (bl ? " blocked" : "") }, h("span", { class: "grow" }, s.title || "Untitled"),
+          h("button", { class: "sm", "aria-pressed": bl ? "true" : "false", "aria-label": (bl ? "Allow requests for " : "Block requests for ") + (s.title || "this song"), onClick: function () { if (s.noReq) delete s.noReq; else s.noReq = true; save(); try { akChPush(); } catch (e) {} render(); } }, bl ? "🚫 Blocked" : "Allowed")));
+      });
+      b.appendChild(bx);
+    }
+    var nb = lib().songs.filter(function (s) { return s.noReq; }).length;
+    b.appendChild(h("div", { class: "row ak22t-row" }, typeof akNoReqPicker === "function" ? h("button", { class: "sm", onClick: function () { akNoReqPicker(); } }, "🚫 All blocked songs (" + nb + ")") : null,
+      typeof akTcFind === "function" ? h("button", { class: "sm", onClick: function () { go("settings"); setTimeout(function () { try { akTcFind("Requests and tips"); } catch (e) {} }, 300); } }, "Tips and rules") : null));
+    return b;
+  }
+  if (id === "gear") {
+    if (!g) return needShow();
+    if (typeof akRmPackFor !== "function") return needShow("The packing list isn't in this version.");
+    if (!Array.isArray(g.pack)) { g.pack = akRmPackFor(g); }
+    var done = 0;
+    g.pack.forEach(function (p) { if (p.done) done++; b.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!p.done, onChange: function () { p.done = this.checked; save(); render(); } }), p.t)); });
+    if (!g.pack.length) b.appendChild(h("p", { class: "hint" }, "Nothing on the list yet."));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted grow" }, done + " of " + g.pack.length + " packed"), h("button", { class: "sm", onClick: function () { akRmPackDlg(g); } }, "Edit list")));
+    return b;
+  }
+  if (id === "notes") {
+    if (!g) return needShow();
+    var ta = h("textarea", { rows: "3", "aria-label": "Notes for tonight", placeholder: "Anything to remember tonight", onInput: function () { g.notes = this.value; save(); } });
+    ta.value = g.notes || ""; b.appendChild(ta);
+    b.appendChild(h("div", { class: "muted" }, "Saved with the show (same notes as on the show page)."));
+    return b;
+  }
+  if (id === "opener") {
+    var fs = first ? ak22tSongsOf(first)[0] : null;
+    if (!fs) return needShow("Pick tonight's setlist to see the first song.");
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "grow" }, "First song: ", h("b", null, fs.title || "Untitled")),
+      h("button", { class: "sm", onClick: function () { go("song", { songId: fs.id }); } }, "Open"), h("button", { class: "sm", "aria-label": "Practice " + (fs.title || "the first song"), onClick: function () { playFromSongs([fs], 0); } }, "▶ Practice it")));
+    return b;
+  }
+  if (id === "recent") {
+    var recent = (store.recent || []).map(findSong).filter(Boolean).slice(0, 3);
+    if (!recent.length) return needShow("No songs opened yet.");
+    recent.forEach(function (s) { b.appendChild(h("div", { class: "ak22t-li" }, h("span", { class: "grow" }, s.title, s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null), h("button", { class: "sm", onClick: function () { go("song", { songId: s.id }); } }, "Open"), h("button", { class: "sm", "aria-label": "Play " + s.title, onClick: function () { playFromSongs([s], 0); } }, "▶"))); });
+    return b;
+  }
+  return b;
+}
+function ak22tSummary(id, g) {
+  var c = ak22tCfg(), lists = ak22tLists(g), first = lists[0];
+  if (id === "prep") { var p = g && ak22tPlan(g); if (!p) return g ? "add a start time" : ""; return "leave " + ak22tClock(p.steps[2].at); }
+  if (id === "setlist") return first ? first.name || "Setlist" : (g ? "none picked yet" : "");
+  if (id === "warm") return c.warmTab === "yt" ? "YouTube" : "built-in";
+  if (id === "tuner") return settings().instrument || "";
+  if (id === "req") { var on = typeof akReqOnNow === "function" && akReqOnNow(); return (on ? "on" : "off") + (c.reqScope === "setlist" ? " · tonight's setlist" : " · any song"); }
+  if (id === "gear") { if (!g || !Array.isArray(g.pack)) return ""; var d = g.pack.filter(function (p) { return p.done; }).length; return d + " of " + g.pack.length + " packed"; }
+  if (id === "notes") return g && g.notes ? String(g.notes).split("\n")[0].slice(0, 40) : "";
+  if (id === "opener") { var fs = first ? ak22tSongsOf(first)[0] : null; return fs ? fs.title || "" : ""; }
+  return "";
+}
+
+/* ---------------------------------------------------------------- the page */
+function ak22tView() {
+  if (AK22T.stop) { try { AK22T.stop(); } catch (e) {} AK22T.stop = null; }
+  var c = ak22tCfg(), g = ak22tGig(), isToday = g && g.date === akTodayKeySafe();
+  var body = h("div", { class: "ak22t", "data-blocks": "tonight" });
+  /* settings strip */
+  if (S.ak22tCfg) {
+    var cf = h("div", { class: "ak22t-cfg", "data-bk": "tonight-settings" });
+    var am = h("select", { "aria-label": "Jump to the show page before it starts", onChange: function () { c.autoMin = +this.value; save(); } },
+      [[0, "Off"], [5, "5 min"], [10, "10 min"], [15, "15 min"], [20, "20 min"], [30, "30 min"], [45, "45 min"], [60, "1 hour"]].map(function (o) { return h("option", { value: String(o[0]), selected: +c.autoMin === o[0] }, o[1]); }));
+    cf.appendChild(h("label", { class: "ak22t-cr" }, h("span", { class: "grow" }, "Jump to the show page before it starts"), am));
+    function ck(label, get, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); save(); } }), label); }
+    cf.appendChild(ck("Open the app on Tonight on show days", function () { return c.openOnShowDay; }, function (v) { c.openOnShowDay = v; }));
+    cf.appendChild(ck("Open the app on Tonight every day", function () { return settings().homeTonight; }, function (v) { settings().homeTonight = v; }));
+    cf.appendChild(ck("Keep the countdown on the show page", function () { return c.keepCd; }, function (v) { c.keepCd = v; }));
+    cf.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted grow" }, "Turn parts on or off below. Move them with ↑ ↓."),
+      h("button", { class: "sm" + (S.ak22tMove ? " on" : ""), onClick: function () { S.ak22tMove = !S.ak22tMove; render(); } }, S.ak22tMove ? "Done moving" : "Move parts")));
+    body.appendChild(cf);
+  }
+  /* the show */
+  if (g) {
+    var lists = ak22tLists(g), st = ak22tStart(g);
+    body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "next-show" },
+      h("div", { class: "grow ak22t-hl" }, h("div", { class: "ak22t-k" }, isToday ? "Tonight" : "Next show"), h("div", { class: "ak22t-name" }, akGigTitle(g)),
+        h("div", { class: "muted" }, [akGigDateText(g), g.start ? "starts " + (st ? ak22tClock(st) : g.start) : "no start time", g.venue && g.venue !== g.name ? g.venue : "", lists.length ? "" : "no setlist yet"].filter(Boolean).join(" · "))),
+      st ? h("div", { class: "ak22t-cdw" }, h("div", { class: "ak22t-cd", "data-ak22cd": g.id }, ak22tCdText(g)), h("div", { class: "muted ak22t-cds" }, isToday && +c.autoMin > 0 ? "show page at " + c.autoMin + " min" : "to showtime")) : null,
+      h("div", { class: "ak22t-acts" },
+        h("button", { class: "sm primary", onClick: function () { go("gig", { gigId: g.id }); } }, "Go to the show now"),
+        h("button", { class: "sm", disabled: !lists.length, onClick: function () { akGigPlay(g); } }, "▶ Play"),
+        typeof akFlyerOpen === "function" ? h("button", { class: "sm", onClick: function () { akFlyerOpen(g); } }, "Flyer") : null)));
+  } else {
+    body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "next-show" }, h("div", { class: "grow" }, h("b", null, "No show coming up"), h("p", { class: "hint" }, "Add your next booking and it shows here with a countdown, your setlist and a Play button.")),
+      typeof akGigNewDialog === "function" ? h("div", { class: "ak22t-acts" }, h("button", { class: "sm primary", onClick: function () { settings().showsTab = "gigs"; save(); go("shows"); setTimeout(function () { akGigNewDialog(); }, 50); } }, "+ New show")) : null));
+  }
+  if (S.play) body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "playing" }, h("b", { class: "grow" }, "A set is playing"), h("button", { class: "sm primary", onClick: function () { resumePlay(); } }, "Back to the playing screen")));
+  /* the parts */
+  c.order.forEach(function (id, i) {
+    var B = AK22T_BLOCKS.filter(function (x) { return x[0] === id; })[0]; if (!B) return;
+    var on = ak22tOn(id); if (!on && !S.ak22tCfg) return;
+    var open = on && !!c.open[id];
+    var w = h("div", { class: "ak22t-blk" + (on ? "" : " off"), "data-bk": "t-" + id, "data-bt": B[2] });
+    var hd = h("div", { class: "ak22t-bh" },
+      h("button", { class: "ak22t-t", "aria-expanded": open ? "true" : "false", disabled: !on, onClick: function () { c.open[id] = !c.open[id]; save(); render(); } },
+        h("span", { class: "ak22t-car", "aria-hidden": "true" }, on ? (open ? "▾" : "▸") : "·"), h("span", null, B[1] + " " + B[2]), h("span", { class: "ak22t-s muted" }, on ? ak22tSummary(id, g) : "off")),
+      S.ak22tCfg && S.ak22tMove ? h("button", { class: "sm", "aria-label": "Move " + B[2] + " up", disabled: i === 0, onClick: function () { var o = c.order, x = o[i]; o[i] = o[i - 1]; o[i - 1] = x; save(); render(); } }, "↑") : null,
+      S.ak22tCfg && S.ak22tMove ? h("button", { class: "sm", "aria-label": "Move " + B[2] + " down", disabled: i === c.order.length - 1, onClick: function () { var o = c.order, x = o[i]; o[i] = o[i + 1]; o[i + 1] = x; save(); render(); } }, "↓") : null,
+      S.ak22tCfg ? h("button", { class: "sm" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": (on ? "Hide " : "Show ") + B[2], onClick: function () { c.on[id] = !on; save(); render(); } }, on ? "On" : "Off") : null);
+    w.appendChild(hd);
+    if (open) w.appendChild(ak22tBody(id, g));
+    body.appendChild(w);
+  });
+  var gear = h("button", { class: "icon" + (S.ak22tCfg ? " on" : ""), "aria-label": "Tonight settings", title: "Choose parts and timing", "aria-pressed": S.ak22tCfg ? "true" : "false", onClick: function () { S.ak22tCfg = !S.ak22tCfg; if (!S.ak22tCfg) S.ak22tMove = false; render(); } }, "⚙");
+  return shell("Tonight", body, { actions: gear });
+}
+AK_VIEWS.tonight = ak22tView; AK_VIEW_TAB.tonight = "tonight";
+
+/* Build a setlist from Tonight: the new setlist goes onto tonight's show, then back to Tonight */
+if (typeof bldCreate === "function") (function () {
+  var bc = bldCreate;
+  bldCreate = function () {
+    var gid = S.ak22tBuild, n0 = (lib().shows || []).length, out = bc.apply(this, arguments);
+    if (gid) {
+      S.ak22tBuild = "";
+      var g = akGig(gid), shs = lib().shows || [], sh = shs.length > n0 ? shs[shs.length - 1] : null;
+      if (g && sh) { ak22tSetTonight(g, sh.id); go("tonight"); }
+    }
+    return out;
+  };
+})();
+
+/* requests: "Only tonight's setlist" greys every other song on the request page (show days only) */
+if (typeof akLivePublicProfile === "function") (function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = pp.apply(this, arguments);
+    try {
+      var c = ak22tCfg(), g = ak22tToday(), first = g ? ak22tLists(g)[0] : null;
+      if (c.reqScope === "setlist" && first && Array.isArray(p.songs)) {
+        var ok = {}; ak22tSongsOf(first).forEach(function (s) { ok[s.id] = 1; });
+        p.songs.forEach(function (x) { if (!ok[x.i]) x.n = 1; });
+      }
+    } catch (e) {}
+    return p;
+  };
+})();
+
+/* the show page: a countdown bar on the show's day; opening the app on Tonight on show days */
+(function () {
+  var first = true, ar = akAfterRender;
+  akAfterRender = function () {
+    var r = ar.apply(this, arguments);
+    try {
+      if (first) { first = false; var c0 = ak22tCfg(); if (c0.openOnShowDay && ak22tToday() && S.view === "songs" && !S.play) setTimeout(function () { go("tonight"); }, 0); }
+      if (S.view !== "tonight" && AK22T.stop) { try { AK22T.stop(); } catch (e) {} AK22T.stop = null; }
+      var main = document.querySelector("#app .main");
+      if (main && S.view === "gig" && ak22tCfg().keepCd && !main.querySelector(":scope > .ak22t-bar")) {
+        var g = akGig(S.gigId), st = ak22tStart(g);
+        if (g && st && g.date === akTodayKeySafe() && Date.now() < st) {
+          main.insertBefore(h("div", { class: "ak22t-bar", role: "timer" }, h("button", { class: "sm", "aria-label": "Back to Tonight", onClick: function () { go("tonight"); } }, "← Tonight"),
+            h("span", { class: "grow" }, "Show starts in"), h("b", { class: "ak22t-cd", "data-ak22cd": g.id }, ak22tCdText(g))), main.firstChild);
+        }
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+akCss("ak22t", [
+  ".ak22t{display:flex;flex-direction:column;gap:0}",
+  ".ak22t-cfg{border:1px solid var(--line);border-radius:2px;padding:8px 10px;margin:0 0 8px;display:flex;flex-direction:column;gap:6px;background:var(--panel)}",
+  ".ak22t-cr{display:flex;align-items:center;gap:8px}",
+  ".ak22t-hero{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 10px;padding:10px;border:1px solid var(--line);border-radius:2px;background:var(--panel);margin:0 0 8px}",
+  ".ak22t-hl{min-width:0}",
+  ".ak22t-k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}",
+  ".ak22t-name{font-size:18px;font-weight:650;margin:1px 0}",
+  ".ak22t-cdw{text-align:right}",
+  ".ak22t-cd{font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-size:28px;font-weight:600;line-height:1}",
+  ".ak22t-cds{font-size:11px;margin-top:3px}",
+  ".ak22t-acts{flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap}",
+  ".ak22t-blk{border:1px solid var(--line);border-top:0;background:var(--panel)}",
+  ".ak22t-hero + .ak22t-blk,.ak22t-cfg + .ak22t-blk{border-top:1px solid var(--line)}",
+  ".ak22t-blk.off{opacity:.55}",
+  ".ak22t-bh{display:flex;align-items:center;gap:4px;padding:2px 6px 2px 0}",
+  ".ak22t-t{flex:1;min-width:0;display:flex;gap:6px;align-items:center;text-align:left;border:0;background:none;padding:8px 10px;font-weight:600;border-radius:0;color:inherit}",
+  ".ak22t-s{font-weight:400;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}",
+  ".ak22t-car{width:12px;display:inline-block;opacity:.7}",
+  ".ak22t-bb{padding:2px 10px 10px;display:flex;flex-direction:column;gap:7px}",
+  ".ak22t-row{margin:0;gap:6px;align-items:center;flex-wrap:wrap}",
+  ".ak22t button.sm,.ak22t-dlg button.sm,.ak22t-bar button.sm{border-radius:2px}",
+  ".ak22t button.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}",
+  ".ak22t-set{border:1px solid var(--line);border-radius:2px;padding:4px 8px;max-height:240px;overflow:auto}",
+  ".ak22t-li{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px dashed var(--line)}",
+  ".ak22t-li:last-child{border-bottom:0}",
+  ".ak22t-li.blocked .grow{color:var(--muted);text-decoration:line-through}",
+  ".ak22t-n{width:20px;text-align:right}",
+  ".ak22t-sub{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-top:4px}",
+  ".ak22t-tabs{display:flex;border-bottom:1px solid var(--line)}",
+  ".ak22t-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:5px 10px;color:inherit}",
+  ".ak22t-tabs button.sel{border-bottom-color:var(--accent);color:var(--accent);font-weight:600}",
+  ".ak22t-tl{display:flex;flex-direction:column;border-left:2px solid var(--line);margin-left:4px}",
+  ".ak22t-step{display:flex;align-items:center;gap:8px;padding:4px 0 4px 10px;position:relative}",
+  ".ak22t-step.past{opacity:.5}",
+  ".ak22t-step.cur{font-weight:600}",
+  ".ak22t-step.cur::before{content:'';position:absolute;left:-6px;top:50%;width:10px;height:10px;margin-top:-5px;background:var(--accent)}",
+  ".ak22t-time{font-variant-numeric:tabular-nums;min-width:68px}",
+  ".ak22t-next{font-weight:600;color:var(--accent)}",
+  ".ak22t-dlg{display:flex;flex-direction:column;gap:8px}",
+  ".ak22t-grid{display:flex;flex-direction:column;gap:4px}",
+  ".ak22t-num{display:flex;align-items:center;gap:6px}",
+  ".ak22t-num>span:first-child{flex:1}",
+  ".ak22t-num input{width:72px}",
+  ".ak22t-alarms{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}",
+  ".ak22t textarea{width:100%;border-radius:2px}",
+  ".ak22t-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--accent);color:var(--on-accent);border-radius:2px;margin:0 0 6px}",
+  ".ak22t-bar .ak22t-cd{font-size:20px}",
+  ".ak22t-bar button.sm{background:transparent;color:inherit;border:1px solid currentColor}",
+  ".ak22t .ak22t-hero,.ak22t .ak22t-blk,.ak22t .ak22t-cfg,.ak22t button,.ak22t select,.ak22t input,.ak22t textarea,.ak22t-bar,.ak22t-bar button,.ak22t-dlg button,.ak22t-dlg input{border-radius:2px!important}"
+].join("\n"));
+
+/* 🧪 test checklist */
+if (typeof akTcAdd === "function") akTcAdd("22.3", "Tonight", [
+  ["tn-page", "Tonight is the pre-show page", "Tap ☾ Tonight. Your next show is on top with a live countdown; tap a heading (Setlist, Warm-ups, Tuner…) to fold it open.", ["tonight", {}, ""]],
+  ["tn-setlist", "Pick tonight's setlist", "☾ Tonight › ☰ Setlist › pick one in the box. Open the show: the same setlist is on it.", ["tonight", {}, ""]],
+  ["tn-suggest", "Make a setlist from suggestions", "☾ Tonight › ☰ Setlist › ✦ Make from suggestions › Build my setlist › Create setlist. You land back on Tonight with it picked.", ["tonight", {}, ""]],
+  ["tn-prep", "Get ready times and drive", "☾ Tonight › ⏰ Get ready › ⏰ Times and alarms: type your home address, Save, then 🗺 Work out the drive. The Leave time moves.", ["tonight", {}, ""]],
+  ["tn-alarm", "Get ready alarms", "☾ Tonight › ⏰ Get ready › ⏰ Times and alarms › 🔊 Test the sound. Then 📅 Add the alarms to my calendar and open the file.", ["tonight", {}, ""]],
+  ["tn-req", "Requests from Tonight", "☾ Tonight › 🙋 Song requests: On / Off, People can ask for › Only tonight's setlist, then 🚫 a song. On the request page it shows greyed.", ["tonight", {}, ""]],
+  ["tn-jump", "Jumps to the show page", "☾ Tonight › ⚙ › Jump to the show page before it starts. On a show day with the app open, the show page opens by itself with the countdown bar on top.", ["tonight", {}, ""]],
+  ["tn-parts", "Turn parts on/off and move them", "☾ Tonight › ⚙ (top right) › On / Off on each part, Move parts › ↑ ↓.", ["tonight", {}, ""]]
+]);
+if (typeof AKTC_WHERE === "object") {
+  var AK22T_WHERE = {
+    "tn-page": ["☾ Tonight (bottom bar)", { sel: "#app .ak22t-t", re: "Setlist" }],
+    "tn-setlist": ["☾ Tonight › ☰ Setlist › the setlist box", { sel: "#app .ak22t-t", re: "Setlist" }],
+    "tn-suggest": ["☾ Tonight › ☰ Setlist › ✦ Make from suggestions", akTcB("Make from suggestions")],
+    "tn-prep": ["☾ Tonight › ⏰ Get ready › ⏰ Times and alarms", { sel: "#app .ak22t-t", re: "Get ready" }],
+    "tn-alarm": ["☾ Tonight › ⏰ Get ready › ⏰ Times and alarms › 🔊 Test the sound", { sel: "#app .ak22t-t", re: "Get ready" }],
+    "tn-req": ["☾ Tonight › 🙋 Song requests", { sel: "#app .ak22t-t", re: "Song requests" }],
+    "tn-jump": ["☾ Tonight › ⚙ (top right) › Jump to the show page before it starts", { sel: "#app button", re: "Tonight settings" }],
+    "tn-parts": ["☾ Tonight › ⚙ (top right) › Move parts", { sel: "#app button", re: "Tonight settings" }]
+  };
+  AKTC.forEach(function (x) { var w = AK22T_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "22.3";
+AK_WHATS_NEW = [
+  "☾ Tonight is now your pre-show page: a countdown to the show, tonight's setlist (pick one and it goes on the show, or ✦ make one from suggestions), warm-ups (built-in or YouTube), the tuner, song requests on/off with 🚫 per song, your packing list and notes. ⚙ turns parts on or off and moves them.",
+  "⏰ Get ready: works back from showtime to tell you when to get ready, pack the car and leave, with the drive time remembered for each venue (🗺 works it out from your home address) and extra time for gas. Alarms ring and buzz, with a heads-up before you have to leave, and 📅 puts them in your phone's calendar too.",
+  "15 minutes before the show (you can change it) the app jumps to the show page by itself, and the countdown keeps going on top."
+].concat(AK_WHATS_NEW);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
