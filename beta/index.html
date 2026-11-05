@@ -3726,6 +3726,7 @@ function viewShow() {
           opts.push({ label: "→ A new set", onClick: function () { var ns = newSet("Set " + (x.sets.length + 1)); x.sets.push(ns); put(ns); } });
           menu(anchor, opts); }, 0); } }; })));
       } }, "Copy to another setlist…"),
+      typeof akNrSelBtn === "function" ? akNrSelBtn(collectSel, draw) : null,
       h("button", { class: "danger", disabled: !n, onClick: function () { var picked = collectSel(); snap("remove songs from set"); takeOut(picked); S.selSongs = {}; save(); draw(); toastUndo("Removed " + picked.length + (picked.length === 1 ? " song" : " songs") + " from the sets."); } }, "Remove"),
       h("button", { onClick: function () { S.selSongMode = false; S.selSongs = {}; draw(); } }, "Done"));
   }
@@ -3767,6 +3768,7 @@ function viewShow() {
       { sep: true },
       { label: "Sort or shuffle…", onClick: function () { setTimeout(function () { menu(anchor, sorts.map(function (o) { return { label: o[0], onClick: function () { snap("sort set"); sortSet(st, o[1]); save(); draw(); toastUndo(st.name + ": " + o[0].toLowerCase() + "."); } }; })); }, 0); } },
       { label: "Add songs…", onClick: function () { pickSongs(function (ids) { akSl16Add(sh, st, ids, draw); }, { have: akSl16Have(sh) }); } },
+    ].concat(typeof akNrSetItems === "function" ? [{ sep: true }].concat(akNrSetItems(st, draw), [{ sep: true }]) : []).concat([
       { label: "Color…", onClick: function () { modal("Set color", colorPicker(st.color, function (c) { st.color = c; save(); }), [{ label: "Done", onClick: function () { setTimeout(draw, 0); } }]); } },
       { label: "Rename…", onClick: function () { askText("Rename set", st.name, "Rename", function (v) { st.name = v; save(); draw(); }); } },
       { label: "Set length (for the break countdown)…", onClick: function () { askText("Length of " + st.name + " in minutes (blank = the setlist's)", st.mins ? String(st.mins) : "", "Save", function (v) { st.mins = Math.max(0, parseInt(v, 10) || 0); save(); draw(); }, "45"); } },
@@ -3775,7 +3777,7 @@ function viewShow() {
         var targets = sh.sets.map(function (x, xi) { return xi === si ? null : { label: "→ " + (/^set\s*\d+$/i.test(x.name.trim()) ? x.name : (xi + 1) + ". " + x.name), onClick: function () { moveAllSongs(st, x); } }; });
         targets.push({ label: "→ A new set", onClick: function () { var ns = newSet("Set " + (sh.sets.length + 1)); sh.sets.splice(si + 1, 0, ns); moveAllSongs(st, ns); } });
         menu(anchor, targets); }, 0); } },
-      { label: "Delete this set…", danger: true, disabled: n === 1, onClick: function () { deleteSetDialog(st, si); } }]);
+      { label: "Delete this set…", danger: true, disabled: n === 1, onClick: function () { deleteSetDialog(st, si); } }]));
   }
   function draw() {
     var scroll = $("mainScroll"), keep = scroll ? scroll.scrollTop : 0;
@@ -3800,6 +3802,7 @@ function viewShow() {
         { label: "Venues…", onClick: function () { openVenues(); } },
         { label: "Undo last change", disabled: !undoStack.length, onClick: undoLast },
         akSl16Prac() ? null : { label: "Timers, break and start-time countdown…", onClick: function () { openTimers({ showId: sh.id }); } },
+        typeof akNrShowItem === "function" ? akNrShowItem(sh, draw) : null,
         { label: "Choose what shows under each song…", onClick: function () { infoOptionsDialog("sets", function () { draw(); }); } },
         !akSl16Prac() && akRunLive(sh.id) ? { label: "End this show now…", onClick: function () { akEndShowAsk(draw); } } : null,
         !akSl16Prac() && !akRunLive(sh.id) && akRunJustEnded(sh.id) ? { label: "Resume this show (encore)", onClick: function () { akRunResume(); draw(); } } : null,
@@ -3861,13 +3864,15 @@ function viewShow() {
             return;
           }
           akAnnRows(sh, st, id, draw).forEach(function (r) { blk.appendChild(r); });
-          blk.appendChild(h("div", { class: "item srow", "data-set": st.id, "data-idx": String(i), style: s && s.color ? "border-left:6px solid " + s.color : null },
+          var nrOn = s && typeof akNrRowsOn === "function" && akNrRowsOn();
+          blk.appendChild(h("div", { class: "item srow" + (nrOn && s.noReq ? " aknr-off" : ""), "data-set": st.id, "data-idx": String(i), style: s && s.color ? "border-left:6px solid " + s.color : null },
             h("button", { class: "handle sh-song", "aria-label": "Drag to move", title: "Drag to move" }, "⠿"),
             h("div", { class: "num" }, String(i + 1)),
             akSl16Prac() ? null : h("button", { class: "tick" + (sh.played[id] ? " on" : ""), "aria-pressed": sh.played[id] ? "true" : "false", "aria-label": "Played", onClick: function () { if (sh.played[id]) { delete sh.played[id]; uncountPlay(id, sh.id); } else countPlay(id, sh.id, { setName: st.name, setNo: sh.sets.indexOf(st) + 1, manual: 1 }); save(); draw(); } }, sh.played[id] ? "✓" : ""),
             h("button", { class: "main-btn" + (!akSl16Prac() && sh.played[id] ? " done" : ""), onClick: function () { saveNow(); var idx = 0, c = 0; sh.sets.forEach(function (x, xi) { x.songIds.forEach(function (sid, k) { if (findSong(sid)) { if (xi === si && k === i) idx = c; c++; } }); }); playShow(sh, idx, function () { go("show", { showId: sh.id }); }); } },
               h("div", { class: "t" }, (st.locks && st.locks[id] ? "🔒 " : "") + (st.rec && st.rec[id] ? "● " : "") + (s ? s.title : "(missing song)")), h("div", { class: "s" }, s ? songInfoLine(s, settings().setInfo) || " " : "")),
             s && typeof akTapPlays === "function" && akTapPlays() ? h("button", { class: "icon akedit", "aria-label": "Edit " + s.title, title: "Edit", onClick: function () { saveNow(); go("song", { songId: id }); } }, "✎") : null,
+            nrOn ? akNrBtn(s, draw) : null,
             h("button", { class: "icon", "aria-label": "Song options", onClick: function () { songMenu(this, st, si, i); } }, "⋯")));
         });
         if (S.selSongMode) blk.appendChild(h("div", { class: "row" }, h("button", { onClick: function () { var allOn = st.songIds.length && st.songIds.every(function (id, i) { return S.selSongs[selKey(st, i)]; }); st.songIds.forEach(function (id, i) { if (allOn) delete S.selSongs[selKey(st, i)]; else S.selSongs[selKey(st, i)] = 1; }); draw(); } }, "Select all in this set")));
@@ -12634,10 +12639,12 @@ function openSongList(root) {
   function played(it) { var sh = it.showId && findShow(it.showId); return !!(sh && sh.played[it.songId]); }
   function row(song, it, i, num) {
     var sh = it && it.showId ? findShow(it.showId) : null, pl = sh && sh.played[song.id];
-    var r = h("div", { class: "li" + (it && i === p.idx ? " cur" : "") + (pl ? " played" : ""), style: song.color ? "border-left:6px solid " + song.color : null },
+    var nrOn = typeof akNrRowsOn === "function" && akNrRowsOn();
+    var r = h("div", { class: "li" + (it && i === p.idx ? " cur" : "") + (pl ? " played" : "") + (nrOn && song.noReq ? " aknr-off" : ""), style: song.color ? "border-left:6px solid " + song.color : null },
       sh ? h("button", { class: "tick" + (pl ? " on" : ""), "aria-pressed": pl ? "true" : "false", "aria-label": "Played", onClick: function () { if (sh.played[song.id]) { delete sh.played[song.id]; uncountPlay(song.id, sh.id); } else countPlay(song.id, sh.id, Object.assign({}, it, { manual: 1 })); save(); drawList(); } }, pl ? "✓" : "") : null,
       num ? h("span", { class: "n" }, String(num)) : null,
-      h("button", { class: "lbtn", onClick: function () { loadSongById(song.id, root); } }, h("div", { class: "t" }, song.title), h("div", { class: "s" }, [song.artist, song.key].filter(Boolean).join(" · ") || " ")));
+      h("button", { class: "lbtn", onClick: function () { loadSongById(song.id, root); } }, h("div", { class: "t" }, song.title), h("div", { class: "s" }, [song.artist, song.key].filter(Boolean).join(" · ") || " ")),
+      nrOn ? akNrBtn(song, function () { drawList(); }) : null);
     if (it && i === p.idx) body._cur = r;
     return r;
   }
@@ -68227,6 +68234,93 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
   AKTC.forEach(function (x) { var w = AK21V_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
 }
 AK_VERSION = "21.7";
+
+/* 22.0: block song requests from the setlist (his note 11-05: "choose which songs I want to do later and not allow people
+   to request"). Uses the same flag as 16.3 (song.noReq, greyed "Not available right now" on the request page, Random skips it).
+   - 🚫 square on each song row of a setlist page and of the playing screen's song list (tap = blocked / open again)
+   - set ⋯: block / open every song in that set; Select songs bar: 🚫 Requests… for the picked songs
+   - setlist ⋯: open every song for requests again (end of the night)
+   - Settings › Requests and tips › Booking and not-available songs: show or hide the 🚫 squares
+   Hooks: views_show.js (row, set menu, More menu, select bar) and play.js (song list row) call these; all guarded with typeof. */
+function akNrRowsOn() {
+  var v = settings().noReqRows;
+  if (v === true || v === false) return v;
+  return akPersonal() || !!(typeof akLive === "function" && akLive().on);
+}
+function akNrSet(list, on) {
+  var n = 0;
+  (list || []).forEach(function (s) { if (!s) return; if (on) { if (!s.noReq) n++; s.noReq = true; } else if (s.noReq) { delete s.noReq; n++; } });
+  save(); if (typeof akChPush === "function") akChPush();
+  return n;
+}
+function akNrToggle(s) {
+  if (!s) return;
+  var on = !s.noReq; akNrSet([s], on);
+  toast(on ? "🚫 " + (s.title || "Song") + ": no requests for now (greyed on the request page)." : "✓ " + (s.title || "Song") + ": open for requests again.");
+}
+function akNrBtn(s, redraw) {
+  var on = !!(s && s.noReq);
+  return h("button", { class: "icon aknr" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false",
+    "aria-label": (on ? "Requests blocked for " : "Block requests for ") + (s ? s.title : "this song"),
+    title: on ? "Not taking requests for this song (tap to open it again)" : "Tap so people can't request this song right now",
+    onClick: function (e) { e.stopPropagation(); akNrToggle(s); if (redraw) redraw(); } }, "🚫");
+}
+function akNrSetSongs(st) { return (st.songIds || []).map(findSong).filter(Boolean); }
+function akNrSetItems(st, redraw) {
+  var L = akNrSetSongs(st), nb = L.filter(akNoReq).length;
+  return [
+    { label: "🚫 Block requests for every song in this set", disabled: !L.length || nb === L.length, onClick: function () { var c = akNrSet(L, true); redraw(); toast("🚫 " + c + (c === 1 ? " song" : " songs") + " in " + st.name + ": no requests for now."); } },
+    { label: "✓ Open every song in this set for requests" + (nb ? " (" + nb + " blocked)" : ""), disabled: !nb, onClick: function () { var c = akNrSet(L, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } }];
+}
+function akNrShowItem(sh, redraw) {
+  var all = []; sh.sets.forEach(function (st) { akNrSetSongs(st).forEach(function (s) { if (all.indexOf(s) < 0) all.push(s); }); });
+  var nb = all.filter(akNoReq).length, lb = lib().songs.filter(akNoReq).length;
+  return { label: "✓ Open all songs for requests again" + (lb ? " (" + lb + " blocked" + (nb < lb ? ", " + nb + " in this setlist" : "") + ")" : ""), disabled: !lb,
+    onClick: function () { var c = akNrSet(lib().songs, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } };
+}
+function akNrSelBtn(picked, redraw) {
+  return h("button", { disabled: !picked().length, onClick: function () {
+    var L = []; picked().forEach(function (x) { var s = findSong(x.id); if (s && L.indexOf(s) < 0) L.push(s); });
+    menu(this, [
+      { label: "🚫 No requests for these", onClick: function () { var c = akNrSet(L, true); redraw(); toast("🚫 " + c + (c === 1 ? " song" : " songs") + ": no requests for now."); } },
+      { label: "✓ Open these for requests", onClick: function () { var c = akNrSet(L, false); redraw(); toast("✓ " + c + (c === 1 ? " song" : " songs") + " open for requests again."); } }]);
+  } }, "🚫 Requests…");
+}
+(function () {
+  /* the show / hide switch sits next to the 🚫 picker in Settings › Requests and tips */
+  var pk = akNoReqPicker;
+  akNoReqPicker = function () {
+    var r = pk.apply(this, arguments);
+    setTimeout(function () {
+      var m = Array.prototype.slice.call(document.querySelectorAll(".modal")).pop(), p = m && m.querySelector(".hint");
+      if (!p || m.querySelector(".aknr-rows")) return;
+      p.parentNode.insertBefore(h("label", { class: "chk aknr-rows" }, h("input", { type: "checkbox", checked: akNrRowsOn(), onChange: function () { settings().noReqRows = this.checked; save(); } }),
+        "🚫 square on each song in a setlist and in the playing screen's song list"), p.nextSibling);
+    }, 0);
+    return r;
+  };
+})();
+akCss("aknr-css", ".aknr{width:32px;min-width:32px;height:32px;min-height:32px;padding:0;border-radius:2px;border:1px solid var(--line);background:transparent;font-size:15px;line-height:1;flex:none;align-self:center;opacity:.38;filter:grayscale(1)}" +
+  ".aknr.on{opacity:1;filter:none;border-color:#c0392b;background:rgba(192,57,43,.14)}" +
+  ".srow.aknr-off .main-btn .t,.listpanel .li.aknr-off .t{text-decoration:line-through;text-decoration-color:rgba(192,57,43,.7);text-decoration-thickness:1px}" +
+  ".listpanel .li .aknr{margin-left:auto}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Block requests for songs I'm saving for later", a: "🎤 Shows › open a setlist › tap 🚫 on a song (red = blocked). Also on the playing screen's song list. Whole set: the set's ⋯. Several: ⋯ › Select songs › 🚫 Requests…. End of night: ⋯ › Open all songs for requests again. Blocked songs are greyed on the request page as “Not available right now”.", k: "requests block not available later save end of night no requests disable request song setlist hide request page" });
+}
+AK_WHATS_NEW = ["🚫 Setlists: tap 🚫 on a song so people can't request it right now (greyed on your request page). Whole set from its ⋯, several from Select songs, and ⋯ › Open all songs for requests again."].concat(AK_WHATS_NEW || []);
+if (typeof akTcAdd === "function") akTcAdd("22.0", "Requests", [
+  ["nr-row", "🚫 on a setlist song", "Open a setlist, tap 🚫 on a song: it turns red and the title is crossed out. Your request page shows it greyed (Not available right now). Tap again to open it.", AKTC_SET],
+  ["nr-set", "Block a whole set", "On a set's ⋯: 🚫 Block requests for every song in this set, then ✓ Open every song in this set.", AKTC_SET],
+  ["nr-sel", "Block several", "Setlist ⋯ › Select songs…, tick a few, 🚫 Requests… › No requests for these.", AKTC_SET],
+  ["nr-play", "🚫 while playing", "Play the setlist, open the song list: each song has 🚫 on the right.", AKTC_SET],
+  ["nr-all", "Open all again", "Setlist ⋯ › ✓ Open all songs for requests again.", AKTC_SET]]);
+if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
+  var AK22NR_WHERE = { "nr-row": ["🎤 Shows › a setlist › 🚫 on each song row", { sel: ".srow .aknr" }], "nr-set": ["🎤 Shows › a setlist › a set's ⋯ › 🚫 Block requests…", { sel: ".sethead [aria-label='Set options']" }],
+    "nr-sel": ["🎤 Shows › a setlist › ⋯ › Select songs… › 🚫 Requests…"], "nr-play": ["▶ Play setlist › song list › 🚫 on the right of each song"],
+    "nr-all": ["🎤 Shows › a setlist › ⋯ › ✓ Open all songs for requests again", { sel: ".main .icon[aria-label=More]" }] };
+  AKTC.forEach(function (x) { var w = AK22NR_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "22.0";
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
