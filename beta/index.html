@@ -68228,6 +68228,572 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
 }
 AK_VERSION = "21.7";
 
+/* ================= 22.1: Tonight is the pre-show page (his 11-05 ask + his notes on the mock-up) =================
+   Mock-up he approved ("apply", 11-05): https://claude.ai/artifact/UCdp1jGMoZ3Z86CqrRThGd
+   Replaces old queue item 35 (fold Tonight into the Show screen): Tonight stays, and hands over to the show page by itself.
+   The page (AK_VIEWS.tonight = ak22tView, data-blocks "tonight" so ✎ Edit this screen still works):
+   - top: the next show (today or later), a live countdown to its start, Go to the show now, Show details, Flyer and QR.
+   - fold-down parts, each on/off and movable under ⚙ (settings().tonight22: order, on, open):
+     ⏰ Get ready (his mock-up note): a timeline worked back from the start time: get ready, pack the car, leave (drive time +
+       extra for gas and stops), arrive and set up, showtime. Drive time is kept per venue (venue.drive) so a venue he's played
+       before already knows it; "Work it out" asks OpenStreetMap routing (OSRM) from his home address, with a straight-line guess
+       when offline. Alarms for each step plus a heads-up before leaving: sound, buzz, a toast with a button, and a phone
+       notification when allowed, while the app is open. 📅 Add to my calendar saves an .ics with the same alarms so the phone
+       rings even when the app is closed.
+     ☰ Setlist: picking one makes it tonight's setlist (on the show right away); ✦ Make from suggestions opens Build a setlist and
+       the setlist it makes goes onto tonight's show; ▶ Play.
+     ♪ Warm-ups: Built-in (Learn › Warm-ups) and YouTube (lib().ytWarm) tabs.
+     ◎ Tuner: the same tuner as the Chord toolkit (stops when the part folds or the page changes).
+     🙋 Song requests: On / Off, who can ask for what (any song or only tonight's setlist; settings().tonight22.reqScope, only on
+       the show's day), and 🚫 per song (the same song.noReq flag as the song editor and 22.0's setlist rows).
+     🧳 Pack and check: the show's packing list (gig.pack, same list as the 🔔 gig reminders).
+     ✎ Notes for tonight: the show's notes (gig.notes).
+     ▶ Run the opener: the first song of tonight's setlist.
+     ↺ Last songs (off by default, the old Tonight card).
+   - ⚙: jump to the show page N minutes before it starts (default 15, 0 = off), open the app on Tonight on show days, keep the
+     countdown on the show page, Move parts, and the old "Open the app on Tonight" (settings().homeTonight).
+   - Show page: a countdown bar at the top on the show's day until it starts (with ← Tonight).
+   Tests: ak_t720. ================= */
+var AK22T = { stop: null, warmStop: null, jumped: {}, timer: 0 };
+var AK22T_BLOCKS = [["prep", "⏰", "Get ready"], ["setlist", "☰", "Setlist"], ["warm", "♪", "Warm-ups"], ["tuner", "◎", "Tuner"], ["req", "🙋", "Song requests"],
+  ["gear", "🧳", "Pack and check"], ["notes", "✎", "Notes for tonight"], ["opener", "▶", "Run the opener"], ["recent", "↺", "Last songs"]];
+var AK22T_STEPS = [["ready", "Get ready"], ["pack", "Pack the car"], ["leave", "Leave"], ["arrive", "Arrive and set up"], ["show", "Showtime"]];
+function ak22tCfg() {
+  var s = settings(); if (!s.tonight22 || typeof s.tonight22 !== "object") s.tonight22 = {};
+  var c = s.tonight22, d = { autoMin: 15, openOnShowDay: true, keepCd: true, warmTab: "built", reqScope: "setlist",
+    order: AK22T_BLOCKS.map(function (b) { return b[0]; }), on: { recent: false }, open: { setlist: true },
+    ready: 30, pack: 30, early: 45, buffer: 10, soon: 10, alarms: { ready: true, pack: true, leave: true, soon: true, arrive: false, show: false }, home: null, fired: {} };
+  Object.keys(d).forEach(function (k) { if (c[k] === undefined || c[k] === null && k !== "home") c[k] = JSON.parse(JSON.stringify(d[k])); });
+  if (!Array.isArray(c.order)) c.order = d.order.slice();
+  AK22T_BLOCKS.forEach(function (b) { if (c.order.indexOf(b[0]) < 0) c.order.push(b[0]); });
+  c.order = c.order.filter(function (id) { return AK22T_BLOCKS.some(function (b) { return b[0] === id; }); });
+  return c;
+}
+function ak22tOn(id) { return ak22tCfg().on[id] !== false; }
+
+/* ---------------------------------------------------------------- times */
+function ak22tGig() { return typeof akNextGig === "function" ? akNextGig() : null; }
+function ak22tToday() { var g = ak22tGig(); return g && g.date === akTodayKeySafe() ? g : null; }
+function ak22tStart(g) {
+  if (!g || !g.date || !/^\d+:\d+/.test(g.start || "")) return 0;
+  var p = g.date.split("-"), t = g.start.split(":");
+  return new Date(+p[0], +p[1] - 1, +p[2], +t[0], +t[1], 0, 0).getTime();
+}
+function ak22tClock(ms) { return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function ak22tLeft(ms) {
+  var s = Math.max(0, Math.round(ms / 1000)), d = Math.floor(s / 86400), hh = Math.floor(s % 86400 / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+  if (d) return d + (d === 1 ? " day " : " days ") + hh + " h";
+  function z(n) { return ("0" + n).slice(-2); }
+  return hh ? hh + ":" + z(mm) + ":" + z(ss) : mm + ":" + z(ss);
+}
+function ak22tCdText(g) {
+  var st = ak22tStart(g); if (!st) return "";
+  var left = st - Date.now(); return left > 0 ? ak22tLeft(left) : "Showtime";
+}
+function ak22tVenue(g) { try { return typeof akVenueFor === "function" ? akVenueFor(g) : null; } catch (e) { return null; } }
+function ak22tDrive(g) {
+  if (g && g.drive22 != null && g.drive22 !== "") return +g.drive22;
+  var v = ak22tVenue(g); return v && v.drive != null && v.drive !== "" ? +v.drive : null;
+}
+function ak22tEarly(g) { return g && g.early22 != null && g.early22 !== "" ? +g.early22 : +ak22tCfg().early; }
+/* the steps, worked back from the start time */
+function ak22tPlan(g) {
+  var st = ak22tStart(g); if (!st) return null;
+  var c = ak22tCfg(), drive = ak22tDrive(g), M = 60000;
+  var arrive = st - ak22tEarly(g) * M, leave = arrive - ((drive || 0) + (+c.buffer || 0)) * M, pack = leave - (+c.pack || 0) * M, ready = pack - (+c.ready || 0) * M;
+  return { drive: drive, steps: [{ k: "ready", at: ready }, { k: "pack", at: pack }, { k: "leave", at: leave }, { k: "arrive", at: arrive }, { k: "show", at: st }], soon: leave - (+c.soon || 0) * M };
+}
+function ak22tStepName(k) { for (var i = 0; i < AK22T_STEPS.length; i++) if (AK22T_STEPS[i][0] === k) return AK22T_STEPS[i][1]; return k; }
+function ak22tNext(plan) { var now = Date.now(); for (var i = 0; i < plan.steps.length; i++) if (plan.steps[i].at > now) return plan.steps[i]; return null; }
+
+/* ---------------------------------------------------------------- drive time */
+function ak22tHaversine(a, b) {
+  var R = 6371, r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lon - a.lon) * r;
+  var x = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function ak22tWhere(g, cb) {
+  var v = ak22tVenue(g);
+  if (v && v.lat && v.lon) return cb({ lat: +v.lat, lon: +v.lon });
+  var addr = typeof akGigAddr === "function" ? akGigAddr(g) : (g.address || "");
+  var q = [g.venue || g.name, addr].filter(Boolean).join(", ");
+  if (!q || typeof akVenueSearch !== "function") return cb(null);
+  akVenueSearch(q, function (err, a) {
+    var r = !err && a && a[0];
+    if (r && r.lat) { if (v) { v.lat = r.lat; v.lon = r.lon; save(); } cb({ lat: +r.lat, lon: +r.lon }); } else cb(null);
+  });
+}
+/* minutes from home to the show; remembered on the venue (or the show when it has no venue) */
+function ak22tDriveCalc(g, cb) {
+  var c = ak22tCfg(), home = c.home;
+  if (!home || !home.lat) { cb(null, "Add your home address first (it stays on this device and in your backups)."); return; }
+  ak22tWhere(g, function (to) {
+    if (!to) { cb(null, "I couldn't find the venue on the map. Add its address on the show, or type the drive time."); return; }
+    function keep(min, how) {
+      min = Math.max(1, Math.round(min)); var v = ak22tVenue(g);
+      if (v) { v.drive = min; v.driveHow = how; v.driveAt = Date.now(); } else { g.drive22 = min; }
+      save(); cb(min, how);
+    }
+    var guess = function () { keep(ak22tHaversine(home, to) * 1.3 / 65 * 60, "guess"); };
+    try {
+      fetch("https://router.project-osrm.org/route/v1/driving/" + home.lon + "," + home.lat + ";" + to.lon + "," + to.lat + "?overview=false")
+        .then(function (r) { if (!r.ok) throw new Error("http"); return r.json(); })
+        .then(function (j) { var sec = j && j.routes && j.routes[0] && j.routes[0].duration; if (sec) keep(sec / 60, "map"); else guess(); }, guess);
+    } catch (e) { guess(); }
+  });
+}
+
+/* ---------------------------------------------------------------- alarms */
+function ak22tBeep() {
+  try {
+    var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    var ctx = new AC(), t = ctx.currentTime;
+    [0, 0.35, 0.7].forEach(function (d) { var o = ctx.createOscillator(), gn = ctx.createGain(); o.frequency.value = 880; gn.gain.setValueAtTime(0.0001, t + d); gn.gain.exponentialRampToValueAtTime(0.4, t + d + 0.02); gn.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.28); o.connect(gn); gn.connect(ctx.destination); o.start(t + d); o.stop(t + d + 0.3); });
+    setTimeout(function () { try { ctx.close(); } catch (e) {} }, 1600);
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate([300, 150, 300]); } catch (e) {}
+}
+function ak22tAlarmText(k, g, plan) {
+  var w = akGigTitle(g);
+  if (k === "soon") return ["🚗 Leave in " + ak22tCfg().soon + " min", "You've got to leave for " + w + " soon (by " + ak22tClock(plan.steps[2].at) + ") or you'll be late."];
+  if (k === "ready") return ["⏰ Time to get ready", w + " starts at " + ak22tClock(plan.steps[4].at) + ". Pack the car at " + ak22tClock(plan.steps[1].at) + "."];
+  if (k === "pack") return ["🧳 Pack the car", "Leave for " + w + " at " + ak22tClock(plan.steps[2].at) + "."];
+  if (k === "leave") return ["🚗 Time to leave", "Drive to " + w + (plan.drive ? " (about " + plan.drive + " min)" : "") + "."];
+  if (k === "arrive") return ["📍 You should be at " + w, "Set up and sound check. Showtime " + ak22tClock(plan.steps[4].at) + "."];
+  return ["🎤 Showtime", w + " starts now."];
+}
+function ak22tFire(k, g, plan) {
+  var t = ak22tAlarmText(k, g, plan);
+  ak22tBeep();
+  toast(t[0] + ". " + t[1], { label: "Tonight", fn: function () { go("tonight"); } });
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "granted" && document.hidden) {
+      var opt = { body: t[1], tag: "ak22t-" + k, icon: "icon-192.png", requireInteraction: true };
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(function (r) { if (r && r.showNotification) r.showNotification(t[0], opt); else new Notification(t[0], opt); }).catch(function () {});
+      else new Notification(t[0], opt);
+    }
+  } catch (e) {}
+}
+function ak22tTick() {
+  try {
+    var g = ak22tToday(); if (!g) return;
+    var c = ak22tCfg(), plan = ak22tPlan(g); if (!plan) return;
+    var now = Date.now(), day = g.date, fired = c.fired, changed = false;
+    var list = plan.steps.map(function (s) { return [s.k, s.at]; }); list.push(["soon", plan.soon]);
+    list.forEach(function (x) {
+      var key = g.id + ":" + day + ":" + x[0];
+      if (!c.alarms[x[0]] || fired[key]) return;
+      if (now >= x[1] && now < x[1] + 10 * 60000) { fired[key] = day; changed = true; ak22tFire(x[0], g, plan); }
+      else if (now >= x[1] + 10 * 60000) { fired[key] = day; changed = true; } /* missed while closed: don't ring late */
+    });
+    Object.keys(fired).forEach(function (k) { if (fired[k] < akTodayKeySafe()) { delete fired[k]; changed = true; } });
+    /* the jump to the show page */
+    var st = plan.steps[4].at, jk = g.id + ":" + day;
+    if (+c.autoMin > 0 && now >= st - c.autoMin * 60000 && now < st + 30 * 60000 && !AK22T.jumped[jk] && !S.play && !document.querySelector(".modal") && /^(tonight|songs|shows|gigs)$/.test(S.view || "")) {
+      AK22T.jumped[jk] = 1; go("gig", { gigId: g.id }); toast("It's almost showtime. Here's tonight's show.");
+    }
+    if (changed) save();
+  } catch (e) {}
+}
+setInterval(ak22tTick, 15000); setTimeout(ak22tTick, 3000);
+document.addEventListener("visibilitychange", function () { if (!document.hidden) ak22tTick(); });
+/* live countdowns */
+setInterval(function () {
+  var els = document.querySelectorAll("[data-ak22cd]"); if (!els.length) return;
+  Array.prototype.forEach.call(els, function (el) { var g = akGig(el.getAttribute("data-ak22cd")); if (g) el.textContent = ak22tCdText(g); });
+  var nx = document.querySelectorAll("[data-ak22nx]");
+  Array.prototype.forEach.call(nx, function (el) { var g = akGig(el.getAttribute("data-ak22nx")); if (g) el.textContent = ak22tNextText(g); });
+}, 1000);
+function ak22tNextText(g) {
+  var plan = ak22tPlan(g); if (!plan) return "";
+  var n = ak22tNext(plan); if (!n || n.k === "show") return "";
+  return "Next: " + ak22tStepName(n.k) + " in " + ak22tLeft(n.at - Date.now());
+}
+
+/* the calendar file: one event per step, each with its alarm */
+function ak22tIcs(g, plan) {
+  function f(ms) { return new Date(ms).toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z"; }
+  var c = ak22tCfg(), out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Akashic Chords//Get ready//EN"];
+  var list = plan.steps.map(function (s) { return [s.k, s.at]; }); list.push(["soon", plan.soon]);
+  list.forEach(function (x) {
+    if (!c.alarms[x[0]]) return;
+    var t = ak22tAlarmText(x[0], g, plan);
+    out.push("BEGIN:VEVENT", "UID:ak22t-" + g.id + "-" + x[0] + "-" + g.date + "@akashic-chords", "DTSTAMP:" + f(Date.now()), "DTSTART:" + f(x[1]), "DURATION:PT10M",
+      "SUMMARY:" + t[0].replace(/[,;]/g, " "), "DESCRIPTION:" + t[1].replace(/[,;]/g, " "), "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:" + t[0].replace(/[,;]/g, " "), "TRIGGER:PT0M", "END:VALARM", "END:VEVENT");
+  });
+  out.push("END:VCALENDAR"); return out.join("\r\n");
+}
+
+/* the times window */
+function ak22tTimesDlg(g) {
+  var c = ak22tCfg(), box = h("div", { class: "ak22t-dlg" });
+  function num(label, get, set, unit) {
+    var i = h("input", { type: "number", min: "0", step: "5", value: String(get() == null ? "" : get()), "aria-label": label, onChange: function () { set(this.value === "" ? null : Math.max(0, +this.value)); save(); } });
+    return h("label", { class: "ak22t-num" }, h("span", null, label), i, h("span", { class: "muted" }, unit || "min"));
+  }
+  function draw() {
+    box.textContent = "";
+    box.appendChild(h("div", { class: "ak22t-grid" },
+      num("Get ready", function () { return c.ready; }, function (v) { c.ready = v || 0; }),
+      num("Pack the car", function () { return c.pack; }, function (v) { c.pack = v || 0; }),
+      num("Arrive before showtime", function () { return ak22tEarly(g); }, function (v) { if (g) g.early22 = v; }),
+      num("Extra for gas and stops", function () { return c.buffer; }, function (v) { c.buffer = v || 0; }),
+      num("Drive to this venue", function () { return ak22tDrive(g); }, function (v) { var vv = ak22tVenue(g); if (vv) { vv.drive = v; vv.driveHow = "typed"; } else if (g) g.drive22 = v; })));
+    var msg = h("span", { class: "muted" });
+    box.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm", onClick: function () { msg.textContent = "Working it out…"; ak22tDriveCalc(g, function (m, how) { if (m == null) { msg.textContent = how; return; } draw(); toast("About " + m + " min" + (how === "guess" ? " (a guess from the distance; the map wasn't reachable)" : "") + ". Saved with the venue."); }); } }, "🗺 Work out the drive"), msg));
+    var home = h("input", { type: "text", value: (c.home && c.home.addr) || "", placeholder: "Your home address", "aria-label": "Home address" });
+    box.appendChild(h("div", { class: "row ak22t-row" }, home, h("button", { class: "sm", onClick: function () {
+      var q = home.value.trim(); if (!q) { c.home = null; save(); return; }
+      akVenueSearch(q, function (err, a) { var r = !err && a && a[0]; if (!r || !r.lat) { toast("I couldn't find that address. Try adding the town."); return; } c.home = { addr: q, lat: +r.lat, lon: +r.lon }; save(); toast("Home address saved."); draw(); });
+    } }, "Save")));
+    box.appendChild(h("p", { class: "hint" }, "Arrive time is for this show; the rest are for every show. The drive time stays with the venue, so next time you play there it's already known."));
+    box.appendChild(h("div", { class: "ak22t-sub" }, "Alarms"));
+    var al = h("div", { class: "ak22t-alarms" });
+    AK22T_STEPS.concat([["soon", "Heads-up before leaving"]]).forEach(function (s) {
+      al.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.alarms[s[0]], onChange: function () { c.alarms[s[0]] = this.checked; save(); } }), s[1]));
+    });
+    box.appendChild(al);
+    box.appendChild(num("Heads-up", function () { return c.soon; }, function (v) { c.soon = v || 0; }, "min before leaving"));
+    var nOk = typeof Notification !== "undefined" && Notification.permission === "granted";
+    box.appendChild(h("div", { class: "row ak22t-row" },
+      typeof Notification !== "undefined" && !nOk ? h("button", { class: "sm", onClick: function () { Notification.requestPermission().then(function () { draw(); }); } }, "Allow phone notifications") : null,
+      h("button", { class: "sm", onClick: function () { var p = ak22tPlan(g); if (!p) { toast("Add a start time to the show first."); return; } saveFile("get-ready-" + (g.date || "show") + ".ics", ak22tIcs(g, p), "text/calendar"); } }, "📅 Add the alarms to my calendar"),
+      h("button", { class: "sm", onClick: function () { ak22tBeep(); } }, "🔊 Test the sound")));
+    box.appendChild(h("p", { class: "hint" }, "Alarms ring while the app is open (sound, buzz and a notification). The calendar file makes your phone ring even when the app is closed."));
+  }
+  draw();
+  modal("⏰ Get ready times", box, [{ label: "Done", primary: true, onClick: function () { render(); } }]);
+}
+
+/* ---------------------------------------------------------------- the parts */
+function ak22tLists(g) { return ((g && g.setlists) || []).map(findShow).filter(Boolean); }
+function ak22tSongsOf(sh) { var out = []; (sh.sets || []).forEach(function (st) { (st.songIds || []).forEach(function (id) { var s = findSong(id); if (s && out.indexOf(s) < 0) out.push(s); }); }); return out; }
+function ak22tSetTonight(g, id) {
+  if (!g || !id) return; snap("tonight's setlist");
+  g.setlists = (g.setlists || []).filter(function (x) { return x !== id; });
+  g.setlists.unshift(id); save();
+  var sh = findShow(id); toast("“" + (sh ? sh.name : "Setlist") + "” is tonight's setlist now (on the show).");
+}
+function ak22tBody(id, g) {
+  var c = ak22tCfg(), b = h("div", { class: "ak22t-bb" }), lists = ak22tLists(g), first = lists[0];
+  function needShow(msg) { b.appendChild(h("p", { class: "hint" }, msg || "Add your next show first.")); return b; }
+  if (id === "prep") {
+    if (!g) return needShow();
+    var plan = ak22tPlan(g);
+    if (!plan) { b.appendChild(h("p", { class: "hint" }, "Add a start time to the show and I'll work out when to get ready, pack and leave.")); b.appendChild(h("button", { class: "sm", onClick: function () { go("gig", { gigId: g.id }); } }, "Open the show")); return b; }
+    var now = Date.now(), nx = ak22tNext(plan);
+    var tl = h("div", { class: "ak22t-tl" });
+    plan.steps.forEach(function (s) {
+      var past = s.at <= now, cur = nx && nx.k === s.k, sub = "";
+      if (s.k === "leave") sub = plan.drive == null ? "drive time not known yet" : "drive about " + plan.drive + " min + " + c.buffer + " extra";
+      if (s.k === "arrive") sub = ak22tEarly(g) + " min before showtime";
+      tl.appendChild(h("div", { class: "ak22t-step" + (past ? " past" : "") + (cur ? " cur" : "") },
+        h("span", { class: "ak22t-time" }, ak22tClock(s.at)), h("span", { class: "grow" }, ak22tStepName(s.k), sub ? h("span", { class: "muted" }, " · " + sub) : null),
+        h("span", { class: "ak22t-bell", title: c.alarms[s.k] ? "Alarm on" : "No alarm", "aria-label": c.alarms[s.k] ? "Alarm on" : "No alarm" }, c.alarms[s.k] ? "🔔" : "")));
+    });
+    b.appendChild(tl);
+    if (g.date === akTodayKeySafe()) b.appendChild(h("div", { class: "ak22t-next", "data-ak22nx": g.id }, ak22tNextText(g)));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm", onClick: function () { ak22tTimesDlg(g); } }, "⏰ Times and alarms"),
+      plan.drive == null ? h("button", { class: "sm", onClick: function () { ak22tDriveCalc(g, function (m, how) { if (m == null) { ak22tTimesDlg(g); toast(how); return; } toast("About " + m + " min. Saved with the venue."); render(); }); } }, "🗺 Work out the drive") : null,
+      typeof akMapsUrl === "function" && akMapsUrl(g.venue || g.name, akGigAddr(g)) ? h("a", { class: "btnlink sm", href: akMapsUrl(g.venue || g.name, akGigAddr(g)), target: "_blank", rel: "noopener" }, "📍 Map") : null));
+    return b;
+  }
+  if (id === "setlist") {
+    if (!g) return needShow();
+    var sel = h("select", { "aria-label": "Tonight's setlist", onChange: function () { if (this.value) { ak22tSetTonight(g, this.value); render(); } } });
+    sel.appendChild(h("option", { value: "" }, first ? "Change setlist…" : "Pick a setlist…"));
+    (lib().shows || []).filter(function (sh) { return !sh.deleted && !sh.archived; }).forEach(function (sh) { sel.appendChild(h("option", { value: sh.id, selected: first && sh.id === first.id }, (sh.name || "Setlist") + " (" + ak22tSongsOf(sh).length + ")")); });
+    b.appendChild(h("div", { class: "row ak22t-row" }, sel, h("button", { class: "sm", onClick: function () { S.ak22tBuild = g.id; go("build"); } }, "✦ Make from suggestions")));
+    if (first) {
+      var box = h("div", { class: "ak22t-set" });
+      (first.sets || []).forEach(function (st, si) {
+        if ((first.sets || []).length > 1) box.appendChild(h("div", { class: "ak22t-sub" }, st.name || "Set " + (si + 1)));
+        (st.songIds || []).forEach(function (sid, i) { var s = findSong(sid); if (s) box.appendChild(h("div", { class: "ak22t-li" }, h("span", { class: "muted ak22t-n" }, String(i + 1)), h("span", { class: "grow" }, s.title || "Untitled"))); });
+      });
+      b.appendChild(box);
+      b.appendChild(h("div", { class: "row ak22t-row" }, h("button", { class: "sm primary", onClick: function () { akGigPlay(g); } }, "▶ Play"), h("button", { class: "sm", onClick: function () { go("show", { showId: first.id }); } }, "Edit"),
+        lists.length > 1 ? h("span", { class: "muted" }, "+" + (lists.length - 1) + " more on the show") : null));
+    } else b.appendChild(h("p", { class: "hint" }, "Picking one puts it on tonight's show right away."));
+    return b;
+  }
+  if (id === "warm") {
+    var tabs = h("div", { class: "ak22t-tabs", role: "tablist" }), pane = h("div", { class: "ak22t-wp" });
+    [["built", "Built-in"], ["yt", "YouTube"]].forEach(function (t) {
+      tabs.appendChild(h("button", { role: "tab", class: c.warmTab === t[0] ? "sel" : "", "aria-selected": c.warmTab === t[0] ? "true" : "false", onClick: function () { c.warmTab = t[0]; save(); render(); } }, t[1]));
+    });
+    b.appendChild(tabs); b.appendChild(pane);
+    try {
+      if (c.warmTab === "yt") { if (typeof akYtWarmCard === "function") pane.appendChild(akYtWarmCard()); else pane.appendChild(h("p", { class: "hint" }, "The YouTube window isn't in this version.")); }
+      else if (typeof akWarmupsView === "function") { akWarmupsView(pane); Array.prototype.forEach.call(pane.querySelectorAll(".akyt-warm,[data-bk=warm-videos]"), function (x) { x.remove(); }); }
+    } catch (e) { pane.appendChild(h("p", { class: "hint" }, "Warm-ups couldn't open here. Try Learn › Warm-ups.")); }
+    var t0 = new Date(); t0.setHours(0, 0, 0, 0); var mins = typeof akPracMins === "function" ? Math.round(akPracMins(t0.getTime())) : 0;
+    b.appendChild(h("div", { class: "muted" }, mins ? "Practiced " + mins + " min today." : "Nothing practiced yet today."));
+    return b;
+  }
+  if (id === "tuner") {
+    var tp = h("div", { class: "ak22t-tuner" }); b.appendChild(tp);
+    try { AK22T.stop = akToolTuner(tp); } catch (e) { tp.appendChild(h("button", { class: "sm", onClick: function () { openChordTools("tuner"); } }, "Open the tuner")); }
+    return b;
+  }
+  if (id === "req") {
+    var on = typeof akReqOnNow === "function" && akReqOnNow();
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "grow" }, "Requests tonight"),
+      h("button", { class: "sm" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { if (!on) akReqOnOff(true); setTimeout(render, 50); } }, "On"),
+      h("button", { class: "sm" + (on ? "" : " on"), "aria-pressed": on ? "false" : "true", onClick: function () { if (on) akReqOnOff(false); setTimeout(render, 50); } }, "Off")));
+    var sc = h("select", { "aria-label": "Which songs people can ask for", onChange: function () { c.reqScope = this.value; save(); try { akChPush(); } catch (e) {} render(); } },
+      [["all", "Any song in my library"], ["setlist", "Only tonight's setlist"]].map(function (o) { return h("option", { value: o[0], selected: c.reqScope === o[0] }, o[1]); }));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted" }, "People can ask for"), sc));
+    if (c.reqScope === "setlist" && !first) b.appendChild(h("p", { class: "hint" }, g ? "Pick tonight's setlist first. Until then any song can be asked for." : "With no show today any song can be asked for."));
+    var songs = c.reqScope === "setlist" && first ? ak22tSongsOf(first) : [];
+    if (songs.length) {
+      var bx = h("div", { class: "ak22t-set" });
+      songs.forEach(function (s) {
+        var bl = !!s.noReq;
+        bx.appendChild(h("div", { class: "ak22t-li" + (bl ? " blocked" : "") }, h("span", { class: "grow" }, s.title || "Untitled"),
+          h("button", { class: "sm", "aria-pressed": bl ? "true" : "false", "aria-label": (bl ? "Allow requests for " : "Block requests for ") + (s.title || "this song"), onClick: function () { if (s.noReq) delete s.noReq; else s.noReq = true; save(); try { akChPush(); } catch (e) {} render(); } }, bl ? "🚫 Blocked" : "Allowed")));
+      });
+      b.appendChild(bx);
+    }
+    var nb = lib().songs.filter(function (s) { return s.noReq; }).length;
+    b.appendChild(h("div", { class: "row ak22t-row" }, typeof akNoReqPicker === "function" ? h("button", { class: "sm", onClick: function () { akNoReqPicker(); } }, "🚫 All blocked songs (" + nb + ")") : null,
+      typeof akTcFind === "function" ? h("button", { class: "sm", onClick: function () { go("settings"); setTimeout(function () { try { akTcFind("Requests and tips"); } catch (e) {} }, 300); } }, "Tips and rules") : null));
+    return b;
+  }
+  if (id === "gear") {
+    if (!g) return needShow();
+    if (typeof akRmPackFor !== "function") return needShow("The packing list isn't in this version.");
+    if (!Array.isArray(g.pack)) { g.pack = akRmPackFor(g); }
+    var done = 0;
+    g.pack.forEach(function (p) { if (p.done) done++; b.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!p.done, onChange: function () { p.done = this.checked; save(); render(); } }), p.t)); });
+    if (!g.pack.length) b.appendChild(h("p", { class: "hint" }, "Nothing on the list yet."));
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted grow" }, done + " of " + g.pack.length + " packed"), h("button", { class: "sm", onClick: function () { akRmPackDlg(g); } }, "Edit list")));
+    return b;
+  }
+  if (id === "notes") {
+    if (!g) return needShow();
+    var ta = h("textarea", { rows: "3", "aria-label": "Notes for tonight", placeholder: "Anything to remember tonight", onInput: function () { g.notes = this.value; save(); } });
+    ta.value = g.notes || ""; b.appendChild(ta);
+    b.appendChild(h("div", { class: "muted" }, "Saved with the show (same notes as on the show page)."));
+    return b;
+  }
+  if (id === "opener") {
+    var fs = first ? ak22tSongsOf(first)[0] : null;
+    if (!fs) return needShow("Pick tonight's setlist to see the first song.");
+    b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "grow" }, "First song: ", h("b", null, fs.title || "Untitled")),
+      h("button", { class: "sm", onClick: function () { go("song", { songId: fs.id }); } }, "Open"), h("button", { class: "sm", "aria-label": "Practice " + (fs.title || "the first song"), onClick: function () { playFromSongs([fs], 0); } }, "▶ Practice it")));
+    return b;
+  }
+  if (id === "recent") {
+    var recent = (store.recent || []).map(findSong).filter(Boolean).slice(0, 3);
+    if (!recent.length) return needShow("No songs opened yet.");
+    recent.forEach(function (s) { b.appendChild(h("div", { class: "ak22t-li" }, h("span", { class: "grow" }, s.title, s.artist ? h("span", { class: "muted" }, "  " + s.artist) : null), h("button", { class: "sm", onClick: function () { go("song", { songId: s.id }); } }, "Open"), h("button", { class: "sm", "aria-label": "Play " + s.title, onClick: function () { playFromSongs([s], 0); } }, "▶"))); });
+    return b;
+  }
+  return b;
+}
+function ak22tSummary(id, g) {
+  var c = ak22tCfg(), lists = ak22tLists(g), first = lists[0];
+  if (id === "prep") { var p = g && ak22tPlan(g); if (!p) return g ? "add a start time" : ""; return "leave " + ak22tClock(p.steps[2].at); }
+  if (id === "setlist") return first ? first.name || "Setlist" : (g ? "none picked yet" : "");
+  if (id === "warm") return c.warmTab === "yt" ? "YouTube" : "built-in";
+  if (id === "tuner") return settings().instrument || "";
+  if (id === "req") { var on = typeof akReqOnNow === "function" && akReqOnNow(); return (on ? "on" : "off") + (c.reqScope === "setlist" ? " · tonight's setlist" : " · any song"); }
+  if (id === "gear") { if (!g || !Array.isArray(g.pack)) return ""; var d = g.pack.filter(function (p) { return p.done; }).length; return d + " of " + g.pack.length + " packed"; }
+  if (id === "notes") return g && g.notes ? String(g.notes).split("\n")[0].slice(0, 40) : "";
+  if (id === "opener") { var fs = first ? ak22tSongsOf(first)[0] : null; return fs ? fs.title || "" : ""; }
+  return "";
+}
+
+/* ---------------------------------------------------------------- the page */
+function ak22tView() {
+  if (AK22T.stop) { try { AK22T.stop(); } catch (e) {} AK22T.stop = null; }
+  var c = ak22tCfg(), g = ak22tGig(), isToday = g && g.date === akTodayKeySafe();
+  var body = h("div", { class: "ak22t", "data-blocks": "tonight" });
+  /* settings strip */
+  if (S.ak22tCfg) {
+    var cf = h("div", { class: "ak22t-cfg", "data-bk": "tonight-settings" });
+    var am = h("select", { "aria-label": "Jump to the show page before it starts", onChange: function () { c.autoMin = +this.value; save(); } },
+      [[0, "Off"], [5, "5 min"], [10, "10 min"], [15, "15 min"], [20, "20 min"], [30, "30 min"], [45, "45 min"], [60, "1 hour"]].map(function (o) { return h("option", { value: String(o[0]), selected: +c.autoMin === o[0] }, o[1]); }));
+    cf.appendChild(h("label", { class: "ak22t-cr" }, h("span", { class: "grow" }, "Jump to the show page before it starts"), am));
+    function ck(label, get, set) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); save(); } }), label); }
+    cf.appendChild(ck("Open the app on Tonight on show days", function () { return c.openOnShowDay; }, function (v) { c.openOnShowDay = v; }));
+    cf.appendChild(ck("Open the app on Tonight every day", function () { return settings().homeTonight; }, function (v) { settings().homeTonight = v; }));
+    cf.appendChild(ck("Keep the countdown on the show page", function () { return c.keepCd; }, function (v) { c.keepCd = v; }));
+    cf.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted grow" }, "Turn parts on or off below. Move them with ↑ ↓."),
+      h("button", { class: "sm" + (S.ak22tMove ? " on" : ""), onClick: function () { S.ak22tMove = !S.ak22tMove; render(); } }, S.ak22tMove ? "Done moving" : "Move parts")));
+    body.appendChild(cf);
+  }
+  /* the show */
+  if (g) {
+    var lists = ak22tLists(g), st = ak22tStart(g);
+    body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "next-show" },
+      h("div", { class: "grow ak22t-hl" }, h("div", { class: "ak22t-k" }, isToday ? "Tonight" : "Next show"), h("div", { class: "ak22t-name" }, akGigTitle(g)),
+        h("div", { class: "muted" }, [akGigDateText(g), g.start ? "starts " + (st ? ak22tClock(st) : g.start) : "no start time", g.venue && g.venue !== g.name ? g.venue : "", lists.length ? "" : "no setlist yet"].filter(Boolean).join(" · "))),
+      st ? h("div", { class: "ak22t-cdw" }, h("div", { class: "ak22t-cd", "data-ak22cd": g.id }, ak22tCdText(g)), h("div", { class: "muted ak22t-cds" }, isToday && +c.autoMin > 0 ? "show page at " + c.autoMin + " min" : "to showtime")) : null,
+      h("div", { class: "ak22t-acts" },
+        h("button", { class: "sm primary", onClick: function () { go("gig", { gigId: g.id }); } }, "Go to the show now"),
+        h("button", { class: "sm", disabled: !lists.length, onClick: function () { akGigPlay(g); } }, "▶ Play"),
+        typeof akFlyerOpen === "function" ? h("button", { class: "sm", onClick: function () { akFlyerOpen(g); } }, "Flyer") : null)));
+  } else {
+    body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "next-show" }, h("div", { class: "grow" }, h("b", null, "No show coming up"), h("p", { class: "hint" }, "Add your next booking and it shows here with a countdown, your setlist and a Play button.")),
+      typeof akGigNewDialog === "function" ? h("div", { class: "ak22t-acts" }, h("button", { class: "sm primary", onClick: function () { settings().showsTab = "gigs"; save(); go("shows"); setTimeout(function () { akGigNewDialog(); }, 50); } }, "+ New show")) : null));
+  }
+  if (S.play) body.appendChild(h("div", { class: "ak22t-hero", "data-bk": "playing" }, h("b", { class: "grow" }, "A set is playing"), h("button", { class: "sm primary", onClick: function () { resumePlay(); } }, "Back to the playing screen")));
+  /* the parts */
+  c.order.forEach(function (id, i) {
+    var B = AK22T_BLOCKS.filter(function (x) { return x[0] === id; })[0]; if (!B) return;
+    var on = ak22tOn(id); if (!on && !S.ak22tCfg) return;
+    var open = on && !!c.open[id];
+    var w = h("div", { class: "ak22t-blk" + (on ? "" : " off"), "data-bk": "t-" + id, "data-bt": B[2] });
+    var hd = h("div", { class: "ak22t-bh" },
+      h("button", { class: "ak22t-t", "aria-expanded": open ? "true" : "false", disabled: !on, onClick: function () { c.open[id] = !c.open[id]; save(); render(); } },
+        h("span", { class: "ak22t-car", "aria-hidden": "true" }, on ? (open ? "▾" : "▸") : "·"), h("span", null, B[1] + " " + B[2]), h("span", { class: "ak22t-s muted" }, on ? ak22tSummary(id, g) : "off")),
+      S.ak22tCfg && S.ak22tMove ? h("button", { class: "sm", "aria-label": "Move " + B[2] + " up", disabled: i === 0, onClick: function () { var o = c.order, x = o[i]; o[i] = o[i - 1]; o[i - 1] = x; save(); render(); } }, "↑") : null,
+      S.ak22tCfg && S.ak22tMove ? h("button", { class: "sm", "aria-label": "Move " + B[2] + " down", disabled: i === c.order.length - 1, onClick: function () { var o = c.order, x = o[i]; o[i] = o[i + 1]; o[i + 1] = x; save(); render(); } }, "↓") : null,
+      S.ak22tCfg ? h("button", { class: "sm" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", "aria-label": (on ? "Hide " : "Show ") + B[2], onClick: function () { c.on[id] = !on; save(); render(); } }, on ? "On" : "Off") : null);
+    w.appendChild(hd);
+    if (open) w.appendChild(ak22tBody(id, g));
+    body.appendChild(w);
+  });
+  var gear = h("button", { class: "icon" + (S.ak22tCfg ? " on" : ""), "aria-label": "Tonight settings", title: "Choose parts and timing", "aria-pressed": S.ak22tCfg ? "true" : "false", onClick: function () { S.ak22tCfg = !S.ak22tCfg; if (!S.ak22tCfg) S.ak22tMove = false; render(); } }, "⚙");
+  return shell("Tonight", body, { actions: gear });
+}
+AK_VIEWS.tonight = ak22tView; AK_VIEW_TAB.tonight = "tonight";
+
+/* Build a setlist from Tonight: the new setlist goes onto tonight's show, then back to Tonight */
+if (typeof bldCreate === "function") (function () {
+  var bc = bldCreate;
+  bldCreate = function () {
+    var gid = S.ak22tBuild, n0 = (lib().shows || []).length, out = bc.apply(this, arguments);
+    if (gid) {
+      S.ak22tBuild = "";
+      var g = akGig(gid), shs = lib().shows || [], sh = shs.length > n0 ? shs[shs.length - 1] : null;
+      if (g && sh) { ak22tSetTonight(g, sh.id); go("tonight"); }
+    }
+    return out;
+  };
+})();
+
+/* requests: "Only tonight's setlist" greys every other song on the request page (show days only) */
+if (typeof akLivePublicProfile === "function") (function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = pp.apply(this, arguments);
+    try {
+      var c = ak22tCfg(), g = ak22tToday(), first = g ? ak22tLists(g)[0] : null;
+      if (c.reqScope === "setlist" && first && Array.isArray(p.songs)) {
+        var ok = {}; ak22tSongsOf(first).forEach(function (s) { ok[s.id] = 1; });
+        p.songs.forEach(function (x) { if (!ok[x.i]) x.n = 1; });
+      }
+    } catch (e) {}
+    return p;
+  };
+})();
+
+/* the show page: a countdown bar on the show's day; opening the app on Tonight on show days */
+(function () {
+  var first = true, ar = akAfterRender;
+  akAfterRender = function () {
+    var r = ar.apply(this, arguments);
+    try {
+      if (first) { first = false; var c0 = ak22tCfg(); if (c0.openOnShowDay && ak22tToday() && S.view === "songs" && !S.play) setTimeout(function () { go("tonight"); }, 0); }
+      if (S.view !== "tonight" && AK22T.stop) { try { AK22T.stop(); } catch (e) {} AK22T.stop = null; }
+      var main = document.querySelector("#app .main");
+      if (main && S.view === "gig" && ak22tCfg().keepCd && !main.querySelector(":scope > .ak22t-bar")) {
+        var g = akGig(S.gigId), st = ak22tStart(g);
+        if (g && st && g.date === akTodayKeySafe() && Date.now() < st) {
+          main.insertBefore(h("div", { class: "ak22t-bar", role: "timer" }, h("button", { class: "sm", "aria-label": "Back to Tonight", onClick: function () { go("tonight"); } }, "← Tonight"),
+            h("span", { class: "grow" }, "Show starts in"), h("b", { class: "ak22t-cd", "data-ak22cd": g.id }, ak22tCdText(g))), main.firstChild);
+        }
+      }
+    } catch (e) {}
+    return r;
+  };
+})();
+
+akCss("ak22t", [
+  ".ak22t{display:flex;flex-direction:column;gap:0}",
+  ".ak22t-cfg{border:1px solid var(--line);border-radius:2px;padding:8px 10px;margin:0 0 8px;display:flex;flex-direction:column;gap:6px;background:var(--panel)}",
+  ".ak22t-cr{display:flex;align-items:center;gap:8px}",
+  ".ak22t-hero{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 10px;padding:10px;border:1px solid var(--line);border-radius:2px;background:var(--panel);margin:0 0 8px}",
+  ".ak22t-hl{min-width:0}",
+  ".ak22t-k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}",
+  ".ak22t-name{font-size:18px;font-weight:650;margin:1px 0}",
+  ".ak22t-cdw{text-align:right}",
+  ".ak22t-cd{font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;font-size:28px;font-weight:600;line-height:1}",
+  ".ak22t-cds{font-size:11px;margin-top:3px}",
+  ".ak22t-acts{flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap}",
+  ".ak22t-blk{border:1px solid var(--line);border-top:0;background:var(--panel)}",
+  ".ak22t-hero + .ak22t-blk,.ak22t-cfg + .ak22t-blk{border-top:1px solid var(--line)}",
+  ".ak22t-blk.off{opacity:.55}",
+  ".ak22t-bh{display:flex;align-items:center;gap:4px;padding:2px 6px 2px 0}",
+  ".ak22t-t{flex:1;min-width:0;display:flex;gap:6px;align-items:center;text-align:left;border:0;background:none;padding:8px 10px;font-weight:600;border-radius:0;color:inherit}",
+  ".ak22t-s{font-weight:400;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}",
+  ".ak22t-car{width:12px;display:inline-block;opacity:.7}",
+  ".ak22t-bb{padding:2px 10px 10px;display:flex;flex-direction:column;gap:7px}",
+  ".ak22t-row{margin:0;gap:6px;align-items:center;flex-wrap:wrap}",
+  ".ak22t button.sm,.ak22t-dlg button.sm,.ak22t-bar button.sm{border-radius:2px}",
+  ".ak22t button.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}",
+  ".ak22t-set{border:1px solid var(--line);border-radius:2px;padding:4px 8px;max-height:240px;overflow:auto}",
+  ".ak22t-li{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px dashed var(--line)}",
+  ".ak22t-li:last-child{border-bottom:0}",
+  ".ak22t-li.blocked .grow{color:var(--muted);text-decoration:line-through}",
+  ".ak22t-n{width:20px;text-align:right}",
+  ".ak22t-sub{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-top:4px}",
+  ".ak22t-tabs{display:flex;border-bottom:1px solid var(--line)}",
+  ".ak22t-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:5px 10px;color:inherit}",
+  ".ak22t-tabs button.sel{border-bottom-color:var(--accent);color:var(--accent);font-weight:600}",
+  ".ak22t-tl{display:flex;flex-direction:column;border-left:2px solid var(--line);margin-left:4px}",
+  ".ak22t-step{display:flex;align-items:center;gap:8px;padding:4px 0 4px 10px;position:relative}",
+  ".ak22t-step.past{opacity:.5}",
+  ".ak22t-step.cur{font-weight:600}",
+  ".ak22t-step.cur::before{content:'';position:absolute;left:-6px;top:50%;width:10px;height:10px;margin-top:-5px;background:var(--accent)}",
+  ".ak22t-time{font-variant-numeric:tabular-nums;min-width:68px}",
+  ".ak22t-next{font-weight:600;color:var(--accent)}",
+  ".ak22t-dlg{display:flex;flex-direction:column;gap:8px}",
+  ".ak22t-grid{display:flex;flex-direction:column;gap:4px}",
+  ".ak22t-num{display:flex;align-items:center;gap:6px}",
+  ".ak22t-num>span:first-child{flex:1}",
+  ".ak22t-num input{width:72px}",
+  ".ak22t-alarms{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px}",
+  ".ak22t textarea{width:100%;border-radius:2px}",
+  ".ak22t-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--accent);color:var(--on-accent);border-radius:2px;margin:0 0 6px}",
+  ".ak22t-bar .ak22t-cd{font-size:20px}",
+  ".ak22t-bar button.sm{background:transparent;color:inherit;border:1px solid currentColor}",
+  ".ak22t .ak22t-hero,.ak22t .ak22t-blk,.ak22t .ak22t-cfg,.ak22t button,.ak22t select,.ak22t input,.ak22t textarea,.ak22t-bar,.ak22t-bar button,.ak22t-dlg button,.ak22t-dlg input{border-radius:2px!important}"
+].join("\n"));
+
+/* 🧪 test checklist */
+if (typeof akTcAdd === "function") akTcAdd("22.1", "Tonight", [
+  ["tn-page", "Tonight is the pre-show page", "Tap ☾ Tonight. Your next show is on top with a live countdown; tap a heading (Setlist, Warm-ups, Tuner…) to fold it open.", ["tonight", {}, ""]],
+  ["tn-setlist", "Pick tonight's setlist", "☾ Tonight › ☰ Setlist › pick one in the box. Open the show: the same setlist is on it.", ["tonight", {}, ""]],
+  ["tn-suggest", "Make a setlist from suggestions", "☾ Tonight › ☰ Setlist › ✦ Make from suggestions › Build my setlist › Create setlist. You land back on Tonight with it picked.", ["tonight", {}, ""]],
+  ["tn-prep", "Get ready times and drive", "☾ Tonight › ⏰ Get ready › ⏰ Times and alarms: type your home address, Save, then 🗺 Work out the drive. The Leave time moves.", ["tonight", {}, ""]],
+  ["tn-alarm", "Get ready alarms", "☾ Tonight › ⏰ Get ready › ⏰ Times and alarms › 🔊 Test the sound. Then 📅 Add the alarms to my calendar and open the file.", ["tonight", {}, ""]],
+  ["tn-req", "Requests from Tonight", "☾ Tonight › 🙋 Song requests: On / Off, People can ask for › Only tonight's setlist, then 🚫 a song. On the request page it shows greyed.", ["tonight", {}, ""]],
+  ["tn-jump", "Jumps to the show page", "☾ Tonight › ⚙ › Jump to the show page before it starts. On a show day with the app open, the show page opens by itself with the countdown bar on top.", ["tonight", {}, ""]],
+  ["tn-parts", "Turn parts on/off and move them", "☾ Tonight › ⚙ (top right) › On / Off on each part, Move parts › ↑ ↓.", ["tonight", {}, ""]]
+]);
+if (typeof AKTC_WHERE === "object") {
+  var AK22T_WHERE = {
+    "tn-page": ["☾ Tonight (bottom bar)", { sel: "#app .ak22t-t", re: "Setlist" }],
+    "tn-setlist": ["☾ Tonight › ☰ Setlist › the setlist box", { sel: "#app .ak22t-t", re: "Setlist" }],
+    "tn-suggest": ["☾ Tonight › ☰ Setlist › ✦ Make from suggestions", akTcB("Make from suggestions")],
+    "tn-prep": ["☾ Tonight › ⏰ Get ready › ⏰ Times and alarms", { sel: "#app .ak22t-t", re: "Get ready" }],
+    "tn-alarm": ["☾ Tonight › ⏰ Get ready › ⏰ Times and alarms › 🔊 Test the sound", { sel: "#app .ak22t-t", re: "Get ready" }],
+    "tn-req": ["☾ Tonight › 🙋 Song requests", { sel: "#app .ak22t-t", re: "Song requests" }],
+    "tn-jump": ["☾ Tonight › ⚙ (top right) › Jump to the show page before it starts", { sel: "#app button", re: "Tonight settings" }],
+    "tn-parts": ["☾ Tonight › ⚙ (top right) › Move parts", { sel: "#app button", re: "Tonight settings" }]
+  };
+  AKTC.forEach(function (x) { var w = AK22T_WHERE[x.id]; if (w) { AKTC_WHERE[x.id] = w; x.where = w[0]; if (w[1]) x.find = w[1]; } });
+}
+AK_VERSION = "22.1";
+AK_WHATS_NEW = [
+  "☾ Tonight is now your pre-show page: a countdown to the show, tonight's setlist (pick one and it goes on the show, or ✦ make one from suggestions), warm-ups (built-in or YouTube), the tuner, song requests on/off with 🚫 per song, your packing list and notes. ⚙ turns parts on or off and moves them.",
+  "⏰ Get ready: works back from showtime to tell you when to get ready, pack the car and leave, with the drive time remembered for each venue (🗺 works it out from your home address) and extra time for gas. Alarms ring and buzz, with a heads-up before you have to leave, and 📅 puts them in your phone's calendar too.",
+  "15 minutes before the show (you can change it) the app jumps to the show page by itself, and the countdown keeps going on top."
+].concat(AK_WHATS_NEW);
+
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
   var text = lyric.replace(/\s+$/, ""), re = /\S+/g, m, chords = [], maxPos = 0;
