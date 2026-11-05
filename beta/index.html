@@ -14575,7 +14575,10 @@ function openLivePanel(root, song) {
     }
   }
   AKL.panelDraw = draw;
-  panel.appendChild(h("header", null, h("strong", { class: "grow" }, "Live requests"), h("button", { class: "icon sm", "aria-label": "Close", onClick: function () { closeLivePanel(root); } }, "✕")));
+  panel.appendChild(h("header", null, h("strong", { class: "grow" }, "Live requests"),
+    /* 22.6b: straight to the request settings, to fix something mid-show */
+    h("button", { class: "icon sm", "aria-label": "Request settings", title: "Request settings", onClick: function () { closeLivePanel(root); akLiveSettingsGo(); } }, "⚙"),
+    h("button", { class: "icon sm", "aria-label": "Close", onClick: function () { closeLivePanel(root); } }, "✕")));
   panel.appendChild(tabs); panel.appendChild(body);
   root.appendChild(scrim); root.appendChild(panel); draw();
 }
@@ -14706,6 +14709,21 @@ function akLiveContactBtns(r) {
   if (em) return h("a", { class: "btn sm", href: "mailto:" + encodeURIComponent(c), target: "_blank", rel: "noopener" }, "✉ Email");
   if (ph.length >= 7) return h("a", { class: "btn sm", href: "sms:" + ph }, "📱 Text");
   return null;
+}
+
+/* open Settings at Requests and tips › Live requests */
+function akLiveSettingsGo() {
+  go("settings");
+  setTimeout(function () {
+    try {
+      var ds = [].slice.call(document.querySelectorAll("details")), hit = null;
+      ds.forEach(function (d) { var sm = d.querySelector("summary"); if (sm && /Requests and tips/.test(sm.textContent) && !hit) hit = d; });
+      if (!hit) return; var p = hit; while (p) { if (p.tagName === "DETAILS") p.open = true; p = p.parentElement; }
+      var lr = [].slice.call(hit.querySelectorAll("details")).filter(function (d) { var sm = d.querySelector("summary"); return sm && /Live requests/.test(sm.textContent); })[0];
+      if (lr) lr.open = true;
+      (lr || hit).scrollIntoView({ block: "start" });
+    } catch (e) {}
+  }, 350);
 }
 
 /* ================= Akashic Chords: when a show ends, and encores =================
@@ -70329,7 +70347,7 @@ function akLrSettings(out, ctx, tmp) {
   function fold(id, title, desc, fill, isNew) {
     var d = h("details", { class: "aklr-g", "data-lr": id, open: c.ui.open === id ? true : null },
       h("summary", null, h("b", null, title), isNew ? h("span", { class: "aklr-new" }, "NEW") : null, h("span", { class: "aklr-d" }, desc)), h("div", { class: "aklr-b" }));
-    d.addEventListener("toggle", function () { if (d.open) { c.ui.open = id; save(); Array.prototype.forEach.call(out.querySelectorAll("details.aklr-g"), function (x) { if (x !== d) x.open = false; }); } else if (c.ui.open === id) { c.ui.open = ""; save(); } });
+    d.addEventListener("toggle", function () { if (d.open) { c.ui.open = id; save(); Array.prototype.forEach.call((d.parentNode || document).querySelectorAll("details.aklr-g"), function (x) { if (x !== d) x.open = false; }); } else if (c.ui.open === id) { c.ui.open = ""; save(); } });
     fill(d.lastChild); out.appendChild(d); return d;
   }
   function chk(label, get, set, redraw) { return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!get(), onChange: function () { set(this.checked); chg(redraw); } }), label); }
@@ -70514,6 +70532,7 @@ function akLrSettings(out, ctx, tmp) {
     if (Lm.one || Lm.max || Lm.setLeft) b.appendChild(txt("What people see when it's full", function () { return Lm.full || AKLR_LIM_FULL; }, function (v) { Lm.full = v; }));
     b.appendChild(h("p", { class: "hint" }, "With both limits on, the smaller number wins. Learn requests and messages don't count. The songs-left limit works while a setlist is playing."));
     take(/Encore bribes/).forEach(function (n) { b.appendChild(n); });
+    try { akLrTipsTidy(b, c); } catch (e) {}
   });
   /* 📱 */
   fold("scans", "📊 QR code scans", "How many people opened your page, from which code, and what they did", function (b) { akScanPanel(b); });
@@ -70851,6 +70870,98 @@ if (typeof AKTC_WHERE !== "undefined" && typeof AKTC !== "undefined") {
 }
 AK_WHATS_NEW = ["🎤 Requests: friendly tip lines with ready-made picks, fine print, the encore card in your words, ⚡ Play it next, people see their place in line, 💬 replies and automatic thank-yous, 📊 QR scan counts, and card payments through Square (after a one-time setup). 🖨 Print any design several to a page (cards, table tents). QR codes are never covered."].concat(AK_WHATS_NEW);
 AK_VERSION = "22.6";
+
+/* ================= 22.6b: 💵 Tips and request rules, tidied (his ask 11-05 14:45) =================
+   Three buttons on top (Free · Tips optional · Tip required); under them only what that rule uses, two to a row;
+   then three small folds: 💳 How people pay, ⚡ Extras, 🎵 The line. Nothing is removed: the same controls, regrouped. */
+function akLrTipsTidy(b, c) {
+  var kids = [].slice.call(b.children); if (!kids.length) return;
+  var modeSel = null, modeLab = null;
+  kids.forEach(function (n) { var s2 = n.querySelector && n.querySelector("select"); if (!modeSel && s2 && [].some.call(s2.options, function (o) { return /All requests are free/.test(o.textContent); })) { modeSel = s2; modeLab = n; } });
+  if (!modeSel) return;
+  var G = { basic: [], other: [], pay: [], extra: [], line: [] }, cur = "pay";
+  function txtOf(n) { return (n.textContent || "").trim(); }
+  kids.forEach(function (n) {
+    if (n === modeLab) return;
+    var t = txtOf(n), isH = n.tagName === "H3";
+    if (isH) { if (/Tip choices/.test(t)) { cur = "basic"; return; } if (/Play it next/.test(t)) cur = "extra"; else if (/Pay by card/.test(t)) cur = "pay"; else if (/Place in line|Request limits/.test(t)) cur = "line"; else if (/Encore/.test(t)) cur = "extra"; G[cur].push(n); return; }
+    if (/^Suggested amount|first request is free|the page starts on|^Hold tipped requests/.test(t)) { G.basic.push(n); return; }
+    if (/ask me to learn a song|send me a message/.test(t)) { G.other.push(n); return; }
+    if (/Encore bribe|encore/i.test(t) && cur !== "extra") cur = "extra";
+    if (n.tagName === "P" && G.basic.length && cur === "basic") { G.basic.push(n); return; }
+    if (cur === "basic") cur = "pay";
+    G[cur].push(n);
+  });
+  b.textContent = "";
+  var mode = modeSel.value;
+  var seg = h("div", { class: "aklr-seg", role: "group", "aria-label": "Tips for requests" }, [["free", "Free"], ["optional", "Tips optional"], ["required", "Tip required"]].map(function (m) {
+    return h("button", { type: "button", "aria-pressed": mode === m[0] ? "true" : "false", onClick: function () { modeSel.value = m[0]; modeSel.dispatchEvent(new Event("change", { bubbles: true })); } }, m[1]);
+  }));
+  b.appendChild(h("div", { class: "aklr-k" }, "Tips for requests")); b.appendChild(seg);
+  /* only what this rule uses */
+  var grid = h("div", { class: "aklr-g2" });
+  G.basic.forEach(function (n) {
+    var t = txtOf(n), show = !(mode === "free" && /^Suggested amount|^Hold tipped/.test(t)) && !(mode !== "required" && /first request is free/.test(t)) && !(mode !== "optional" && /the page starts on/.test(t));
+    if (n.tagName === "P") { n.classList.add("aklr-wide"); if (mode === "free") return; }
+    if (show) grid.appendChild(n);
+  });
+  G.other.forEach(function (n) { grid.appendChild(n); });
+  b.appendChild(grid);
+  var st = c.ui = c.ui || {}; st.tf = st.tf || {};
+  function fold2(k, title, list) {
+    if (!list.length) return;
+    var d = h("details", { class: "aklr-sub", open: !!st.tf[k] }, h("summary", null, title)), body = h("div", { class: "aklr-subb" });
+    d.addEventListener("toggle", function () { st.tf[k] = d.open; save(); });
+    list.forEach(function (n) { if (n.tagName === "H3") n.classList.add("aklr-h4"); body.appendChild(n); });
+    d.appendChild(body); b.appendChild(d);
+  }
+  fold2("pay", "💳 How people pay: tip links, card fee, Square", G.pay);
+  fold2("extra", "⚡ Extras: Play it next, encore bribes", G.extra);
+  fold2("line", "🎵 The line: place in line, limits", G.line);
+}
+akCss("aklr-tidy", [
+  ".aklr-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:2px 0 8px}.aklr-seg button{border-radius:2px;padding:8px 4px;font-size:13px}",
+  ".aklr-seg button[aria-pressed=true]{background:var(--accent);color:var(--on-accent,#000);border-color:var(--accent)}",
+  ".aklr-g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:2px 10px;align-items:start}.aklr-g2>.fld,.aklr-g2>.chk{margin:2px 0;font-size:13px}.aklr-g2 .aklr-wide{grid-column:1/-1}",
+  ".aklr-g2 input[type=number],.aklr-g2 select{width:100%}",
+  ".aklr-sub{border:1px solid var(--line);border-radius:2px;margin:6px 0;padding:0 8px}.aklr-sub>summary{padding:8px 0;font-weight:600;cursor:pointer}.aklr-subb{padding:0 0 8px}",
+  ".aklr-subb .aklr-h4{font-size:13px;margin:8px 0 2px;opacity:.85}.aklr-subb .aklr-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px}",
+  "@media (max-width:360px){.aklr-g2{grid-template-columns:1fr}}"
+].join(""));
+/* ================= 22.6b: lock keys and ids (his ask 11-05 15:05) =================
+   Firebase settings, Google keys and calendar ids, GitHub repository and token, cloud app keys, the functions address:
+   once filled in they show 🔒 and can't be typed in until you tap Change… and say yes to a short warning. */
+var AKLOCK_RE = /firebase settings|api ?key|access token|\btoken\b|client id|app key|secret|calendar id|functions address|repository|google key/i;
+function akLockLabel(el) {
+  var lab = el.closest("label"); if (lab) return lab.textContent || "";
+  var id = el.id && document.querySelector('label[for="' + el.id + '"]'); if (id) return id.textContent || "";
+  return (el.getAttribute("aria-label") || "") + " " + (el.getAttribute("placeholder") || "");
+}
+function akLockSweep(root) {
+  [].forEach.call((root || document).querySelectorAll("input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=search]), textarea"), function (el) {
+    if (el.getAttribute("data-aklock") || !String(el.value || "").trim() || el.readOnly || el.disabled) return;
+    var t = akLockLabel(el); if (!AKLOCK_RE.test(t) && !(el.type === "password" && el.value)) return;
+    el.setAttribute("data-aklock", "1"); el.readOnly = true; el.classList.add("aklock-on");
+    var nm = String(t).replace(/\s+/g, " ").trim().slice(0, 60) || "this";
+    var btn = h("button", { type: "button", class: "sm aklock-btn", "aria-label": "Unlock " + nm, onClick: function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (!el.readOnly) { el.readOnly = true; el.classList.add("aklock-on"); btn.textContent = "🔒 Change…"; return; }
+      modal("Change this?", h("div", null, h("p", null, "“" + nm + "” is an important setting that keeps your app connected."),
+        h("p", { class: "hint" }, "Only change it if you know the new value is right (for example, from a setup guide). A wrong or empty value stops requests, sync or payments from working.")),
+        [{ label: "Keep it" }, { label: "🔓 Unlock to change", primary: true, onClick: function () { el.readOnly = false; el.classList.remove("aklock-on"); btn.textContent = "🔒 Lock again"; setTimeout(function () { try { el.focus(); } catch (er) {} }, 50); } }]);
+    } }, "🔒 Change…");
+    if (el.nextSibling) el.parentNode.insertBefore(btn, el.nextSibling); else el.parentNode.appendChild(btn);
+  });
+}
+(function () {
+  var t = null;
+  try {
+    new MutationObserver(function () { clearTimeout(t); t = setTimeout(function () { if (typeof S !== "undefined" && S.view === "settings") akLockSweep(document.getElementById("app") || document); }, 120); })
+      .observe(document.body || document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+})();
+akCss("aklock", ".aklock-on{opacity:.75;cursor:not-allowed;background-image:linear-gradient(transparent,transparent)}.aklock-btn{margin:4px 0 6px;font-size:12px}");
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Change a locked key or id (🔒)", a: "Keys and ids (Firebase settings, Google keys, calendar ids, GitHub repository and token, the functions address) are locked once filled in. Tap 🔒 Change… under the box and say yes to unlock it.", k: "locked key id token firebase settings change unlock", p: ["settings", {}, ""] });
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
