@@ -14437,7 +14437,7 @@ function akCloudListen(u) {
     var ids = {}; a.forEach(function (x) { ids[x.id] = 1; }); Object.keys(AKL.items).forEach(function (k) { if (!ids[k]) delete AKL.items[k]; });
     akLiveIncoming(a);
   }, function (e) { AKL.err = "Firebase said no: " + (e.code || e.message); akLivePaint(); });
-  akLivePublish().catch(function (e) { AKL.err = "Couldn't publish your page: " + (e.code || e.message); akLivePaint(); });
+  (typeof akLivePublishSoft === "function" ? akLivePublishSoft() : akLivePublish()).catch(function (e) { AKL.err = "Couldn't publish your page: " + (e.code || e.message); akLivePaint(); });
   akLivePaint();
 }
 function akCloudSignIn(email, pass, create) {
@@ -70612,14 +70612,16 @@ function akLrSettings(out, ctx, tmp) {
 function akLrPreview(edit, help) {
   var L = akLive(); if (!L.on) { toast("Turn on live requests first."); return; }
   try { closeModals(); } catch (e) {}
-  if (L.mode === "cloud" && AKL.conn !== "cloud") { toast("Sign in first (🔌 Connection and sign-in), so the page has your details."); return; }
-  akLivePublish().catch(function () {});
+  /* not signed in on this device: still open the page (it shows what's online now) and say so */
+  var offline = L.mode === "cloud" && AKL.conn !== "cloud";
+  if (!offline) akLivePublish().catch(function () {});
   /* this-device mode: hand the page your details straight away, even before the live connection has started */
   if (L.mode !== "cloud") { try { localStorage.setItem("akreq:profile", JSON.stringify(akLivePublicProfile())); } catch (e) {} }
   var url = akLivePageUrl(true) + "&preview=1" + (edit ? "&edit=1" : "") + (help ? "&help=1" : "");
   var fr = h("iframe", { class: "aklr-frame", src: url, title: "Your request page", referrerpolicy: "no-referrer" });
   AKLR.frame = fr;
   modal(edit ? "✎ Edit this page" : "👁 Preview", h("div", null,
+    offline ? h("p", { class: "hint", style: "margin-top:0;color:var(--warn,#E5B800)" }, "This device isn't signed in to live requests, so this shows your page as it is online right now. Changes made here won't go out until you sign in (🔌 Connection and sign-in).") : null,
     h("p", { class: "hint", style: "margin-top:0" }, edit ? "Tap any part of the page, then change it in the panel at the bottom. Changes save by themselves." : "This is your real page, as people see it. Nothing is sent from here."),
     h("div", { class: "aklr-phone" }, fr),
     h("div", { class: "row" }, h("button", { onClick: function () { fr.src = akLivePageUrl(true) + "&preview=1&help=1&t=" + Date.now(); } }, "▶ Try the help"),
@@ -70706,7 +70708,7 @@ function akLrStudioBake(D) {
     var only = Object.assign({}, B, { layers: B.layers.filter(function (l) { return !akLrIsLive(l.id); }) }), k = Math.min(1, 720 / W);
     AKLR.baking = true;
     var cv; try { cv = akPosterCanvas(only, null, k); } finally { AKLR.baking = false; }
-    return { img: cv.toDataURL("image/jpeg", 0.8), W: W, H: H, fg: B.fg || "#ffffff", font: (D.fonts || {}).main || "", parts: parts };
+    return { img: akLrSmallJpeg(cv), W: W, H: H, fg: B.fg || "#ffffff", font: (D.fonts || {}).main || "", parts: parts };
   });
 }
 function akLrStudioOpen() { try { S.gfxKind = "reqpage"; akGfxOpen("reqpage", null); } catch (e) { go("graphics"); } }
@@ -70719,7 +70721,7 @@ function akLrStudioPanel(d, D, ch) {
       var b = this; b.disabled = true; st.textContent = "Getting it ready…";
       akLrStudioBake(D).then(function (o) {
         var cc = akLr(); cc.studio = { on: true, img: o.img, W: o.W, H: o.H, fg: o.fg, font: o.font, parts: o.parts, at: Date.now() }; save();
-        b.disabled = false; st.textContent = "✓ Sent. Your request page now uses this design."; if (AKL.conn) akLivePublish().catch(function () {}); toast("Your request page uses this design now.");
+        b.disabled = false; st.textContent = "✓ Sent. Your request page now uses this design."; akLrGoLive("✓ Your request page uses this design now.");
       }, function (e) { b.disabled = false; st.textContent = "Couldn't make it: " + ((e && e.message) || e); });
     } }, "📤 Use on my request page"),
     c.studio.on ? h("button", { onClick: function () { var cc = akLr(); cc.studio.on = false; save(); if (AKL.conn) akLivePublish().catch(function () {}); st.textContent = "Your request page is back to ⇅ Arrange."; } }, "Stop using it") : null,
@@ -70832,10 +70834,11 @@ function akLrLine(c) {
   return q.slice(0, 40).map(function (r) { return c.lineNames ? { i: r.id, t: String(r.title || "").slice(0, 60), n: r.tip && r.tip.next ? 1 : 0 } : { i: r.id }; });
 }
 (function () {
-  var lp = akLivePaint, sig = "";
+  var lp = akLivePaint, sig = null;
   akLivePaint = function () {
     var out = lp.apply(this, arguments);
-    try { var c = akLr(); if (c.lineOn !== false || akLive().rules.next) { var s = JSON.stringify(akLrLine(c)); if (s !== sig) { sig = s; akLrPublishSoon(); } } } catch (e) {}
+    /* only when the line really changes (not when the app first opens), and never over a page another device is running */
+    try { var c = akLr(); if (c.lineOn !== false || akLive().rules.next) { var s = JSON.stringify(akLrLine(c)); if (sig === null) sig = s; else if (s !== sig) { sig = s; clearTimeout(AKLR.t); AKLR.t = setTimeout(function () { try { save(); if (AKL.conn) (typeof akLivePublishSoft === "function" ? akLivePublishSoft() : akLivePublish()).catch(function () {}); } catch (e) {} }, 700); } } } catch (e) {}
     return out;
   };
 })();
@@ -71048,11 +71051,20 @@ akCss("aklock", ".aklock-on{opacity:.75;cursor:not-allowed;background-image:line
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Change a locked key or id (🔒)", a: "Keys and ids (Firebase settings, Google keys, calendar ids, GitHub repository and token, the functions address) are locked once filled in. Tap 🔒 Change… under the box and say yes to unlock it.", k: "locked key id token firebase settings change unlock", p: ["settings", {}, ""] });
 
 /* ================= 22.6b: 📤 Use on my page right in the Graphics top bar (his ask 11-05 15:18: "no way to apply it") ================= */
+/* the page picture has to fit in your online page (Firestore's 1 MB limit, shared with your song list):
+   phone width (720 px wide is sharp on any phone), then lower quality until it's under about 450 KB */
+function akLrSmallJpeg(cv) {
+  var w = Math.min(720, cv.width), hh = Math.round(cv.height * w / cv.width), c2 = cv;
+  if (w < cv.width) { c2 = document.createElement("canvas"); c2.width = w; c2.height = hh; var x = c2.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(cv, 0, 0, w, hh); }
+  var q = 0.82, u = c2.toDataURL("image/jpeg", q);
+  while (u.length > 450000 && q > 0.35) { q -= 0.08; u = c2.toDataURL("image/jpeg", q); }
+  return u;
+}
 function akLrStudioUse(D, done) {
   toast("Getting your page design ready…");
   akLrStudioBake(D).then(function (o) {
     var cc = akLr(); cc.studio = { on: true, img: o.img, W: o.W, H: o.H, fg: o.fg, font: o.font, parts: o.parts, at: Date.now() }; save();
-    if (AKL.conn) akLivePublish().catch(function () {}); toast("✓ Your request page uses this design now."); if (done) done(true);
+    akLrGoLive("✓ Your request page uses this design now."); if (done) done(true);
   }, function (e) { toast("Couldn't make it: " + ((e && e.message) || e)); if (done) done(false); });
 }
 (function () {
@@ -71095,6 +71107,17 @@ function akLrSavesBox() {
   return box;
 }
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Save the request page as it is now, and bring it back later", a: "Settings › Requests and tips › Live requests › 🎨 Page design › ⇅ Arrange › 💾 Saved page setups › 💾 Save this setup… (Load puts it back)." });
+
+/* send the page now and say plainly whether it went out */
+function akLrGoLive(okMsg) {
+  var L = akLive();
+  if (!L.on) { toast("Saved. Turn on live requests to put it on your page."); return; }
+  if (L.mode === "cloud" && AKL.conn !== "cloud") { modal("Saved, but not on your page yet", h("p", null, "This device isn't signed in to live requests, so your page didn't change. Go to Settings › Requests and tips › Live requests › 🔌 Connection and sign-in, sign in, then tap 📤 Update my page.")); return; }
+  akLivePublish().then(function () { toast(okMsg || "✓ Your page is updated."); }, function (e) {
+    var m = (e && (e.code || e.message)) || "unknown";
+    modal("Your page didn't update", h("p", null, /size|too large|exceeds|bytes/i.test(m) ? "The page picture is too big to send. Open the design and tap 📤 Use on my page again (it now makes the picture smaller)." : "Firebase said: " + m));
+  });
+}
 
 /* ak_v22ui (22.6): one tidy Effects box, and every fold arrow on the left.
    - ✨ Effects opens in the panel only (no second window, no "Open the effects window / Dock here" stub).
@@ -71230,7 +71253,7 @@ function akQAllowed() {
 })();
 /* "only the set I'm playing": when the play screen moves into the next set, the page follows */
 setInterval(function () {
-  try { var c = akQCfg(); if (c.reqScope !== "now" || !akLive().on) return; var was = c.reqNowSet, now = akQNowSet(); if (now !== was) { save(); akLivePublish().catch(function () {}); } } catch (e) {}
+  try { var c = akQCfg(); if (c.reqScope !== "now" || !akLive().on) return; var was = c.reqNowSet, now = akQNowSet(); if (now !== was) { save(); akLivePublishSoft().catch(function () {}); } } catch (e) {}
 }, 5000);
 
 /* ---------------- the show's log: everything that came in tonight */
@@ -71376,7 +71399,7 @@ function akQuickBox(redraw) {
     return o0.apply(this, arguments);
   };
   var last = null;
-  setInterval(function () { try { if (!akLive().on) return; var c = akEncCfg(); if (c.when !== "at" && c.when !== "before") return; var o = akEncOpen(); if (o !== last) { last = o; akLivePublish().catch(function () {}); } } catch (e) {} }, 30000);
+  setInterval(function () { try { if (!akLive().on) return; var c = akEncCfg(); if (c.when !== "at" && c.when !== "before") return; var o = akEncOpen(); if (last === null) { last = o; return; } if (o !== last) { last = o; akLivePublishSoft().catch(function () {}); } } catch (e) {} }, 30000);
 })();
 akCss("ak22q", ".akq-row{display:flex;align-items:center;gap:8px;margin:4px 0}.akq-amt{display:flex;align-items:center;gap:4px}.akq-amt input{width:76px}" + ".akq-quick>summary{min-height:36px;display:flex;align-items:center}.akq-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.75;margin:10px 0 4px}" +
   ".akq-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}.akq-grid>button{width:100%}.akq-sets{display:flex;flex-wrap:wrap;gap:4px 14px}.akq-price input{max-width:110px}");
@@ -71428,6 +71451,33 @@ akCss("ak22q-live", ".akq-live{margin:0 0 8px;padding:6px 10px;border-radius:2px
   ".akq-live.paused{background:rgba(229,184,0,.15);color:#E5B800;border:1px solid rgba(229,184,0,.5)}.akq-live.down{background:rgba(229,72,77,.15);color:#ff8a8d;border:1px solid rgba(229,72,77,.5)}.akq-live.off{opacity:.7}" +
   ".akq-enc.on{color:#4ade80;font-weight:700}" +
   "button.aklive-on{color:#4ade80!important;box-shadow:inset 0 -3px 0 #4ade80}button.aklive-paused{color:#E5B800!important;box-shadow:inset 0 -3px 0 #E5B800}button.aklive-down{color:#ff8a8d!important;box-shadow:inset 0 -3px 0 #ff8a8d}");
+
+/* ONE device runs the page. Every publish is stamped with this device; automatic ones (opening the app, the line moving,
+   the encore timer) never overwrite a page another device published. Anything you change on purpose, or 📤 Update my page,
+   makes this device the one running it. */
+function akDevId() { try { var d = localStorage.getItem("akdev"); if (!d) { d = Math.random().toString(36).slice(2, 10); localStorage.setItem("akdev", d); } return d; } catch (e) { return "x"; } }
+(function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = pp.apply(this, arguments); try { p.dev = akDevId(); p.devName = (navigator.userAgent.match(/iPhone|iPad|Android|Windows|Macintosh|Linux/) || ["a device"])[0]; } catch (e) {} return p; };
+  var pub = akLivePublish;
+  akLivePublish = function () { var r = pub.apply(this, arguments); try { Promise.resolve(r).then(function () { if (AKL.otherDev) { AKL.otherDev = false; akLivePaint(); } }, function () {}); } catch (e) {} return r; };
+})();
+function akLivePublishSoft() {
+  if (AKL.conn !== "cloud" || !AKL.db) return akLivePublish();
+  return AKL.db.collection("performers").doc(AKL.uid).get().then(function (d) {
+    var x = d.exists ? d.data() : null;
+    if (x && x.dev && x.dev !== akDevId()) { AKL.otherDev = x.devName || "another device"; try { akLivePaint(); } catch (e) {} return; }
+    return akLivePublish();
+  });
+}
+(function () {
+  var b0 = akLiveBanner;
+  akLiveBanner = function () {
+    var b = b0.apply(this, arguments);
+    if (AKL.otherDev) b = h("div", { class: "akq-live paused", role: "status" }, "Your page is being run from " + (AKL.otherDev === true ? "another device" : "your " + AKL.otherDev) + ". This one won't change it unless you tap 📤 Update my page.");
+    return b;
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
