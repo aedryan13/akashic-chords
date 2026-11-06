@@ -70708,7 +70708,7 @@ function akLrStudioBake(D) {
     var only = Object.assign({}, B, { layers: B.layers.filter(function (l) { return !akLrIsLive(l.id); }) }), k = Math.min(1, 720 / W);
     AKLR.baking = true;
     var cv; try { cv = akPosterCanvas(only, null, k); } finally { AKLR.baking = false; }
-    return { img: cv.toDataURL("image/jpeg", 0.8), W: W, H: H, fg: B.fg || "#ffffff", font: (D.fonts || {}).main || "", parts: parts };
+    return { img: akLrSmallJpeg(cv), W: W, H: H, fg: B.fg || "#ffffff", font: (D.fonts || {}).main || "", parts: parts };
   });
 }
 function akLrStudioOpen() { try { S.gfxKind = "reqpage"; akGfxOpen("reqpage", null); } catch (e) { go("graphics"); } }
@@ -70721,7 +70721,7 @@ function akLrStudioPanel(d, D, ch) {
       var b = this; b.disabled = true; st.textContent = "Getting it ready…";
       akLrStudioBake(D).then(function (o) {
         var cc = akLr(); cc.studio = { on: true, img: o.img, W: o.W, H: o.H, fg: o.fg, font: o.font, parts: o.parts, at: Date.now() }; save();
-        b.disabled = false; st.textContent = "✓ Sent. Your request page now uses this design."; if (AKL.conn) akLivePublish().catch(function () {}); toast("Your request page uses this design now.");
+        b.disabled = false; st.textContent = "✓ Sent. Your request page now uses this design."; akLrGoLive("✓ Your request page uses this design now.");
       }, function (e) { b.disabled = false; st.textContent = "Couldn't make it: " + ((e && e.message) || e); });
     } }, "📤 Use on my request page"),
     c.studio.on ? h("button", { onClick: function () { var cc = akLr(); cc.studio.on = false; save(); if (AKL.conn) akLivePublish().catch(function () {}); st.textContent = "Your request page is back to ⇅ Arrange."; } }, "Stop using it") : null,
@@ -71051,11 +71051,20 @@ akCss("aklock", ".aklock-on{opacity:.75;cursor:not-allowed;background-image:line
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Change a locked key or id (🔒)", a: "Keys and ids (Firebase settings, Google keys, calendar ids, GitHub repository and token, the functions address) are locked once filled in. Tap 🔒 Change… under the box and say yes to unlock it.", k: "locked key id token firebase settings change unlock", p: ["settings", {}, ""] });
 
 /* ================= 22.6b: 📤 Use on my page right in the Graphics top bar (his ask 11-05 15:18: "no way to apply it") ================= */
+/* the page picture has to fit in your online page (Firestore's 1 MB limit, shared with your song list):
+   phone width (720 px wide is sharp on any phone), then lower quality until it's under about 450 KB */
+function akLrSmallJpeg(cv) {
+  var w = Math.min(720, cv.width), hh = Math.round(cv.height * w / cv.width), c2 = cv;
+  if (w < cv.width) { c2 = document.createElement("canvas"); c2.width = w; c2.height = hh; var x = c2.getContext("2d"); x.imageSmoothingQuality = "high"; x.drawImage(cv, 0, 0, w, hh); }
+  var q = 0.82, u = c2.toDataURL("image/jpeg", q);
+  while (u.length > 450000 && q > 0.35) { q -= 0.08; u = c2.toDataURL("image/jpeg", q); }
+  return u;
+}
 function akLrStudioUse(D, done) {
   toast("Getting your page design ready…");
   akLrStudioBake(D).then(function (o) {
     var cc = akLr(); cc.studio = { on: true, img: o.img, W: o.W, H: o.H, fg: o.fg, font: o.font, parts: o.parts, at: Date.now() }; save();
-    if (AKL.conn) akLivePublish().catch(function () {}); toast("✓ Your request page uses this design now."); if (done) done(true);
+    akLrGoLive("✓ Your request page uses this design now."); if (done) done(true);
   }, function (e) { toast("Couldn't make it: " + ((e && e.message) || e)); if (done) done(false); });
 }
 (function () {
@@ -71098,6 +71107,17 @@ function akLrSavesBox() {
   return box;
 }
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Save the request page as it is now, and bring it back later", a: "Settings › Requests and tips › Live requests › 🎨 Page design › ⇅ Arrange › 💾 Saved page setups › 💾 Save this setup… (Load puts it back)." });
+
+/* send the page now and say plainly whether it went out */
+function akLrGoLive(okMsg) {
+  var L = akLive();
+  if (!L.on) { toast("Saved. Turn on live requests to put it on your page."); return; }
+  if (L.mode === "cloud" && AKL.conn !== "cloud") { modal("Saved, but not on your page yet", h("p", null, "This device isn't signed in to live requests, so your page didn't change. Go to Settings › Requests and tips › Live requests › 🔌 Connection and sign-in, sign in, then tap 📤 Update my page.")); return; }
+  akLivePublish().then(function () { toast(okMsg || "✓ Your page is updated."); }, function (e) {
+    var m = (e && (e.code || e.message)) || "unknown";
+    modal("Your page didn't update", h("p", null, /size|too large|exceeds|bytes/i.test(m) ? "The page picture is too big to send. Open the design and tap 📤 Use on my page again (it now makes the picture smaller)." : "Firebase said: " + m));
+  });
+}
 
 /* ak_v22ui (22.6): one tidy Effects box, and every fold arrow on the left.
    - ✨ Effects opens in the panel only (no second window, no "Open the effects window / Dock here" stub).
