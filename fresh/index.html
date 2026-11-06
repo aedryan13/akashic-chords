@@ -69803,7 +69803,7 @@ function ak22tBody(id, g) {
       h("button", { class: "sm" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false", onClick: function () { if (!on) akReqOnOff(true); setTimeout(render, 50); } }, "On"),
       h("button", { class: "sm" + (on ? "" : " on"), "aria-pressed": on ? "false" : "true", onClick: function () { if (on) akReqOnOff(false); setTimeout(render, 50); } }, "Off")));
     var sc = h("select", { "aria-label": "Which songs people can ask for", onChange: function () { c.reqScope = this.value; save(); try { akChPush(); } catch (e) {} render(); } },
-      [["all", "Any song in my library"], ["setlist", "Only tonight's setlist"]].map(function (o) { return h("option", { value: o[0], selected: c.reqScope === o[0] }, o[1]); }));
+      [["all", "Any song in my library"], ["setlist", "Only tonight's setlist"], ["sets", "Only the sets I pick"], ["now", "Only the set I'm playing now"]].map(function (o) { return h("option", { value: o[0], selected: c.reqScope === o[0] }, o[1]); }));
     b.appendChild(h("div", { class: "row ak22t-row" }, h("span", { class: "muted" }, "People can ask for"), sc));
     if (c.reqScope === "setlist" && !first) b.appendChild(h("p", { class: "hint" }, g ? "Pick tonight's setlist first. Until then any song can be asked for." : "With no show today any song can be asked for."));
     var songs = c.reqScope === "setlist" && first ? ak22tSongsOf(first) : [];
@@ -71203,6 +71203,145 @@ if (typeof akTcAdd === "function") akTcAdd("22.6", "Graphics and folds", [["ui-f
   try { new MutationObserver(function () { clearTimeout(t); t = setTimeout(add, 150); }).observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (e) {}
 })();
 if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Print a design (one, or several on a page)", a: "Graphics studio › 🖨 (top bar, next to 📁): pick how many on a page (1, 2, 4, 6, 8, 9, 12), Portrait or Landscape, table tent, cut lines." });
+
+/* ak_v22q (22.7): live requests on the fly.
+   - ⚙ Quick settings fold at the top of the Live requests panel: tips (Free / Tips optional / Tip required + price),
+     what people can ask for (any song, tonight's setlist, chosen sets, or only the set I'm playing now),
+     clear buttons by kind (played songs, all songs, learn, messages) and "clear songs when I tap Played".
+   - Every request, learn request and message is also kept in that show's log (gig.reqLog), so clearing never loses it.
+     📒 Tonight's log shows it; Shows › a show › ⋯ has it too (akReqLogOpen(gig)). */
+
+function akQCfg() { var c = ak22tCfg(); if (!Array.isArray(c.reqSets)) c.reqSets = []; return c; }
+function akQSets() { var g = ak22tToday(), first = g ? ak22tLists(g)[0] : null; return { g: g, sh: first, sets: first ? first.sets || [] : [] }; }
+/* the set being played right now (from the play screen), remembered so the page keeps it between songs */
+function akQNowSet() {
+  var c = akQCfg(), Q = akQSets();
+  try { if (S.play && S.play.list && Q.sh) { var it = S.play.list[S.play.idx]; if (it && it.showId === Q.sh.id && it.setNo) c.reqNowSet = it.setNo; } } catch (e) {}
+  return c.reqNowSet || 1;
+}
+function akQAllowed() {
+  var c = akQCfg(), Q = akQSets(); if (!Q.sh) return null;
+  var nums = c.reqScope === "sets" ? c.reqSets : c.reqScope === "now" ? [akQNowSet()] : null; if (!nums) return null;
+  var ok = {};
+  Q.sets.forEach(function (st, i) { if (nums.indexOf(i + 1) >= 0) (st.songIds || []).forEach(function (id) { ok[id] = 1; }); });
+  return ok;
+}
+(function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () {
+    var p = pp.apply(this, arguments);
+    try { var ok = akQAllowed(); if (ok && Array.isArray(p.songs)) p.songs.forEach(function (x) { if (!ok[x.i]) x.n = 1; }); } catch (e) {}
+    return p;
+  };
+})();
+/* "only the set I'm playing": when the play screen moves into the next set, the page follows */
+setInterval(function () {
+  try { var c = akQCfg(); if (c.reqScope !== "now" || !akLive().on) return; var was = c.reqNowSet, now = akQNowSet(); if (now !== was) { save(); akLivePublish().catch(function () {}); } } catch (e) {}
+}, 5000);
+
+/* ---------------- the show's log: everything that came in tonight */
+function akReqLogOf(g) { if (!g) return null; if (!g.reqLog || typeof g.reqLog !== "object") g.reqLog = {}; return g.reqLog; }
+function akReqLogPut(r) {
+  try {
+    if (!r || !r.id || r.kind === "signup") return; var g = ak22tToday() || (typeof akNextGig === "function" ? akNextGig() : null); var lg = akReqLogOf(g); if (!lg) return;
+    var at = r.at && r.at.toMillis ? r.at.toMillis() : Number(r.at) || Date.now();
+    lg[r.id] = { kind: r.kind, title: r.title || "", artist: r.artist || "", name: r.name || "", note: r.note || "", status: r.status || "", reply: r.reply || "", at: at,
+      tip: r.tip && r.tip.amount ? { method: r.tip.method || "", amount: r.tip.amount, ok: !!r.tipOk } : null };
+  } catch (e) {}
+}
+(function () {
+  var inc = akLiveIncoming;
+  akLiveIncoming = function (list) { try { (list || []).forEach(akReqLogPut); save(); } catch (e) {} return inc.apply(this, arguments); };
+  var up = akLiveUpdate;
+  akLiveUpdate = function (r, patch) {
+    var out = up.apply(this, arguments);
+    try { akReqLogPut(r); save(); } catch (e) {}
+    try { var c = akQCfg(); if (c.autoClear && r.kind === "play" && patch && /^(played|declined)$/.test(patch.status || "")) setTimeout(function () { if (AKL.items[r.id]) akLiveDelete(r); }, 4000); } catch (e) {}
+    return out;
+  };
+})();
+function akReqLogOpen(g) {
+  g = g || ak22tToday() || (typeof akNextGig === "function" ? akNextGig() : null);
+  var lg = akReqLogOf(g); if (!lg) { toast("No show today, so there's no log yet."); return; }
+  var all = Object.keys(lg).map(function (k) { return lg[k]; }).sort(function (a, b) { return a.at - b.at; });
+  var box = h("div", null, h("p", { class: "hint", style: "margin-top:0" }, (g.venue || g.name || "This show") + " · " + (g.date || "") + ". Kept even after you clear the panel."));
+  [["play", "🎵 Song requests"], ["learn", "📚 Learn requests"], ["message", "💬 Messages"], ["encore", "🔥 Encores"]].forEach(function (k) {
+    var rows = all.filter(function (x) { return x.kind === k[0] || (k[0] === "encore" && x.title === "Encore bribe"); }); if (k[0] === "message") rows = rows.filter(function (x) { return x.title !== "Encore bribe"; });
+    if (!rows.length) return;
+    var d = h("details", { class: "card", open: k[0] === "play" }, h("summary", null, k[1] + " (" + rows.length + ")"));
+    rows.forEach(function (x) {
+      d.appendChild(h("div", { style: "margin:4px 0;padding-bottom:4px;border-bottom:1px solid rgba(127,127,127,.2)" },
+        h("b", null, x.kind === "message" ? (x.note || x.title) : x.title), x.artist ? h("span", { class: "muted" }, " · " + x.artist) : null,
+        h("div", { class: "muted", style: "font-size:.85rem" }, [new Date(x.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }), x.name ? "from " + x.name : "", x.status, x.tip ? "$" + x.tip.amount + (x.tip.ok ? " ✓" : "") : ""].filter(Boolean).join(" · ")),
+        x.kind !== "message" && x.note ? h("div", { class: "muted" }, "“" + x.note + "”") : null));
+    });
+    box.appendChild(d);
+  });
+  if (!all.length) box.appendChild(h("p", { class: "muted" }, "Nothing yet tonight."));
+  modal("📒 Request log", box);
+}
+
+/* ---------------- ⚙ Quick settings at the top of the Live requests panel */
+function akQuickBox(redraw) {
+  var L = akLive(), c = akQCfg(), Q = akQSets(), st = AKL.qOpen;
+  function pub() { save(); akLivePublish().catch(function () {}); }
+  var d = h("details", { class: "card akq-quick", open: !!st }, h("summary", null, h("b", null, "⚙ Quick settings")));
+  d.addEventListener("toggle", function () { AKL.qOpen = d.open; });
+  var mode = L.rules.mode || "free";
+  d.appendChild(h("div", { class: "akq-k" }, "Tips for requests"));
+  d.appendChild(h("div", { class: "aklr-seg" }, [["free", "Free"], ["optional", "Tips optional"], ["required", "Tip required"]].map(function (m) {
+    return h("button", { type: "button", "aria-pressed": mode === m[0] ? "true" : "false", onClick: function () { L.rules.mode = m[0]; pub(); redraw(); } }, m[1]);
+  })));
+  if (mode !== "free") d.appendChild(h("label", { class: "fld akq-price" }, mode === "required" ? "Tip per request $" : "Suggested tip $",
+    h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", value: L.rules.price || 5, onChange: function () { var v = Math.max(1, Math.round(Number(this.value) || 5)); L.rules.price = v; pub(); } })));
+  d.appendChild(h("div", { class: "akq-k" }, "People can ask for"));
+  var opts = [["all", "Any song in my library"], ["setlist", "Tonight's whole setlist"], ["sets", "Only the sets I pick"], ["now", "Only the set I'm playing now"]];
+  d.appendChild(h("select", { "aria-label": "Which songs people can ask for", onChange: function () { c.reqScope = this.value; if (c.reqScope === "sets" && !c.reqSets.length) c.reqSets = [1]; pub(); redraw(); } },
+    opts.map(function (o) { return h("option", { value: o[0], selected: (c.reqScope || "all") === o[0] }, o[1]); })));
+  if (c.reqScope !== "all" && !Q.sh) d.appendChild(h("p", { class: "hint" }, "No setlist for a show today yet, so any song can be asked for."));
+  if (c.reqScope === "sets" && Q.sh) d.appendChild(h("div", { class: "akq-sets" }, Q.sets.map(function (s, i) {
+    var n = i + 1, on = c.reqSets.indexOf(n) >= 0;
+    return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: on, onChange: function () { if (this.checked) { if (c.reqSets.indexOf(n) < 0) c.reqSets.push(n); } else c.reqSets = c.reqSets.filter(function (x) { return x !== n; }); pub(); } }), s.name || "Set " + n);
+  })));
+  if (c.reqScope === "now" && Q.sh) {
+    var cur = akQNowSet();
+    d.appendChild(h("label", { class: "fld" }, "Playing now (follows the play screen)", h("select", { onChange: function () { c.reqNowSet = Number(this.value); pub(); } },
+      Q.sets.map(function (s, i) { return h("option", { value: i + 1, selected: cur === i + 1 }, s.name || "Set " + (i + 1)); }))));
+  }
+  d.appendChild(h("div", { class: "akq-k" }, "Clear the panel (everything stays in tonight's 📒 log)"));
+  function clr(label, test) { return h("button", { class: "sm", onClick: function () { var list = akLiveList().filter(test); if (!list.length) { toast("Nothing to clear."); return; } confirmBox(label + " (" + list.length + ")? They stay in tonight's log.", "Clear", function () { list.forEach(akReqLogPut); save(); list.forEach(akLiveDelete); }); } }, label); }
+  d.appendChild(h("div", { class: "akq-grid" },
+    clr("Played songs", function (r) { return r.kind === "play" && r.status !== "new"; }),
+    clr("All songs", function (r) { return r.kind === "play"; }),
+    clr("Learn requests", function (r) { return r.kind === "learn"; }),
+    clr("Messages", function (r) { return r.kind === "message"; })));
+  d.appendChild(h("label", { class: "chk" }, h("input", { type: "checkbox", checked: !!c.autoClear, onChange: function () { c.autoClear = this.checked; save(); } }), "Clear a song by itself when I tap Played or Decline"));
+  d.appendChild(h("div", { class: "row" }, h("button", { class: "sm", onClick: function () { akReqLogOpen(); } }, "📒 Tonight's log"),
+    h("button", { class: "sm", onClick: function () { var r = document.querySelector(".livepanel"); try { closeLivePanel(r.parentNode); } catch (e) {} akLiveSettingsGo(); } }, "All request settings…")));
+  return d;
+}
+(function () {
+  var t = null;
+  function add() {
+    try {
+      var body = document.querySelector(".livepanel .cpbody"); if (!body || body.querySelector(".akq-quick")) return;
+      function redraw() { try { if (AKL.panelDraw) AKL.panelDraw(); } catch (e) {} }
+      var top = body.querySelector(".akl-top");
+      body.insertBefore(akQuickBox(redraw), top ? top.nextSibling : body.firstChild);
+    } catch (e) {}
+  }
+  try { new MutationObserver(function () { clearTimeout(t); t = setTimeout(add, 30); }).observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+})();
+akCss("ak22q", ".akq-quick>summary{min-height:36px;display:flex;align-items:center}.akq-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.75;margin:10px 0 4px}" +
+  ".akq-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}.akq-grid>button{width:100%}.akq-sets{display:flex;flex-wrap:wrap;gap:4px 14px}.akq-price input{max-width:110px}");
+if (typeof AK_HELP_WHERE !== "undefined") {
+  AK_HELP_WHERE.push({ t: "Change request rules mid-show (tips, which songs, clear)", a: "Live requests panel › ⚙ Quick settings: Free / Tips optional / Tip required and the price; People can ask for (any song, tonight's setlist, only the sets I pick, only the set I'm playing now); clear played songs, all songs, learn requests or messages; clear songs by themselves when you tap Played." });
+  AK_HELP_WHERE.push({ t: "Every request and message from a show, kept", a: "Live requests panel › ⚙ Quick settings › 📒 Tonight's log. Each show keeps its own log, even after you clear the panel." });
+}
+if (typeof akTcAdd === "function") akTcAdd("22.7", "Live requests on the fly", [
+  ["q-quick", "Quick settings in the Live panel", "Live requests panel › ⚙ Quick settings: switch Free / Tips optional / Tip required; the request page changes.", ["live", {}, ""]],
+  ["q-sets", "Only some sets can be asked for", "Quick settings › People can ask for › Only the sets I pick (or the set I'm playing now): songs from other sets show as not available on the page.", ["live", {}, ""]],
+  ["q-clear", "Clear by kind, keep the log", "Quick settings › Clear Played songs: they leave the panel; 📒 Tonight's log still lists them.", ["live", {}, ""]]]);
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
