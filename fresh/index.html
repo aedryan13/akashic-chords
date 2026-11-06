@@ -29976,7 +29976,9 @@ if (typeof AK_LONG !== "undefined") AK_LONG.reqonoff = function () { akTipQuick(
     out.appendChild(h("h3", { class: "akl-h" }, "🔥 Encore bribes"));
     ck("Offer encore bribes on the request page", function () { return c.on; }, function (v) { c.on = v; });
     if (c.on) {
-      sel("Show the offer", function () { return c.when; }, function (v) { c.when = v; }, [["end", "When the show ends (and during the encore)"], ["always", "All night"], ["manual", "Only when I open it (Requests button, hold)"]]);
+      sel("Show the offer", function () { return c.when; }, function (v) { c.when = v; }, [["manual", "When I tap Show it (Live panel › ⚙ Quick settings)"], ["before", "Some minutes before the show ends"], ["at", "At a time I pick"], ["end", "When the show ends (and during the encore)"], ["always", "All night"]]);
+      if (c.when === "before") num("Minutes before the show ends (uses tonight's show end time)", function () { return c.mins || 15; }, function (v) { c.mins = Math.max(1, Number(v) || 15); });
+      if (c.when === "at") out.appendChild(h("label", { class: "fld" }, "Show it at", h("input", { type: "time", value: c.at || "21:30", onChange: function () { c.at = this.value; save(); if (AKL.conn) akLivePublish().catch(function () {}); } })));
       num("Starting price ($)", function () { return c.price; }, function (v) { c.price = v; });
       num("Price goes up by, with each bribe ($, 0 = same price)", function () { return c.step; }, function (v) { c.step = v; });
       num("Highest price ($, 0 = no limit)", function () { return c.cap; }, function (v) { c.cap = v; });
@@ -71287,6 +71289,15 @@ function akQuickBox(redraw) {
   function pub() { save(); akLivePublish().catch(function () {}); }
   var d = h("details", { class: "card akq-quick", open: !!st }, h("summary", null, h("b", null, "⚙ Quick settings")));
   d.addEventListener("toggle", function () { AKL.qOpen = d.open; });
+  /* 📤 send everything to the page now, and say when it's live */
+  var upSt = h("span", { class: "muted grow", role: "status" }, AKL.lastPub ? "Last updated " + new Date(AKL.lastPub).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "");
+  d.appendChild(h("div", { class: "akq-row" }, h("button", { class: "primary sm", onClick: function () {
+    var me = this; me.disabled = true; upSt.textContent = "Updating…";
+    try { if (L.mode !== "cloud") localStorage.setItem("akreq:profile", JSON.stringify(akLivePublicProfile())); } catch (e) {}
+    Promise.resolve(akLivePublish()).then(function () {
+      AKL.lastPub = Date.now(); me.disabled = false; upSt.textContent = "✓ Live. Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); toast("✓ Your request page is updated.");
+    }, function (e) { me.disabled = false; upSt.textContent = "Couldn't update: " + ((e && e.message) || "check the connection"); toast("Couldn't update the page. Check the connection."); });
+  } }, "📤 Update my page"), upSt));
   var mode = L.rules.mode || "free";
   d.appendChild(h("div", { class: "akq-k" }, "Tips for requests"));
   d.appendChild(h("div", { class: "aklr-seg" }, [["free", "Free"], ["optional", "Tips optional"], ["required", "Tip required"]].map(function (m) {
@@ -71307,9 +71318,12 @@ function akQuickBox(redraw) {
         [["manual", "When I tap Show it"], ["before", "Some minutes before the show ends"], ["at", "At a time I pick"], ["end", "When the show ends"], ["always", "All night"]].map(function (o) { return h("option", { value: o[0], selected: E.when === o[0] }, o[1]); }))));
       if (E.when === "before") { var gEnd = (Q.g || {}).end; d.appendChild(h("div", { class: "akq-row" }, h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", "aria-label": "Minutes before the end", value: E.mins || 15, style: "max-width:80px", onChange: function () { E.mins = Math.max(1, Math.round(Number(this.value) || 15)); pub(); } }), h("span", { class: "grow" }, " minutes before the end" + (gEnd ? " (ends " + gEnd + ")" : " (add an end time to tonight's show)")))); }
       if (E.when === "at") d.appendChild(h("div", { class: "akq-row" }, h("span", null, "At "), h("input", { type: "time", value: E.at || "21:30", "aria-label": "Encore time", onChange: function () { E.at = this.value; pub(); } })));
-      var open = akEncOpen();
-      d.appendChild(h("div", { class: "akq-row" }, h("span", { class: "muted grow" }, open ? "Showing on your page now." : "Not showing right now."),
-        h("button", { class: "sm" + (open ? "" : " primary"), onClick: function () { var st2 = akEncState(); if (open) { st2.open = false; if (E.when !== "manual") E.when = "manual"; } else st2.open = true; pub(); redraw(); } }, open ? "Hide it" : "Show it now")));
+      var eLine = h("span", { class: "muted grow akq-enc" }), eBtn = h("button", { class: "sm", onClick: function () {
+        var st2 = akEncState(); if (akEncOpen()) { st2.open = false; if (E.when !== "manual") { E.when = "manual"; } } else st2.open = true;
+        pub(); paintE(); toast(akEncOpen() ? "🔥 The encore offer is on your page now." : "The encore offer is hidden."); } });
+      function paintE() { var o = akEncOpen(); eLine.textContent = o ? "🔥 Showing on your page now." : "Not showing right now."; eLine.classList.toggle("on", o); eBtn.textContent = o ? "Hide it" : "Show it now"; eBtn.classList.toggle("primary", !o); }
+      paintE();
+      d.appendChild(h("div", { class: "akq-row" }, eLine, eBtn));
     }
   }
   d.appendChild(h("div", { class: "akq-k" }, "People can ask for"));
@@ -71346,6 +71360,7 @@ function akQuickBox(redraw) {
       function redraw() { try { if (AKL.panelDraw) AKL.panelDraw(); } catch (e) {} }
       var top = body.querySelector(".akl-top");
       body.insertBefore(akQuickBox(redraw), top ? top.nextSibling : body.firstChild);
+      body.insertBefore(akLiveBanner(), body.firstChild);
     } catch (e) {}
   }
   try { new MutationObserver(function () { clearTimeout(t); t = setTimeout(add, 30); }).observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (e) {}
@@ -71381,6 +71396,46 @@ if (typeof akTcAdd === "function") akTcAdd("22.7", "Live requests on the fly", [
   ["q-quick", "Quick settings in the Live panel", "Live requests panel › ⚙ Quick settings: switch Free / Tips optional / Tip required; the request page changes.", ["live", {}, ""]],
   ["q-sets", "Only some sets can be asked for", "Quick settings › People can ask for › Only the sets I pick (or the set I'm playing now): songs from other sets show as not available on the page.", ["live", {}, ""]],
   ["q-clear", "Clear by kind, keep the log", "Quick settings › Clear Played songs: they leave the panel; 📒 Tonight's log still lists them.", ["live", {}, ""]]]);
+
+/* the same quick settings in Settings › Requests and tips › Live requests (top of the section) */
+(function () {
+  var ls = akLiveSettings;
+  akLiveSettings = function (out, ctx) {
+    var r = ls.apply(this, arguments);
+    try {
+      var L = akLive(); if (!L.on) return r;
+      var box = akQuickBox(function () { render(); }); box.open = true; box.querySelector("summary b").textContent = "⚡ On the fly (same as the Live panel's ⚙ Quick settings)";
+      var all = [].slice.call(box.querySelectorAll("button")).filter(function (b) { return /All request settings/.test(b.textContent); })[0]; if (all) all.remove();
+      var first = out.querySelector && out.querySelector("h3"); if (first && first.parentNode) first.parentNode.insertBefore(box, first); else out.appendChild(box);
+    } catch (e) {}
+    return r;
+  };
+})();
+
+/* is it really on? a clear line at the top of the Live panel, and the Live button lights up */
+function akLiveState() {
+  var L = akLive(); if (!L.on) return "off";
+  var up = L.mode === "local" ? AKL.conn === "local" : AKL.conn === "cloud";
+  if (!up) return "down"; return L.open === false ? "paused" : "live";
+}
+function akLiveBanner() {
+  var s = akLiveState(), enc = typeof akEncOpen === "function" && akEncOpen();
+  var t = { live: "● LIVE: your page is up and taking requests", paused: "⏸ Paused: the page is up, requests are paused", down: "⚠ Not connected: " + akLiveStatus(), off: "Live requests are off" }[s];
+  return h("div", { class: "akq-live " + s, role: "status" }, t, enc && s !== "off" ? h("span", { class: "akq-encon" }, " · 🔥 encore offer showing") : null);
+}
+(function () {
+  var p0 = akLivePaint;
+  akLivePaint = function () {
+    var r = p0.apply(this, arguments);
+    try { var s = akLiveState(); [].forEach.call(document.querySelectorAll('[data-tb="live"], button[aria-label="Live requests"]'), function (b) { b.classList.toggle("aklive-on", s === "live"); b.classList.toggle("aklive-paused", s === "paused"); b.classList.toggle("aklive-down", s === "down"); }); } catch (e) {}
+    return r;
+  };
+  setInterval(function () { try { if (akLive().on) akLivePaint(); } catch (e) {} }, 15000);
+})();
+akCss("ak22q-live", ".akq-live{margin:0 0 8px;padding:6px 10px;border-radius:2px;font-weight:700;font-size:.9rem}.akq-live.live{background:rgba(48,164,108,.18);color:#4ade80;border:1px solid rgba(74,222,128,.5)}" +
+  ".akq-live.paused{background:rgba(229,184,0,.15);color:#E5B800;border:1px solid rgba(229,184,0,.5)}.akq-live.down{background:rgba(229,72,77,.15);color:#ff8a8d;border:1px solid rgba(229,72,77,.5)}.akq-live.off{opacity:.7}" +
+  ".akq-enc.on{color:#4ade80;font-weight:700}" +
+  "button.aklive-on{color:#4ade80!important;box-shadow:inset 0 -3px 0 #4ade80}button.aklive-paused{color:#E5B800!important;box-shadow:inset 0 -3px 0 #E5B800}button.aklive-down{color:#ff8a8d!important;box-shadow:inset 0 -3px 0 #ff8a8d}");
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
