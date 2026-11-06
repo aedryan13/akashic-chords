@@ -71286,11 +71286,29 @@ function akQuickBox(redraw) {
   })));
   if (mode !== "free") d.appendChild(h("label", { class: "fld akq-price" }, mode === "required" ? "Tip per request $" : "Suggested tip $",
     h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", value: L.rules.price || 5, onChange: function () { var v = Math.max(1, Math.round(Number(this.value) || 5)); L.rules.price = v; pub(); } })));
+  /* ⚡ Play it next (jump the line) */
+  d.appendChild(h("div", { class: "akq-row" }, h("label", { class: "chk grow" }, h("input", { type: "checkbox", checked: !!L.rules.next, onChange: function () { L.rules.next = this.checked; if (this.checked && !(Number(L.rules.nextPrice) > 0)) L.rules.nextPrice = 20; pub(); redraw(); } }), "⚡ Play it next (jump the line)"),
+    L.rules.next ? h("label", { class: "akq-amt" }, "$", h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", "aria-label": "Play it next price", value: L.rules.nextPrice || 20, onChange: function () { L.rules.nextPrice = Math.max(1, Math.round(Number(this.value) || 20)); pub(); } })) : null));
+  /* 🔥 Encore bribe */
+  var E = typeof akEncCfg === "function" ? akEncCfg() : null;
+  if (E) {
+    d.appendChild(h("div", { class: "akq-row" }, h("label", { class: "chk grow" }, h("input", { type: "checkbox", checked: !!E.on, onChange: function () { E.on = this.checked; pub(); redraw(); } }), "🔥 Encore bribe"),
+      E.on ? h("label", { class: "akq-amt" }, "$", h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", "aria-label": "Encore price", value: E.price || 20, onChange: function () { E.price = Math.max(1, Math.round(Number(this.value) || 20)); pub(); } })) : null));
+    if (E.on) {
+      d.appendChild(h("label", { class: "fld" }, "The encore offer shows", h("select", { onChange: function () { E.when = this.value; if (E.when === "before" && !E.mins) E.mins = 15; if (E.when === "at" && !E.at) E.at = "21:30"; pub(); redraw(); } },
+        [["manual", "When I tap Show it"], ["before", "Some minutes before the show ends"], ["at", "At a time I pick"], ["end", "When the show ends"], ["always", "All night"]].map(function (o) { return h("option", { value: o[0], selected: E.when === o[0] }, o[1]); }))));
+      if (E.when === "before") { var gEnd = (Q.g || {}).end; d.appendChild(h("div", { class: "akq-row" }, h("input", { type: "number", min: "1", step: "1", inputmode: "numeric", "aria-label": "Minutes before the end", value: E.mins || 15, style: "max-width:80px", onChange: function () { E.mins = Math.max(1, Math.round(Number(this.value) || 15)); pub(); } }), h("span", { class: "grow" }, " minutes before the end" + (gEnd ? " (ends " + gEnd + ")" : " (add an end time to tonight's show)")))); }
+      if (E.when === "at") d.appendChild(h("div", { class: "akq-row" }, h("span", null, "At "), h("input", { type: "time", value: E.at || "21:30", "aria-label": "Encore time", onChange: function () { E.at = this.value; pub(); } })));
+      var open = akEncOpen();
+      d.appendChild(h("div", { class: "akq-row" }, h("span", { class: "muted grow" }, open ? "Showing on your page now." : "Not showing right now."),
+        h("button", { class: "sm" + (open ? "" : " primary"), onClick: function () { var st2 = akEncState(); if (open) { st2.open = false; if (E.when !== "manual") E.when = "manual"; } else st2.open = true; pub(); redraw(); } }, open ? "Hide it" : "Show it now")));
+    }
+  }
   d.appendChild(h("div", { class: "akq-k" }, "People can ask for"));
   var opts = [["all", "Any song in my library"], ["setlist", "Tonight's whole setlist"], ["sets", "Only the sets I pick"], ["now", "Only the set I'm playing now"]];
   d.appendChild(h("select", { "aria-label": "Which songs people can ask for", onChange: function () { c.reqScope = this.value; if (c.reqScope === "sets" && !c.reqSets.length) c.reqSets = [1]; pub(); redraw(); } },
     opts.map(function (o) { return h("option", { value: o[0], selected: (c.reqScope || "all") === o[0] }, o[1]); })));
-  if (c.reqScope !== "all" && !Q.sh) d.appendChild(h("p", { class: "hint" }, "No setlist for a show today yet, so any song can be asked for."));
+  if (c.reqScope !== "all" && !Q.sh) d.appendChild(h("p", { class: "hint" }, "Pick tonight's setlist first (Tonight screen, or the show's page). Then a box shows here for each set in it: 2 sets, 2 boxes; 4 sets, 4 boxes. Until then any song can be asked for."));
   if (c.reqScope === "sets" && Q.sh) d.appendChild(h("div", { class: "akq-sets" }, Q.sets.map(function (s, i) {
     var n = i + 1, on = c.reqSets.indexOf(n) >= 0;
     return h("label", { class: "chk" }, h("input", { type: "checkbox", checked: on, onChange: function () { if (this.checked) { if (c.reqSets.indexOf(n) < 0) c.reqSets.push(n); } else c.reqSets = c.reqSets.filter(function (x) { return x !== n; }); pub(); } }), s.name || "Set " + n);
@@ -71324,7 +71342,28 @@ function akQuickBox(redraw) {
   }
   try { new MutationObserver(function () { clearTimeout(t); t = setTimeout(add, 30); }).observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (e) {}
 })();
-akCss("ak22q", ".akq-quick>summary{min-height:36px;display:flex;align-items:center}.akq-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.75;margin:10px 0 4px}" +
+/* the encore at a set time, or some minutes before the show ends (tonight's show end time) */
+(function () {
+  if (typeof akEncOpen !== "function") return;
+  var o0 = akEncOpen;
+  function mins(t) { var m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? Number(m[1]) * 60 + Number(m[2]) : null; }
+  akEncOpen = function () {
+    var c = akEncCfg(); if (!c.on) return false;
+    if (c.when === "at" || c.when === "before") {
+      if (akEncState().open) return true;
+      var now = new Date(), nm = now.getHours() * 60 + now.getMinutes(), t = null;
+      if (c.when === "at") t = mins(c.at);
+      else { var g = ak22tToday(); var e = g && mins(g.end), st = g && mins(g.start); if (e != null) { t = e - (Number(c.mins) || 15); if (st != null && e < st && nm < 12 * 60) nm += 24 * 60, t += 24 * 60; } }
+      if (t == null) return false;
+      if (nm < 6 * 60 && t > 12 * 60) nm += 24 * 60; /* after midnight counts as tonight */
+      return nm >= t;
+    }
+    return o0.apply(this, arguments);
+  };
+  var last = null;
+  setInterval(function () { try { if (!akLive().on) return; var c = akEncCfg(); if (c.when !== "at" && c.when !== "before") return; var o = akEncOpen(); if (o !== last) { last = o; akLivePublish().catch(function () {}); } } catch (e) {} }, 30000);
+})();
+akCss("ak22q", ".akq-row{display:flex;align-items:center;gap:8px;margin:4px 0}.akq-amt{display:flex;align-items:center;gap:4px}.akq-amt input{width:76px}" + ".akq-quick>summary{min-height:36px;display:flex;align-items:center}.akq-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.75;margin:10px 0 4px}" +
   ".akq-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}.akq-grid>button{width:100%}.akq-sets{display:flex;flex-wrap:wrap;gap:4px 14px}.akq-price input{max-width:110px}");
 if (typeof AK_HELP_WHERE !== "undefined") {
   AK_HELP_WHERE.push({ t: "Change request rules mid-show (tips, which songs, clear)", a: "Live requests panel › ⚙ Quick settings: Free / Tips optional / Tip required and the price; People can ask for (any song, tonight's setlist, only the sets I pick, only the set I'm playing now); clear played songs, all songs, learn requests or messages; clear songs by themselves when you tap Played." });
