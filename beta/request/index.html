@@ -123,6 +123,8 @@
   .rq-az { display: none; } .rq-compact.rq-listopen .rq-az { display: flex; flex-direction: column; justify-content: center; position: fixed; right: 2px; top: 150px; bottom: 10px; width: 28px; z-index: 61; touch-action: none; }
   .rq-az button { flex: 1 1 0; min-height: 0; max-height: 26px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 11px; font-weight: 700; line-height: 1; }
   .rq-lbtns .rq-lbtn { min-height: 38px; padding: 0 6px; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; } html.rq-noscroll, html.rq-noscroll body { overflow: hidden; }
+  .rq-calpop { position: fixed; inset: 0; z-index: 70; background: var(--bg); display: flex; flex-direction: column; }
+  .rq-calbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid var(--line); } .rq-calpop iframe { flex: 1 1 auto; width: 100%; border: 0; }
   .rq-abs.filled { background-blend-mode: normal; } .rq-abs.filled::before { content: none; }
   .rq-abs.txt { overflow: visible; justify-content: center; } .rq-abs.txt > * { margin: 0; width: 100%; color: inherit; font-size: inherit; }
   .rq-abs .rq-name, .rq-abs .rq-rh { color: inherit; }
@@ -202,7 +204,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   /* back from Square's checkout: say so, and show My requests (the request appears there once Square confirms) */
   if (P.get("paid")) { view = "mine"; setTimeout(function () { try { var n = h("p", { class: "notice" }, "✅ Paid. Thank you! Your request shows up here in a moment."); app.insertBefore(n, app.firstChild); } catch (e) {} }, 1200); }
   function rqVisit() {
-    if (P.get("preview") || P.get("edit") || P.get("help")) return;
+    if (P.get("preview") || P.get("edit") || P.get("help") || P.get("inapp")) return;
     try {
       var vid = store("akreq:vid"), first = !vid; if (!vid) { vid = rid(); store("akreq:vid", vid); }
       var v = { uid: me.uid || "", at: Date.now(), src: String(P.get("src") || (P.get("go") || "page")).slice(0, 40), dev: /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? "phone" : "computer",
@@ -490,7 +492,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
      tip messages, request limits, dedications and birthday details, your own help cards, styles from ✎ Edit this page,
      or a 📱 Request page design from the Graphics studio (a picture behind, the live parts placed where you put them). ---------- */
   var PV = P.get("preview") === "1", PVHELP = P.get("help") === "1", PVEDIT = P.get("edit") === "1", rqNote = "", rqPick = Math.random();
-  var RQW = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Upcoming shows", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}",
+  var RQW = { req: "Request a song", learn: "Suggest a song to learn", msg: "Send me a message", tip: "Leave a tip", shows: "Calendar", mine: "My requests", send: "Send request", search: "Search songs or artists", dedic: "💝 Dedicate it to someone", tipBtn: "Tip with {app}",
     /* 22.6: the lines that follow the tip rule, the encore card, the fine print and the thank-you (all editable in the app; {name} {price} {songs} {he} {him} {his} fill in) */
     tipFree: "Requests are free. Tips are always appreciated.", tipOpt: "Tips appreciated, never required. {price} suggested.", tipReq: "Request a song for a small tip ({price}).", tipFirst: "Your first song is on me! After that, a small tip ({price}) with each request.",
     encH: "🔥 Keep {name} playing!", encL: "Encore bribe: {price} for {songs}.",
@@ -652,6 +654,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       try {
         var enc = app.querySelector(".card.encore"), rq = app.querySelector(".rq-req");
         if (enc && rq) { var tgt = rq.closest(".rq-abs") || rq; if (tgt.closest(".rq-studio") && tgt !== rq) { var w = h("div", { class: "rq-abs box rq-encw", style: "margin-left:" + tgt.style.marginLeft + ";width:" + tgt.style.width + ";margin-top:2%" }); w.appendChild(enc); tgt.parentNode.insertBefore(w, tgt.nextSibling); } else tgt.parentNode.insertBefore(enc, tgt.nextSibling); }
+        var mail = app.querySelector(".card.mail"); if (mail) { var wrapM = mail.closest(".rq-abs"); var mv = wrapM && wrapM.closest(".rq-studio") ? wrapM : mail; app.appendChild(mv); }
+        if (view !== "shows") { var cp = document.querySelector(".rq-calpop"); if (cp) { cp.remove(); document.documentElement.classList.remove("rq-noscroll"); } }
         [].forEach.call(app.querySelectorAll("nav.rq-tabs, nav.tabs"), function (nv) {
           var n = nv.children.length; if (!n) return;
           [].forEach.call(nv.children, function (c) { c.style.gridColumn = ""; });
@@ -663,6 +667,15 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       return r;
     };
   })();
+  /* 📅 Calendar tab: your full calendar (Month / Week / Upcoming) in a pop-up over the page */
+  function rqCalPop() {
+    if (document.querySelector(".rq-calpop")) return;
+    var u = new URL(location.href); u.searchParams.set("go", "cal"); u.searchParams.set("inapp", "1"); u.searchParams.delete("edit"); u.hash = "";
+    var pop = h("div", { class: "rq-calpop", role: "dialog", "aria-label": "Calendar" },
+      h("div", { class: "rq-calbar" }, h("b", null, rqW("shows")), h("button", { class: "rq-lx", "aria-label": "Close the calendar", onClick: function () { pop.remove(); document.documentElement.classList.remove("rq-noscroll"); view = "songs"; draw(); } }, "✕")),
+      h("iframe", { src: u.toString(), title: "Calendar" }));
+    document.body.appendChild(pop); document.documentElement.classList.add("rq-noscroll");
+  }
   function rqCompact(box, list) {
     var q = box.querySelector('input[type="search"]'); if (!q) return;
     box.classList.add("rq-compact"); if (flt.open) box.classList.add("rq-listopen");
@@ -896,7 +909,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       (prof.pay || []).filter(function (p) { return p.url; }).forEach(function (p) { var c = qr(p.url); add(app, h("div", { class: "card center" }, h("a", { class: "pill primary", href: payUrl(p, R.price), target: "_blank", rel: "noopener" }, "Tip with " + (p.label || PAY[p.kind] || "a link")), c ? h("div", { style: "margin-top:10px" }, c) : null)); });
       if (!(prof.pay || []).some(function (p) { return p.url; })) add(app, h("p", { class: "muted center" }, "No tip links yet."));
     } else if (view === "shows") {
-      drawShows();
+      rqCalPop();
     } else if (view === "book") {
       drawBookTab();
     } else if (view === "mine") {
