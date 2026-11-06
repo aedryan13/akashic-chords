@@ -71069,24 +71069,48 @@ function akLrStudioUse(D, done) {
    - Every effects section starts folded; the 🎲 / copy / paste / take-off buttons sit in one "🧰 Quick tools" fold, in a neat grid.
    - App-wide: each foldable section shows ▸ (folded) / ▾ (open) on the LEFT. Arrows that sat on the right move left. */
 akFxUi = function () { var s = settings(); s.gfxHub = s.gfxHub || { open: {} }; s.gfxHub.fxPop = false; return s.gfxHub; };
-akFxOpen = function (key) { return !!AKFX.open[key]; };
+/* the effects themselves open; everything else starts folded */
+akFxOpen = function (key, def) { if (AKFX.open[key] != null) return !!AKFX.open[key]; return key === "stack" || key === "text" || /^e/.test(key); };
 (function () {
   var b0 = akFxBody;
   akFxBody = function (X, compact) {
     var root = b0.apply(this, arguments);
     try {
-      var rows = [].slice.call(root.querySelectorAll(":scope > .akfx-dice"));
-      if (rows.length) {
-        var grid = h("div", { class: "akfx-tools" });
-        rows.forEach(function (r) { [].slice.call(r.children).forEach(function (b) { grid.appendChild(b); }); r.parentNode.removeChild(r); });
-        var sec = akFxSec("tools", "🧰 Quick tools (🎲 random, copy, paste)", [grid], false);
-        var tg = root.querySelector(":scope > .akfx-scope") || root.querySelector(":scope > .akfx-target");
-        root.insertBefore(sec, tg ? tg.nextSibling : root.firstChild);
+      function kid(sel) { return root.querySelector(":scope > " + sel); }
+      function secBy(re) { return [].slice.call(root.querySelectorAll(":scope > .akfx-sec")).filter(function (x) { var sm = x.querySelector("summary"); return sm && re.test(sm.textContent); })[0]; }
+      /* one slim line: which layer (small), what it works on, and small 🧰 Tools / ⭐ Looks buttons that open their own little window */
+      var tg = kid(".akfx-target"), pick = tg && tg.querySelector("select"), scope = kid(".akfx-scope");
+      var bar = h("div", { class: "akfx-bar" });
+      if (pick) { pick.classList.add("akfx-lsel"); bar.appendChild(pick); }
+      else if (tg) { var nm = tg.querySelector(".akfx-tn"); if (nm) bar.appendChild(h("span", { class: "akfx-lname" }, nm.textContent)); }
+      if (scope) {
+        var btns = [].slice.call(scope.querySelectorAll("button"));
+        var ss = h("select", { class: "akfx-ssel", "aria-label": "What the effects work on", onChange: function () { var bb = btns[this.selectedIndex]; if (bb) bb.click(); } },
+          btns.map(function (bb) { return h("option", { selected: bb.getAttribute("aria-pressed") === "true" }, /part only/.test(bb.textContent) ? "This part only" : "This + layers under it"); }));
+        bar.appendChild(ss); scope.parentNode.removeChild(scope);
       }
-      /* the layer's own effects come first, the whole-picture list last */
-      var all = [].slice.call(root.querySelectorAll(":scope > .akfx-sec")).filter(function (x) { return /^🖼 Whole picture/.test(x.textContent); })[0];
-      if (all) root.appendChild(all);
-    } catch (e) {}
+      var tools = [].slice.call(root.querySelectorAll(":scope > .akfx-dice")), looks = secBy(/Quick looks/), all = secBy(/^.?\s*🖼 Whole picture/);
+      function pop(title, nodes) {
+        var box = h("div", { class: "akfx-popb" }); nodes.forEach(function (n) { if (n) box.appendChild(n); });
+        var close = modal(title, box);
+        box.addEventListener("click", function (ev) { if (ev.target.closest("button") && !ev.target.closest("summary")) setTimeout(close, 60); });
+      }
+      if (tools.length) {
+        var grid = h("div", { class: "akfx-tools" });
+        tools.forEach(function (r) { [].slice.call(r.children).forEach(function (bb) { grid.appendChild(bb); }); r.parentNode.removeChild(r); });
+        bar.appendChild(h("button", { type: "button", class: "sm akfx-mini", "aria-label": "Quick tools: random, copy, paste, take off", onClick: function () { pop("🧰 Quick tools", [grid]); } }, "🧰"));
+      }
+      if (looks) { var lk = [].slice.call(looks.children).filter(function (n) { return n.tagName !== "SUMMARY"; }); looks.parentNode.removeChild(looks);
+        bar.appendChild(h("button", { type: "button", class: "sm akfx-mini", "aria-label": "Quick looks", onClick: function () { pop("⭐ Quick looks", lk); } }, "⭐")); }
+      if (all) { var al = [].slice.call(all.children).filter(function (n) { return n.tagName !== "SUMMARY"; }); all.parentNode.removeChild(all);
+        bar.appendChild(h("button", { type: "button", class: "sm akfx-mini", "aria-label": "Every effect in the whole picture", onClick: function () { pop("🖼 Every effect in use", al); } }, "🖼")); }
+      if (tg) tg.parentNode.removeChild(tg);
+      root.insertBefore(bar, root.firstChild);
+      /* the effects right under it */
+      var stack = secBy(/Effects on this layer/), txt = secBy(/Text effect/);
+      if (txt) root.insertBefore(txt, bar.nextSibling);
+      if (stack) root.insertBefore(stack, txt ? txt.nextSibling : bar.nextSibling);
+    } catch (e) { try { console.warn("fx tidy", e); } catch (e2) {} }
     return root;
   };
 })();
@@ -71107,7 +71131,8 @@ akCss("ak22ui",
   /* effects box */
   ".akfx-tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin:2px 0 4px}.akfx-tools>button{width:100%;justify-content:flex-start;text-align:left}" +
   ".akfx-sec>summary b{font-weight:700}.akfx-scope{display:grid;grid-template-columns:1fr 1fr;gap:6px}.akfx-scope>button{width:100%}" +
-  ".akfx-target .hint{display:none}" +
+  ".akfx-bar{display:flex;gap:4px;align-items:center;margin:0 0 6px}.akfx-bar select{min-width:0;flex:1 1 0;height:34px;padding:0 6px;font-size:.85rem}.akfx-mini{flex:0 0 34px;min-width:34px;height:34px;padding:0}" +
+  ".akfx-lname{flex:1;font-weight:700;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
   /* every fold arrow on the left */
   "details>summary{list-style:none}details>summary::-webkit-details-marker{display:none}" +
   "details>summary::before{content:'▸';display:inline-block;width:1em;flex:0 0 1em;margin-right:4px;color:var(--accent,#C8962E);transform:none!important;font-weight:400}" +
@@ -71120,7 +71145,7 @@ akCss("ak22ui",
   ".akg-foldic,.akpl-m,.akg-fxic,.akg-subic{order:-1;margin:0 6px 0 0!important;margin-left:0!important}" +
   "html body .akg .akg-foldhd{flex-direction:row!important;justify-content:flex-start!important}" +
   "details>summary::before,.akst-fold>summary::before,.akorg-fold>summary::before,.akorg-sec>summary::before{color:var(--accent,#5CC8C4)!important;opacity:1}");
-if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Effects (one box, everything folded)", a: "Graphics studio › ✨ Effects: pick the layer at the top, then open the fold you need. 🧰 Quick tools has 🎲 random, copy, paste and take all off." });
+if (typeof AK_HELP_WHERE !== "undefined") AK_HELP_WHERE.push({ t: "Effects (one box, everything folded)", a: "Graphics studio › ✨ Effects: the effects are right there. The slim top line picks the layer and what it works on; 🧰 is random, copy, paste, take off; ⭐ is quick looks; 🖼 lists every effect in use." });
 if (typeof akTcAdd === "function") akTcAdd("22.6", "Graphics and folds", [["ui-fx", "Effects in one tidy box", "Graphics › ✨ Effects: only one box opens (no second window). Every section starts folded; 🧰 Quick tools holds 🎲, copy, paste, take off.", ["graphics", {}, ""]],
   ["ui-arrows", "Fold arrows on the left", "Settings, Graphics, Shows: every foldable section shows ▸ / ▾ on the left side.", ["settings", {}, ""]]]);
 
