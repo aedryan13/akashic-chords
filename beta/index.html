@@ -14437,7 +14437,7 @@ function akCloudListen(u) {
     var ids = {}; a.forEach(function (x) { ids[x.id] = 1; }); Object.keys(AKL.items).forEach(function (k) { if (!ids[k]) delete AKL.items[k]; });
     akLiveIncoming(a);
   }, function (e) { AKL.err = "Firebase said no: " + (e.code || e.message); akLivePaint(); });
-  akLivePublish().catch(function (e) { AKL.err = "Couldn't publish your page: " + (e.code || e.message); akLivePaint(); });
+  (typeof akLivePublishSoft === "function" ? akLivePublishSoft() : akLivePublish()).catch(function (e) { AKL.err = "Couldn't publish your page: " + (e.code || e.message); akLivePaint(); });
   akLivePaint();
 }
 function akCloudSignIn(email, pass, create) {
@@ -70832,10 +70832,11 @@ function akLrLine(c) {
   return q.slice(0, 40).map(function (r) { return c.lineNames ? { i: r.id, t: String(r.title || "").slice(0, 60), n: r.tip && r.tip.next ? 1 : 0 } : { i: r.id }; });
 }
 (function () {
-  var lp = akLivePaint, sig = "";
+  var lp = akLivePaint, sig = null;
   akLivePaint = function () {
     var out = lp.apply(this, arguments);
-    try { var c = akLr(); if (c.lineOn !== false || akLive().rules.next) { var s = JSON.stringify(akLrLine(c)); if (s !== sig) { sig = s; akLrPublishSoon(); } } } catch (e) {}
+    /* only when the line really changes (not when the app first opens), and never over a page another device is running */
+    try { var c = akLr(); if (c.lineOn !== false || akLive().rules.next) { var s = JSON.stringify(akLrLine(c)); if (sig === null) sig = s; else if (s !== sig) { sig = s; clearTimeout(AKLR.t); AKLR.t = setTimeout(function () { try { save(); if (AKL.conn) (typeof akLivePublishSoft === "function" ? akLivePublishSoft() : akLivePublish()).catch(function () {}); } catch (e) {} }, 700); } } } catch (e) {}
     return out;
   };
 })();
@@ -71230,7 +71231,7 @@ function akQAllowed() {
 })();
 /* "only the set I'm playing": when the play screen moves into the next set, the page follows */
 setInterval(function () {
-  try { var c = akQCfg(); if (c.reqScope !== "now" || !akLive().on) return; var was = c.reqNowSet, now = akQNowSet(); if (now !== was) { save(); akLivePublish().catch(function () {}); } } catch (e) {}
+  try { var c = akQCfg(); if (c.reqScope !== "now" || !akLive().on) return; var was = c.reqNowSet, now = akQNowSet(); if (now !== was) { save(); akLivePublishSoft().catch(function () {}); } } catch (e) {}
 }, 5000);
 
 /* ---------------- the show's log: everything that came in tonight */
@@ -71376,7 +71377,7 @@ function akQuickBox(redraw) {
     return o0.apply(this, arguments);
   };
   var last = null;
-  setInterval(function () { try { if (!akLive().on) return; var c = akEncCfg(); if (c.when !== "at" && c.when !== "before") return; var o = akEncOpen(); if (o !== last) { last = o; akLivePublish().catch(function () {}); } } catch (e) {} }, 30000);
+  setInterval(function () { try { if (!akLive().on) return; var c = akEncCfg(); if (c.when !== "at" && c.when !== "before") return; var o = akEncOpen(); if (last === null) { last = o; return; } if (o !== last) { last = o; akLivePublishSoft().catch(function () {}); } } catch (e) {} }, 30000);
 })();
 akCss("ak22q", ".akq-row{display:flex;align-items:center;gap:8px;margin:4px 0}.akq-amt{display:flex;align-items:center;gap:4px}.akq-amt input{width:76px}" + ".akq-quick>summary{min-height:36px;display:flex;align-items:center}.akq-k{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;opacity:.75;margin:10px 0 4px}" +
   ".akq-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:0 0 6px}.akq-grid>button{width:100%}.akq-sets{display:flex;flex-wrap:wrap;gap:4px 14px}.akq-price input{max-width:110px}");
@@ -71428,6 +71429,33 @@ akCss("ak22q-live", ".akq-live{margin:0 0 8px;padding:6px 10px;border-radius:2px
   ".akq-live.paused{background:rgba(229,184,0,.15);color:#E5B800;border:1px solid rgba(229,184,0,.5)}.akq-live.down{background:rgba(229,72,77,.15);color:#ff8a8d;border:1px solid rgba(229,72,77,.5)}.akq-live.off{opacity:.7}" +
   ".akq-enc.on{color:#4ade80;font-weight:700}" +
   "button.aklive-on{color:#4ade80!important;box-shadow:inset 0 -3px 0 #4ade80}button.aklive-paused{color:#E5B800!important;box-shadow:inset 0 -3px 0 #E5B800}button.aklive-down{color:#ff8a8d!important;box-shadow:inset 0 -3px 0 #ff8a8d}");
+
+/* ONE device runs the page. Every publish is stamped with this device; automatic ones (opening the app, the line moving,
+   the encore timer) never overwrite a page another device published. Anything you change on purpose, or 📤 Update my page,
+   makes this device the one running it. */
+function akDevId() { try { var d = localStorage.getItem("akdev"); if (!d) { d = Math.random().toString(36).slice(2, 10); localStorage.setItem("akdev", d); } return d; } catch (e) { return "x"; } }
+(function () {
+  var pp = akLivePublicProfile;
+  akLivePublicProfile = function () { var p = pp.apply(this, arguments); try { p.dev = akDevId(); p.devName = (navigator.userAgent.match(/iPhone|iPad|Android|Windows|Macintosh|Linux/) || ["a device"])[0]; } catch (e) {} return p; };
+  var pub = akLivePublish;
+  akLivePublish = function () { var r = pub.apply(this, arguments); try { Promise.resolve(r).then(function () { if (AKL.otherDev) { AKL.otherDev = false; akLivePaint(); } }, function () {}); } catch (e) {} return r; };
+})();
+function akLivePublishSoft() {
+  if (AKL.conn !== "cloud" || !AKL.db) return akLivePublish();
+  return AKL.db.collection("performers").doc(AKL.uid).get().then(function (d) {
+    var x = d.exists ? d.data() : null;
+    if (x && x.dev && x.dev !== akDevId()) { AKL.otherDev = x.devName || "another device"; try { akLivePaint(); } catch (e) {} return; }
+    return akLivePublish();
+  });
+}
+(function () {
+  var b0 = akLiveBanner;
+  akLiveBanner = function () {
+    var b = b0.apply(this, arguments);
+    if (AKL.otherDev) b = h("div", { class: "akq-live paused", role: "status" }, "Your page is being run from " + (AKL.otherDev === true ? "another device" : "your " + AKL.otherDev) + ". This one won't change it unless you tap 📤 Update my page.");
+    return b;
+  };
+})();
 
 /* ---------- turning pasted charts into bracket form ---------- */
 function mergeAbove(chordLine, lyric, snap) {
