@@ -1,6 +1,6 @@
 # GitLab auto-merge robot
 
-Runs every 10 minutes on GitHub Actions (free for this public repo). No AI, no GitLab CI minutes.
+Runs all the time on GitHub Actions (one long run that restarts itself) (free for this public repo). No AI, no GitLab CI minutes.
 
 What it does on `aedryan-gantt-music-group/akashic-chords-source`:
 
@@ -8,7 +8,7 @@ What it does on `aedryan-gantt-music-group/akashic-chords-source`:
   `claude/rewrite-*` goes to `claude/rewrite`; every other `claude/*` branch goes to `claude/tips-tidy`. "Delete source branch" is always off.
 - Merges open `claude/*` merge requests into those two targets once GitLab says "mergeable". Pipelines are ignored.
 - On a conflict it only adds the label `auto-merge: needs fix` and one comment. A Claude thread fixes it and pushes; the robot retries.
-- Waits 10 minutes after the last push before opening a merge request, and does at most 5 of each action per run.
+- Checks every 5 minutes, one branch per check. Waits 5 minutes after the last push before opening a merge request.
 
 It never touches `main`, never deploys, never deletes branches. Branches `claude/tips-tidy`, `claude/rewrite`, `claude/black-ink-sync` and any branch ending in `-wip` or `-hold` are left alone.
 Draft merge requests and ones labelled `hold` are skipped.

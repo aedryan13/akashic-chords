@@ -1,20 +1,29 @@
 # Auto-merge robot for the private GitLab source repo. No AI, no GitLab CI minutes.
 # Turn it on/off with the repository variable AUTOMERGE_MODE: on | off | dry-run (default dry-run).
 # Needs the repository secret GITLAB_AUTOMERGE_TOKEN (GitLab token with "api" scope).
+#
+# One run stays awake for about 5h35m and checks GitLab every 5 minutes, one branch per check.
+# Before it ends it starts the next run itself, so it does not depend on GitHub's timer.
+# The timer below is only a backup that restarts the chain if it ever breaks.
 name: GitLab auto-merge
 
 on:
   schedule:
-    - cron: "4,14,24,34,44,54 * * * *"
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       mode:
         description: "on, off or dry-run (blank = use the AUTOMERGE_MODE setting)"
         required: false
         default: ""
+      once:
+        description: "yes = check once and stop (no 5-minute loop)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: gitlab-automerge
@@ -23,14 +32,26 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 358
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .github/automerge
           persist-credentials: false
-      - name: Check GitLab and merge what is ready
+      - name: Check GitLab every 5 minutes, one branch at a time
         env:
           GITLAB_AUTOMERGE_TOKEN: ${{ secrets.GITLAB_AUTOMERGE_TOKEN }}
           AUTOMERGE_MODE: ${{ github.event.inputs.mode || vars.AUTOMERGE_MODE }}
-        run: python3 .github/automerge/automerge.py
+          ONCE: ${{ github.event.inputs.once }}
+        run: |
+          passes=66
+          if [ "$ONCE" = "yes" ]; then passes=1; fi
+          for i in $(seq 1 $passes); do
+            python3 .github/automerge/automerge.py || echo "pass $i had an error, trying again next pass"
+            if [ "$i" -lt "$passes" ]; then sleep 300; fi
+          done
+      - name: Start the next run
+        if: ${{ !cancelled() && github.event.inputs.once != 'yes' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run gitlab-automerge.yml --repo "$GITHUB_REPOSITORY" --ref main
