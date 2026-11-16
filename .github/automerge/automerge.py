@@ -29,6 +29,7 @@ START_AFTER = datetime.fromisoformat(CFG["only_branches_pushed_after"].replace("
 LABEL = CFG["conflict_label"]
 TARGETS = set(CFG["allowed_targets"])
 LOG = []
+ACTIONS = [0]
 
 
 def log(msg):
@@ -92,8 +93,9 @@ def safe_target(t):
 
 def open_missing_mrs(open_mrs, all_mrs):
     have_open = {m["source_branch"] for m in open_mrs}
-    made = 0
-    for b in get_all("/repository/branches"):
+    done_shas = {m["sha"] for m in all_mrs if m["state"] == "merged"}
+    branches = sorted(get_all("/repository/branches"), key=lambda b: b["commit"]["committed_date"])
+    for b in branches:
         name, sha = b["name"], b["commit"]["id"]
         target = target_for(name)
         if not target or name in have_open:
@@ -103,6 +105,8 @@ def open_missing_mrs(open_mrs, all_mrs):
         pushed = when(b["commit"]["committed_date"])
         if pushed < START_AFTER:
             continue  # older branches are never touched
+        if sha in done_shas:
+            continue  # this exact version was already merged
         if NOW - pushed < SETTLE:
             log(f"wait   {name}: pushed {int((NOW - pushed).total_seconds() // 60)} min ago, waiting for it to settle")
             continue
@@ -111,8 +115,8 @@ def open_missing_mrs(open_mrs, all_mrs):
         cmp = call("GET", "/repository/compare", {"from": target, "to": name, "straight": "false"})
         if not cmp.get("commits"):
             continue  # nothing new, already merged
-        if made >= CFG["max_actions_per_run"]:
-            log(f"later  {name}: hit this run's limit, next run will open it")
+        if ACTIONS[0] >= CFG["max_actions_per_run"]:
+            log(f"later  {name}: one at a time, next pass opens it")
             continue
         title = (cmp["commits"][-1].get("title") or name)[:200]
         if MODE == "on":
@@ -125,11 +129,10 @@ def open_missing_mrs(open_mrs, all_mrs):
             log(f"opened !{mr['iid']} {name} -> {target}")
         else:
             log(f"WOULD open MR {name} -> {target} ({len(cmp['commits'])} new commits)")
-        made += 1
+        ACTIONS[0] += 1
 
 
 def merge_ready(open_mrs):
-    merged = 0
     for m in sorted(open_mrs, key=lambda x: x["iid"]):
         iid, src, tgt = m["iid"], m["source_branch"], m["target_branch"]
         if not src.startswith("claude/") or not safe_target(tgt) or target_for(src) != tgt:
@@ -158,8 +161,8 @@ def merge_ready(open_mrs):
         if status != "mergeable":
             log(f"wait   !{iid} {src}: GitLab status is {status}")
             continue
-        if merged >= CFG["max_actions_per_run"]:
-            log(f"later  !{iid} {src}: hit this run's limit")
+        if ACTIONS[0] >= CFG["max_actions_per_run"]:
+            log(f"later  !{iid} {src}: one at a time, next pass merges it")
             continue
         if MODE == "on":
             if LABEL in labels:
@@ -171,7 +174,7 @@ def merge_ready(open_mrs):
             log(f"MERGED !{iid} {src} -> {tgt}")
         else:
             log(f"WOULD merge !{iid} {src} -> {tgt}")
-        merged += 1
+        ACTIONS[0] += 1
 
 
 def main():
